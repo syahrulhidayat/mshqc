@@ -1,0 +1,693 @@
+
+Host: fedora
+
+Timers On : Tue Nov 11 08:40:02 2025
+Timers Off: Tue Nov 11 08:40:04 2025
+
+Wall Time:        1.56 seconds
+
+                                                       Time (seconds)
+Module                                       User      System        Wall        Calls
+Total PK formation time             :      0.133u      0.183s      0.192w      2 calls
+Libint2ERI::Libint2ERI              :      0.067u      0.217s      0.161w      5 calls
+HF: Form core H                     :      0.000u      0.000s      0.001w      2 calls
+HF: Form S/X                        :      0.000u      0.000s      0.000w      2 calls
+HF: Guess                           :      0.000u      0.000s      0.000w      2 calls
+HF: Form G                          :      0.017u      0.000s      0.006w     16 calls
+JK: D                               :      0.000u      0.000s      0.000w     16 calls
+JK: USO2AO                          :      0.000u      0.000s      0.000w     16 calls
+JK: JK                              :      0.017u      0.000s      0.006w     16 calls
+PK computes JK                      :      0.017u      0.000s      0.006w     16 calls
+JK: AO2USO                          :      0.000u      0.000s      0.000w     16 calls
+HF: Form F                          :      0.000u      0.000s      0.001w     16 calls
+HF: DIIS                            :      0.067u      0.000s      0.026w     16 calls
+HF: Form C                          :      0.000u      0.000s      0.005w     16 calls
+HF: Form D                          :      0.000u      0.000s      0.000w     16 calls
+trans_ints                          :      0.067u      0.067s      0.076w      1 calls
+Trans (OO|OO)                       :      0.017u      0.017s      0.010w      1 calls
+Trans (OO|OV)                       :      0.000u      0.000s      0.000w      1 calls
+Trans (OO|VV)                       :      0.000u      0.000s      0.000w      1 calls
+Trans (OV|OO)                       :      0.017u      0.000s      0.009w      1 calls
+Trans (OV|OV)                       :      0.000u      0.000s      0.001w      1 calls
+Trans (OV|VV)                       :      0.000u      0.000s      0.002w      1 calls
+Trans (VV|OO)                       :      0.017u      0.017s      0.028w      1 calls
+Trans (VV|OV)                       :      0.017u      0.017s      0.010w      1 calls
+Sort chem -> phys                   :      0.000u      0.000s      0.003w      1 calls
+Sort (OO|OO) -> <OO|OO>             :      0.000u      0.000s      0.000w      1 calls
+Sort (OO|OV) -> <OO|OV>             :      0.000u      0.000s      0.000w      1 calls
+Sort (OV|OV) -> <OO|VV>             :      0.000u      0.000s      0.000w      1 calls
+Sort (OO|VV) -> <OV|OV>             :      0.000u      0.000s      0.001w      1 calls
+Sort (OV|VV) -> <OV|VV>             :      0.000u      0.000s      0.002w      1 calls
+Antisymmetrize integrals            :      0.000u      0.000s      0.000w      1 calls
+Make <OO||OO>                       :      0.000u      0.000s      0.000w      1 calls
+Make <OO||OV>                       :      0.000u      0.000s      0.000w      1 calls
+Make <OO||VV>                       :      0.000u      0.000s      0.000w      1 calls
+Make <OV||OV>                       :      0.000u      0.000s      0.000w      1 calls
+Trans OEI                           :      0.000u      0.000s      0.000w      1 calls
+Build Denominators                  :      0.000u      0.000s      0.000w      1 calls
+T1(1)                               :      0.000u      0.000s      0.001w      1 calls
+T2(1)                               :      0.017u      0.100s      0.058w      1 calls
+MP2 Energy                          :      0.000u      0.000s      0.000w      1 calls
+
+--------------------------------------------------------------------------------------
+Total PK formation time             :      0.133u      0.183s      0.192w      2 calls
+| Libint2ERI::Libint2ERI            :      0.050u      0.183s      0.131w      4 calls
+HF: Form core H                     :      0.000u      0.000s      0.001w      2 calls
+HF: Form S/X                        :      0.000u      0.000s      0.000w      2 calls
+HF: Guess                           :      0.000u      0.000s      0.000w      2 calls
+HF: Form G                          :      0.017u      0.000s      0.006w     16 calls
+| JK: D                             :      0.000u      0.000s      0.000w     16 calls
+| JK: USO2AO                        :      0.000u      0.000s      0.000w     16 calls
+| JK: JK                            :      0.017u      0.000s      0.006w     16 calls
+| | PK computes JK                  :      0.017u      0.000s      0.006w     16 calls
+| JK: AO2USO                        :      0.000u      0.000s      0.000w     16 calls
+HF: Form F                          :      0.000u      0.000s      0.001w     16 calls
+HF: DIIS                            :      0.067u      0.000s      0.026w     16 calls
+HF: Form C                          :      0.000u      0.000s      0.005w     16 calls
+HF: Form D                          :      0.000u      0.000s      0.000w     16 calls
+Libint2ERI::Libint2ERI              :      0.017u      0.033s      0.031w      1 calls
+trans_ints                          :      0.067u      0.067s      0.076w      1 calls
+| Trans (OO|OO)                     :      0.017u      0.017s      0.010w      1 calls
+| Trans (OO|OV)                     :      0.000u      0.000s      0.000w      1 calls
+| Trans (OO|VV)                     :      0.000u      0.000s      0.000w      1 calls
+| Trans (OV|OO)                     :      0.017u      0.000s      0.009w      1 calls
+| Trans (OV|OV)                     :      0.000u      0.000s      0.001w      1 calls
+| Trans (OV|VV)                     :      0.000u      0.000s      0.002w      1 calls
+| Trans (VV|OO)                     :      0.017u      0.017s      0.028w      1 calls
+| Trans (VV|OV)                     :      0.017u      0.017s      0.010w      1 calls
+| Sort chem -> phys                 :      0.000u      0.000s      0.003w      1 calls
+| | Sort (OO|OO) -> <OO|OO>         :      0.000u      0.000s      0.000w      1 calls
+| | Sort (OO|OV) -> <OO|OV>         :      0.000u      0.000s      0.000w      1 calls
+| | Sort (OV|OV) -> <OO|VV>         :      0.000u      0.000s      0.000w      1 calls
+| | Sort (OO|VV) -> <OV|OV>         :      0.000u      0.000s      0.001w      1 calls
+| | Sort (OV|VV) -> <OV|VV>         :      0.000u      0.000s      0.002w      1 calls
+| Antisymmetrize integrals          :      0.000u      0.000s      0.000w      1 calls
+| | Make <OO||OO>                   :      0.000u      0.000s      0.000w      1 calls
+| | Make <OO||OV>                   :      0.000u      0.000s      0.000w      1 calls
+| | Make <OO||VV>                   :      0.000u      0.000s      0.000w      1 calls
+| | Make <OV||OV>                   :      0.000u      0.000s      0.000w      1 calls
+| Trans OEI                         :      0.000u      0.000s      0.000w      1 calls
+| Build Denominators                :      0.000u      0.000s      0.000w      1 calls
+T1(1)                               :      0.000u      0.000s      0.001w      1 calls
+T2(1)                               :      0.017u      0.100s      0.058w      1 calls
+MP2 Energy                          :      0.000u      0.000s      0.000w      1 calls
+
+**************************************************************************************
+
+Host: fedora
+
+Timers On : Tue Nov 11 08:41:34 2025
+Timers Off: Tue Nov 11 08:41:35 2025
+
+Wall Time:        1.05 seconds
+
+                                                       Time (seconds)
+Module                                       User      System        Wall        Calls
+Total PK formation time             :      0.150u      0.167s      0.188w      2 calls
+Libint2ERI::Libint2ERI              :      0.083u      0.183s      0.160w      5 calls
+HF: Form core H                     :      0.000u      0.000s      0.001w      2 calls
+HF: Form S/X                        :      0.000u      0.000s      0.000w      2 calls
+HF: Guess                           :      0.000u      0.000s      0.000w      2 calls
+HF: Form G                          :      0.000u      0.000s      0.007w     16 calls
+JK: D                               :      0.000u      0.000s      0.000w     16 calls
+JK: USO2AO                          :      0.000u      0.000s      0.000w     16 calls
+JK: JK                              :      0.000u      0.000s      0.006w     16 calls
+PK computes JK                      :      0.000u      0.000s      0.006w     16 calls
+JK: AO2USO                          :      0.000u      0.000s      0.000w     16 calls
+HF: Form F                          :      0.000u      0.000s      0.001w     16 calls
+HF: DIIS                            :      0.050u      0.000s      0.022w     16 calls
+HF: Form C                          :      0.017u      0.000s      0.005w     16 calls
+HF: Form D                          :      0.000u      0.000s      0.000w     16 calls
+trans_ints                          :      0.067u      0.067s      0.077w      1 calls
+Trans (OO|OO)                       :      0.000u      0.017s      0.010w      1 calls
+Trans (OO|OV)                       :      0.000u      0.000s      0.000w      1 calls
+Trans (OO|VV)                       :      0.000u      0.000s      0.000w      1 calls
+Trans (OV|OO)                       :      0.017u      0.000s      0.009w      1 calls
+Trans (OV|OV)                       :      0.000u      0.000s      0.001w      1 calls
+Trans (OV|VV)                       :      0.000u      0.000s      0.002w      1 calls
+Trans (VV|OO)                       :      0.033u      0.017s      0.028w      1 calls
+Trans (VV|OV)                       :      0.017u      0.000s      0.010w      1 calls
+Sort chem -> phys                   :      0.000u      0.017s      0.003w      1 calls
+Sort (OO|OO) -> <OO|OO>             :      0.000u      0.000s      0.000w      1 calls
+Sort (OO|OV) -> <OO|OV>             :      0.000u      0.000s      0.000w      1 calls
+Sort (OV|OV) -> <OO|VV>             :      0.000u      0.000s      0.000w      1 calls
+Sort (OO|VV) -> <OV|OV>             :      0.000u      0.000s      0.001w      1 calls
+Sort (OV|VV) -> <OV|VV>             :      0.000u      0.017s      0.002w      1 calls
+Antisymmetrize integrals            :      0.000u      0.000s      0.000w      1 calls
+Make <OO||OO>                       :      0.000u      0.000s      0.000w      1 calls
+Make <OO||OV>                       :      0.000u      0.000s      0.000w      1 calls
+Make <OO||VV>                       :      0.000u      0.000s      0.000w      1 calls
+Make <OV||OV>                       :      0.000u      0.000s      0.000w      1 calls
+Trans OEI                           :      0.000u      0.000s      0.000w      1 calls
+Build Denominators                  :      0.000u      0.000s      0.000w      1 calls
+T1(1)                               :      0.000u      0.000s      0.001w      1 calls
+T2(1)                               :      0.017u      0.083s      0.062w      1 calls
+MP2 Energy                          :      0.000u      0.000s      0.000w      1 calls
+
+--------------------------------------------------------------------------------------
+Total PK formation time             :      0.150u      0.167s      0.188w      2 calls
+| Libint2ERI::Libint2ERI            :      0.067u      0.150s      0.128w      4 calls
+HF: Form core H                     :      0.000u      0.000s      0.001w      2 calls
+HF: Form S/X                        :      0.000u      0.000s      0.000w      2 calls
+HF: Guess                           :      0.000u      0.000s      0.000w      2 calls
+HF: Form G                          :      0.000u      0.000s      0.007w     16 calls
+| JK: D                             :      0.000u      0.000s      0.000w     16 calls
+| JK: USO2AO                        :      0.000u      0.000s      0.000w     16 calls
+| JK: JK                            :      0.000u      0.000s      0.006w     16 calls
+| | PK computes JK                  :      0.000u      0.000s      0.006w     16 calls
+| JK: AO2USO                        :      0.000u      0.000s      0.000w     16 calls
+HF: Form F                          :      0.000u      0.000s      0.001w     16 calls
+HF: DIIS                            :      0.050u      0.000s      0.022w     16 calls
+HF: Form C                          :      0.017u      0.000s      0.005w     16 calls
+HF: Form D                          :      0.000u      0.000s      0.000w     16 calls
+Libint2ERI::Libint2ERI              :      0.017u      0.033s      0.032w      1 calls
+trans_ints                          :      0.067u      0.067s      0.077w      1 calls
+| Trans (OO|OO)                     :      0.000u      0.017s      0.010w      1 calls
+| Trans (OO|OV)                     :      0.000u      0.000s      0.000w      1 calls
+| Trans (OO|VV)                     :      0.000u      0.000s      0.000w      1 calls
+| Trans (OV|OO)                     :      0.017u      0.000s      0.009w      1 calls
+| Trans (OV|OV)                     :      0.000u      0.000s      0.001w      1 calls
+| Trans (OV|VV)                     :      0.000u      0.000s      0.002w      1 calls
+| Trans (VV|OO)                     :      0.033u      0.017s      0.028w      1 calls
+| Trans (VV|OV)                     :      0.017u      0.000s      0.010w      1 calls
+| Sort chem -> phys                 :      0.000u      0.017s      0.003w      1 calls
+| | Sort (OO|OO) -> <OO|OO>         :      0.000u      0.000s      0.000w      1 calls
+| | Sort (OO|OV) -> <OO|OV>         :      0.000u      0.000s      0.000w      1 calls
+| | Sort (OV|OV) -> <OO|VV>         :      0.000u      0.000s      0.000w      1 calls
+| | Sort (OO|VV) -> <OV|OV>         :      0.000u      0.000s      0.001w      1 calls
+| | Sort (OV|VV) -> <OV|VV>         :      0.000u      0.017s      0.002w      1 calls
+| Antisymmetrize integrals          :      0.000u      0.000s      0.000w      1 calls
+| | Make <OO||OO>                   :      0.000u      0.000s      0.000w      1 calls
+| | Make <OO||OV>                   :      0.000u      0.000s      0.000w      1 calls
+| | Make <OO||VV>                   :      0.000u      0.000s      0.000w      1 calls
+| | Make <OV||OV>                   :      0.000u      0.000s      0.000w      1 calls
+| Trans OEI                         :      0.000u      0.000s      0.000w      1 calls
+| Build Denominators                :      0.000u      0.000s      0.000w      1 calls
+T1(1)                               :      0.000u      0.000s      0.001w      1 calls
+T2(1)                               :      0.017u      0.083s      0.062w      1 calls
+MP2 Energy                          :      0.000u      0.000s      0.000w      1 calls
+
+**************************************************************************************
+
+Host: fedora
+
+Timers On : Tue Nov 11 09:47:20 2025
+Timers Off: Tue Nov 11 09:47:21 2025
+
+Wall Time:        0.89 seconds
+
+                                                       Time (seconds)
+Module                                       User      System        Wall        Calls
+DFH: sparsity prep                  :      0.017u      0.050s      0.038w      1 calls
+Libint2ERI::Libint2ERI              :      0.033u      0.067s      0.061w      5 calls
+DFH: initialize()                   :      0.017u      0.050s      0.049w      1 calls
+DFH: AO Construction                :      0.000u      0.017s      0.018w      1 calls
+DFH: AO-Met. Contraction            :      0.000u      0.000s      0.000w      1 calls
+HF: Form core H                     :      0.000u      0.000s      0.001w      1 calls
+HF: Form S/X                        :      0.000u      0.000s      0.000w      1 calls
+HF: Guess                           :      0.000u      0.000s      0.000w      1 calls
+HF: Form G                          :      0.000u      0.000s      0.001w      7 calls
+JK: D                               :      0.000u      0.000s      0.000w      7 calls
+JK: USO2AO                          :      0.000u      0.000s      0.000w      7 calls
+JK: JK                              :      0.000u      0.000s      0.001w      7 calls
+DFH: compute_JK()                   :      0.000u      0.000s      0.001w      7 calls
+DFH: Grabbing AOs                   :      0.000u      0.000s      0.000w      7 calls
+DFH: compute_J                      :      0.000u      0.000s      0.000w      7 calls
+DFH: compute_K                      :      0.000u      0.000s      0.001w      7 calls
+JK: AO2USO                          :      0.000u      0.000s      0.000w      7 calls
+HF: Form F                          :      0.017u      0.000s      0.000w      7 calls
+HF: DIIS                            :      0.000u      0.000s      0.009w      7 calls
+HF: Form C                          :      0.017u      0.000s      0.002w      7 calls
+HF: Form D                          :      0.000u      0.000s      0.000w      7 calls
+DFMP2 Singles                       :      0.000u      0.000s      0.000w      1 calls
+DFMP2 Aia                           :      0.017u      0.017s      0.014w      1 calls
+DFMP2 (A|mn)                        :      0.000u      0.017s      0.005w      1 calls
+DFMP2 (A|mn)C_mi                    :      0.000u      0.000s      0.000w      2 calls
+DFMP2 (A|mi)C_na                    :      0.000u      0.000s      0.000w      2 calls
+DFMP2 Aia Write                     :      0.000u      0.000s      0.000w      2 calls
+DFMP2 Bia                           :      0.017u      0.000s      0.005w      1 calls
+DFMP2 Metric                        :      0.017u      0.000s      0.004w      1 calls
+DFMP2 Aia Read                      :      0.000u      0.000s      0.000w      2 calls
+DFMP2 (ia|A)(A|Q)                   :      0.000u      0.000s      0.000w      2 calls
+DFMP2 Bia Write                     :      0.000u      0.000s      0.000w      2 calls
+DFMP2 Energy                        :      0.000u      0.000s      0.001w      1 calls
+DFMP2 Bia Read                      :      0.000u      0.000s      0.000w      6 calls
+
+--------------------------------------------------------------------------------------
+DFH: sparsity prep                  :      0.017u      0.050s      0.038w      1 calls
+| Libint2ERI::Libint2ERI            :      0.017u      0.050s      0.033w      1 calls
+DFH: initialize()                   :      0.017u      0.050s      0.049w      1 calls
+| Libint2ERI::Libint2ERI            :      0.017u      0.017s      0.021w      2 calls
+| DFH: AO Construction              :      0.000u      0.017s      0.018w      1 calls
+| DFH: AO-Met. Contraction          :      0.000u      0.000s      0.000w      1 calls
+HF: Form core H                     :      0.000u      0.000s      0.001w      1 calls
+HF: Form S/X                        :      0.000u      0.000s      0.000w      1 calls
+HF: Guess                           :      0.000u      0.000s      0.000w      1 calls
+HF: Form G                          :      0.000u      0.000s      0.001w      7 calls
+| JK: D                             :      0.000u      0.000s      0.000w      7 calls
+| JK: USO2AO                        :      0.000u      0.000s      0.000w      7 calls
+| JK: JK                            :      0.000u      0.000s      0.001w      7 calls
+| | DFH: compute_JK()               :      0.000u      0.000s      0.001w      7 calls
+| | | DFH: Grabbing AOs             :      0.000u      0.000s      0.000w      7 calls
+| | | DFH: compute_J                :      0.000u      0.000s      0.000w      7 calls
+| | | DFH: compute_K                :      0.000u      0.000s      0.001w      7 calls
+| JK: AO2USO                        :      0.000u      0.000s      0.000w      7 calls
+HF: Form F                          :      0.017u      0.000s      0.000w      7 calls
+HF: DIIS                            :      0.000u      0.000s      0.009w      7 calls
+HF: Form C                          :      0.017u      0.000s      0.002w      7 calls
+HF: Form D                          :      0.000u      0.000s      0.000w      7 calls
+DFMP2 Singles                       :      0.000u      0.000s      0.000w      1 calls
+DFMP2 Aia                           :      0.017u      0.017s      0.014w      1 calls
+| Libint2ERI::Libint2ERI            :      0.000u      0.000s      0.007w      1 calls
+| DFMP2 (A|mn)                      :      0.000u      0.017s      0.005w      1 calls
+| DFMP2 (A|mn)C_mi                  :      0.000u      0.000s      0.000w      2 calls
+| DFMP2 (A|mi)C_na                  :      0.000u      0.000s      0.000w      2 calls
+| DFMP2 Aia Write                   :      0.000u      0.000s      0.000w      2 calls
+DFMP2 Bia                           :      0.017u      0.000s      0.005w      1 calls
+| DFMP2 Metric                      :      0.017u      0.000s      0.004w      1 calls
+| | Libint2ERI::Libint2ERI          :      0.000u      0.000s      0.000w      1 calls
+| DFMP2 Aia Read                    :      0.000u      0.000s      0.000w      2 calls
+| DFMP2 (ia|A)(A|Q)                 :      0.000u      0.000s      0.000w      2 calls
+| DFMP2 Bia Write                   :      0.000u      0.000s      0.000w      2 calls
+DFMP2 Energy                        :      0.000u      0.000s      0.001w      1 calls
+| DFMP2 Bia Read                    :      0.000u      0.000s      0.000w      6 calls
+
+**************************************************************************************
+
+Host: fedora
+
+Timers On : Tue Nov 11 10:56:25 2025
+Timers Off: Tue Nov 11 10:56:27 2025
+
+Wall Time:        1.77 seconds
+
+                                                       Time (seconds)
+Module                                       User      System        Wall        Calls
+Total PK formation time             :      0.133u      0.233s      0.249w      2 calls
+Libint2ERI::Libint2ERI              :      0.083u      0.267s      0.240w      9 calls
+HF: Form core H                     :      0.000u      0.017s      0.008w      2 calls
+HF: Form S/X                        :      0.000u      0.000s      0.001w      2 calls
+HF: Guess                           :      0.000u      0.000s      0.000w      2 calls
+HF: Form G                          :      0.000u      0.000s      0.006w     14 calls
+JK: D                               :      0.000u      0.000s      0.000w     14 calls
+JK: USO2AO                          :      0.000u      0.000s      0.000w     14 calls
+JK: JK                              :      0.000u      0.000s      0.005w     14 calls
+PK computes JK                      :      0.000u      0.000s      0.005w     14 calls
+JK: AO2USO                          :      0.000u      0.000s      0.000w     14 calls
+HF: Form F                          :      0.000u      0.000s      0.001w     14 calls
+HF: DIIS                            :      0.050u      0.000s      0.023w     14 calls
+HF: Form C                          :      0.000u      0.000s      0.004w     14 calls
+HF: Form D                          :      0.000u      0.000s      0.000w     14 calls
+DF CC Integrals                     :      0.100u      0.150s      0.133w      9 calls
+Form J                              :      0.000u      0.017s      0.008w      2 calls
+Form B(Q,munu)                      :      0.050u      0.033s      0.056w      2 calls
+Form B(Q,ij)                        :      0.000u      0.000s      0.010w     18 calls
+Form B(Q,ia)                        :      0.033u      0.017s      0.027w     18 calls
+Form B(Q,ab)                        :      0.000u      0.033s      0.034w     18 calls
+Trans OEI                           :      0.000u      0.000s      0.000w      9 calls
+Fock                                :      0.000u      0.033s      0.012w      9 calls
+1st-order T1                        :      0.000u      0.000s      0.000w      1 calls
+1st-order T2                        :      0.017u      0.000s      0.019w      9 calls
+Build (IA|JB)                       :      0.000u      0.000s      0.002w     10 calls
+Build <PQ||RS>                      :      0.000u      0.000s      0.000w     20 calls
+Build (ia|jb)                       :      0.000u      0.000s      0.002w     10 calls
+Build (IA|jb)                       :      0.000u      0.000s      0.003w     10 calls
+opdm                                :      0.000u      0.000s      0.004w      9 calls
+tpdm                                :      0.000u      0.033s      0.014w      9 calls
+CCL Energy                          :      0.017u      0.000s      0.005w      9 calls
+sep_tpdm                            :      0.017u      0.033s      0.026w      9 calls
+GFM VO                              :      0.000u      0.017s      0.019w      9 calls
+GFM OV                              :      0.017u      0.033s      0.016w      9 calls
+GFM OO                              :      0.000u      0.017s      0.015w      9 calls
+GFM VV                              :      0.000u      0.033s      0.020w      9 calls
+kappa orb rot                       :      0.017u      0.000s      0.019w      8 calls
+Diagonal MO Hessian VO              :      0.017u      0.000s      0.019w      8 calls
+Build (OV|OV)                       :      0.000u      0.000s      0.001w      8 calls
+Build (ov|ov)                       :      0.017u      0.000s      0.001w      8 calls
+update_mo                           :      0.017u      0.000s      0.009w      8 calls
+DF REF Integrals                    :      0.017u      0.000s      0.024w      8 calls
+MO Grad                             :      0.000u      0.000s      0.000w      8 calls
+MP2 Energy                          :      0.000u      0.000s      0.001w      1 calls
+
+--------------------------------------------------------------------------------------
+Total PK formation time             :      0.133u      0.233s      0.249w      2 calls
+| Libint2ERI::Libint2ERI            :      0.050u      0.233s      0.185w      4 calls
+HF: Form core H                     :      0.000u      0.017s      0.008w      2 calls
+HF: Form S/X                        :      0.000u      0.000s      0.001w      2 calls
+HF: Guess                           :      0.000u      0.000s      0.000w      2 calls
+HF: Form G                          :      0.000u      0.000s      0.006w     14 calls
+| JK: D                             :      0.000u      0.000s      0.000w     14 calls
+| JK: USO2AO                        :      0.000u      0.000s      0.000w     14 calls
+| JK: JK                            :      0.000u      0.000s      0.005w     14 calls
+| | PK computes JK                  :      0.000u      0.000s      0.005w     14 calls
+| JK: AO2USO                        :      0.000u      0.000s      0.000w     14 calls
+HF: Form F                          :      0.000u      0.000s      0.001w     14 calls
+HF: DIIS                            :      0.050u      0.000s      0.023w     14 calls
+HF: Form C                          :      0.000u      0.000s      0.004w     14 calls
+HF: Form D                          :      0.000u      0.000s      0.000w     14 calls
+DF CC Integrals                     :      0.100u      0.150s      0.133w      9 calls
+| Form J                            :      0.000u      0.017s      0.008w      2 calls
+| | Libint2ERI::Libint2ERI          :      0.000u      0.000s      0.000w      2 calls
+| Form B(Q,munu)                    :      0.050u      0.033s      0.056w      2 calls
+| | Libint2ERI::Libint2ERI          :      0.017u      0.033s      0.044w      2 calls
+| Form B(Q,ij)                      :      0.000u      0.000s      0.007w     10 calls
+| Form B(Q,ia)                      :      0.017u      0.017s      0.018w     10 calls
+| Form B(Q,ab)                      :      0.000u      0.033s      0.024w     10 calls
+| Trans OEI                         :      0.000u      0.000s      0.000w      9 calls
+| Libint2ERI::Libint2ERI            :      0.017u      0.000s      0.010w      1 calls
+Fock                                :      0.000u      0.033s      0.012w      9 calls
+1st-order T1                        :      0.000u      0.000s      0.000w      1 calls
+1st-order T2                        :      0.017u      0.000s      0.019w      9 calls
+| Build (IA|JB)                     :      0.000u      0.000s      0.002w      9 calls
+| Build <PQ||RS>                    :      0.000u      0.000s      0.000w     18 calls
+| Build (ia|jb)                     :      0.000u      0.000s      0.001w      9 calls
+| Build (IA|jb)                     :      0.000u      0.000s      0.003w      9 calls
+opdm                                :      0.000u      0.000s      0.004w      9 calls
+tpdm                                :      0.000u      0.033s      0.014w      9 calls
+CCL Energy                          :      0.017u      0.000s      0.005w      9 calls
+sep_tpdm                            :      0.017u      0.033s      0.026w      9 calls
+GFM VO                              :      0.000u      0.017s      0.019w      9 calls
+GFM OV                              :      0.017u      0.033s      0.016w      9 calls
+GFM OO                              :      0.000u      0.017s      0.015w      9 calls
+GFM VV                              :      0.000u      0.033s      0.020w      9 calls
+kappa orb rot                       :      0.017u      0.000s      0.019w      8 calls
+| Diagonal MO Hessian VO            :      0.017u      0.000s      0.019w      8 calls
+| | Build (OV|OV)                   :      0.000u      0.000s      0.001w      8 calls
+| | Build (ov|ov)                   :      0.017u      0.000s      0.001w      8 calls
+update_mo                           :      0.017u      0.000s      0.009w      8 calls
+DF REF Integrals                    :      0.017u      0.000s      0.024w      8 calls
+| Form B(Q,ij)                      :      0.000u      0.000s      0.003w      8 calls
+| Form B(Q,ia)                      :      0.017u      0.000s      0.009w      8 calls
+| Form B(Q,ab)                      :      0.000u      0.000s      0.010w      8 calls
+MO Grad                             :      0.000u      0.000s      0.000w      8 calls
+MP2 Energy                          :      0.000u      0.000s      0.001w      1 calls
+| Build (IA|JB)                     :      0.000u      0.000s      0.000w      1 calls
+| Build <PQ||RS>                    :      0.000u      0.000s      0.000w      2 calls
+| Build (ia|jb)                     :      0.000u      0.000s      0.000w      1 calls
+| Build (IA|jb)                     :      0.000u      0.000s      0.000w      1 calls
+
+**************************************************************************************
+
+Host: fedora
+
+Timers On : Tue Nov 11 11:18:03 2025
+Timers Off: Tue Nov 11 11:18:05 2025
+
+Wall Time:        1.78 seconds
+
+                                                       Time (seconds)
+Module                                       User      System        Wall        Calls
+Total PK formation time             :      0.133u      0.383s      0.345w      2 calls
+Libint2ERI::Libint2ERI              :      0.050u      0.383s      0.313w      5 calls
+HF: Form core H                     :      0.000u      0.000s      0.007w      2 calls
+HF: Form S/X                        :      0.000u      0.000s      0.001w      2 calls
+HF: Guess                           :      0.000u      0.000s      0.000w      2 calls
+HF: Form G                          :      0.050u      0.000s      0.007w     16 calls
+JK: D                               :      0.000u      0.000s      0.000w     16 calls
+JK: USO2AO                          :      0.000u      0.000s      0.000w     16 calls
+JK: JK                              :      0.033u      0.000s      0.006w     16 calls
+PK computes JK                      :      0.033u      0.000s      0.006w     16 calls
+JK: AO2USO                          :      0.000u      0.000s      0.000w     16 calls
+HF: Form F                          :      0.017u      0.000s      0.001w     16 calls
+HF: DIIS                            :      0.017u      0.017s      0.029w     16 calls
+HF: Form C                          :      0.017u      0.000s      0.005w     16 calls
+HF: Form D                          :      0.000u      0.000s      0.000w     16 calls
+trans_ints                          :      0.067u      0.067s      0.082w      1 calls
+Trans (OO|OO)                       :      0.000u      0.017s      0.011w      1 calls
+Trans (OO|OV)                       :      0.000u      0.000s      0.000w      1 calls
+Trans (OO|VV)                       :      0.000u      0.000s      0.000w      1 calls
+Trans (OV|OO)                       :      0.017u      0.017s      0.010w      1 calls
+Trans (OV|OV)                       :      0.000u      0.000s      0.001w      1 calls
+Trans (OV|VV)                       :      0.017u      0.000s      0.003w      1 calls
+Trans (VV|OO)                       :      0.017u      0.017s      0.030w      1 calls
+Trans (VV|OV)                       :      0.017u      0.000s      0.011w      1 calls
+Sort chem -> phys                   :      0.000u      0.017s      0.003w      1 calls
+Sort (OO|OO) -> <OO|OO>             :      0.000u      0.000s      0.000w      1 calls
+Sort (OO|OV) -> <OO|OV>             :      0.000u      0.000s      0.000w      1 calls
+Sort (OV|OV) -> <OO|VV>             :      0.000u      0.000s      0.000w      1 calls
+Sort (OO|VV) -> <OV|OV>             :      0.000u      0.000s      0.001w      1 calls
+Sort (OV|VV) -> <OV|VV>             :      0.000u      0.017s      0.002w      1 calls
+Antisymmetrize integrals            :      0.000u      0.000s      0.000w      1 calls
+Make <OO||OO>                       :      0.000u      0.000s      0.000w      1 calls
+Make <OO||OV>                       :      0.000u      0.000s      0.000w      1 calls
+Make <OO||VV>                       :      0.000u      0.000s      0.000w      1 calls
+Make <OV||OV>                       :      0.000u      0.000s      0.000w      1 calls
+Trans OEI                           :      0.000u      0.000s      0.000w      1 calls
+Build Denominators                  :      0.000u      0.000s      0.000w      1 calls
+T1(1)                               :      0.000u      0.017s      0.001w      1 calls
+T2(1)                               :      0.017u      0.083s      0.062w      1 calls
+MP2 Energy                          :      0.000u      0.000s      0.000w      1 calls
+
+--------------------------------------------------------------------------------------
+Total PK formation time             :      0.133u      0.383s      0.345w      2 calls
+| Libint2ERI::Libint2ERI            :      0.033u      0.333s      0.279w      4 calls
+HF: Form core H                     :      0.000u      0.000s      0.007w      2 calls
+HF: Form S/X                        :      0.000u      0.000s      0.001w      2 calls
+HF: Guess                           :      0.000u      0.000s      0.000w      2 calls
+HF: Form G                          :      0.050u      0.000s      0.007w     16 calls
+| JK: D                             :      0.000u      0.000s      0.000w     16 calls
+| JK: USO2AO                        :      0.000u      0.000s      0.000w     16 calls
+| JK: JK                            :      0.033u      0.000s      0.006w     16 calls
+| | PK computes JK                  :      0.033u      0.000s      0.006w     16 calls
+| JK: AO2USO                        :      0.000u      0.000s      0.000w     16 calls
+HF: Form F                          :      0.017u      0.000s      0.001w     16 calls
+HF: DIIS                            :      0.017u      0.017s      0.029w     16 calls
+HF: Form C                          :      0.017u      0.000s      0.005w     16 calls
+HF: Form D                          :      0.000u      0.000s      0.000w     16 calls
+Libint2ERI::Libint2ERI              :      0.017u      0.050s      0.034w      1 calls
+trans_ints                          :      0.067u      0.067s      0.082w      1 calls
+| Trans (OO|OO)                     :      0.000u      0.017s      0.011w      1 calls
+| Trans (OO|OV)                     :      0.000u      0.000s      0.000w      1 calls
+| Trans (OO|VV)                     :      0.000u      0.000s      0.000w      1 calls
+| Trans (OV|OO)                     :      0.017u      0.017s      0.010w      1 calls
+| Trans (OV|OV)                     :      0.000u      0.000s      0.001w      1 calls
+| Trans (OV|VV)                     :      0.017u      0.000s      0.003w      1 calls
+| Trans (VV|OO)                     :      0.017u      0.017s      0.030w      1 calls
+| Trans (VV|OV)                     :      0.017u      0.000s      0.011w      1 calls
+| Sort chem -> phys                 :      0.000u      0.017s      0.003w      1 calls
+| | Sort (OO|OO) -> <OO|OO>         :      0.000u      0.000s      0.000w      1 calls
+| | Sort (OO|OV) -> <OO|OV>         :      0.000u      0.000s      0.000w      1 calls
+| | Sort (OV|OV) -> <OO|VV>         :      0.000u      0.000s      0.000w      1 calls
+| | Sort (OO|VV) -> <OV|OV>         :      0.000u      0.000s      0.001w      1 calls
+| | Sort (OV|VV) -> <OV|VV>         :      0.000u      0.017s      0.002w      1 calls
+| Antisymmetrize integrals          :      0.000u      0.000s      0.000w      1 calls
+| | Make <OO||OO>                   :      0.000u      0.000s      0.000w      1 calls
+| | Make <OO||OV>                   :      0.000u      0.000s      0.000w      1 calls
+| | Make <OO||VV>                   :      0.000u      0.000s      0.000w      1 calls
+| | Make <OV||OV>                   :      0.000u      0.000s      0.000w      1 calls
+| Trans OEI                         :      0.000u      0.000s      0.000w      1 calls
+| Build Denominators                :      0.000u      0.000s      0.000w      1 calls
+T1(1)                               :      0.000u      0.017s      0.001w      1 calls
+T2(1)                               :      0.017u      0.083s      0.062w      1 calls
+MP2 Energy                          :      0.000u      0.000s      0.000w      1 calls
+
+**************************************************************************************
+
+Host: fedora
+
+Timers On : Tue Nov 11 11:33:08 2025
+Timers Off: Tue Nov 11 11:33:09 2025
+
+Wall Time:        1.70 seconds
+
+                                                       Time (seconds)
+Module                                       User      System        Wall        Calls
+Total PK formation time             :      0.150u      0.183s      0.207w      2 calls
+Libint2ERI::Libint2ERI              :      0.100u      0.217s      0.197w      9 calls
+HF: Form core H                     :      0.000u      0.000s      0.001w      2 calls
+HF: Form S/X                        :      0.000u      0.000s      0.001w      2 calls
+HF: Guess                           :      0.000u      0.000s      0.000w      2 calls
+HF: Form G                          :      0.033u      0.000s      0.006w     14 calls
+JK: D                               :      0.000u      0.000s      0.000w     14 calls
+JK: USO2AO                          :      0.000u      0.000s      0.000w     14 calls
+JK: JK                              :      0.017u      0.000s      0.006w     14 calls
+PK computes JK                      :      0.017u      0.000s      0.005w     14 calls
+JK: AO2USO                          :      0.000u      0.000s      0.000w     14 calls
+HF: Form F                          :      0.000u      0.000s      0.001w     14 calls
+HF: DIIS                            :      0.017u      0.000s      0.024w     14 calls
+HF: Form C                          :      0.000u      0.000s      0.004w     14 calls
+HF: Form D                          :      0.000u      0.000s      0.000w     14 calls
+DF CC Integrals                     :      0.100u      0.100s      0.134w      9 calls
+Form J                              :      0.017u      0.000s      0.007w      2 calls
+Form B(Q,munu)                      :      0.017u      0.050s      0.055w      2 calls
+Form B(Q,ij)                        :      0.017u      0.000s      0.010w     18 calls
+Form B(Q,ia)                        :      0.067u      0.033s      0.029w     18 calls
+Form B(Q,ab)                        :      0.000u      0.033s      0.035w     18 calls
+Trans OEI                           :      0.000u      0.000s      0.000w      9 calls
+Fock                                :      0.000u      0.033s      0.013w      9 calls
+1st-order T1                        :      0.000u      0.000s      0.000w      1 calls
+1st-order T2                        :      0.017u      0.050s      0.019w      9 calls
+Build (IA|JB)                       :      0.017u      0.017s      0.002w     10 calls
+Build <PQ||RS>                      :      0.000u      0.000s      0.000w     20 calls
+Build (ia|jb)                       :      0.000u      0.000s      0.002w     10 calls
+Build (IA|jb)                       :      0.000u      0.017s      0.003w     10 calls
+opdm                                :      0.000u      0.000s      0.004w      9 calls
+tpdm                                :      0.000u      0.000s      0.015w      9 calls
+CCL Energy                          :      0.000u      0.017s      0.005w      9 calls
+sep_tpdm                            :      0.033u      0.017s      0.028w      9 calls
+GFM VO                              :      0.033u      0.000s      0.020w      9 calls
+GFM OV                              :      0.000u      0.033s      0.016w      9 calls
+GFM OO                              :      0.017u      0.017s      0.015w      9 calls
+GFM VV                              :      0.000u      0.033s      0.021w      9 calls
+kappa orb rot                       :      0.000u      0.017s      0.019w      8 calls
+Diagonal MO Hessian VO              :      0.000u      0.017s      0.019w      8 calls
+Build (OV|OV)                       :      0.000u      0.000s      0.001w      8 calls
+Build (ov|ov)                       :      0.000u      0.000s      0.001w      8 calls
+update_mo                           :      0.000u      0.000s      0.009w      8 calls
+DF REF Integrals                    :      0.033u      0.017s      0.026w      8 calls
+MO Grad                             :      0.000u      0.000s      0.000w      8 calls
+MP2 Energy                          :      0.000u      0.000s      0.001w      1 calls
+
+--------------------------------------------------------------------------------------
+Total PK formation time             :      0.150u      0.183s      0.207w      2 calls
+| Libint2ERI::Libint2ERI            :      0.067u      0.167s      0.142w      4 calls
+HF: Form core H                     :      0.000u      0.000s      0.001w      2 calls
+HF: Form S/X                        :      0.000u      0.000s      0.001w      2 calls
+HF: Guess                           :      0.000u      0.000s      0.000w      2 calls
+HF: Form G                          :      0.033u      0.000s      0.006w     14 calls
+| JK: D                             :      0.000u      0.000s      0.000w     14 calls
+| JK: USO2AO                        :      0.000u      0.000s      0.000w     14 calls
+| JK: JK                            :      0.017u      0.000s      0.006w     14 calls
+| | PK computes JK                  :      0.017u      0.000s      0.005w     14 calls
+| JK: AO2USO                        :      0.000u      0.000s      0.000w     14 calls
+HF: Form F                          :      0.000u      0.000s      0.001w     14 calls
+HF: DIIS                            :      0.017u      0.000s      0.024w     14 calls
+HF: Form C                          :      0.000u      0.000s      0.004w     14 calls
+HF: Form D                          :      0.000u      0.000s      0.000w     14 calls
+DF CC Integrals                     :      0.100u      0.100s      0.134w      9 calls
+| Form J                            :      0.017u      0.000s      0.007w      2 calls
+| | Libint2ERI::Libint2ERI          :      0.000u      0.000s      0.000w      2 calls
+| Form B(Q,munu)                    :      0.017u      0.050s      0.055w      2 calls
+| | Libint2ERI::Libint2ERI          :      0.017u      0.050s      0.043w      2 calls
+| Form B(Q,ij)                      :      0.017u      0.000s      0.007w     10 calls
+| Form B(Q,ia)                      :      0.033u      0.033s      0.019w     10 calls
+| Form B(Q,ab)                      :      0.000u      0.017s      0.025w     10 calls
+| Trans OEI                         :      0.000u      0.000s      0.000w      9 calls
+| Libint2ERI::Libint2ERI            :      0.017u      0.000s      0.011w      1 calls
+Fock                                :      0.000u      0.033s      0.013w      9 calls
+1st-order T1                        :      0.000u      0.000s      0.000w      1 calls
+1st-order T2                        :      0.017u      0.050s      0.019w      9 calls
+| Build (IA|JB)                     :      0.017u      0.017s      0.002w      9 calls
+| Build <PQ||RS>                    :      0.000u      0.000s      0.000w     18 calls
+| Build (ia|jb)                     :      0.000u      0.000s      0.002w      9 calls
+| Build (IA|jb)                     :      0.000u      0.017s      0.003w      9 calls
+opdm                                :      0.000u      0.000s      0.004w      9 calls
+tpdm                                :      0.000u      0.000s      0.015w      9 calls
+CCL Energy                          :      0.000u      0.017s      0.005w      9 calls
+sep_tpdm                            :      0.033u      0.017s      0.028w      9 calls
+GFM VO                              :      0.033u      0.000s      0.020w      9 calls
+GFM OV                              :      0.000u      0.033s      0.016w      9 calls
+GFM OO                              :      0.017u      0.017s      0.015w      9 calls
+GFM VV                              :      0.000u      0.033s      0.021w      9 calls
+kappa orb rot                       :      0.000u      0.017s      0.019w      8 calls
+| Diagonal MO Hessian VO            :      0.000u      0.017s      0.019w      8 calls
+| | Build (OV|OV)                   :      0.000u      0.000s      0.001w      8 calls
+| | Build (ov|ov)                   :      0.000u      0.000s      0.001w      8 calls
+update_mo                           :      0.000u      0.000s      0.009w      8 calls
+DF REF Integrals                    :      0.033u      0.017s      0.026w      8 calls
+| Form B(Q,ij)                      :      0.000u      0.000s      0.003w      8 calls
+| Form B(Q,ia)                      :      0.033u      0.000s      0.009w      8 calls
+| Form B(Q,ab)                      :      0.000u      0.017s      0.011w      8 calls
+MO Grad                             :      0.000u      0.000s      0.000w      8 calls
+MP2 Energy                          :      0.000u      0.000s      0.001w      1 calls
+| Build (IA|JB)                     :      0.000u      0.000s      0.000w      1 calls
+| Build <PQ||RS>                    :      0.000u      0.000s      0.000w      2 calls
+| Build (ia|jb)                     :      0.000u      0.000s      0.000w      1 calls
+| Build (IA|jb)                     :      0.000u      0.000s      0.000w      1 calls
+
+**************************************************************************************
+
+Host: fedora
+
+Timers On : Tue Nov 11 11:33:18 2025
+Timers Off: Tue Nov 11 11:33:19 2025
+
+Wall Time:        1.08 seconds
+
+                                                       Time (seconds)
+Module                                       User      System        Wall        Calls
+Total PK formation time             :      0.133u      0.200s      0.209w      2 calls
+Libint2ERI::Libint2ERI              :      0.050u      0.200s      0.179w      5 calls
+HF: Form core H                     :      0.000u      0.000s      0.001w      2 calls
+HF: Form S/X                        :      0.000u      0.000s      0.001w      2 calls
+HF: Guess                           :      0.000u      0.000s      0.000w      2 calls
+HF: Form G                          :      0.050u      0.000s      0.007w     16 calls
+JK: D                               :      0.000u      0.000s      0.000w     16 calls
+JK: USO2AO                          :      0.017u      0.000s      0.000w     16 calls
+JK: JK                              :      0.033u      0.000s      0.006w     16 calls
+PK computes JK                      :      0.033u      0.000s      0.006w     16 calls
+JK: AO2USO                          :      0.000u      0.000s      0.000w     16 calls
+HF: Form F                          :      0.000u      0.000s      0.001w     16 calls
+HF: DIIS                            :      0.033u      0.000s      0.025w     16 calls
+HF: Form C                          :      0.000u      0.000s      0.005w     16 calls
+HF: Form D                          :      0.000u      0.000s      0.000w     16 calls
+trans_ints                          :      0.050u      0.083s      0.082w      1 calls
+Trans (OO|OO)                       :      0.000u      0.000s      0.012w      1 calls
+Trans (OO|OV)                       :      0.000u      0.000s      0.000w      1 calls
+Trans (OO|VV)                       :      0.000u      0.000s      0.000w      1 calls
+Trans (OV|OO)                       :      0.017u      0.017s      0.009w      1 calls
+Trans (OV|OV)                       :      0.000u      0.000s      0.001w      1 calls
+Trans (OV|VV)                       :      0.000u      0.000s      0.002w      1 calls
+Trans (VV|OO)                       :      0.017u      0.033s      0.030w      1 calls
+Trans (VV|OV)                       :      0.017u      0.000s      0.011w      1 calls
+Sort chem -> phys                   :      0.000u      0.000s      0.003w      1 calls
+Sort (OO|OO) -> <OO|OO>             :      0.000u      0.000s      0.000w      1 calls
+Sort (OO|OV) -> <OO|OV>             :      0.000u      0.000s      0.000w      1 calls
+Sort (OV|OV) -> <OO|VV>             :      0.000u      0.000s      0.000w      1 calls
+Sort (OO|VV) -> <OV|OV>             :      0.000u      0.000s      0.001w      1 calls
+Sort (OV|VV) -> <OV|VV>             :      0.000u      0.000s      0.002w      1 calls
+Antisymmetrize integrals            :      0.000u      0.017s      0.000w      1 calls
+Make <OO||OO>                       :      0.000u      0.000s      0.000w      1 calls
+Make <OO||OV>                       :      0.000u      0.000s      0.000w      1 calls
+Make <OO||VV>                       :      0.000u      0.000s      0.000w      1 calls
+Make <OV||OV>                       :      0.000u      0.017s      0.000w      1 calls
+Trans OEI                           :      0.000u      0.000s      0.000w      1 calls
+Build Denominators                  :      0.000u      0.000s      0.000w      1 calls
+T1(1)                               :      0.000u      0.000s      0.001w      1 calls
+T2(1)                               :      0.017u      0.083s      0.062w      1 calls
+MP2 Energy                          :      0.000u      0.000s      0.000w      1 calls
+
+--------------------------------------------------------------------------------------
+Total PK formation time             :      0.133u      0.200s      0.209w      2 calls
+| Libint2ERI::Libint2ERI            :      0.050u      0.150s      0.144w      4 calls
+HF: Form core H                     :      0.000u      0.000s      0.001w      2 calls
+HF: Form S/X                        :      0.000u      0.000s      0.001w      2 calls
+HF: Guess                           :      0.000u      0.000s      0.000w      2 calls
+HF: Form G                          :      0.050u      0.000s      0.007w     16 calls
+| JK: D                             :      0.000u      0.000s      0.000w     16 calls
+| JK: USO2AO                        :      0.017u      0.000s      0.000w     16 calls
+| JK: JK                            :      0.033u      0.000s      0.006w     16 calls
+| | PK computes JK                  :      0.033u      0.000s      0.006w     16 calls
+| JK: AO2USO                        :      0.000u      0.000s      0.000w     16 calls
+HF: Form F                          :      0.000u      0.000s      0.001w     16 calls
+HF: DIIS                            :      0.033u      0.000s      0.025w     16 calls
+HF: Form C                          :      0.000u      0.000s      0.005w     16 calls
+HF: Form D                          :      0.000u      0.000s      0.000w     16 calls
+Libint2ERI::Libint2ERI              :      0.000u      0.050s      0.035w      1 calls
+trans_ints                          :      0.050u      0.083s      0.082w      1 calls
+| Trans (OO|OO)                     :      0.000u      0.000s      0.012w      1 calls
+| Trans (OO|OV)                     :      0.000u      0.000s      0.000w      1 calls
+| Trans (OO|VV)                     :      0.000u      0.000s      0.000w      1 calls
+| Trans (OV|OO)                     :      0.017u      0.017s      0.009w      1 calls
+| Trans (OV|OV)                     :      0.000u      0.000s      0.001w      1 calls
+| Trans (OV|VV)                     :      0.000u      0.000s      0.002w      1 calls
+| Trans (VV|OO)                     :      0.017u      0.033s      0.030w      1 calls
+| Trans (VV|OV)                     :      0.017u      0.000s      0.011w      1 calls
+| Sort chem -> phys                 :      0.000u      0.000s      0.003w      1 calls
+| | Sort (OO|OO) -> <OO|OO>         :      0.000u      0.000s      0.000w      1 calls
+| | Sort (OO|OV) -> <OO|OV>         :      0.000u      0.000s      0.000w      1 calls
+| | Sort (OV|OV) -> <OO|VV>         :      0.000u      0.000s      0.000w      1 calls
+| | Sort (OO|VV) -> <OV|OV>         :      0.000u      0.000s      0.001w      1 calls
+| | Sort (OV|VV) -> <OV|VV>         :      0.000u      0.000s      0.002w      1 calls
+| Antisymmetrize integrals          :      0.000u      0.017s      0.000w      1 calls
+| | Make <OO||OO>                   :      0.000u      0.000s      0.000w      1 calls
+| | Make <OO||OV>                   :      0.000u      0.000s      0.000w      1 calls
+| | Make <OO||VV>                   :      0.000u      0.000s      0.000w      1 calls
+| | Make <OV||OV>                   :      0.000u      0.017s      0.000w      1 calls
+| Trans OEI                         :      0.000u      0.000s      0.000w      1 calls
+| Build Denominators                :      0.000u      0.000s      0.000w      1 calls
+T1(1)                               :      0.000u      0.000s      0.001w      1 calls
+T2(1)                               :      0.017u      0.083s      0.062w      1 calls
+MP2 Energy                          :      0.000u      0.000s      0.000w      1 calls
+
+**************************************************************************************

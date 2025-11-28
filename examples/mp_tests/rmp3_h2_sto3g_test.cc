@@ -1,0 +1,57 @@
+/**
+ * @file rmp3_h2_sto3g_test.cc
+ * @brief Fast RMP3 test on H2 with STO-3G basis (closed-shell)
+ */
+
+#include "mshqc/molecule.h"
+#include "mshqc/basis.h"
+#include "mshqc/integrals.h"
+#include "mshqc/scf.h"
+#include "mshqc/foundation/rmp2.h"
+#include "mshqc/foundation/rmp3.h"
+#include <iostream>
+#include <iomanip>
+#include <memory>
+
+using namespace mshqc;
+
+int main() {
+    std::cout << "====================================\n";
+    std::cout << "  RMP3 Test: H2/STO-3G\n";
+    std::cout << "====================================\n";
+
+    Molecule h2;
+    // H2 bond length ~0.74 Å
+    h2.add_atom(1, 0.0, 0.0, -0.37);
+    h2.add_atom(1, 0.0, 0.0,  0.37);
+
+    BasisSet basis("STO-3G", h2);
+    std::cout << "Basis: STO-3G (" << basis.n_basis_functions() << " functions)\n";
+
+    auto integrals = std::make_shared<IntegralEngine>(h2, basis);
+
+    SCFConfig config;
+    config.max_iterations = 50;
+    config.energy_threshold = 1e-10;
+    config.density_threshold = 1e-8;
+    config.print_level = 0;
+
+    RHF rhf(h2, basis, integrals, config);
+    auto rhf_result = rhf.compute();
+
+    std::cout << std::fixed << std::setprecision(10);
+    std::cout << "RHF energy:  " << rhf_result.energy_total << " Ha\n";
+
+    foundation::RMP2 rmp2(rhf_result, basis, integrals);
+    auto rmp2_result = rmp2.compute();
+
+    std::cout << "MP2 corr:   " << rmp2_result.e_corr << " Ha\n";
+
+    foundation::RMP3 rmp3(rhf_result, rmp2_result, basis, integrals);
+    auto rmp3_result = rmp3.compute();
+
+    std::cout << "MP3 corr:   " << rmp3_result.e_mp3 << " Ha\n";
+    std::cout << "E(total):   " << rmp3_result.e_total << " Ha\n";
+
+    return 0;
+}
