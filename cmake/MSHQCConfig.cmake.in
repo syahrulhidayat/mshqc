@@ -1,0 +1,36 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+# Find dependencies
+find_dependency(Eigen3 3.3 REQUIRED)
+find_dependency(PkgConfig QUIET)
+if(PKG_CONFIG_FOUND)
+  pkg_check_modules(Libint2 REQUIRED libint2)
+endif()
+
+# Add our modules
+list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_LIST_DIR})
+
+# Find optional dependencies
+find_dependency(Libcint QUIET)
+
+# Include our targets
+include(${CMAKE_CURRENT_LIST_DIR}/MSHQCTargets.cmake)
+
+# Check that all required components are found
+check_required_components(MSHQC)
+
+# Set variables for users
+set(MSHQC_FOUND @PROJECT_NAME@)
+set(MSHQC_VERSION "@PROJECT_VERSION@")
+set(MSHQC_INCLUDE_DIRS "@CMAKE_INSTALL_PREFIX@/include")
+set(MSHQC_LIBRARIES "mshqc")
+
+# Report status
+if(Libcint_FOUND)
+  set(MSHQC_HAS_DENSITY_FITTING TRUE)
+else()
+  set(MSHQC_HAS_DENSITY_FITTING FALSE)
+  message(STATUS "Libcint not found - density fitting will not be available")
+endif()

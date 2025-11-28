@@ -1,0 +1,43 @@
+# CMake build directories
+build*/
+cmake-build-*/
+install/
+
+# Compiled object files
+*.o
+*.obj
+
+# Compiled executables
+*.exe
+*.out
+*.app
+
+# Compiled libraries
+*.so
+*.dylib
+*.a
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs and temporary files
+*.log
+*.tmp
+*.cache
+
+# Test output
+test_*/
+*_test

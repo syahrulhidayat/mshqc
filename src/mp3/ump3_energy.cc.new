@@ -1,0 +1,142 @@
+/**
+ * @file ump3_energy.cc.new
+ * @brief UMP3 energy computation - CORRECT IMPLEMENTATION
+ * 
+ * Theory learned from: Psi4 dfocc/t2_2nd_gen.cc (lines 228, 311, 382)
+ * Implementation: Original by Muhamad Sahrul Hidayat
+ * 
+ * FORMULA (from theory analysis):
+ * E_MP3 = Σ <ij||ab> × [T2^(1) + T2^(2)] with factor 0.25 for same-spin
+ * E_MP3 = Σ <ij|ab> × [T2^(1) + T2^(2)] with factor 1.0 for mixed-spin
+ * E^(3) = E_MP3_total - E_MP2
+ * 
+ * @author Muhamad Sahrul Hidayat
+ * @date 2025-01-17
+ */
+
+#include "mshqc/ump3.h"
+
+namespace mshqc {
+
+double UMP3::compute_e3_alpha() {
+    /**
+     * Compute E^(3) alpha-alpha correction
+     * 
+     * Theory: E_MP3_AA = 0.25 × Σ <ij||ab> × [T2^(1) + T2^(2)]
+     *         E^(3)_AA = E_MP3_AA - E_MP2_AA
+     */
+    
+    // First compute E_MP3 total with T2^(1) + T2^(2)
+    double emp3_total = 0.0;
+    
+    for(int i = 0; i < nocc_a_; i++) {
+        for(int j = 0; j < nocc_a_; j++) {
+            for(int a = 0; a < nvir_a_; a++) {
+                for(int b = 0; b < nvir_a_; b++) {
+                    // Antisymmetrized integral <ij||ab>
+                    double g_antisym = eri_aaaa_(i,j,a,b) - eri_aaaa_(i,j,b,a);
+                    
+                    // T_total = T2^(1) + T2^(2)
+                    double t_total = t2_aa_(i,j,a,b) + t2_aa_2_(i,j,a,b);
+                    
+                    emp3_total += g_antisym * t_total;
+                }
+            }
+        }
+    }
+    emp3_total *= 0.25;  // Factor for same-spin
+    
+    // Compute E_MP2_AA separately
+    double emp2_aa = 0.0;
+    for(int i = 0; i < nocc_a_; i++) {
+        for(int j = 0; j < nocc_a_; j++) {
+            for(int a = 0; a < nvir_a_; a++) {
+                for(int b = 0; b < nvir_a_; b++) {
+                    double g_antisym = eri_aaaa_(i,j,a,b) - eri_aaaa_(i,j,b,a);
+                    emp2_aa += g_antisym * t2_aa_(i,j,a,b);
+                }
+            }
+        }
+    }
+    emp2_aa *= 0.25;
+    
+    // E^(3) = E_MP3 - E_MP2
+    return emp3_total - emp2_aa;
+}
+
+double UMP3::compute_e3_beta() {
+    /**
+     * Compute E^(3) beta-beta correction (same as alpha)
+     */
+    
+    double emp3_total = 0.0;
+    
+    for(int i = 0; i < nocc_b_; i++) {
+        for(int j = 0; j < nocc_b_; j++) {
+            for(int a = 0; a < nvir_b_; a++) {
+                for(int b = 0; b < nvir_b_; b++) {
+                    double g_antisym = eri_bbbb_(i,j,a,b) - eri_bbbb_(i,j,b,a);
+                    double t_total = t2_bb_(i,j,a,b) + t2_bb_2_(i,j,a,b);
+                    emp3_total += g_antisym * t_total;
+                }
+            }
+        }
+    }
+    emp3_total *= 0.25;
+    
+    double emp2_bb = 0.0;
+    for(int i = 0; i < nocc_b_; i++) {
+        for(int j = 0; j < nocc_b_; j++) {
+            for(int a = 0; a < nvir_b_; a++) {
+                for(int b = 0; b < nvir_b_; b++) {
+                    double g_antisym = eri_bbbb_(i,j,a,b) - eri_bbbb_(i,j,b,a);
+                    emp2_bb += g_antisym * t2_bb_(i,j,a,b);
+                }
+            }
+        }
+    }
+    emp2_bb *= 0.25;
+    
+    return emp3_total - emp2_bb;
+}
+
+double UMP3::compute_e3_alphabeta() {
+    /**
+     * Compute E^(3) alpha-beta correction
+     * 
+     * NOTE: No antisymmetrization for mixed spin!
+     *       Factor is 1.0, not 0.25!
+     */
+    
+    double emp3_total = 0.0;
+    
+    for(int i = 0; i < nocc_a_; i++) {
+        for(int j = 0; j < nocc_b_; j++) {
+            for(int a = 0; a < nvir_a_; a++) {
+                for(int b = 0; b < nvir_b_; b++) {
+                    // Direct integral only (no exchange for mixed spin)
+                    double g = eri_aabb_(i,j,a,b);
+                    double t_total = t2_ab_(i,j,a,b) + t2_ab_2_(i,j,a,b);
+                    emp3_total += g * t_total;
+                }
+            }
+        }
+    }
+    // No 0.25 factor for mixed spin!
+    
+    double emp2_ab = 0.0;
+    for(int i = 0; i < nocc_a_; i++) {
+        for(int j = 0; j < nocc_b_; j++) {
+            for(int a = 0; a < nvir_a_; a++) {
+                for(int b = 0; b < nvir_b_; b++) {
+                    double g = eri_aabb_(i,j,a,b);
+                    emp2_ab += g * t2_ab_(i,j,a,b);
+                }
+            }
+        }
+    }
+    
+    return emp3_total - emp2_ab;
+}
+
+} // namespace mshqc
