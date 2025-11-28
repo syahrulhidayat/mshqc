@@ -2,7 +2,7 @@
 // CASSCF Implementation
 // Complete Active Space Self-Consistent Field method
 // ============================================================================
-// Author: Muhamad Sahrul Hidayat (AI )
+// Author: Muhamad Sahrul Hidayat (AI Agent 3)
 // Date: 2025-11-12
 // License: MIT
 //
@@ -15,8 +15,8 @@
 //   Structure Theory. Wiley, Chapter 14.
 //
 // DEPENDENCIES:
-// - : Determinant, Davidson solver, Slater-Condon rules
-// - : SCFResult (initial orbitals), IntegralEngine
+// - Agent 2: Determinant, Davidson solver, Slater-Condon rules
+// - Agent 1: SCFResult (initial orbitals), IntegralEngine
 // ============================================================================
 
 #include "mshqc/mcscf/casscf.h"
@@ -327,7 +327,7 @@ ci::CIIntegrals CASSCF::transform_integrals_to_active(
         }
     }
     
-    // DEBUG: Print ERI values BEFORE antisymmetrization ('s checklist)
+    // DEBUG: Print ERI values BEFORE antisymmetrization (Agent 2's checklist)
     std::cout << std::fixed << std::setprecision(10);
     std::cout << "\n=== DEBUG: ERI values (chemist notation) ===\n";
     std::cout << "eri_mo(0,0,0,0) = " << eri_mo(0,0,0,0) << " Ha\n";
@@ -371,7 +371,7 @@ ci::CIIntegrals CASSCF::transform_integrals_to_active(
         }
     }
     
-    // DEBUG: Print ERI values AFTER antisymmetrization ('s checklist)
+    // DEBUG: Print ERI values AFTER antisymmetrization (Agent 2's checklist)
     std::cout << "\n=== DEBUG: ERI after antisym (physicist) ===\n";
     std::cout << "eri_aaaa(0,0,0,0) = " << ints.eri_aaaa(0,0,0,0) << " Ha\n";
     std::cout << "eri_aaaa(0,1,0,1) = " << ints.eri_aaaa(0,1,0,1) << " Ha\n";
@@ -379,7 +379,7 @@ ci::CIIntegrals CASSCF::transform_integrals_to_active(
     std::cout << "eri_aabb(0,0,0,0) = " << ints.eri_aabb(0,0,0,0) << " Ha\n";
     std::cout << "eri_aabb(1,0,1,0) = " << ints.eri_aabb(1,0,1,0) << " Ha\n";
     
-    // HF Determinant Energy Test ('s critical test)
+    // HF Determinant Energy Test (Agent 2's critical test)
     // For Li: |0α 1α 0β⟩
     double h1_test = ints.h_alpha(0,0) + ints.h_alpha(1,1) + ints.h_beta(0,0);
     double eri_aa_test = ints.eri_aaaa(0,1,0,1);  // <01||01>
@@ -1070,7 +1070,7 @@ CASResult CASSCF::compute(const SCFResult& initial_guess) {
 // ============================================================================
 // THEORY: Helgaker et al. (2000), Chapter 11, Eq. 11.6.10
 // γ_pq = ⟨Ψ|E_pq|Ψ⟩ = Σ_IJ c_I c_J ⟨Φ_I|E_pq|Φ_J⟩
-// AUTHOR: AI  (Multireference Master)
+// AUTHOR: AI Agent 3 (Multireference Master)
 // DATE: 2025-11-12
 // NOTE: Original implementation from published theory.
 // ============================================================================

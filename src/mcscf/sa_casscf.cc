@@ -260,7 +260,7 @@ void SACASSCF::solve_ci_all_states() {
     // 1. Diagonalize CI Hamiltonian: H_CI |ψ_I⟩ = E_I |ψ_I⟩
     // 2. Compute 1-RDM and 2-RDM for state I
     //
-    // IMPLEMENTATION: Use MultiRootCI wrapper around 's FCI
+    // IMPLEMENTATION: Use MultiRootCI wrapper around Agent 2's FCI
     
     // Transform integrals to MO basis
     // TODO: Full integral transformation

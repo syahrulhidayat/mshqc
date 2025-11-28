@@ -23,7 +23,7 @@
  *   - Almlöf (1991), Chem. Phys. Lett. 181, 319
  *     Direct integral transformations
  * 
- * @author Muhamad Syahrul Hidayat ()
+ * @author Muhamad Syahrul Hidayat (Agent 3)
  * @date 2025-11-17
  * @license MIT License
  * 

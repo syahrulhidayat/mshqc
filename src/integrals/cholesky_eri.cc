@@ -7,7 +7,7 @@
  * - H. Koch et al., J. Chem. Phys. **118**, 9481 (2003)
  * - F. Aquilante et al., J. Chem. Phys. **129**, 024113 (2008)
  * 
- * @author Muhamad Syahrul Hidayat ()
+ * @author Muhamad Syahrul Hidayat (Agent 2)
  * @date 2025-11-16
  * @license MIT License
  */

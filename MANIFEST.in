@@ -1,0 +1,6 @@
+recursive-include include *
+recursive-include src *
+recursive-include data/basis *.gbs
+recursive-include python *.cc *.py
+include LICENSE
+include README.md

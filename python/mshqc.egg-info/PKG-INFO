@@ -1,3 +1,35 @@
+Metadata-Version: 2.4
+Name: mshqc
+Version: 0.1.0
+Summary: Python bindings for MSH-QC quantum mechanics library
+Home-page: https://github.com/syahrulhidayat/mshqc
+Author: Muhamad Sahrul Hidayat
+License: MIT
+Project-URL: Homepage, https://github.com/syahrulhidayat/mshqc
+Project-URL: Bug Tracker, https://github.com/syahrulhidayat/mshqc/issues
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Science/Research
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Operating System :: OS Independent
+Classifier: Programming Language :: Python :: 3
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: C++
+Classifier: Topic :: Scientific/Engineering :: Chemistry
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown
+License-File: LICENSE
+Requires-Dist: numpy>=1.22
+Provides-Extra: dev
+Requires-Dist: pytest>=6.0; extra == "dev"
+Requires-Dist: sphinx>=3.0; extra == "dev"
+Requires-Dist: matplotlib; extra == "dev"
+Dynamic: home-page
+Dynamic: license-file
+Dynamic: requires-python
+
 # MSH-QC: Quantum Mechanics Library for Computational Chemistry
 
 MSH-QC is a comprehensive quantum mechanics library designed for accurate molecular simulations. This C++ library provides a complete implementation of electronic structure methods from basic Hartree-Fock to advanced multi-reference approaches, enabling high-precision calculations of molecular properties and energetics.

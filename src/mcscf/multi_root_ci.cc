@@ -6,7 +6,7 @@
  * @date 2025-11-17
  * 
  * ORIGINALITY:
- * This implementation integrates 's FCI module for SA-CASSCF.
+ * This implementation integrates Agent 2's FCI module for SA-CASSCF.
  * RDM algorithms derived from Helgaker et al. (2000) Chapter 11.
  * No code copied from external quantum chemistry packages.
  */
@@ -92,7 +92,7 @@ std::vector<CIState> MultiRootCI::solve(
     auto h_active = extract_active_h(h_mo, n_inactive, n_active_orb_);
     auto eri_active = extract_active_eri(eri_mo, n_inactive, n_active_orb_);
     
-    // Package as CIIntegrals for 's FCI
+    // Package as CIIntegrals for Agent 2's FCI
     ci::CIIntegrals ci_ints;
     ci_ints.h_alpha = h_active;  // Same for alpha/beta in RHF
     ci_ints.h_beta = h_active;

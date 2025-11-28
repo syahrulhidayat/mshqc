@@ -4,7 +4,7 @@
  * 
  * INTEGRATION TASK 1.1: Determinant infrastructure reuse
  * 
- * This module provides clean interface between  (MP) and  (CI)
+ * This module provides clean interface between Agent 1 (MP) and Agent 2 (CI)
  * without modifying their original code. Following separation of concerns principle.
  * 
  * Theory References:
@@ -12,7 +12,7 @@
  *   - Pople et al. (1977), Int. J. Quantum Chem. 11, 149
  *   - Szabo & Ostlund (1996), Modern Quantum Chemistry, Appendix A
  * 
- * @author Muhamad Syahrul Hidayat ()
+ * @author Muhamad Syahrul Hidayat (Agent 3)
  * @date 2025-11-16
  * @license MIT License
  * 

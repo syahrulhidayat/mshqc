@@ -2,7 +2,7 @@
 // External Space Generation for CASPT2
 // Complete Active Space Second-Order Perturbation Theory
 // ============================================================================
-// Author: AI  (Multireference Master)
+// Author: AI Agent 3 (Multireference Master)
 // Date: 2025-11-12
 // License: MIT
 //
@@ -15,7 +15,7 @@
 //   Chapter 14: Multireference Perturbation Theory
 //
 // DEPENDENCIES:
-// - : Determinant class for bit-string manipulations
+// - Agent 2: Determinant class for bit-string manipulations
 // - CASSCF: ActiveSpace for orbital partitioning
 // ============================================================================
 

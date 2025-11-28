@@ -12,7 +12,7 @@
  *     Int. J. Quantum Chem. Symp. 9, 183 (1975)
  *     [Many-body perturbation theory foundations]
  * 
- * @author Syahrul (AI )
+ * @author Syahrul (AI Agent 1)
  * @date 2025-11-12
  * @license MIT
  */

@@ -1,6 +1,6 @@
 /**
  * @file mrci.cc
- * @brief Multi-Reference CI implementation (simplified for )
+ * @brief Multi-Reference CI implementation (simplified for Agent 3)
  * 
  * THEORY REFERENCES:
  *   - Werner & Knowles (1988), J. Chem. Phys. 89, 5803

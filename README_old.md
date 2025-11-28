@@ -37,77 +37,93 @@ MSH-QC is a comprehensive quantum mechanics library designed for accurate molecu
 - Numerical Gradients
 - Geometry Optimization
 
-## Python Installation
-
-### Option 1: pip install from GitHub
-```bash
-pip install git+https://github.com/syahrulhidayat/mshqc.git
-```
-
-### Option 2: Minimal build from source (recommended for users without precompiled dependencies)
-```bash
-# Clone the repository
-git clone https://github.com/syahrulhidayat/mshqc.git
-cd mshqc
-
-# Install with minimal dependencies (works on all platforms)
-MSHQC_WITH_LIBINT2=OFF MSHQC_WITH_LIBCINT=OFF pip install .
-```
-
-### Option 3: Full features installation (requires libint2/libcint)
-```bash
-# Install dependencies first (Linux example)
-sudo apt-get install libeigen3-dev libint2-dev
-
-# Then install
-pip install .
-```
-
-### Windows Installation
-For Windows users, we recommend the minimal installation:
-```powershell
-# Clone the repository
-git clone https://github.com/syahrulhidayat/mshqc.git
-cd mshqc
-
-# Install with minimal features
-$env:MSHQC_WITH_LIBINT2="OFF"
-$env:MSHQC_WITH_LIBCINT="OFF"
-pip install .
-```
-
-### Python Example
-```python
-import mshqc
-
-# Create H2 molecule
-mol = mshqc.create_h2_molecule()
-
-# Perform RHF calculation
-result = mshqc.quick_rhf(mol, "sto-3g")
-print(f"RHF Energy: {result.energy:.6f} Hartree")
-```
-
 ## Dependencies
 
 ### Required
+- C++17 compiler (GCC 9+)
+- CMake 3.14+
+- Eigen 3.3+
+- Libint2 2.7+
+
+### Optional
+- OpenMP (parallelization)
+- MKL/BLAS (faster linear algebra)
+- Libcint (for 3-center integrals and density fitting)
+
+## Installation
+
+### Option 1: Quick Install with Script
+Run the installation script for automated dependency installation:
+
+```bash
+git clone https://github.com/syahrulhidayat/mshqc.git
+cd mshqc
+chmod +x install.sh
+./install.sh
+```
+
+### Option 2: Manual Installation
+
+#### Dependencies
 - C++17 compiler (GCC 9+ or Clang 8+)
 - CMake 3.14+
-- Python 3.8+
-- NumPy 1.22+
-- pybind11 2.12+
-- Eigen 3.3+ (header-only)
-
-### Optional (for full features)
+- Eigen 3.3+
 - Libint2 2.7+ (for electron repulsion integrals)
-- Libcint (for density fitting)
-- OpenMP (for parallelization)
+- BLAS/LAPACK (for linear algebra)
+- Libcint (optional, for density fitting)
+- OpenMP (optional, for parallelization)
 
-## Performance
+#### Install Dependencies
 
-- **Single-threaded**: Efficient algorithms for small to medium molecules
-- **Parallelization**: OpenMP support for large-scale calculations
-- **Memory**: Optimized for both single-workstation and cluster environments
+**Ubuntu/Debian:**
+```bash
+sudo apt-get install build-essential cmake libeigen3-dev libblas-dev liblapack-dev libint2-dev libomp-dev
+```
+
+**Fedora/CentOS:**
+```bash
+sudo dnf install gcc gcc-c++ cmake eigen3-devel blas-devel lapack-devel libint2-devel libgomp-devel
+```
+
+**macOS (with Homebrew):**
+```bash
+brew install cmake eigen libint2 libomp
+```
+
+#### Build and Install MSH-QC
+```bash
+# Clone repository
+git clone https://github.com/syahrulhidayat/mshqc.git
+cd mshqc
+
+# Build
+mkdir build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+make -j$(nproc)
+
+# Install
+sudo make install
+```
+
+## Using MSH-QC in Your Project
+
+After installation, you can use MSH-QC in your own CMake project:
+
+```cmake
+# In your CMakeLists.txt
+find_package(MSHQC REQUIRED)
+target_link_libraries(your_target mshqc)
+```
+
+## Building
+
+## Testing
+
+The package includes numerous test programs organized by methodology:
+
+- **MP Tests**: Examples/tests for Møller-Plesset perturbation theory
+- **CI Tests**: Examples/tests for configuration interaction methods
+- **MCSCF Tests**: Examples/tests for multi-configurational methods
 
 ## License
 
@@ -118,6 +134,6 @@ MIT License
 If you use this package in your research, please cite:
 
 ```
-MSH-QC: Quantum Mechanics Library for Computational Chemistry
+MSH-QC: Minimalist Scalable High-Performance Quantum Chemistry
 [Add citation information when published]
 ```
