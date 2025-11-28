@@ -1,0 +1,50 @@
+[build-system]
+requires = ["setuptools>=42", "wheel", "pybind11>=2.6.0", "numpy>=1.19.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mshqc"
+version = "0.1.0"
+authors = [
+    {name = "Muhamad Sahrul Hidayat"},
+]
+description = "Python bindings for MSH-QC quantum mechanics library"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.6"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.6",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: C++",
+    "Topic :: Scientific/Engineering :: Chemistry",
+]
+dependencies = [
+    "numpy>=1.19.0",
+    "pybind11>=2.6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=6.0",
+    "sphinx>=3.0",
+    "matplotlib",
+]
+
+[project.urls]
+Homepage = "https://github.com/syahrulhidayat/mshqc"
+"Bug Tracker" = "https://github.com/syahrulhidayat/mshqc/issues"
+
+[tool.setuptools]
+packages = ["mshqc"]
+package-dir = {"" = "python"}
+
+[tool.setuptools.package-data]
+mshqc = ["*.pyi", "data/basis/*.gbs"]
