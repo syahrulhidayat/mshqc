@@ -175,16 +175,15 @@ PYBIND11_MODULE(_core, m) {
         .def_readwrite("e_mp3", &UMP3Result::e_mp3, "MP3 correlation energy")
         .def_readwrite("e_total", &UMP3Result::e_total, "Total MP3 energy");
 
-    py::class_<UMP3>(m, "UMP3", "Unrestricted MP3")
-        .def(py::init<const SCFResult&, const IntegralEngine&>())
-        .def("solve", &UMP3::solve, "Compute UMP3 energy")
-        .def("get_energy", &UMP3::get_energy, "Get MP3 energy");
+   py::class_<UMP3>(m, "UMP3", "Unrestricted MP3")
+    .def(py::init<const SCFResult&, const UMP2Result&, const BasisSet&, std::shared_ptr<IntegralEngine>>())
+    .def("compute", &UMP3::compute, "Compute UMP3 energy");
 
-    py::class_<RMP3>(m, "RMP3", "Restricted MP3")
+    /*py::class_<RMP3>(m, "RMP3", "Restricted MP3")
         .def(py::init<const SCFResult&, const IntegralEngine&>())
         .def("solve", &RMP3::solve, "Compute RMP3 energy")
         .def("get_energy", &RMP3::get_energy, "Get MP3 energy");
-
+     */
     // UMP4/UMP5
     py::class_<UMP4>(m, "UMP4", "Unrestricted MP4")
         .def(py::init<const SCFResult&, const IntegralEngine&>())
@@ -466,8 +465,9 @@ PYBIND11_MODULE(_core, m) {
         "Quick OMP2 calculation"
     );
 
-    // MP3 Methods
-    m.def("quick_rmp3",
+    // MP3 Methods next session
+    
+    /*m.def("quick_rmp3",
         [](const Molecule& mol, const std::string& basis_name) -> UMP3Result {
             BasisSet basis;
             basis.load(basis_name, mol);
@@ -483,24 +483,30 @@ PYBIND11_MODULE(_core, m) {
         py::arg("basis"),
         "Quick RMP3 calculation"
     );
-
-    m.def("quick_ump3",
-        [](const Molecule& mol, const std::string& basis_name) -> UMP3Result {
-            BasisSet basis;
-            basis.load(basis_name, mol);
-            
-            UHF uhf(mol, basis);
-            SCFResult scf_result = uhf.solve();
-            
-            IntegralEngine ints(mol, basis);
-            UMP3 mp3(scf_result, ints);
-            return mp3.solve();
-        },
-        py::arg("molecule"),
-        py::arg("basis"),
-        "Quick UMP3 calculation"
-    );
-
+  */
+ m.def("quick_ump3",
+    [](const Molecule& mol, const std::string& basis_name) -> UMP3Result {
+        BasisSet basis;
+        basis.load(basis_name, mol);
+        
+        // 1. UHF calculation
+        UHF uhf(mol, basis);
+        SCFResult scf_result = uhf.solve();
+        
+        // 2. UMP2 calculation (UMP3 needs UMP2 result!)
+        auto integrals = std::make_shared<IntegralEngine>(mol, basis);
+        UMP2 mp2(scf_result, *integrals);
+        UMP2Result mp2_result = mp2.solve();
+        
+        // 3. UMP3 calculation
+        UMP3 mp3(scf_result, mp2_result, basis, integrals);
+        return mp3.compute();
+    },
+    py::arg("molecule"),
+    py::arg("basis"),
+    "Quick UMP3 calculation"
+ );
+/*
     m.def("quick_omp3",
         [](const Molecule& mol, const std::string& basis_name) -> UMP3Result {
             BasisSet basis;
@@ -517,7 +523,7 @@ PYBIND11_MODULE(_core, m) {
         py::arg("basis"),
         "Quick OMP3 calculation"
     );
-
+*/
     // CI Methods
     m.def("quick_cis",
         [](const Molecule& mol, const std::string& basis_name) -> CIResult {
