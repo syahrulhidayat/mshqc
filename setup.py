@@ -70,13 +70,14 @@ include_dirs = [
     pybind11.get_include(),
 ]
 
-# Eigen3 - coba berbagai lokasi
+# Eigen path dengan deteksi Fedora
 eigen_paths = [
-    "/usr/include/eigen3",
+    "/usr/include/eigen3",      # Fedora/RHEL lowercase
+    "/usr/include/Eigen3",      # Fedora/RHEL uppercase  
+    "/usr/include",             # Fedora sometimes puts it here
     "/usr/local/include/eigen3",
-    "/opt/homebrew/include/eigen3",  # macOS ARM
-    "C:/eigen3/include",  # Windows
-    str(Path.home() / "eigen3"),
+    "/opt/homebrew/include/eigen3",  # macOS
+
 ]
 
 eigen_found = False
