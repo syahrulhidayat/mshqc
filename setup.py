@@ -17,8 +17,8 @@ except ImportError:
 BASE_DIR = Path(__file__).parent.absolute()
 print(f"Base directory: {BASE_DIR}")
 
-# Source files
-source_files = [str(BASE_DIR / "python" / "bindings.cc")]
+# Source files - GUNAKAN PATH RELATIF
+source_files = ["python/bindings.cc"]  # ← INI YANG DIPERBAIKI
 
 # Collect all C++ source files
 src_patterns = [
@@ -38,12 +38,13 @@ src_patterns = [
 
 for pattern in src_patterns:
     files = list(BASE_DIR.glob(pattern))
-    files = [str(f) for f in files if not str(f).endswith(('.backup', '.new'))]
+    # Konversi ke path relatif terhadap BASE_DIR
+    files = [str(f.relative_to(BASE_DIR)) for f in files if not str(f).endswith(('.backup', '.new'))]
     source_files.extend(files)
 
 print(f"Total source files: {len(source_files)}")
 
-# Include directories
+# Include directories - tetap gunakan absolute path untuk include_dirs (ini diperbolehkan)
 include_dirs = [
     str(BASE_DIR / "include"),
     str(BASE_DIR / "src"),
@@ -71,16 +72,21 @@ for path in eigen_paths:
         break
         
 # Cari dulu lokasi Eigen3 yang benar
-eigen_location = subprocess.run(
-    ["find", "/usr/include", "-name", "Dense", "-path", "*/Eigen/*"],
-    capture_output=True, text=True
-).stdout.strip()
+try:
+    eigen_location = subprocess.run(
+        ["find", "/usr/include", "-name", "Dense", "-path", "*/Eigen/*"],
+        capture_output=True, text=True, timeout=5
+    ).stdout.strip()
 
-if eigen_location:
-    # Extract parent directory
-    eigen_dir = os.path.dirname(os.path.dirname(eigen_location))
-    include_dirs.append(eigen_dir)
-    print(f"✓ Eigen3 found: {eigen_dir}")
+    if eigen_location:
+        # Extract parent directory
+        eigen_dir = os.path.dirname(os.path.dirname(eigen_location))
+        if eigen_dir not in include_dirs:
+            include_dirs.append(eigen_dir)
+            print(f"✓ Eigen3 found: {eigen_dir}")
+            eigen_found = True
+except Exception as e:
+    print(f"Warning: Could not search for Eigen3: {e}")
 
 # Try pkg-config (Fedora way)
 if not eigen_found:
@@ -120,7 +126,7 @@ libraries = ["m"]
 ext_modules = [
     Extension(
         "mshqc._core",
-        sources=source_files,
+        sources=source_files,  # Sudah menggunakan path relatif
         include_dirs=include_dirs,
         libraries=libraries,
         extra_compile_args=extra_compile_args,
