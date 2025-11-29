@@ -1,40 +1,25 @@
 import os
 import sys
 import glob
+import subprocess
 from setuptools import setup, Extension
-from setuptools.command.build_ext import build_ext
 import numpy
 from pathlib import Path
 
 try:
     import pybind11
 except ImportError:
-    import subprocess
     subprocess.check_call([sys.executable, "-m", "pip", "install", "pybind11>=2.12"])
     import pybind11
 
-# ============================================================================
-# CONFIGURATION
-# ============================================================================
+# Base directory
+BASE_DIR = Path(__file__).parent.absolute()
+print(f"Base directory: {BASE_DIR}")
 
-# Detect platform
-is_windows = sys.platform.startswith('win')
-is_macos = sys.platform == 'darwin'
-is_linux = sys.platform.startswith('linux')
+# Source files
+source_files = [str(BASE_DIR / "python" / "bindings.cc")]
 
-# Base directories
-base_dir = Path(__file__).parent.absolute()
-src_dir = base_dir / "src"
-include_dir = base_dir / "include"
-python_dir = base_dir / "python"
-
-# ============================================================================
-# SOURCE FILES - Kumpulkan SEMUA file .cc dari src/
-# ============================================================================
-
-source_files = [str(python_dir / "bindings.cc")]  # Main bindings
-
-# Tambahkan SEMUA file .cc dari subdirektori src/
+# Collect all C++ source files
 src_patterns = [
     "src/ci/*.cc",
     "src/core/*.cc",
@@ -51,106 +36,85 @@ src_patterns = [
 ]
 
 for pattern in src_patterns:
-    files = glob.glob(str(base_dir / pattern))
-    # Filter out backup files
-    files = [f for f in files if not f.endswith('.backup') and not f.endswith('.new')]
+    files = list(BASE_DIR.glob(pattern))
+    files = [str(f) for f in files if not str(f).endswith(('.backup', '.new'))]
     source_files.extend(files)
 
-print(f"Found {len(source_files)} source files")
-print(f"Bindings file: {source_files[0]}")
+print(f"Total source files: {len(source_files)}")
 
-# ============================================================================
-# INCLUDE DIRECTORIES
-# ============================================================================
-
+# Include directories
 include_dirs = [
-    str(include_dir),
-    str(src_dir),
+    str(BASE_DIR / "include"),
+    str(BASE_DIR / "src"),
     numpy.get_include(),
     pybind11.get_include(),
 ]
 
-# Eigen path dengan deteksi Fedora
+# Find Eigen3 - FEDORA SPECIFIC
+print("\n=== Searching for Eigen3 ===")
 eigen_paths = [
-    "/usr/include/eigen3",      # Fedora/RHEL lowercase
-    "/usr/include/Eigen3",      # Fedora/RHEL uppercase  
-    "/usr/include",             # Fedora sometimes puts it here
+    "/usr/include/eigen3",
+    "/usr/include/Eigen3",
+    "/usr/include",
     "/usr/local/include/eigen3",
-    "/opt/homebrew/include/eigen3",  # macOS
-
 ]
 
 eigen_found = False
-for eigen_path in eigen_paths:
-    if os.path.exists(eigen_path):
-        include_dirs.append(eigen_path)
-        print(f"Found Eigen3 at: {eigen_path}")
+for path in eigen_paths:
+    eigen_header = os.path.join(path, "Eigen", "Dense")
+    if os.path.exists(eigen_header):
+        include_dirs.append(path)
+        print(f"✓ Found Eigen3 at: {path}")
         eigen_found = True
         break
+        
+# Cari dulu lokasi Eigen3 yang benar
+eigen_location = subprocess.run(
+    ["find", "/usr/include", "-name", "Dense", "-path", "*/Eigen/*"],
+    capture_output=True, text=True
+).stdout.strip()
+
+if eigen_location:
+    # Extract parent directory
+    eigen_dir = os.path.dirname(os.path.dirname(eigen_location))
+    include_dirs.append(eigen_dir)
+    print(f"✓ Eigen3 found: {eigen_dir}")
+
+# Try pkg-config (Fedora way)
+if not eigen_found:
+    try:
+        result = subprocess.run(
+            ["pkg-config", "--cflags-only-I", "eigen3"],
+            capture_output=True, text=True, check=True
+        )
+        eigen_path = result.stdout.strip().replace("-I", "").strip()
+        if eigen_path and os.path.exists(eigen_path):
+            include_dirs.append(eigen_path)
+            print(f"✓ Found Eigen3 via pkg-config: {eigen_path}")
+            eigen_found = True
+    except:
+        pass
 
 if not eigen_found:
-    print("WARNING: Eigen3 not found in standard locations!")
-    print("Please install Eigen3 or set EIGEN3_INCLUDE_DIR environment variable")
+    print("⚠ WARNING: Eigen3 not found!")
+    print("Install with: sudo dnf install eigen3-devel")
 
-# Tambahkan subdirektori include
-include_dirs.extend([
-    str(include_dir / "mshqc"),
-    str(include_dir / "mshqc" / "ci"),
-    str(include_dir / "mshqc" / "foundation"),
-    str(include_dir / "mshqc" / "gradient"),
-    str(include_dir / "mshqc" / "integrals"),
-    str(include_dir / "mshqc" / "integration"),
-    str(include_dir / "mshqc" / "mcscf"),
-    str(include_dir / "mshqc" / "mp"),
-    str(include_dir / "mshqc" / "validation"),
-])
+# Compile flags
+extra_compile_args = [
+    "-std=c++17",
+    "-O3",
+    "-fPIC",
+    "-Wall",
+    "-Wno-unused-variable",
+    "-Wno-unused-function",
+]
 
-# ============================================================================
-# COMPILE FLAGS
-# ============================================================================
-
-extra_compile_args = ["-std=c++17", "-O3"]
 extra_link_args = []
 
-if is_linux or is_macos:
-    extra_compile_args.extend([
-        "-fPIC",
-        "-Wall",
-        "-Wno-unused-variable",
-        "-Wno-unused-function",
-    ])
-    # OpenMP support (optional)
-    if os.environ.get("MSHQC_WITH_OPENMP", "OFF") == "ON":
-        extra_compile_args.append("-fopenmp")
-        extra_link_args.append("-fopenmp")
-        
-elif is_windows:
-    extra_compile_args.extend([
-        "/EHsc",  # Exception handling
-        "/MD",    # Runtime library
-        "/O2",    # Optimization
-    ])
+# Libraries
+libraries = ["m"]
 
-# ============================================================================
-# LIBRARIES
-# ============================================================================
-
-libraries = []
-
-if is_linux or is_macos:
-    libraries.append("m")  # Math library
-    
-# Optional: Libint2 dan Libcint
-if os.environ.get("MSHQC_WITH_LIBINT2", "OFF") == "ON":
-    libraries.append("int2")
-    
-if os.environ.get("MSHQC_WITH_LIBCINT", "OFF") == "ON":
-    libraries.append("cint")
-
-# ============================================================================
-# EXTENSION MODULE
-# ============================================================================
-
+# Extension
 ext_modules = [
     Extension(
         "mshqc._core",
@@ -163,47 +127,15 @@ ext_modules = [
     ),
 ]
 
-# ============================================================================
-# SETUP
-# ============================================================================
-
 setup(
     name="mshqc",
     version="0.1.0",
-    description="Python bindings for MSH-QC quantum mechanics library",
-    long_description=Path("README.md").read_text(encoding="utf-8") if Path("README.md").exists() else "",
-    long_description_content_type="text/markdown",
     author="Muhamad Sahrul Hidayat",
-    license="MIT",
-    url="https://github.com/syahrulhidayat/mshqc",
+    description="Quantum Chemistry Library",
     packages=["mshqc"],
     package_dir={"mshqc": "python"},
-    package_data={"mshqc": ["py.typed", "*.pyi"]},
-    include_package_data=True,
     ext_modules=ext_modules,
     python_requires=">=3.8",
-    install_requires=[
-        "numpy>=1.22",
-        "pybind11>=2.12",
-    ],
-    extras_require={
-        "dev": [
-            "pytest>=7.0",
-            "pytest-cov>=3.0",
-            "black>=22.0",
-            "mypy>=0.950",
-        ],
-    },
+    install_requires=["numpy>=1.22", "pybind11>=2.12"],
     zip_safe=False,
-    classifiers=[
-        "Development Status :: 3 - Alpha",
-        "Intended Audience :: Science/Research",
-        "Topic :: Scientific/Engineering :: Chemistry",
-        "License :: OSI Approved :: MIT License",
-        "Programming Language :: Python :: 3",
-        "Programming Language :: Python :: 3.8",
-        "Programming Language :: Python :: 3.9",
-        "Programming Language :: Python :: 3.10",
-        "Programming Language :: Python :: 3.11",
-    ],
 )
