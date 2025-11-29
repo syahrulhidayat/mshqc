@@ -370,4 +370,243 @@ PYBIND11_MODULE(_core, m) {
 #else
     m.attr("__version__") = "0.1.0";
 #endif
+// ========================================================================
+    // QUICK INTERFACE: Convenience functions for rapid calculations
+    // ========================================================================
+    
+    m.def("quick_rhf", 
+        [](const Molecule& mol, const std::string& basis_name) -> SCFResult {
+            BasisSet basis;
+            basis.load(basis_name, mol);
+            
+            RHF rhf(mol, basis);
+            return rhf.solve();
+        },
+        py::arg("molecule"),
+        py::arg("basis"),
+        "Quick RHF calculation"
+    );
+
+    m.def("quick_rohf",
+        [](const Molecule& mol, const std::string& basis_name) -> SCFResult {
+            BasisSet basis;
+            basis.load(basis_name, mol);
+            
+            ROHF rohf(mol, basis);
+            return rohf.solve();
+        },
+        py::arg("molecule"),
+        py::arg("basis"),
+        "Quick ROHF calculation"
+    );
+
+    m.def("quick_uhf",
+        [](const Molecule& mol, const std::string& basis_name) -> SCFResult {
+            BasisSet basis;
+            basis.load(basis_name, mol);
+            
+            UHF uhf(mol, basis);
+            return uhf.solve();
+        },
+        py::arg("molecule"),
+        py::arg("basis"),
+        "Quick UHF calculation"
+    );
+
+    // MP2 Methods
+    m.def("quick_rmp2",
+        [](const Molecule& mol, const std::string& basis_name) -> MP2Result {
+            BasisSet basis;
+            basis.load(basis_name, mol);
+            
+            RHF rhf(mol, basis);
+            SCFResult scf_result = rhf.solve();
+            
+            IntegralEngine ints(mol, basis);
+            RMP2 mp2(scf_result, ints);
+            return mp2.solve();
+        },
+        py::arg("molecule"),
+        py::arg("basis"),
+        "Quick RMP2 calculation"
+    );
+
+    m.def("quick_ump2",
+        [](const Molecule& mol, const std::string& basis_name) -> MP2Result {
+            BasisSet basis;
+            basis.load(basis_name, mol);
+            
+            UHF uhf(mol, basis);
+            SCFResult scf_result = uhf.solve();
+            
+            IntegralEngine ints(mol, basis);
+            UMP2 mp2(scf_result, ints);
+            return mp2.solve();
+        },
+        py::arg("molecule"),
+        py::arg("basis"),
+        "Quick UMP2 calculation"
+    );
+
+    m.def("quick_omp2",
+        [](const Molecule& mol, const std::string& basis_name) -> MP2Result {
+            BasisSet basis;
+            basis.load(basis_name, mol);
+            
+            ROHF rohf(mol, basis);
+            SCFResult scf_result = rohf.solve();
+            
+            IntegralEngine ints(mol, basis);
+            // Note: You might need OMP2 class if different from UMP2
+            UMP2 mp2(scf_result, ints);
+            return mp2.solve();
+        },
+        py::arg("molecule"),
+        py::arg("basis"),
+        "Quick OMP2 calculation"
+    );
+
+    // MP3 Methods
+    m.def("quick_rmp3",
+        [](const Molecule& mol, const std::string& basis_name) -> UMP3Result {
+            BasisSet basis;
+            basis.load(basis_name, mol);
+            
+            RHF rhf(mol, basis);
+            SCFResult scf_result = rhf.solve();
+            
+            IntegralEngine ints(mol, basis);
+            RMP3 mp3(scf_result, ints);
+            return mp3.solve();
+        },
+        py::arg("molecule"),
+        py::arg("basis"),
+        "Quick RMP3 calculation"
+    );
+
+    m.def("quick_ump3",
+        [](const Molecule& mol, const std::string& basis_name) -> UMP3Result {
+            BasisSet basis;
+            basis.load(basis_name, mol);
+            
+            UHF uhf(mol, basis);
+            SCFResult scf_result = uhf.solve();
+            
+            IntegralEngine ints(mol, basis);
+            UMP3 mp3(scf_result, ints);
+            return mp3.solve();
+        },
+        py::arg("molecule"),
+        py::arg("basis"),
+        "Quick UMP3 calculation"
+    );
+
+    m.def("quick_omp3",
+        [](const Molecule& mol, const std::string& basis_name) -> UMP3Result {
+            BasisSet basis;
+            basis.load(basis_name, mol);
+            
+            ROHF rohf(mol, basis);
+            SCFResult scf_result = rohf.solve();
+            
+            IntegralEngine ints(mol, basis);
+            UMP3 mp3(scf_result, ints);
+            return mp3.solve();
+        },
+        py::arg("molecule"),
+        py::arg("basis"),
+        "Quick OMP3 calculation"
+    );
+
+    // CI Methods
+    m.def("quick_cis",
+        [](const Molecule& mol, const std::string& basis_name) -> CIResult {
+            BasisSet basis;
+            basis.load(basis_name, mol);
+            
+            RHF rhf(mol, basis);
+            SCFResult scf_result = rhf.solve();
+            
+            IntegralEngine ints(mol, basis);
+            CIS cis(scf_result, ints);
+            return cis.solve();
+        },
+        py::arg("molecule"),
+        py::arg("basis"),
+        "Quick CIS calculation"
+    );
+
+    m.def("quick_cisd",
+        [](const Molecule& mol, const std::string& basis_name) -> CIResult {
+            BasisSet basis;
+            basis.load(basis_name, mol);
+            
+            RHF rhf(mol, basis);
+            SCFResult scf_result = rhf.solve();
+            
+            IntegralEngine ints(mol, basis);
+            CISD cisd(scf_result, ints);
+            return cisd.solve();
+        },
+        py::arg("molecule"),
+        py::arg("basis"),
+        "Quick CISD calculation"
+    );
+
+    m.def("quick_fci",
+        [](const Molecule& mol, const std::string& basis_name) -> CIResult {
+            BasisSet basis;
+            basis.load(basis_name, mol);
+            
+            RHF rhf(mol, basis);
+            SCFResult scf_result = rhf.solve();
+            
+            IntegralEngine ints(mol, basis);
+            FCI fci(scf_result, ints);
+            return fci.solve();
+        },
+        py::arg("molecule"),
+        py::arg("basis"),
+        "Quick FCI calculation"
+    );
+
+    // Multi-Reference Methods
+    m.def("quick_casscf",
+        [](const Molecule& mol, const std::string& basis_name, 
+           int n_electrons, int n_orbitals) -> CASSCFResult {
+            BasisSet basis;
+            basis.load(basis_name, mol);
+            
+            CASSCF casscf(mol, basis);
+            casscf.set_active_space(n_electrons, n_orbitals);
+            return casscf.solve();
+        },
+        py::arg("molecule"),
+        py::arg("basis"),
+        py::arg("n_electrons"),
+        py::arg("n_orbitals"),
+        "Quick CASSCF calculation"
+    );
+
+    m.def("quick_caspt2",
+        [](const Molecule& mol, const std::string& basis_name,
+           int n_electrons, int n_orbitals) -> double {
+            BasisSet basis;
+            basis.load(basis_name, mol);
+            
+            CASSCF casscf(mol, basis);
+            casscf.set_active_space(n_electrons, n_orbitals);
+            CASSCFResult casscf_result = casscf.solve();
+            
+            IntegralEngine ints(mol, basis);
+            CASPT2 caspt2(casscf_result, ints);
+            caspt2.solve();
+            return caspt2.get_energy();
+        },
+        py::arg("molecule"),
+        py::arg("basis"),
+        py::arg("n_electrons"),
+        py::arg("n_orbitals"),
+        "Quick CASPT2 calculation"
+    );
 }
