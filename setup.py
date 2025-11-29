@@ -5,6 +5,7 @@ import subprocess
 from setuptools import setup, Extension
 import numpy
 from pathlib import Path
+import sysconfig
 
 try:
     import pybind11
@@ -48,6 +49,7 @@ include_dirs = [
     str(BASE_DIR / "src"),
     numpy.get_include(),
     pybind11.get_include(),
+    sysconfig.get_path('include'), 
 ]
 
 # Find Eigen3 - FEDORA SPECIFIC
