@@ -13,11 +13,18 @@ except ImportError:
     subprocess.check_call([sys.executable, "-m", "pip", "install", "pybind11>=2.12"])
     import pybind11
 
+# Collect all source files
+import glob
+
+source_files = ["python/bindings.cc"]
+for pattern in ["src/**/*.cc"]:
+    source_files.extend(glob.glob(pattern, recursive=True))
+
 # Define Python extension class
 ext_modules = [
     Extension(
         "mshqc._core",
-        sources=["python/bindings.cc"],
+        sources=source_files,
         include_dirs=[
             "/usr/include/eigen3",
             "include",
@@ -26,6 +33,7 @@ ext_modules = [
             pybind11.get_include(),
         ],
         libraries=["m"],  # Math library for Linux
+        extra_compile_args=["-std=c++17", "-O3", "-fPIC"],
         language="c++",
     ),
 ]
