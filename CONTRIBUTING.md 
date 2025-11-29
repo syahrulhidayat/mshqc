@@ -1,0 +1,80 @@
+ Contributing to MSH-QC
+
+Terima kasih atas minat Anda untuk berkontribusi ke MSH-QC!
+
+## Cara Berkontribusi
+
+1. Fork repository
+2. Buat branch untuk fitur Anda (`git checkout -b feature/AmazingFeature`)
+3. Commit perubahan (`git commit -m 'Add some AmazingFeature'`)
+4. Push ke branch (`git push origin feature/AmazingFeature`)
+5. Buat Pull Request
+
+## Development Setup
+
+```bash
+# Clone your fork
+git clone https://github.com/YOUR_USERNAME/mshqc.git
+cd mshqc
+
+# Create virtual environment
+python -m venv venv
+source venv/bin/activate  # Linux/macOS
+# atau: venv\Scripts\activate  # Windows
+
+# Install in development mode
+pip install -e .
+
+# Install development dependencies
+pip install pytest black flake8
+```
+
+## Coding Standards
+
+- Gunakan C++17 untuk kode C++
+- Follow PEP 8 untuk Python code
+- Tulis docstrings untuk semua fungsi public
+- Tambahkan tests untuk fitur baru
+
+## Testing
+
+```bash
+# Run tests
+python scripts/test_mshqc.py
+
+# Run with pytest
+pytest tests/
+```
+
+## Reporting Issues
+
+Saat melaporkan bug, sertakan:
+- OS dan versi
+- Python version
+- Steps to reproduce
+- Expected vs actual behavior
+- Error messages
+EOF
+
+echo ""
+echo "✅ Documentation structure created successfully!"
+echo ""
+echo "📁 Created files:"
+echo "  - README.md (updated)"
+echo "  - docs/installation/README.md"
+echo "  - docs/installation/LINUX.md"
+echo "  - docs/installation/WINDOWS.md"
+echo "  - docs/TROUBLESHOOTING.md"
+echo "  - docs/QUICKSTART.md"
+echo "  - scripts/check_installation.py"
+echo "  - scripts/test_mshqc.py"
+echo "  - CONTRIBUTING.md"
+echo "  - .gitignore (updated)"
+echo ""
+echo "📤 Next steps:"
+echo "  1. Review the created files"
+echo "  2. git add ."
+echo "  3. git commit -m 'Add comprehensive documentation'"
+echo "  4. git push origin main"
+echo ""
+echo "✨ Done!"

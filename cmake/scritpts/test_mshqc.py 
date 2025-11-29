@@ -1,0 +1,62 @@
+#!/usr/bin/env python3
+"""
+MSH-QC Test Suite
+Run basic tests to verify installation
+"""
+
+import sys
+
+def test_basic_import():
+    """Test 1: Basic Import"""
+    print("\n" + "="*60)
+    print("TEST 1: Basic Import")
+    print("="*60)
+    try:
+        import mshqc
+        print("✓ MSH-QC imported successfully")
+        return True
+    except ImportError as e:
+        print(f"✗ Failed to import MSH-QC: {e}")
+        return False
+
+def test_rhf_calculation():
+    """Test 2: RHF Calculation"""
+    print("\n" + "="*60)
+    print("TEST 2: RHF Calculation")
+    print("="*60)
+    try:
+        import mshqc
+        mol = mshqc.create_h2_molecule()
+        result = mshqc.quick_rhf(mol, "sto-3g")
+        print(f"✓ RHF calculation successful")
+        print(f"  Energy: {result.energy:.6f} Hartree")
+        return True
+    except Exception as e:
+        print(f"✗ RHF calculation failed: {e}")
+        return False
+
+def run_all_tests():
+    """Run all tests"""
+    print("\n" + "#"*60)
+    print("# MSH-QC Installation Tests")
+    print("#"*60)
+    
+    tests = [test_basic_import, test_rhf_calculation]
+    results = [test() for test in tests]
+    
+    print("\n" + "="*60)
+    print("SUMMARY")
+    print("="*60)
+    passed = sum(results)
+    total = len(results)
+    print(f"Tests Passed: {passed}/{total}")
+    
+    if passed == total:
+        print("\n✓ ALL TESTS PASSED!")
+    else:
+        print("\n✗ SOME TESTS FAILED")
+    
+    print("="*60 + "\n")
+
+if __name__ == "__main__":
+    run_all_tests()
