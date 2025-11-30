@@ -39,7 +39,8 @@
 namespace py = pybind11;
 using namespace mshqc;
 
-PYBIND11_MODULE(mshqc, m) {
+// Python extension name: mshqc._core  → module name must be "_core"
+PYBIND11_MODULE(_core, m) {
     m.doc() = "MSHQC: Modern Quantum Chemistry Library";
 
     // ========================================================================

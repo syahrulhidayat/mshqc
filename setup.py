@@ -53,8 +53,19 @@ include_dirs = [
     str(BASE_DIR / "src"),
     numpy.get_include(),
     pybind11.get_include(),
-    sysconfig.get_path('include'), 
+    sysconfig.get_path('include'),
 ]
+
+# Tambah include path untuk libint2 kalau ada (mis. Fedora: /usr/include/libint2.hpp)
+libint_include_candidates = [
+    "/usr/include",
+    "/usr/local/include",
+]
+for path in libint_include_candidates:
+    if os.path.exists(os.path.join(path, "libint2.hpp")) and path not in include_dirs:
+        include_dirs.append(path)
+        print(f"✓ Added libint2 include dir: {path}")
+        break
 
 # Find Eigen3 - FEDORA SPECIFIC
 print("\n=== Searching for Eigen3 ===")
@@ -123,7 +134,11 @@ extra_compile_args = [
 extra_link_args = []
 
 # Libraries
+# Tambahkan libint2 jika tersedia (Fedora: libint2.so → -lint2)
 libraries = ["m"]
+if os.path.exists("/usr/lib64/libint2.so") or os.path.exists("/usr/lib/libint2.so"):
+    libraries.append("int2")
+    print("✓ Will link against libint2 (int2)")
 
 # Extension
 ext_modules = [
@@ -138,18 +153,23 @@ ext_modules = [
     ),
 ]
 
+# Satu-satunya setup() yang dipakai: layout paket Python di bawah python/
 setup(
     name="mshqc",
     version="0.1.0",
     author="Muhamad Sahrul Hidayat",
-    description="Quantum Chemistry Library",
-    packages=["mshqc"],
-    package_dir={"mshqc": "python"},
+    description="Modern Quantum Chemistry Library",
+    long_description=open("README.md").read() if os.path.exists("README.md") else "",
+    long_description_content_type="text/markdown",
+    packages=find_packages(where="python"),
+    package_dir={"": "python"},
     ext_modules=ext_modules,
+    install_requires=["numpy>=1.22", "pybind11>=2.12", "scipy>=1.9.0"],
     python_requires=">=3.8",
-    install_requires=["numpy>=1.22", "pybind11>=2.12"],
     zip_safe=False,
 )
+
+# ---- Di bawah ini adalah kode CMake lama yang tidak lagi dipakai langsung ----
 def check_libint2():
     """Check if libint2 is available"""
     search_paths = [
