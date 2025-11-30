@@ -533,6 +533,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 ## 👥 Authors
 
 - **Muhamad Syahrul Hidayat** - *Main Developer*
+- email: hidayatsyahrul53@gmail.com
 
 ## 🙏 Acknowledgments
 
