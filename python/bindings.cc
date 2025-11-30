@@ -1,618 +1,405 @@
+// python/bindings.cc - Complete Python bindings for MSHQC library
 #include <pybind11/pybind11.h>
-#include <pybind11/eigen.h>
 #include <pybind11/stl.h>
-#include <pybind11/numpy.h>
+#include <pybind11/eigen.h>
+#include <pybind11/functional.h>
 
-// Include MSH-QC headers
-#include <mshqc/molecule.h>
-#include <mshqc/basis.h>
-#include <mshqc/scf.h>
-#include <mshqc/integrals.h>
+// Core headers
+#include "mshqc/molecule.h"
+#include "mshqc/basis.h"
+#include "mshqc/integrals.h"
+#include "mshqc/scf.h"
 
-// MP2/MP3
-#include <mshqc/mp2.h>
-#include <mshqc/ump2.h>
-#include <mshqc/ump3.h>
-#include <mshqc/omp3.h>
-#include <mshqc/dfmp2.h>
+// MP2/MP3 headers
+#include "mshqc/mp2.h"
+#include "mshqc/ump2.h"
+#include "mshqc/ump3.h"
+#include "mshqc/dfmp2.h"
+#include "mshqc/foundation/rmp2.h"
+#include "mshqc/foundation/rmp3.h"
+#include "mshqc/foundation/wavefunction.h"
 
-// MP4/MP5
-#include <mshqc/mp/ump4.h>
-#include <mshqc/mp/ump5.h>
+// CI headers
+#include "mshqc/ci/determinant.h"
+#include "mshqc/ci/cis.h"
+#include "mshqc/ci/cisd.h"
+#include "mshqc/ci/cisdt.h"
+#include "mshqc/ci/fci.h"
+#include "mshqc/ci/cipsi.h"
 
-// Foundation
-#include <mshqc/foundation/rmp2.h>
-#include <mshqc/foundation/rmp3.h>
-#include <mshqc/foundation/wavefunction.h>
-#include <mshqc/foundation/opdm.h>
+// MCSCF headers
+#include "mshqc/mcscf/active_space.h"
+#include "mshqc/mcscf/casscf.h"
+#include "mshqc/mcscf/caspt2.h"
 
-// CI methods
-#include <mshqc/ci/determinant.h>
-#include <mshqc/ci/cis.h>
-#include <mshqc/ci/cisd.h>
-#include <mshqc/ci/cisdt.h>
-#include <mshqc/ci/fci.h>
-#include <mshqc/ci/mrci.h>
-#include <mshqc/ci/cipsi.h>
-#include <mshqc/ci/davidson.h>
-#include <mshqc/ci/natural_orbitals.h>
-#include <mshqc/ci/wavefunction_analysis.h>
-
-// MCSCF
-#include <mshqc/mcscf/active_space.h>
-#include <mshqc/mcscf/casscf.h>
-#include <mshqc/mcscf/caspt2.h>
-#include <mshqc/mcscf/df_caspt2.h>
-#include <mshqc/mcscf/mrmp2.h>
-#include <mshqc/mcscf/sa_casscf.h>
-
-// Gradient
-#include <mshqc/gradient/gradient.h>
-#include <mshqc/gradient/optimizer.h>
+// Gradient headers
+#include "mshqc/gradient/gradient.h"
+#include "mshqc/gradient/optimizer.h"
 
 namespace py = pybind11;
 using namespace mshqc;
 
-// Helper to convert Eigen matrices to numpy arrays
-py::array_t<double> eigen_to_numpy(const Eigen::MatrixXd& mat) {
-    return py::array_t<double>(
-        {mat.rows(), mat.cols()},
-        {sizeof(double) * mat.cols(), sizeof(double)},
-        mat.data()
-    );
-}
-
-py::array_t<double> eigen_to_numpy_vec(const Eigen::VectorXd& vec) {
-    return py::array_t<double>(vec.size(), vec.data());
-}
-
-PYBIND11_MODULE(_core, m) {
-    m.doc() = "MSH-QC: Comprehensive Quantum Mechanics Library for Computational Chemistry";
+PYBIND11_MODULE(mshqc, m) {
+    m.doc() = "MSHQC: Modern Quantum Chemistry Library";
 
     // ========================================================================
-    // CORE MODULE: Molecule, Basis Set, Integrals
+    // Core Classes: Molecule, Basis, Integrals
     // ========================================================================
     
-    py::class_<Molecule>(m, "Molecule", "Molecular system specification")
+    py::class_<Atom>(m, "Atom")
+        .def(py::init<int, double, double, double>(),
+             py::arg("atomic_number"), py::arg("x"), py::arg("y"), py::arg("z"))
+        .def_readwrite("atomic_number", &Atom::atomic_number)
+        .def_readwrite("x", &Atom::x)
+        .def_readwrite("y", &Atom::y)
+        .def_readwrite("z", &Atom::z)
+        .def("position", &Atom::position);
+
+    py::class_<Molecule>(m, "Molecule")
         .def(py::init<>())
-        .def("add_atom", &Molecule::add_atom,
-             py::arg("atomic_number"), py::arg("x"), py::arg("y"), py::arg("z"),
-             "Add an atom to the molecule")
-        .def("natoms", &Molecule::natoms, "Number of atoms")
-        .def("nelectrons", &Molecule::nelectrons, "Number of electrons")
-        .def("charge", &Molecule::charge, "Molecular charge")
-        .def("multiplicity", &Molecule::multiplicity, "Spin multiplicity")
-        .def("nuclear_repulsion", &Molecule::nuclear_repulsion, "Nuclear repulsion energy");
+        .def(py::init<int, int>(), py::arg("charge"), py::arg("multiplicity"))
+        .def("add_atom", py::overload_cast<int, double, double, double>(&Molecule::add_atom),
+             py::arg("Z"), py::arg("x"), py::arg("y"), py::arg("z"))
+        .def("add_atom", py::overload_cast<const Atom&>(&Molecule::add_atom),
+             py::arg("atom"))
+        .def("n_atoms", &Molecule::n_atoms)
+        .def("atom", &Molecule::atom, py::arg("i"))
+        .def("atoms", &Molecule::atoms)
+        .def("total_nuclear_charge", &Molecule::total_nuclear_charge)
+        .def("n_electrons", &Molecule::n_electrons)
+        .def("charge", &Molecule::charge)
+        .def("set_charge", &Molecule::set_charge, py::arg("q"))
+        .def("multiplicity", &Molecule::multiplicity)
+        .def("set_multiplicity", &Molecule::set_multiplicity, py::arg("m"))
+        .def("nuclear_repulsion_energy", &Molecule::nuclear_repulsion_energy);
 
-    py::class_<BasisSet>(m, "BasisSet", "Gaussian basis set")
+    py::enum_<AngularMomentum>(m, "AngularMomentum")
+        .value("S", AngularMomentum::S)
+        .value("P", AngularMomentum::P)
+        .value("D", AngularMomentum::D)
+        .value("F", AngularMomentum::F)
+        .value("G", AngularMomentum::G)
+        .value("H", AngularMomentum::H);
+
+    py::class_<GaussianPrimitive>(m, "GaussianPrimitive")
+        .def(py::init<double, double>(), py::arg("exponent"), py::arg("coefficient"))
+        .def_readwrite("exponent", &GaussianPrimitive::exponent)
+        .def_readwrite("coefficient", &GaussianPrimitive::coefficient);
+
+    py::class_<Shell>(m, "Shell")
         .def(py::init<>())
-        .def("load", &BasisSet::load,
-             py::arg("basis_name"), py::arg("molecule"),
-             "Load basis set for molecule")
-        .def("nbasis", &BasisSet::nbasis, "Number of basis functions")
-        .def("nbf", &BasisSet::nbf, "Number of basis functions (alias)");
+        .def_readwrite("angular_momentum", &Shell::angular_momentum)
+        .def_readwrite("center", &Shell::center)
+        .def_readwrite("primitives", &Shell::primitives);
 
-    py::class_<IntegralEngine>(m, "IntegralEngine", "Compute electron integrals")
-        .def(py::init<const Molecule&, const BasisSet&>())
-        .def("compute_overlap", &IntegralEngine::compute_overlap,
-             "Compute overlap matrix")
-        .def("compute_kinetic", &IntegralEngine::compute_kinetic,
-             "Compute kinetic energy matrix")
-        .def("compute_nuclear", &IntegralEngine::compute_nuclear,
-             "Compute nuclear attraction matrix")
-        .def("compute_eri", &IntegralEngine::compute_eri,
-             "Compute electron repulsion integrals");
-
-    // ========================================================================
-    // SCF MODULE: Hartree-Fock methods
-    // ========================================================================
-    
-    py::class_<SCFResult>(m, "SCFResult", "Self-consistent field calculation result")
+    py::class_<BasisSet>(m, "BasisSet")
         .def(py::init<>())
-        .def_readwrite("energy", &SCFResult::energy, "Total energy")
-        .def_readwrite("converged", &SCFResult::converged, "Convergence status")
-        .def_readwrite("n_occ", &SCFResult::n_occ, "Number of occupied orbitals")
-        .def_readwrite("n_vir", &SCFResult::n_vir, "Number of virtual orbitals")
-        .def_property("C",
-            [](const SCFResult& r) { return eigen_to_numpy(r.C); },
-            nullptr,
-            "MO coefficients")
-        .def_property("e",
-            [](const SCFResult& r) { return eigen_to_numpy_vec(r.e); },
-            nullptr,
-            "Orbital energies")
-        .def_property("D",
-            [](const SCFResult& r) { return eigen_to_numpy(r.D); },
-            nullptr,
-            "Density matrix");
+        .def(py::init<const std::string&, const Molecule&, const std::string&>(),
+             py::arg("basis_name"), py::arg("mol"), py::arg("basis_dir") = "../data/basis")
+        .def("read_gbs", &BasisSet::read_gbs, py::arg("basis_file"), py::arg("mol"))
+        .def("add_shell", &BasisSet::add_shell, py::arg("shell"))
+        .def("n_shells", &BasisSet::n_shells)
+        .def("n_basis_functions", &BasisSet::n_basis_functions)
+        .def("shell", &BasisSet::shell, py::arg("i"))
+        .def("name", &BasisSet::name);
 
-    py::class_<RHF>(m, "RHF", "Restricted Hartree-Fock")
-        .def(py::init<const Molecule&, const BasisSet&>())
-        .def("solve", &RHF::solve, "Perform RHF calculation")
-        .def("get_energy", &RHF::get_energy, "Get current energy");
-
-    py::class_<ROHF>(m, "ROHF", "Restricted Open-shell Hartree-Fock")
-        .def(py::init<const Molecule&, const BasisSet&>())
-        .def("solve", &ROHF::solve, "Perform ROHF calculation")
-        .def("get_energy", &ROHF::get_energy, "Get current energy");
-
-    py::class_<UHF>(m, "UHF", "Unrestricted Hartree-Fock")
-        .def(py::init<const Molecule&, const BasisSet&>())
-        .def("solve", &UHF::solve, "Perform UHF calculation")
-        .def("get_energy", &UHF::get_energy, "Get current energy")
-        .def("get_spin_contamination", &UHF::get_spin_contamination,
-             "Spin contamination <S^2>");
+    py::class_<IntegralEngine, std::shared_ptr<IntegralEngine>>(m, "IntegralEngine")
+        .def(py::init<const Molecule&, const BasisSet&>(),
+             py::arg("mol"), py::arg("basis"))
+        .def("compute_overlap", &IntegralEngine::compute_overlap)
+        .def("compute_kinetic", &IntegralEngine::compute_kinetic)
+        .def("compute_nuclear", &IntegralEngine::compute_nuclear)
+        .def("compute_eri", &IntegralEngine::compute_eri);
 
     // ========================================================================
-    // MP2/MP3 MODULE: Møller-Plesset Perturbation Theory
+    // SCF: Configuration, Results, and Solvers
     // ========================================================================
     
-    py::class_<MP2Result>(m, "MP2Result", "MP2 calculation result")
+    py::class_<SCFConfig>(m, "SCFConfig")
         .def(py::init<>())
-        .def_readwrite("e_scf", &MP2Result::e_scf, "SCF reference energy")
-        .def_readwrite("e_corr", &MP2Result::e_corr, "MP2 correlation energy")
-        .def_readwrite("e_total", &MP2Result::e_total, "Total MP2 energy");
+        .def_readwrite("max_iterations", &SCFConfig::max_iterations)
+        .def_readwrite("energy_threshold", &SCFConfig::energy_threshold)
+        .def_readwrite("density_threshold", &SCFConfig::density_threshold)
+        .def_readwrite("diis_threshold", &SCFConfig::diis_threshold)
+        .def_readwrite("diis_max_vectors", &SCFConfig::diis_max_vectors)
+        .def_readwrite("print_level", &SCFConfig::print_level)
+        .def_readwrite("level_shift", &SCFConfig::level_shift);
 
-    py::class_<RMP2>(m, "RMP2", "Restricted MP2")
-        .def(py::init<const SCFResult&, const IntegralEngine&>())
-        .def("solve", &RMP2::solve, "Compute RMP2 energy")
-        .def("get_energy", &RMP2::get_energy, "Get MP2 energy");
-
-    py::class_<UMP2>(m, "UMP2", "Unrestricted MP2")
-        .def(py::init<const SCFResult&, const IntegralEngine&>())
-        .def("solve", &UMP2::solve, "Compute UMP2 energy")
-        .def("get_energy", &UMP2::get_energy, "Get MP2 energy");
-
-    py::class_<DFMP2>(m, "DFMP2", "Density-Fitting MP2")
-        .def(py::init<const SCFResult&, const BasisSet&>())
-        .def("solve", &DFMP2::solve, "Compute DF-MP2 energy")
-        .def("get_energy", &DFMP2::get_energy, "Get DF-MP2 energy");
-
-    py::class_<UMP3Result>(m, "UMP3Result", "UMP3 calculation result")
+    py::class_<SCFResult>(m, "SCFResult")
         .def(py::init<>())
-        .def_readwrite("e_scf", &UMP3Result::e_scf, "SCF reference energy")
-        .def_readwrite("e_mp2", &UMP3Result::e_mp2, "MP2 correlation energy")
-        .def_readwrite("e_mp3", &UMP3Result::e_mp3, "MP3 correlation energy")
-        .def_readwrite("e_total", &UMP3Result::e_total, "Total MP3 energy");
+        .def_readwrite("energy_electronic", &SCFResult::energy_electronic)
+        .def_readwrite("energy_nuclear", &SCFResult::energy_nuclear)
+        .def_readwrite("energy_total", &SCFResult::energy_total)
+        .def_readwrite("orbital_energies_alpha", &SCFResult::orbital_energies_alpha)
+        .def_readwrite("orbital_energies_beta", &SCFResult::orbital_energies_beta)
+        .def_readwrite("C_alpha", &SCFResult::C_alpha)
+        .def_readwrite("C_beta", &SCFResult::C_beta)
+        .def_readwrite("P_alpha", &SCFResult::P_alpha)
+        .def_readwrite("P_beta", &SCFResult::P_beta)
+        .def_readwrite("F_alpha", &SCFResult::F_alpha)
+        .def_readwrite("F_beta", &SCFResult::F_beta)
+        .def_readwrite("iterations", &SCFResult::iterations)
+        .def_readwrite("converged", &SCFResult::converged)
+        .def_readwrite("gradient_norm", &SCFResult::gradient_norm)
+        .def_readwrite("n_occ_alpha", &SCFResult::n_occ_alpha)
+        .def_readwrite("n_occ_beta", &SCFResult::n_occ_beta);
 
-   py::class_<UMP3>(m, "UMP3", "Unrestricted MP3")
-    .def(py::init<const SCFResult&, const UMP2Result&, const BasisSet&, std::shared_ptr<IntegralEngine>>())
-    .def("compute", &UMP3::compute, "Compute UMP3 energy");
+    py::class_<RHF>(m, "RHF")
+        .def(py::init<const Molecule&, const BasisSet&, std::shared_ptr<IntegralEngine>, const SCFConfig&>(),
+             py::arg("mol"), py::arg("basis"), py::arg("integrals"), 
+             py::arg("config") = SCFConfig())
+        .def("compute", &RHF::compute)
+        .def("energy", &RHF::energy)
+        .def("nbasis", &RHF::nbasis)
+        .def("n_occ", &RHF::n_occ);
 
-    /*py::class_<RMP3>(m, "RMP3", "Restricted MP3")
-        .def(py::init<const SCFResult&, const IntegralEngine&>())
-        .def("solve", &RMP3::solve, "Compute RMP3 energy")
-        .def("get_energy", &RMP3::get_energy, "Get MP3 energy");
-     */
-    // UMP4/UMP5
-    py::class_<UMP4>(m, "UMP4", "Unrestricted MP4")
-        .def(py::init<const SCFResult&, const IntegralEngine&>())
-        .def("solve", &UMP4::solve, "Compute UMP4 energy")
-        .def("get_energy", &UMP4::get_energy, "Get MP4 energy");
+    py::class_<UHF>(m, "UHF")
+        .def(py::init<const Molecule&, const BasisSet&, std::shared_ptr<IntegralEngine>, const SCFConfig&>(),
+             py::arg("mol"), py::arg("basis"), py::arg("integrals"), 
+             py::arg("config") = SCFConfig())
+        .def("compute", &UHF::compute)
+        .def("energy", &UHF::energy);
 
-    py::class_<UMP5>(m, "UMP5", "Unrestricted MP5")
-        .def(py::init<const SCFResult&, const IntegralEngine&>())
-        .def("solve", &UMP5::solve, "Compute UMP5 energy")
-        .def("get_energy", &UMP5::get_energy, "Get MP5 energy");
+    py::class_<ROHF>(m, "ROHF")
+        .def(py::init<const Molecule&, const BasisSet&, std::shared_ptr<IntegralEngine>, const SCFConfig&>(),
+             py::arg("mol"), py::arg("basis"), py::arg("integrals"), 
+             py::arg("config") = SCFConfig())
+        .def("compute", &ROHF::compute)
+        .def("energy", &ROHF::energy);
 
     // ========================================================================
-    // CI MODULE: Configuration Interaction
+    // MP2/MP3 Methods
     // ========================================================================
     
-    py::class_<Determinant>(m, "Determinant", "Slater determinant")
+    py::class_<MP2Result>(m, "MP2Result")
         .def(py::init<>())
-        .def(py::init<int, int>())
-        .def("excite", &Determinant::excite, "Single excitation")
-        .def("phase", &Determinant::phase, "Sign of excitation");
+        .def_readwrite("energy_scf", &MP2Result::energy_scf)
+        .def_readwrite("energy_mp2_ss", &MP2Result::energy_mp2_ss)
+        .def_readwrite("energy_mp2_os", &MP2Result::energy_mp2_os)
+        .def_readwrite("energy_mp2_corr", &MP2Result::energy_mp2_corr)
+        .def_readwrite("energy_total", &MP2Result::energy_total)
+        .def_readwrite("n_occ_alpha", &MP2Result::n_occ_alpha)
+        .def_readwrite("n_occ_beta", &MP2Result::n_occ_beta)
+        .def_readwrite("n_virt_alpha", &MP2Result::n_virt_alpha)
+        .def_readwrite("n_virt_beta", &MP2Result::n_virt_beta);
 
-    py::class_<CIResult>(m, "CIResult", "Configuration interaction result")
+    py::class_<UMP2Result>(m, "UMP2Result")
         .def(py::init<>())
-        .def_readwrite("energy", &CIResult::energy, "CI energy")
-        .def_readwrite("e_corr", &CIResult::e_corr, "Correlation energy")
-        .def_property("coefficients",
-            [](const CIResult& r) { return eigen_to_numpy_vec(r.coefficients); },
-            nullptr,
-            "CI coefficients");
+        .def_readwrite("e_corr_ss_aa", &UMP2Result::e_corr_ss_aa)
+        .def_readwrite("e_corr_ss_bb", &UMP2Result::e_corr_ss_bb)
+        .def_readwrite("e_corr_os", &UMP2Result::e_corr_os)
+        .def_readwrite("e_corr_total", &UMP2Result::e_corr_total)
+        .def_readwrite("e_total", &UMP2Result::e_total);
 
-    py::class_<CIS>(m, "CIS", "Configuration Interaction Singles")
-        .def(py::init<const SCFResult&, const IntegralEngine&>())
-        .def("solve", &CIS::solve, "Perform CIS calculation")
-        .def("get_energy", &CIS::get_energy, "Get CIS energy")
-        .def("get_excitation_energy", &CIS::get_excitation_energy,
-             py::arg("state"), "Get excitation energy for state");
-
-    py::class_<CISD>(m, "CISD", "Configuration Interaction Singles and Doubles")
-        .def(py::init<const SCFResult&, const IntegralEngine&>())
-        .def("solve", &CISD::solve, "Perform CISD calculation")
-        .def("get_energy", &CISD::get_energy, "Get CISD energy");
-
-    py::class_<CISDT>(m, "CISDT", "CI Singles, Doubles, and Triples")
-        .def(py::init<const SCFResult&, const IntegralEngine&>())
-        .def("solve", &CISDT::solve, "Perform CISDT calculation")
-        .def("get_energy", &CISDT::get_energy, "Get CISDT energy");
-
-    py::class_<FCI>(m, "FCI", "Full Configuration Interaction")
-        .def(py::init<const SCFResult&, const IntegralEngine&>())
-        .def("solve", &FCI::solve, "Perform FCI calculation")
-        .def("get_energy", &FCI::get_energy, "Get FCI energy");
-
-    py::class_<MRCI>(m, "MRCI", "Multi-Reference Configuration Interaction")
-        .def(py::init<const SCFResult&, const IntegralEngine&>())
-        .def("set_active_space", &MRCI::set_active_space,
-             py::arg("n_electrons"), py::arg("n_orbitals"))
-        .def("solve", &MRCI::solve, "Perform MRCI calculation")
-        .def("get_energy", &MRCI::get_energy, "Get MRCI energy");
-
-    py::class_<CIPSI>(m, "CIPSI", "Configuration Interaction using Perturbative Selection Iteratively")
-        .def(py::init<const SCFResult&, const IntegralEngine&>())
-        .def("solve", &CIPSI::solve,
-             py::arg("epsilon_var") = 1e-6,
-             "Perform CIPSI calculation with selection threshold")
-        .def("get_energy", &CIPSI::get_energy, "Get CIPSI energy")
-        .def("get_variational_energy", &CIPSI::get_variational_energy,
-             "Get variational energy")
-        .def("get_pt2_correction", &CIPSI::get_pt2_correction,
-             "Get PT2 correction");
-
-    // ========================================================================
-    // MCSCF MODULE: Multi-Configurational SCF
-    // ========================================================================
-    
-    py::class_<ActiveSpace>(m, "ActiveSpace", "CAS active space definition")
-        .def(py::init<int, int>(),
-             py::arg("n_electrons"), py::arg("n_orbitals"))
-        .def("n_electrons", &ActiveSpace::n_electrons, "Active electrons")
-        .def("n_orbitals", &ActiveSpace::n_orbitals, "Active orbitals");
-
-    py::class_<CASSCFResult>(m, "CASSCFResult", "CASSCF result")
+    py::class_<RMP2Result>(m, "RMP2Result")
         .def(py::init<>())
-        .def_readwrite("energy", &CASSCFResult::energy, "CASSCF energy")
-        .def_readwrite("converged", &CASSCFResult::converged, "Convergence status");
+        .def_readwrite("e_scf", &RMP2Result::e_scf)
+        .def_readwrite("e_corr", &RMP2Result::e_corr)
+        .def_readwrite("e_total", &RMP2Result::e_total);
 
-    py::class_<CASSCF>(m, "CASSCF", "Complete Active Space SCF")
-        .def(py::init<const Molecule&, const BasisSet&>())
-        .def("set_active_space", &CASSCF::set_active_space,
-             py::arg("n_electrons"), py::arg("n_orbitals"),
-             "Set CAS active space")
-        .def("solve", &CASSCF::solve, "Perform CASSCF calculation")
-        .def("get_energy", &CASSCF::get_energy, "Get CASSCF energy");
+    py::class_<RMP3Result>(m, "RMP3Result")
+        .def(py::init<>())
+        .def_readwrite("e_scf", &RMP3Result::e_scf)
+        .def_readwrite("e_mp2", &RMP3Result::e_mp2)
+        .def_readwrite("e_mp3", &RMP3Result::e_mp3)
+        .def_readwrite("e_total", &RMP3Result::e_total);
 
-    py::class_<SACASSCF>(m, "SACASSCF", "State-Averaged CASSCF")
-        .def(py::init<const Molecule&, const BasisSet&>())
-        .def("set_active_space", &SACASSCF::set_active_space,
-             py::arg("n_electrons"), py::arg("n_orbitals"))
-        .def("set_n_states", &SACASSCF::set_n_states,
-             py::arg("n_states"), "Set number of states to average")
-        .def("solve", &SACASSCF::solve, "Perform SA-CASSCF calculation")
-        .def("get_energy", &SACASSCF::get_energy,
-             py::arg("state"), "Get energy for specific state");
+    // MP2 classes
+    py::class_<ROMP2>(m, "ROMP2")
+        .def(py::init<const SCFResult&, std::shared_ptr<IntegralEngine>>(),
+             py::arg("scf_result"), py::arg("integrals"))
+        .def("compute", &ROMP2::compute);
 
-    py::class_<CASPT2>(m, "CASPT2", "Complete Active Space Perturbation Theory")
-        .def(py::init<const CASSCFResult&, const IntegralEngine&>())
-        .def("solve", &CASPT2::solve, "Perform CASPT2 calculation")
-        .def("get_energy", &CASPT2::get_energy, "Get CASPT2 energy")
-        .def("get_correlation_energy", &CASPT2::get_correlation_energy,
-             "Get CASPT2 correlation energy");
+    py::class_<UMP2>(m, "UMP2")
+        .def(py::init<const SCFResult&, std::shared_ptr<IntegralEngine>>(),
+             py::arg("uhf_result"), py::arg("integrals"))
+        .def("compute", &UMP2::compute);
 
-    py::class_<DFCASPT2>(m, "DFCASPT2", "Density-Fitting CASPT2")
-        .def(py::init<const CASSCFResult&, const BasisSet&>())
-        .def("solve", &DFCASPT2::solve, "Perform DF-CASPT2 calculation")
-        .def("get_energy", &DFCASPT2::get_energy, "Get DF-CASPT2 energy");
+    // Note: DFMP2 constructor needs SCFResult, BasisSet, AND IntegralEngine based on header
+    py::class_<DFMP2>(m, "DFMP2")
+        .def(py::init<const SCFResult&, const BasisSet&, std::shared_ptr<IntegralEngine>>(),
+             py::arg("scf_result"), py::arg("basis"), py::arg("integrals"))
+        .def("compute", &DFMP2::compute);
 
-    py::class_<MRMP2>(m, "MRMP2", "Multi-Reference MP2")
-        .def(py::init<const CASSCFResult&, const IntegralEngine&>())
-        .def("solve", &MRMP2::solve, "Perform MRMP2 calculation")
-        .def("get_energy", &MRMP2::get_energy, "Get MRMP2 energy");
+    py::class_<RMP2>(m, "RMP2")
+        .def(py::init<const SCFResult&, const BasisSet&, std::shared_ptr<IntegralEngine>>(),
+             py::arg("rhf_result"), py::arg("basis"), py::arg("integrals"))
+        .def("compute", &RMP2::compute);
 
-    // ========================================================================
-    // GRADIENT MODULE: Geometry Optimization
-    // ========================================================================
-    
-    py::class_<NumericalGradient>(m, "NumericalGradient", "Numerical gradient calculator")
-        .def(py::init<const Molecule&, const BasisSet&>())
-        .def("compute_rhf_gradient", &NumericalGradient::compute_rhf_gradient,
-             "Compute RHF gradient")
-        .def("compute_mp2_gradient", &NumericalGradient::compute_mp2_gradient,
-             "Compute MP2 gradient");
+    py::class_<RMP3>(m, "RMP3")
+        .def(py::init<const SCFResult&, const RMP2Result&, const BasisSet&, std::shared_ptr<IntegralEngine>>(),
+             py::arg("rhf_result"), py::arg("rmp2_result"), py::arg("basis"), py::arg("integrals"))
+        .def("compute", &RMP3::compute);
 
-    py::class_<GeometryOptimizer>(m, "GeometryOptimizer", "Molecular geometry optimizer")
-        .def(py::init<const Molecule&, const BasisSet&>())
-        .def("set_method", &GeometryOptimizer::set_method,
-             py::arg("method"), "Set optimization method (SD, CG, BFGS)")
-        .def("optimize", &GeometryOptimizer::optimize,
-             "Optimize molecular geometry")
-        .def("get_optimized_energy", &GeometryOptimizer::get_optimized_energy,
-             "Get optimized energy")
-        .def("get_optimized_geometry", &GeometryOptimizer::get_optimized_geometry,
-             "Get optimized geometry");
+    py::class_<UMP3>(m, "UMP3")
+        .def(py::init<const SCFResult&, std::shared_ptr<IntegralEngine>>(),
+             py::arg("uhf_result"), py::arg("integrals"))
+        .def("compute", &UMP3::compute);
 
     // ========================================================================
-    // UTILITY FUNCTIONS
-    // ========================================================================
-    
-    m.def("create_h2_molecule", [](double distance = 0.74) {
-        Molecule mol;
-        mol.add_atom(1, 0.0, 0.0, -distance/2.0);  // H
-        mol.add_atom(1, 0.0, 0.0, distance/2.0);   // H
-        return mol;
-    }, py::arg("distance") = 0.74, "Create H2 molecule");
-
-    m.def("create_water_molecule", []() {
-        Molecule mol;
-        mol.add_atom(8, 0.0, 0.0, 0.119262);    // O
-        mol.add_atom(1, 0.0, 0.757, -0.477023);  // H
-        mol.add_atom(1, 0.0, -0.757, -0.477023); // H
-        return mol;
-    }, "Create water molecule");
-
-    m.def("create_li_atom", []() {
-        Molecule mol;
-        mol.add_atom(3, 0.0, 0.0, 0.0);  // Li
-        return mol;
-    }, "Create lithium atom");
-
-    m.def("create_he_atom", []() {
-        Molecule mol;
-        mol.add_atom(2, 0.0, 0.0, 0.0);  // He
-        return mol;
-    }, "Create helium atom");
-
-    m.def("create_ne_atom", []() {
-        Molecule mol;
-        mol.add_atom(10, 0.0, 0.0, 0.0);  // Ne
-        return mol;
-    }, "Create neon atom");
-
-    // Version info
-#ifdef VERSION_INFO
-    m.attr("__version__") = VERSION_INFO;
-#else
-    m.attr("__version__") = "0.1.0";
-#endif
-// ========================================================================
-    // QUICK INTERFACE: Convenience functions for rapid calculations
-    // ========================================================================
-    
-    m.def("quick_rhf", 
-        [](const Molecule& mol, const std::string& basis_name) -> SCFResult {
-            BasisSet basis;
-            basis.load(basis_name, mol);
-            
-            RHF rhf(mol, basis);
-            return rhf.solve();
-        },
-        py::arg("molecule"),
-        py::arg("basis"),
-        "Quick RHF calculation"
-    );
-
-    m.def("quick_rohf",
-        [](const Molecule& mol, const std::string& basis_name) -> SCFResult {
-            BasisSet basis;
-            basis.load(basis_name, mol);
-            
-            ROHF rohf(mol, basis);
-            return rohf.solve();
-        },
-        py::arg("molecule"),
-        py::arg("basis"),
-        "Quick ROHF calculation"
-    );
-
-    m.def("quick_uhf",
-        [](const Molecule& mol, const std::string& basis_name) -> SCFResult {
-            BasisSet basis;
-            basis.load(basis_name, mol);
-            
-            UHF uhf(mol, basis);
-            return uhf.solve();
-        },
-        py::arg("molecule"),
-        py::arg("basis"),
-        "Quick UHF calculation"
-    );
-
-    // MP2 Methods
-    m.def("quick_rmp2",
-        [](const Molecule& mol, const std::string& basis_name) -> MP2Result {
-            BasisSet basis;
-            basis.load(basis_name, mol);
-            
-            RHF rhf(mol, basis);
-            SCFResult scf_result = rhf.solve();
-            
-            IntegralEngine ints(mol, basis);
-            RMP2 mp2(scf_result, ints);
-            return mp2.solve();
-        },
-        py::arg("molecule"),
-        py::arg("basis"),
-        "Quick RMP2 calculation"
-    );
-
-    m.def("quick_ump2",
-        [](const Molecule& mol, const std::string& basis_name) -> MP2Result {
-            BasisSet basis;
-            basis.load(basis_name, mol);
-            
-            UHF uhf(mol, basis);
-            SCFResult scf_result = uhf.solve();
-            
-            IntegralEngine ints(mol, basis);
-            UMP2 mp2(scf_result, ints);
-            return mp2.solve();
-        },
-        py::arg("molecule"),
-        py::arg("basis"),
-        "Quick UMP2 calculation"
-    );
-
-    m.def("quick_omp2",
-        [](const Molecule& mol, const std::string& basis_name) -> MP2Result {
-            BasisSet basis;
-            basis.load(basis_name, mol);
-            
-            ROHF rohf(mol, basis);
-            SCFResult scf_result = rohf.solve();
-            
-            IntegralEngine ints(mol, basis);
-            // Note: You might need OMP2 class if different from UMP2
-            UMP2 mp2(scf_result, ints);
-            return mp2.solve();
-        },
-        py::arg("molecule"),
-        py::arg("basis"),
-        "Quick OMP2 calculation"
-    );
-
-    // MP3 Methods next session
-    
-    /*m.def("quick_rmp3",
-        [](const Molecule& mol, const std::string& basis_name) -> UMP3Result {
-            BasisSet basis;
-            basis.load(basis_name, mol);
-            
-            RHF rhf(mol, basis);
-            SCFResult scf_result = rhf.solve();
-            
-            IntegralEngine ints(mol, basis);
-            RMP3 mp3(scf_result, ints);
-            return mp3.solve();
-        },
-        py::arg("molecule"),
-        py::arg("basis"),
-        "Quick RMP3 calculation"
-    );
-  */
- m.def("quick_ump3",
-    [](const Molecule& mol, const std::string& basis_name) -> UMP3Result {
-        BasisSet basis;
-        basis.load(basis_name, mol);
-        
-        // 1. UHF calculation
-        UHF uhf(mol, basis);
-        SCFResult scf_result = uhf.solve();
-        
-        // 2. UMP2 calculation (UMP3 needs UMP2 result!)
-        auto integrals = std::make_shared<IntegralEngine>(mol, basis);
-        UMP2 mp2(scf_result, *integrals);
-        UMP2Result mp2_result = mp2.solve();
-        
-        // 3. UMP3 calculation
-        UMP3 mp3(scf_result, mp2_result, basis, integrals);
-        return mp3.compute();
-    },
-    py::arg("molecule"),
-    py::arg("basis"),
-    "Quick UMP3 calculation"
- );
-/*
-    m.def("quick_omp3",
-        [](const Molecule& mol, const std::string& basis_name) -> UMP3Result {
-            BasisSet basis;
-            basis.load(basis_name, mol);
-            
-            ROHF rohf(mol, basis);
-            SCFResult scf_result = rohf.solve();
-            
-            IntegralEngine ints(mol, basis);
-            UMP3 mp3(scf_result, ints);
-            return mp3.solve();
-        },
-        py::arg("molecule"),
-        py::arg("basis"),
-        "Quick OMP3 calculation"
-    );
-*/
     // CI Methods
-    m.def("quick_cis",
-        [](const Molecule& mol, const std::string& basis_name) -> CIResult {
-            BasisSet basis;
-            basis.load(basis_name, mol);
-            
-            RHF rhf(mol, basis);
-            SCFResult scf_result = rhf.solve();
-            
-            IntegralEngine ints(mol, basis);
-            CIS cis(scf_result, ints);
-            return cis.solve();
-        },
-        py::arg("molecule"),
-        py::arg("basis"),
-        "Quick CIS calculation"
-    );
+    // ========================================================================
+    
+    py::class_<ci::Determinant>(m, "Determinant")
+        .def(py::init<>())
+        .def(py::init<const std::vector<int>&, const std::vector<int>&>(),
+             py::arg("alpha_occ"), py::arg("beta_occ"))
+        .def("n_alpha", &ci::Determinant::n_alpha)
+        .def("n_beta", &ci::Determinant::n_beta)
+        .def("alpha_occ", &ci::Determinant::alpha_occ)
+        .def("beta_occ", &ci::Determinant::beta_occ)
+        .def("is_alpha_occupied", &ci::Determinant::is_alpha_occupied, py::arg("i"))
+        .def("is_beta_occupied", &ci::Determinant::is_beta_occupied, py::arg("i"))
+        .def("excitation_level", &ci::Determinant::excitation_level, py::arg("other"));
 
-    m.def("quick_cisd",
-        [](const Molecule& mol, const std::string& basis_name) -> CIResult {
-            BasisSet basis;
-            basis.load(basis_name, mol);
-            
-            RHF rhf(mol, basis);
-            SCFResult scf_result = rhf.solve();
-            
-            IntegralEngine ints(mol, basis);
-            CISD cisd(scf_result, ints);
-            return cisd.solve();
-        },
-        py::arg("molecule"),
-        py::arg("basis"),
-        "Quick CISD calculation"
-    );
+    py::class_<ci::CIIntegrals>(m, "CIIntegrals")
+        .def(py::init<>())
+        .def_readwrite("h_mo", &ci::CIIntegrals::h_mo)
+        .def_readwrite("eri_mo", &ci::CIIntegrals::eri_mo)
+        .def_readwrite("e_nuc", &ci::CIIntegrals::e_nuc);
 
-    m.def("quick_fci",
-        [](const Molecule& mol, const std::string& basis_name) -> CIResult {
-            BasisSet basis;
-            basis.load(basis_name, mol);
-            
-            RHF rhf(mol, basis);
-            SCFResult scf_result = rhf.solve();
-            
-            IntegralEngine ints(mol, basis);
-            FCI fci(scf_result, ints);
-            return fci.solve();
-        },
-        py::arg("molecule"),
-        py::arg("basis"),
-        "Quick FCI calculation"
-    );
+    py::class_<ci::CIResult>(m, "CIResult")
+        .def(py::init<>())
+        .def_readwrite("energies", &ci::CIResult::energies)
+        .def_readwrite("ci_vectors", &ci::CIResult::ci_vectors)
+        .def_readwrite("determinants", &ci::CIResult::determinants)
+        .def_readwrite("converged", &ci::CIResult::converged)
+        .def_readwrite("n_iterations", &ci::CIResult::n_iterations);
 
-    // Multi-Reference Methods
-    m.def("quick_casscf",
-        [](const Molecule& mol, const std::string& basis_name, 
-           int n_electrons, int n_orbitals) -> CASSCFResult {
-            BasisSet basis;
-            basis.load(basis_name, mol);
-            
-            CASSCF casscf(mol, basis);
-            casscf.set_active_space(n_electrons, n_orbitals);
-            return casscf.solve();
-        },
-        py::arg("molecule"),
-        py::arg("basis"),
-        py::arg("n_electrons"),
-        py::arg("n_orbitals"),
-        "Quick CASSCF calculation"
-    );
+    py::class_<ci::CIS>(m, "CIS")
+        .def(py::init<const ci::CIIntegrals&, const ci::Determinant&, int, int, int, int>(),
+             py::arg("ints"), py::arg("hf_det"), 
+             py::arg("n_occ_alpha"), py::arg("n_occ_beta"),
+             py::arg("n_virt_alpha"), py::arg("n_virt_beta"))
+        .def("compute", &ci::CIS::compute, py::arg("n_roots") = 5);
 
-    m.def("quick_caspt2",
-        [](const Molecule& mol, const std::string& basis_name,
-           int n_electrons, int n_orbitals) -> double {
-            BasisSet basis;
-            basis.load(basis_name, mol);
-            
-            CASSCF casscf(mol, basis);
-            casscf.set_active_space(n_electrons, n_orbitals);
-            CASSCFResult casscf_result = casscf.solve();
-            
-            IntegralEngine ints(mol, basis);
-            CASPT2 caspt2(casscf_result, ints);
-            caspt2.solve();
-            return caspt2.get_energy();
-        },
-        py::arg("molecule"),
-        py::arg("basis"),
-        py::arg("n_electrons"),
-        py::arg("n_orbitals"),
-        "Quick CASPT2 calculation"
-    );
+    py::class_<ci::CISD>(m, "CISD")
+        .def(py::init<const ci::CIIntegrals&, const ci::Determinant&, int, int, int, int>(),
+             py::arg("ints"), py::arg("hf_det"),
+             py::arg("n_occ_alpha"), py::arg("n_occ_beta"),
+             py::arg("n_virt_alpha"), py::arg("n_virt_beta"))
+        .def("compute", &ci::CISD::compute);
+
+    py::class_<ci::CISDT>(m, "CISDT")
+        .def(py::init<const ci::CIIntegrals&, const ci::Determinant&, int, int, int, int>(),
+             py::arg("ints"), py::arg("hf_det"),
+             py::arg("n_occ_alpha"), py::arg("n_occ_beta"),
+             py::arg("n_virt_alpha"), py::arg("n_virt_beta"))
+        .def("compute", &ci::CISDT::compute);
+
+    py::class_<ci::FCI>(m, "FCI")
+        .def(py::init<const ci::CIIntegrals&, int, int, int, int>(),
+             py::arg("ints"), py::arg("n_orbitals"),
+             py::arg("n_alpha"), py::arg("n_beta"), py::arg("n_roots") = 1)
+        .def("compute", &ci::FCI::compute);
+
+    py::class_<ci::CIPSI>(m, "CIPSI")
+        .def(py::init<const ci::CIIntegrals&, int, int, int>(),
+             py::arg("ints"), py::arg("n_orbitals"),
+             py::arg("n_alpha"), py::arg("n_beta"))
+        .def("compute", &ci::CIPSI::compute,
+             py::arg("energy_threshold") = 1e-6,
+             py::arg("max_iterations") = 20);
+
+    // ========================================================================
+    // MCSCF Methods
+    // ========================================================================
+    
+    py::class_<ActiveSpace>(m, "ActiveSpace")
+        .def(py::init<>())
+        .def(py::init<int, int, int, int>(),
+             py::arg("n_inactive"), py::arg("n_active"), 
+             py::arg("n_virtual"), py::arg("n_elec_active"))
+        .def_static("CAS", &ActiveSpace::CAS,
+                   py::arg("n_elec"), py::arg("n_orb"),
+                   py::arg("n_total_orb"), py::arg("n_total_elec"))
+        .def("n_inactive", &ActiveSpace::n_inactive)
+        .def("n_active", &ActiveSpace::n_active)
+        .def("n_virtual", &ActiveSpace::n_virtual)
+        .def("n_elec_active", &ActiveSpace::n_elec_active);
+
+    py::class_<CASResult>(m, "CASResult")
+        .def(py::init<>())
+        .def_readwrite("e_casscf", &CASResult::e_casscf)
+        .def_readwrite("e_nuclear", &CASResult::e_nuclear)
+        .def_readwrite("n_iterations", &CASResult::n_iterations)
+        .def_readwrite("converged", &CASResult::converged)
+        .def_readwrite("C_mo", &CASResult::C_mo)
+        .def_readwrite("orbital_energies", &CASResult::orbital_energies)
+        .def_readwrite("ci_coeffs", &CASResult::ci_coeffs)
+        .def_readwrite("determinants", &CASResult::determinants)
+        .def_readwrite("n_determinants", &CASResult::n_determinants)
+        .def_readwrite("active_space", &CASResult::active_space);
+
+    py::class_<CASSCF>(m, "CASSCF")
+        .def(py::init<const Molecule&, const BasisSet&, std::shared_ptr<IntegralEngine>, const ActiveSpace&>(),
+             py::arg("mol"), py::arg("basis"), py::arg("integrals"), py::arg("active_space"))
+        .def("compute", &CASSCF::compute, py::arg("initial_guess"));
+
+    py::class_<CASPT2Result>(m, "CASPT2Result")
+        .def(py::init<>())
+        .def_readwrite("e_casscf", &CASPT2Result::e_casscf)
+        .def_readwrite("e_pt2", &CASPT2Result::e_pt2)
+        .def_readwrite("e_total", &CASPT2Result::e_total)
+        .def_readwrite("converged", &CASPT2Result::converged)
+        .def_readwrite("status_message", &CASPT2Result::status_message);
+
+    py::class_<CASPT2>(m, "CASPT2")
+        .def(py::init<const Molecule&, const BasisSet&, std::shared_ptr<IntegralEngine>, const CASResult&>(),
+             py::arg("mol"), py::arg("basis"), py::arg("integrals"), py::arg("casscf_result"))
+        .def("compute", &CASPT2::compute);
+
+    // ========================================================================
+    // Gradient and Optimization
+    // ========================================================================
+    
+    py::class_<GradientResult>(m, "GradientResult")
+        .def(py::init<>())
+        .def_readwrite("energy", &GradientResult::energy)
+        .def_readwrite("gradient", &GradientResult::gradient)
+        .def_readwrite("gradient_norm", &GradientResult::gradient_norm);
+
+    py::class_<AnalyticalGradient>(m, "AnalyticalGradient")
+        .def(py::init<const Molecule&, const BasisSet&, std::shared_ptr<IntegralEngine>>(),
+             py::arg("mol"), py::arg("basis"), py::arg("integrals"))
+        .def("compute_rhf_gradient", &AnalyticalGradient::compute_rhf_gradient,
+             py::arg("scf_result"));
+
+    py::class_<OptConfig>(m, "OptConfig")
+        .def(py::init<>())
+        .def_readwrite("max_iterations", &OptConfig::max_iterations)
+        .def_readwrite("gradient_threshold", &OptConfig::gradient_threshold)
+        .def_readwrite("energy_threshold", &OptConfig::energy_threshold)
+        .def_readwrite("step_size", &OptConfig::step_size)
+        .def_readwrite("print_level", &OptConfig::print_level);
+
+    py::class_<OptResult>(m, "OptResult")
+        .def(py::init<>())
+        .def_readwrite("converged", &OptResult::converged)
+        .def_readwrite("n_iterations", &OptResult::n_iterations)
+        .def_readwrite("final_energy", &OptResult::final_energy)
+        .def_readwrite("final_gradient_norm", &OptResult::final_gradient_norm)
+        .def_readwrite("optimized_geometry", &OptResult::optimized_geometry);
+
+    py::class_<GeometryOptimizer>(m, "GeometryOptimizer")
+        .def(py::init<Molecule&, const BasisSet&, std::shared_ptr<IntegralEngine>, const OptConfig&>(),
+             py::arg("mol"), py::arg("basis"), py::arg("integrals"), 
+             py::arg("config") = OptConfig())
+        .def("optimize_rhf", &GeometryOptimizer::optimize_rhf);
+
+    // ========================================================================
+    // Utility Functions
+    // ========================================================================
+    
+    m.def("bohr_to_angstrom", [](double bohr) { return bohr * 0.529177210903; },
+          "Convert Bohr to Angstrom");
+    
+    m.def("angstrom_to_bohr", [](double angstrom) { return angstrom / 0.529177210903; },
+          "Convert Angstrom to Bohr");
+    
+    m.def("hartree_to_ev", [](double hartree) { return hartree * 27.211386245988; },
+          "Convert Hartree to eV");
+    
+    m.def("hartree_to_kcal", [](double hartree) { return hartree * 627.5094740631; },
+          "Convert Hartree to kcal/mol");
 }
