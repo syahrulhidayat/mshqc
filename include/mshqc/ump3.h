@@ -2,7 +2,7 @@
  * @file ump3.h
  * @brief Unrestricted Møller-Plesset 3rd-order perturbation theory (UMP3)
  * 
- * CORRECT IMPLEMENTATION using W-intermediate approach
+ * CORRECTED IMPLEMENTATION using W-intermediate approach
  * 
  * Algorithm based on:
  *   - Pople et al., Int. J. Quantum Chem. 11, 149 (1977)
@@ -17,7 +17,7 @@
  *   T2^(2) = W_mnij contraction + W_abef contraction + W_mbej contraction
  * 
  * @author Muhamad Syahrul Hidayat
- * @date 2025-01-29
+ * @date 2025-01-29 (v2 - CORRECTED)
  * @license MIT License
  * 
  * @note ORIGINAL IMPLEMENTATION - No code copied from other software
@@ -57,7 +57,7 @@ struct UMP3Result {
  * @brief Unrestricted Møller-Plesset 3rd-order perturbation theory
  * 
  * Computes third-order correction to MP2 energy using W-intermediate method.
- * This is the CORRECT implementation validated against Psi4.
+ * This is the CORRECTED implementation with proper spin handling.
  */
 class UMP3 {
 public:
@@ -142,20 +142,20 @@ private:
     void build_W_intermediates();
     
     /**
-     * @brief Build W_mnij = <mn||ij> for alpha spin
+     * @brief Build W_mnij = <mn||ij> hole-hole intermediates
      */
     void build_W_oooo_aa();
     void build_W_oooo_bb();
     void build_W_oooo_ab();
     
     /**
-     * @brief Build W_mbej = <mb||ej> for alpha spin
+     * @brief Build W_mbej = <mb||ej> particle-hole intermediates
      */
     void build_W_ovov_aa();
     void build_W_ovov_bb();
     
     /**
-     * @brief Build W_abef = <ab||ef> for alpha spin
+     * @brief Build W_abef = <ab||ef> particle-particle intermediates
      */
     void build_W_vvvv_aa();
     void build_W_vvvv_bb();
@@ -167,16 +167,9 @@ private:
      *   T2^(2)_ijab = [Σ_mn W_mnij T2^(1)_mnab 
      *                + Σ_ef W_abef T2^(1)_ijef
      *                - Σ_me W_mbej T2^(1)_imae
-     *                - Σ_me W_majb T2^(1)_imeb] / D_ijab
+     *                - Σ_me W_maej T2^(1)_imbe] / D_ijab
      */
     void compute_t2_2nd();
-    
-    /**
-     * @brief Compute T2^(2) for alpha-alpha spin
-     */
-    void compute_t2_2nd_aa();
-    void compute_t2_2nd_bb();
-    void compute_t2_2nd_ab();
     
     /**
      * @brief Compute E(3) energy from T2^(2)
