@@ -594,6 +594,7 @@ include/mshqc/mp/mp_density.h
 include/mshqc/mp/ump4.h
 include/mshqc/mp/ump5.h
 include/mshqc/validation/mp_vs_fci.h
+python/__init__.py
 python/bindings.cc
 python/mshqc/__init__.py
 python/mshqc.egg-info/PKG-INFO
