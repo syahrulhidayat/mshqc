@@ -201,7 +201,7 @@ public:
      */
     BasisSet(const std::string& basis_name, 
              const Molecule& mol,
-             const std::string& basis_dir = "../data/basis");
+             const std::string& basis_dir = "data/basis");
     
     /**
      * @brief Build basis set from .gbs file

@@ -24,6 +24,7 @@
  */
 
 #include "mshqc/integrals.h"
+#include "mshqc/libcint_wrapper.h"
 #include <libint2.hpp>
 #include <libint2/config.h>
 #include <unsupported/Eigen/CXX11/Tensor>

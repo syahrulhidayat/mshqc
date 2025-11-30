@@ -98,7 +98,7 @@ PYBIND11_MODULE(_core, m) {
     py::class_<BasisSet>(m, "BasisSet")
         .def(py::init<>())
         .def(py::init<const std::string&, const Molecule&, const std::string&>(),
-             py::arg("basis_name"), py::arg("mol"), py::arg("basis_dir") = "data/basis")
+             py::arg("basis_name"), py::arg("mol"), py::arg("basis_dir") = "../data/basis")
         .def("read_gbs", &BasisSet::read_gbs, py::arg("basis_file"), py::arg("mol"))
         .def("add_shell", &BasisSet::add_shell, py::arg("shell"))
         .def("n_shells", &BasisSet::n_shells)
@@ -195,18 +195,6 @@ PYBIND11_MODULE(_core, m) {
         .def_readwrite("e_corr_total", &UMP2Result::e_corr_total)
         .def_readwrite("e_total", &UMP2Result::e_total);
 
-    // UMP3Result binding
-    py::class_<UMP3Result>(m, "UMP3Result")
-        .def(py::init<>())
-        .def_readwrite("e_uhf", &UMP3Result::e_uhf)
-        .def_readwrite("e_mp2", &UMP3Result::e_mp2)
-        .def_readwrite("e_mp3_corr", &UMP3Result::e_mp3_corr)
-        .def_readwrite("e_corr_total", &UMP3Result::e_corr_total)
-        .def_readwrite("e_total", &UMP3Result::e_total)
-        .def_readwrite("e3_aa", &UMP3Result::e3_aa)
-        .def_readwrite("e3_bb", &UMP3Result::e3_bb)
-        .def_readwrite("e3_ab", &UMP3Result::e3_ab);
-
     // Foundation namespace classes - check actual member names
     py::class_<foundation::RMP2Result>(m, "RMP2Result")
         .def(py::init<>())
@@ -220,6 +208,10 @@ PYBIND11_MODULE(_core, m) {
         .def_readwrite("e_total", &foundation::RMP3Result::e_total);
 
     // MP2 classes
+    py::class_<ROMP2>(m, "ROMP2")
+        .def(py::init<const SCFResult&, std::shared_ptr<IntegralEngine>>(),
+             py::arg("scf_result"), py::arg("integrals"))
+        .def("compute", &ROMP2::compute);
 
     // UMP2 - fixed constructor (needs BasisSet)
     py::class_<UMP2>(m, "UMP2")

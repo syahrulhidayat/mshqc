@@ -420,7 +420,7 @@ main() {
     install_mshqc
     
     log_info "Step 6/6: Running tests..."
-    run_tests || log_warning "Tests completed with warnings"
+    run_tests || log_warning "T/home/syahrul/mshqc/src/mp3/ump3.ccests completed with warnings"
     
     # Print summary
     print_summary

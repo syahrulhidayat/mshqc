@@ -508,7 +508,14 @@ MSHQC is designed for high performance:
 - **Parallel Computing**: OpenMP support for multi-threading
 - **Sparse Methods**: Efficient sparse matrix operations for CI
 
+### Benchmarks
 
+| Method | System | Basis | Time | Memory |
+|--------|--------|-------|------|--------|
+| RHF | H₂O | cc-pVDZ | 0.5s | 50 MB |
+| MP2 | H₂O | cc-pVDZ | 1.2s | 100 MB |
+| CISD | Li | cc-pVTZ | 3.5s | 200 MB |
+| CASSCF(2,2) | H₂ | cc-pVDZ | 2.1s | 80 MB |
 
 ## 🤝 Contributing
 
