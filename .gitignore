@@ -63,3 +63,4 @@ env/
 .idea/
 *.swp
 *.swo*.backup*
+*.backup*
