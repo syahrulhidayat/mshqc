@@ -2,10 +2,13 @@ import os
 import sys
 import glob
 import subprocess
-from setuptools import setup, Extension
+from setuptools import setup, Extension, find_packages
 import numpy
 from pathlib import Path
 import sysconfig
+from setuptools.command.build_ext import build_ext
+import pybind11
+
 
 try:
     import pybind11
@@ -145,5 +148,81 @@ setup(
     ext_modules=ext_modules,
     python_requires=">=3.8",
     install_requires=["numpy>=1.22", "pybind11>=2.12"],
+    zip_safe=False,
+)
+def check_libint2():
+    """Check if libint2 is available"""
+    search_paths = [
+        "/usr/include",
+        "/usr/local/include",
+        os.path.expanduser("~/miniconda/include"),
+        os.path.expanduser("~/.local/include"),
+    ]
+    
+    for path in search_paths:
+        if os.path.exists(os.path.join(path, "libint2.hpp")):
+            print(f"✓ Found libint2 at: {path}")
+            return path
+    
+    print("✗ libint2 not found!")
+    print("\nPlease install libint2:")
+    print("  Ubuntu/Debian: sudo apt-get install libint2-dev")
+    print("  Conda: conda install -c conda-forge libint")
+    print("  macOS: brew install libint")
+    sys.exit(1)
+
+class CMakeExtension(Extension):
+    def __init__(self, name, sourcedir=""):
+        Extension.__init__(self, name, sources=[])
+        self.sourcedir = os.path.abspath(sourcedir)
+
+class CMakeBuild(build_ext):
+    def build_extension(self, ext):
+        # Check dependencies
+        libint_path = check_libint2()
+        
+        # ... rest of your CMake build code ...
+
+# Get all source files
+def get_source_files():
+    base_dir = Path(__file__).parent
+    source_dirs = [
+        base_dir / "src" / "ci",
+        base_dir / "src" / "core",
+        base_dir / "src" / "foundation",
+        base_dir / "src" / "gradient",
+        base_dir / "src" / "integrals",
+        base_dir / "src" / "integration",
+        base_dir / "src" / "mcscf",
+        base_dir / "src" / "mp",
+        base_dir / "src" / "mp2",
+        base_dir / "src" / "mp3",
+        base_dir / "src" / "scf",
+        base_dir / "src" / "validation",
+    ]
+    
+    sources = [str(base_dir / "python" / "bindings.cc")]
+    for src_dir in source_dirs:
+        if src_dir.exists():
+            sources.extend([str(f) for f in src_dir.glob("*.cc")])
+    
+    return sources
+
+setup(
+    name="mshqc",
+    version="0.1.0",
+    author="Syahrul Hidayat",
+    description="Modern Quantum Chemistry Library",
+    long_description=open("README.md").read() if os.path.exists("README.md") else "",
+    long_description_content_type="text/markdown",
+    packages=find_packages(where="python"),
+    package_dir={"": "python"},
+    ext_modules=[CMakeExtension("mshqc._core")],
+    cmdclass={"build_ext": CMakeBuild},
+    install_requires=[
+        "numpy>=1.22",
+        "scipy>=1.9.0",
+    ],
+    python_requires=">=3.8",
     zip_safe=False,
 )
