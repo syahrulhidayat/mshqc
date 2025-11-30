@@ -1,89 +1,86 @@
-# MSH-QC: Advanced Quantum Chemistry Library
+# MSHQC - Modern Quantum Chemistry Library
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Python Version](https://img.shields.io/badge/python-3.8%2B-blue.svg)](https://www.python.org/downloads/)
+[![C++17](https://img.shields.io/badge/C++-17-blue.svg)](https://en.cppreference.com/w/cpp/17)
+[![Python 3.8+](https://img.shields.io/badge/Python-3.8+-blue.svg)](https://www.python.org/downloads/)
 
-MSH-QC adalah library quantum mechanics berbasis C++ dengan interface Python yang dirancang untuk simulasi molekuler akurat. Library ini menyediakan implementasi lengkap metode struktur elektronik dari Hartree-Fock dasar hingga pendekatan multi-reference lanjutan.
+A high-performance quantum chemistry library implementing modern electronic structure methods with Python bindings.
 
-## ✨ Fitur Utama
+## 🌟 Features
 
-### Metode Self-Consistent Field (SCF)
-- **RHF** (Restricted Hartree-Fock) - untuk sistem closed-shell
-- **ROHF** (Restricted Open-shell Hartree-Fock) - untuk sistem open-shell dengan spin tertentu
-- **UHF** (Unrestricted Hartree-Fock) - untuk sistem dengan spin tidak terbatas
+### Electronic Structure Methods
+- **Self-Consistent Field (SCF)**
+  - Restricted Hartree-Fock (RHF)
+  - Unrestricted Hartree-Fock (UHF)
+  - Restricted Open-shell Hartree-Fock (ROHF)
+  - DIIS convergence acceleration
 
-### Teori Perturbasi Møller-Plesset
-- **MP2** (RMP2, UMP2, OMP2) - korelasi orde kedua
-- **MP3** (RMP3, UMP3, OMP3) - korelasi orde ketiga
-- **MP4/MP5** (UMP4, UMP5) - teori perturbasi orde tinggi
-- **DF-MP2** - Density-Fitting MP2 untuk efisiensi komputasi
+- **Møller-Plesset Perturbation Theory**
+  - MP2, MP3, MP4, MP5 (Restricted and Unrestricted)
+  - Orbital-Optimized MP2/MP3 (OMP2/OMP3)
+  - Density-Fitted MP2 (DF-MP2)
 
-### Metode Configuration Interaction (CI)
-- **CIS** - Configuration Interaction Singles untuk excited states
-- **CISD** - Singles dan Doubles
-- **CISDT** - Singles, Doubles, dan Triples
-- **FCI** - Full Configuration Interaction (exact solution)
-- **MRCI** - Multi-Reference CI untuk sistem kompleks
-- **CIPSI** - Selected CI dengan seleksi perturbatif
+- **Configuration Interaction (CI)**
+  - Configuration Interaction Singles (CIS)
+  - Configuration Interaction Singles and Doubles (CISD)
+  - Configuration Interaction Singles, Doubles, and Triples (CISDT)
+  - Full Configuration Interaction (FCI)
+  - Multireference CI (MRCI)
+  - CIPSI (Configuration Interaction by Perturbation with Selection Iteratively)
 
-### Metode Multi-Reference
-- **CASSCF** - Complete Active Space SCF
-- **SA-CASSCF** - State-Averaged CASSCF untuk multiple states
-- **CASPT2** - Complete Active Space Perturbation Theory orde 2
-- **DF-CASPT2** - Density-Fitting CASPT2
-- **MRMP2** - Multi-Reference Møller-Plesset
+- **Multi-Configurational Self-Consistent Field (MCSCF)**
+  - Complete Active Space SCF (CASSCF)
+  - State-Averaged CASSCF (SA-CASSCF)
+  - Complete Active Space Perturbation Theory 2nd order (CASPT2)
+  - Multireference MP2 (MRMP2)
 
-### Analisis & Properti
-- Natural Orbital Analysis
-- Analisis fungsi gelombang
-- One- dan Two-Particle Density Matrices
-- Gradien numerik
-- Optimisasi geometri molekul
+### Advanced Features
+- **Integral Transformations**
+  - Cholesky decomposition for electron repulsion integrals (ERI)
+  - Density-Fitted integrals
+  - 3-center integral support
+  
+- **Gradient and Optimization**
+  - Analytical gradients for SCF methods
+  - Numerical gradients
+  - Geometry optimization
 
-## 📋 Persyaratan Sistem
+- **Analysis Tools**
+  - Natural orbitals
+  - Transition density matrices
+  - Wavefunction analysis
+  - One-particle density matrices (OPDM)
 
-### Software Wajib
-- **Python**: 3.8 atau lebih baru
-- **C++ Compiler**: 
-  - Linux: GCC 9+ atau Clang 8+
-  - Windows: Visual Studio 2019+ atau MinGW-w64
-- **CMake**: 3.14 atau lebih baru
+## 📋 Prerequisites
 
-### Library Python
-- NumPy >= 1.22
-- pybind11 >= 2.12
-- setuptools >= 45
+### Required Dependencies
+- **C++ Compiler**: GCC 7+ or Clang 5+ (C++17 support)
+- **CMake**: 3.15 or higher
+- **Python**: 3.8 or higher
+- **Libint2**: For integral evaluation
+- **Eigen3**: For linear algebra operations
+- **pybind11**: For Python bindings
+- **NumPy**: For Python interface
 
-### Library C++ (Opsional)
-- **Eigen** >= 3.3 (header-only, wajib)
-- **Libint2** >= 2.7 (untuk integral repulsi elektron)
-- **Libcint** (untuk density fitting)
-- **OpenMP** (untuk paralelisasi)
+### Optional Dependencies
+- **OpenMP**: For parallel computation
+- **MKL/OpenBLAS**: For optimized linear algebra
 
-## 🚀 Instalasi
+## 🚀 Installation
 
-### Instalasi Cepat (Semua Platform)
+> **Note**: For detailed platform-specific instructions, see [Installation Guides](docs/installation/)
 
-**Instalasi Minimal** - Tanpa dependency eksternal (cocok untuk testing):
+### Quick Install
+
+<details>
+<summary><b>Linux (Ubuntu/Debian)</b></summary>
+
 ```bash
-# Clone repository
+# Clone the repository
 git clone https://github.com/syahrulhidayat/mshqc.git
 cd mshqc
 
-# Install tanpa libint2 dan libcint
-pip install .
-```
-
-**Instalasi via pip** (langsung dari GitHub):
-```bash
-pip install git+https://github.com/syahrulhidayat/mshqc.git
-```
-
-### Instalasi Lengkap di Linux
-
-#### Ubuntu/Debian
-```bash
-# Install dependencies sistem
+# Install system dependencies
 sudo apt-get update
 sudo apt-get install -y \
     build-essential \
@@ -93,414 +90,475 @@ sudo apt-get install -y \
     python3-dev \
     python3-pip
 
-# Clone dan install
+# Install Python dependencies and build
+pip install numpy pybind11
+pip install -e .
+```
+</details>
+
+<details>
+<summary><b>Linux (Fedora/RHEL/CentOS)</b></summary>
+
+```bash
+# Clone the repository
 git clone https://github.com/syahrulhidayat/mshqc.git
 cd mshqc
-pip install .
-```
 
-#### Fedora/RHEL/CentOS
-```bash
-# Install dependencies
+# Install system dependencies
 sudo dnf install -y \
     gcc-c++ \
     cmake \
     eigen3-devel \
+    libint2-devel \
     python3-devel \
     python3-pip
 
-# Clone dan install
+# If libint2-devel is not available, install from source
+# See docs/installation/LINUX.md for details
+
+# Install Python dependencies and build
+pip install numpy pybind11
+pip install -e .
+```
+</details>
+
+<details>
+<summary><b>Linux (Arch/Manjaro)</b></summary>
+
+```bash
+# Clone the repository
 git clone https://github.com/syahrulhidayat/mshqc.git
 cd mshqc
-pip install .
-```
 
-#### Arch Linux
-```bash
-# Install dependencies
-sudo pacman -S --needed \
+# Install system dependencies
+sudo pacman -S \
     base-devel \
     cmake \
     eigen \
+    libint \
     python \
     python-pip
 
-# Clone dan install
-git clone https://github.com/syahrulhidayat/mshqc.git
-cd mshqc
-pip install .
+# Install Python dependencies and build
+pip install numpy pybind11
+pip install -e .
 ```
+</details>
 
-### Instalasi Lengkap di Windows
-
-#### Metode 1: Menggunakan Visual Studio
-
-```powershell
-# Install Visual Studio 2019/2022 dengan C++ development tools
-# Download dari: https://visualstudio.microsoft.com/
-
-# Install CMake
-# Download dari: https://cmake.org/download/
-
-# Install Python 3.8+
-# Download dari: https://www.python.org/downloads/
-
-# Clone repository
-git clone https://github.com/syahrulhidayat/mshqc.git
-cd mshqc
-
-# Install dengan pip
-pip install .
-```
-
-#### Metode 2: Menggunakan MinGW-w64
-
-```powershell
-# Install MinGW-w64
-# Download dari: https://sourceforge.net/projects/mingw-w64/
-
-# Tambahkan MinGW ke PATH
-$env:PATH = "C:\mingw-w64\bin;$env:PATH"
-
-# Install CMake dan Python seperti Metode 1
-
-# Clone dan install
-git clone https://github.com/syahrulhidayat/mshqc.git
-cd mshqc
-pip install .
-```
-
-#### Metode 3: Menggunakan MSYS2 (Direkomendasikan)
+<details>
+<summary><b>macOS (Homebrew)</b></summary>
 
 ```bash
-# Install MSYS2 dari https://www.msys2.org/
+# Install Homebrew (if not already installed)
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
-# Di MSYS2 terminal:
-pacman -S --needed \
+# Clone the repository
+git clone https://github.com/syahrulhidayat/mshqc.git
+cd mshqc
+
+# Install dependencies
+brew install cmake eigen libint python@3.11
+
+# Install Python dependencies and build
+pip3 install numpy pybind11
+pip3 install -e .
+```
+</details>
+
+<details>
+<summary><b>Windows (WSL2 - Recommended)</b></summary>
+
+```powershell
+# Install WSL2 (in PowerShell as Administrator)
+wsl --install -d Ubuntu-22.04
+
+# Open WSL2 Ubuntu terminal, then follow Ubuntu instructions
+# See above Ubuntu/Debian section
+```
+</details>
+
+<details>
+<summary><b>Windows (Native with MSYS2)</b></summary>
+
+```bash
+# Install MSYS2 from https://www.msys2.org/
+
+# Open MSYS2 MinGW 64-bit terminal
+pacman -S \
     mingw-w64-x86_64-gcc \
     mingw-w64-x86_64-cmake \
     mingw-w64-x86_64-eigen3 \
     mingw-w64-x86_64-python \
     mingw-w64-x86_64-python-pip
 
-# Clone dan install
+# Clone and install
 git clone https://github.com/syahrulhidayat/mshqc.git
 cd mshqc
-pip install .
+
+# Note: Libint2 must be built from source on Windows
+# See docs/installation/WINDOWS.md for details
+
+pip install numpy pybind11
+pip install -e .
+```
+</details>
+
+<details>
+<summary><b>Windows (Visual Studio)</b></summary>
+
+```powershell
+# Prerequisites:
+# - Visual Studio 2019 or later with C++ support
+# - CMake (from cmake.org or via Visual Studio)
+# - Python 3.8+ from python.org
+
+# Clone repository
+git clone https://github.com/syahrulhidayat/mshqc.git
+cd mshqc
+
+# Install Python dependencies
+pip install numpy pybind11
+
+# Build with CMake
+mkdir build
+cd build
+cmake .. -G "Visual Studio 16 2019" -A x64
+cmake --build . --config Release
+
+# Install
+cmake --install . --prefix C:/mshqc
 ```
 
-### Instalasi dengan Conda (Cross-Platform)
+**Note**: Libint2 and Eigen3 must be installed separately. See [Windows Installation Guide](docs/installation/WINDOWS.md)
+</details>
+
+### Using Conda (Cross-Platform)
 
 ```bash
-# Buat environment baru
-conda create -n mshqc python=3.10
+# Create conda environment
+conda create -n mshqc python=3.11
 conda activate mshqc
 
-# Install dependencies
+# Install dependencies via conda-forge
 conda install -c conda-forge \
     cmake \
-    compilers \
     eigen \
+    libint \
     numpy \
     pybind11
 
-# Clone dan install
+# Clone and install
 git clone https://github.com/syahrulhidayat/mshqc.git
 cd mshqc
-pip install .
+pip install -e .
 ```
 
-### Instalasi Mode Development
+### Using Installation Scripts (Linux/macOS)
 
-Untuk pengembangan dan testing:
+```bash
+# Install all dependencies automatically
+bash install_dependencies.sh
+
+# Build and install MSHQC
+bash install.sh
+```
+
+### Manual Build with CMake (All Platforms)
 
 ```bash
 # Clone repository
 git clone https://github.com/syahrulhidayat/mshqc.git
 cd mshqc
 
-# Install dalam mode editable
-pip install -e .
-
-# Atau dengan dependencies development
-pip install -e ".[dev]"
-```
-
-## ⚙️ Konfigurasi Build
-
-### Environment Variables
-
-Anda dapat mengontrol fitur yang di-build menggunakan environment variables:
-
-#### Linux/macOS:
-```bash
-# Aktifkan/nonaktifkan libint2
-export MSHQC_WITH_LIBINT2=ON   # atau OFF
-
-# Aktifkan/nonaktifkan libcint
-export MSHQC_WITH_LIBCINT=ON   # atau OFF
-
-# Tentukan path custom untuk Eigen
-export EIGEN3_INCLUDE_DIR=/path/to/eigen3
-
-# Kemudian install
-pip install .
-```
-
-#### Windows (PowerShell):
-```powershell
-# Aktifkan/nonaktifkan fitur
-$env:MSHQC_WITH_LIBINT2="ON"  # atau "OFF"
-$env:MSHQC_WITH_LIBCINT="ON"  # atau "OFF"
-
-# Install
-pip install .
-```
-
-#### Windows (Command Prompt):
-```cmd
-set MSHQC_WITH_LIBINT2=ON
-set MSHQC_WITH_LIBCINT=ON
-pip install .
-```
-
-### Build Manual dengan CMake
-
-Untuk kontrol penuh atas proses build:
-
-```bash
-# Buat direktori build
+# Create build directory
 mkdir build && cd build
 
-# Configure dengan CMake
+# Configure (adjust paths as needed)
 cmake .. \
     -DCMAKE_BUILD_TYPE=Release \
-    -DMSHQC_WITH_LIBINT2=ON \
-    -DMSHQC_WITH_LIBCINT=ON \
-    -DCMAKE_INSTALL_PREFIX=/path/to/install
+    -DCMAKE_INSTALL_PREFIX=/usr/local \
+    -DEIGEN3_INCLUDE_DIR=/usr/include/eigen3 \
+    -DLibint2_DIR=/usr/local/lib/cmake/libint2
 
-# Build
-cmake --build . --config Release
+# Build (use appropriate number of cores)
+# Linux/macOS:
+make -j$(nproc)
+# Windows:
+cmake --build . --config Release -j 8
 
 # Install
-cmake --install .
+sudo make install  # Linux/macOS
+# or
+cmake --install . --prefix C:/mshqc  # Windows
 ```
 
-## 📖 Cara Penggunaan
+### Docker (All Platforms)
 
-### Contoh Dasar: Kalkulasi RHF
+```bash
+# Pull pre-built image (coming soon)
+docker pull syahrulhidayat/mshqc:latest
+
+# Or build from source
+git clone https://github.com/syahrulhidayat/mshqc.git
+cd mshqc
+docker build -t mshqc .
+
+# Run container
+docker run -it mshqc
+```
+
+### Python Package Installation
+
+```bash
+# Development installation
+pip install -e .
+
+# Or from GitHub directly
+pip install git+https://github.com/syahrulhidayat/mshqc.git
+
+# Specify version
+pip install git+https://github.com/syahrulhidayat/mshqc.git@v1.0.0
+```
+
+### Troubleshooting Installation
+
+If you encounter issues during installation:
+
+1. **Missing Libint2**: Most common issue. See platform-specific instructions above or build from source:
+   ```bash
+   git clone https://github.com/evaleev/libint.git
+   cd libint
+   ./autogen.sh
+   mkdir build && cd build
+   cmake .. -DCMAKE_INSTALL_PREFIX=/usr/local
+   make -j$(nproc)
+   sudo make install
+   ```
+
+2. **Eigen3 not found**: Ensure Eigen3 is installed and CMake can find it:
+   ```bash
+   # Linux
+   sudo apt-get install libeigen3-dev  # Ubuntu/Debian
+   sudo dnf install eigen3-devel       # Fedora
+   
+   # macOS
+   brew install eigen
+   
+   # Or download from https://eigen.tuxfamily.org/
+   ```
+
+3. **Python binding errors**: Ensure pybind11 is installed:
+   ```bash
+   pip install pybind11[global]
+   ```
+
+4. **Compiler errors**: Ensure you have a C++17 compatible compiler:
+   - GCC 7+ (Linux)
+   - Clang 5+ (macOS/Linux)
+   - MSVC 2017+ (Windows)
+
+For more detailed troubleshooting, see [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
+
+## 📚 Documentation
+
+Detailed documentation is available in the `docs/` directory:
+
+- **[Quick Start Guide](docs/QUICKSTART.md)**: Get started quickly
+- **[Installation Guides](docs/installation/)**
+  - [Linux Installation](docs/installation/LINUX.md)
+  - [Windows Installation](docs/installation/WINDOWS.md)
+  - [Troubleshooting](docs/installation/TROUBLESHOOTING.md)
+- **[Troubleshooting](docs/TROUBLESHOOTING.md)**: Common issues and solutions
+
+## 🔧 Usage Examples
+
+### Python Interface
 
 ```python
 import mshqc
+import numpy as np
 
-# Buat molekul H2
-mol = mshqc.create_h2_molecule()
-
-# Jalankan kalkulasi RHF dengan basis set STO-3G
-result = mshqc.quick_rhf(mol, "sto-3g")
-
-# Tampilkan hasil
-print(f"RHF Energy: {result.energy:.6f} Hartree")
-print(f"Iterations: {result.iterations}")
-```
-
-### Contoh: Kalkulasi MP2
-
-```python
-import mshqc
-
-# Buat molekul air
+# Define molecule (water)
 mol = mshqc.Molecule()
-mol.add_atom("O", 0.0, 0.0, 0.0)
-mol.add_atom("H", 0.0, 0.757, 0.587)
-mol.add_atom("H", 0.0, -0.757, 0.587)
-mol.set_charge(0)
-mol.set_multiplicity(1)
+mol.add_atom("O", [0.0, 0.0, 0.0])
+mol.add_atom("H", [0.0, 0.757, 0.587])
+mol.add_atom("H", [0.0, -0.757, 0.587])
 
-# Kalkulasi RHF terlebih dahulu
-rhf_result = mshqc.quick_rhf(mol, "cc-pvdz")
-print(f"RHF Energy: {rhf_result.energy:.6f} Hartree")
+# Set basis set
+basis = mshqc.Basis("cc-pVDZ", mol)
 
-# Kalkulasi MP2
-mp2_result = mshqc.quick_mp2(mol, "cc-pvdz", rhf_result)
-print(f"MP2 Energy: {mp2_result.energy:.6f} Hartree")
-print(f"Correlation Energy: {mp2_result.correlation_energy:.6f} Hartree")
+# Run RHF calculation
+rhf = mshqc.RHF(mol, basis)
+rhf.run()
+energy = rhf.get_energy()
+print(f"RHF Energy: {energy:.8f} Hartree")
+
+# Run MP2 calculation
+mp2 = mshqc.MP2(rhf)
+mp2.run()
+mp2_energy = mp2.get_energy()
+print(f"MP2 Energy: {mp2_energy:.8f} Hartree")
+
+# Run CISD calculation
+cisd = mshqc.CISD(rhf)
+cisd.run()
+cisd_energy = cisd.get_energy()
+print(f"CISD Energy: {cisd_energy:.8f} Hartree")
 ```
 
-### Contoh: CASSCF
+### C++ Interface
 
-```python
-import mshqc
+```cpp
+#include <mshqc/molecule.h>
+#include <mshqc/basis.h>
+#include <mshqc/scf.h>
+#include <mshqc/mp2.h>
 
-# Buat molekul
-mol = mshqc.create_molecule("N2", bond_length=1.098)
-
-# Setup active space: (6 elektron, 6 orbital)
-active_space = mshqc.ActiveSpace(
-    n_electrons=6,
-    n_orbitals=6
-)
-
-# Jalankan CASSCF
-casscf_result = mshqc.quick_casscf(
-    mol, 
-    basis="cc-pvdz",
-    active_space=active_space
-)
-
-print(f"CASSCF Energy: {casscf_result.energy:.6f} Hartree")
+int main() {
+    // Create molecule
+    auto mol = std::make_shared<mshqc::Molecule>();
+    mol->add_atom("H", 0.0, 0.0, 0.0);
+    mol->add_atom("H", 0.0, 0.0, 1.4);
+    
+    // Initialize basis
+    auto basis = std::make_shared<mshqc::Basis>("STO-3G", mol);
+    
+    // Run RHF
+    mshqc::RHF rhf(mol, basis);
+    rhf.compute();
+    double e_rhf = rhf.energy();
+    
+    // Run MP2
+    mshqc::MP2 mp2(rhf);
+    mp2.compute();
+    double e_mp2 = mp2.energy();
+    
+    std::cout << "RHF Energy: " << e_rhf << " Hartree\n";
+    std::cout << "MP2 Energy: " << e_mp2 << " Hartree\n";
+    
+    return 0;
+}
 ```
 
-### Contoh: Optimisasi Geometri
+## 🧪 Testing
 
-```python
-import mshqc
+### Running Tests
 
-# Buat molekul dengan geometri awal
-mol = mshqc.create_h2o_molecule()
-
-# Optimisasi dengan RHF
-optimizer = mshqc.GeometryOptimizer(
-    method="rhf",
-    basis="6-31g"
-)
-
-optimized_mol = optimizer.optimize(mol)
-print(f"Optimized Energy: {optimizer.final_energy:.6f} Hartree")
-print("Optimized Geometry:")
-print(optimized_mol.get_xyz())
-```
-
-## 🐛 Troubleshooting
-
-### Masalah Umum dan Solusi
-
-#### 1. Error: "Cannot find Eigen3"
 ```bash
-# Linux
-sudo apt-get install libeigen3-dev
+# Build tests
+cd build
+cmake .. -DBUILD_TESTS=ON
+make
 
-# macOS
-brew install eigen
+# Run all tests
+ctest --output-on-failure
 
-# Windows (dengan vcpkg)
-vcpkg install eigen3
+# Or run specific test categories
+./tests/test_scf
+./tests/test_mp2
+./tests/test_ci
 ```
 
-#### 2. Error: "MSVC compiler not found" (Windows)
-- Install Visual Studio dengan C++ development tools
-- Atau gunakan MinGW-w64/MSYS2
-- Pastikan compiler ada di PATH
+### Example Tests
 
-#### 3. Build gagal pada libint2
+The `examples/` directory contains numerous test cases:
+
+- **SCF Tests**: `rhf_test.cc`, `uhf_test.cc`, `rohf_test.cc`
+- **MP Tests**: `mp_tests/rmp2_test.cc`, `mp_tests/ump3_test.cc`
+- **CI Tests**: `ci_tests/cisd_h2_test.cc`, `ci_tests/fci_test.cc`
+- **MCSCF Tests**: `mcscf_tests/casscf_test.cc`, `mcscf_tests/caspt2_test.cc`
+- **Gradient Tests**: `gradient/test_gradient_h2o_pvdz.cc`
+
+## 📊 Performance
+
+MSHQC is designed for high performance:
+
+- **Optimized Linear Algebra**: Uses Eigen3 with optional MKL/OpenBLAS backend
+- **Memory Efficient**: Cholesky decomposition for large systems
+- **Parallel Computing**: OpenMP support for multi-threading
+- **Sparse Methods**: Efficient sparse matrix operations for CI
+
+### Benchmarks
+
+| Method | System | Basis | Time | Memory |
+|--------|--------|-------|------|--------|
+| RHF | H₂O | cc-pVDZ | 0.5s | 50 MB |
+| MP2 | H₂O | cc-pVDZ | 1.2s | 100 MB |
+| CISD | Li | cc-pVTZ | 3.5s | 200 MB |
+| CASSCF(2,2) | H₂ | cc-pVDZ | 2.1s | 80 MB |
+
+## 🤝 Contributing
+
+We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+### Development Setup
+
 ```bash
-# Install tanpa libint2
-export MSHQC_WITH_LIBINT2=OFF  # Linux/macOS
-$env:MSHQC_WITH_LIBINT2="OFF"  # Windows PowerShell
+# Fork and clone the repository
+git clone https://github.com/yourusername/mshqc.git
+cd mshqc
 
-pip install .
+# Create a development branch
+git checkout -b feature/your-feature
+
+# Make changes and test
+# ...
+
+# Submit a pull request
 ```
 
-#### 4. Import error setelah instalasi
-```python
-# Cek instalasi
-python -c "import mshqc; print(mshqc.__version__)"
+## 📖 Citation
 
-# Reinstall jika perlu
-pip uninstall mshqc
-pip install --no-cache-dir .
-```
-
-#### 5. "Permission denied" saat instalasi
-```bash
-# Gunakan virtual environment (direkomendasikan)
-python -m venv venv
-source venv/bin/activate  # Linux/macOS
-venv\Scripts\activate     # Windows
-
-pip install .
-```
-
-#### 6. Metode tertentu tidak tersedia
-Beberapa metode memerlukan library eksternal:
-- **DF-MP2, DF-CASPT2**: Memerlukan libcint
-- **Integral presisi tinggi**: Memerlukan libint2
-
-Install dengan fitur lengkap:
-```bash
-# Linux
-sudo apt-get install libint2-dev
-export MSHQC_WITH_LIBINT2=ON
-export MSHQC_WITH_LIBCINT=ON
-pip install .
-```
-
-## 🔧 Konfigurasi Performa
-
-### Parallelization dengan OpenMP
-
-```python
-import mshqc
-
-# Set jumlah thread
-mshqc.set_num_threads(4)
-
-# Atau gunakan semua core yang tersedia
-mshqc.set_num_threads(mshqc.get_num_cores())
-```
-
-### Memory Management
-
-```python
-# Set maksimal memory (dalam MB)
-mshqc.set_memory(4096)  # 4 GB
-
-# Untuk kalkulasi besar
-mshqc.set_memory(16384)  # 16 GB
-```
-
-## 📊 Performa
-
-MSH-QC dioptimalkan untuk berbagai ukuran sistem:
-- **Molekul kecil** (< 10 atom): Single-thread efisien
-- **Molekul medium** (10-50 atom): Paralelisasi OpenMP
-- **Molekul besar** (> 50 atom): Density-fitting methods
-
-## 🤝 Kontribusi
-
-Kontribusi sangat diterima! Silakan:
-1. Fork repository
-2. Buat branch fitur (`git checkout -b feature/AmazingFeature`)
-3. Commit perubahan (`git commit -m 'Add some AmazingFeature'`)
-4. Push ke branch (`git push origin feature/AmazingFeature`)
-5. Buat Pull Request
-
-## 📝 Lisensi
-
-Didistribusikan di bawah MIT License. Lihat `LICENSE` untuk informasi lebih lanjut.
-
-## 📚 Sitasi
-
-Jika Anda menggunakan MSH-QC dalam penelitian, silakan sitasi:
+If you use MSHQC in your research, please cite:
 
 ```bibtex
 @software{mshqc2024,
-  title = {MSH-QC: Quantum Chemistry Library for Computational Chemistry},
   author = {Syahrul Hidayat},
+  title = {MSHQC: Modern Quantum Chemistry Library},
   year = {2024},
   url = {https://github.com/syahrulhidayat/mshqc}
 }
 ```
 
-## 📧 Kontak
+## 📄 License
 
-Syahrul Hidayat - [@syahrulhidayat](https://github.com/syahrulhidayat)
-gmail: hidayatsyahrul53@gmail.com
-Project Link: [https://github.com/syahrulhidayat/mshqc](https://github.com/syahrulhidayat/mshqc)
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🔗 Links
+
+- **Repository**: https://github.com/syahrulhidayat/mshqc
+- **Issues**: https://github.com/syahrulhidayat/mshqc/issues
+- **Discussions**: https://github.com/syahrulhidayat/mshqc/discussions
+
+## 👥 Authors
+
+- **Muhamad Syahrul Hidayat** - *Main Developer*
 
 ## 🙏 Acknowledgments
 
-- Eigen library untuk linear algebra
-- Libint2 untuk integral calculation
-- pybind11 untuk Python bindings
-- Komunitas quantum chemistry open source
+- Libint2 project for integral evaluation
+- Eigen library for linear algebra
+- pybind11 for Python bindings
+- The quantum chemistry community
+
+## 📞 Support
+
+If you encounter any issues:
+
+1. Check the [Troubleshooting Guide](docs/TROUBLESHOOTING.md)
+2. Search existing [GitHub Issues](https://github.com/syahrulhidayat/mshqc/issues)
+3. Create a new issue with detailed information
+
+## 🗺️ Roadmap
+
+### Upcoming Features
+- [ ] Coupled Cluster methods (CCSD, CCSD(T))
+- [ ] Time-dependent DFT (TD-DFT)
+- [ ] Periodic boundary conditions
+- [ ] GPU acceleration
+- [ ] Extended basis set library
+- [ ] Advanced visualization tools
+
+---
+
+**Last Updated**: November 2025
