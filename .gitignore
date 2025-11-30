@@ -62,4 +62,4 @@ env/
 .vscode/
 .idea/
 *.swp
-*.swo
+*.swo*.backup*
