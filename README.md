@@ -515,8 +515,8 @@ Areas where help is needed:
 ### 🔴 Debug Needed
 
 1. **DF-CASPT2 (Density-Fitted CASPT2)** - ERI reconstruction issue
-   - **Problem**: ERIs reconstructed ~1000× too large
-   - **Location**: `src/mcscf/df_caspt2.cc` lines 410-458
+   - **Problem**: ERIs reconstructed 
+   - **Location**: `src/mcscf/df_caspt2.cc`
    - **Impact**: E(DF-CASPT2) = +3204 Ha (should be -7.43 Ha)
    - **Timeline**: 1-2 weeks debugging
    - **✅ Workaround**: Use **Cholesky-CASPT2** (0.007 µHa accuracy, production-ready!)
