@@ -467,29 +467,61 @@ The `examples/` directory contains numerous test cases:
 - **MP Tests**: `mp_tests/rmp2_test.cc`, `mp_tests/ump3_test.cc`
 - **CI Tests**: `ci_tests/cisd_h2_test.cc`, `ci_tests/fci_test.cc`
 - **MCSCF Tests**: `mcscf_tests/casscf_test.cc`, `mcscf_tests/caspt2_test.cc`
-- **Gradient Tests**: `gradient/test_gradient_h2o_pvdz.cc`
+- **Gradient Tests**: `gradient/test_gradient_h2o_pvdz.cc
+- 
+## ⚠️ Known Issues & Limitations
 
-## 📊 Performance
+### 🟡 In Progress 
 
-MSHQC is designed for high performance:
+1. **SA-CASSCF (State-Averaged CASSCF)** - 85% complete
+   - ✅ Framework and API ready
+   - ✅ Multi-root CI solver integrated
+   - ⏳ ERI transformation needed (~150-200 lines)
+   - ⏳ Orbital optimization (~300-400 lines)
 
-- **Optimized Linear Algebra**: Uses Eigen3 with optional MKL/OpenBLAS backend
-- **Memory Efficient**: Cholesky decomposition for large systems
-- **Parallel Computing**: OpenMP support for multi-threading
-- **Sparse Methods**: Efficient sparse matrix operations for CI
+2. **CIPSI Build Issue** - Minor compilation error
+   - Impact: Numerical validation blocked
+   - **Fix**: Clean rebuild 
+   
 
-### Benchmarks
+3. **Analytical Gradients** - 80% complete
+   - ✅ Framework implemented
+   - ⏳ Implementation details (~200 lines)
 
-| Method | System | Basis | Time | Memory |
-|--------|--------|-------|------|--------|
-| RHF | H₂O | cc-pVDZ | 0.5s | 50 MB |
-| MP2 | H₂O | cc-pVDZ | 1.2s | 100 MB |
-| CISD | Li | cc-pVTZ | 3.5s | 200 MB |
-| CASSCF(2,2) | H₂ | cc-pVDZ | 2.1s | 80 MB |
+
 
 ## 🤝 Contributing
 
 We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+Areas where help is needed:
+
+### High Priority
+1. **DF-CASPT2 Debug**: Fix ERI reconstruction (lines 410-458)
+2. **SA-CASSCF Completion**: ERI transformation and orbital optimization
+3. **Documentation**: Add more Python examples
+
+### Medium Priority
+1. **Performance**: Optimization for larger systems
+2. **Testing**: Add more validation tests
+3. **Features**: Analytical frequency calculations
+
+### How to Contribute
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+   
+### 🔴 Debug Needed
+
+1. **DF-CASPT2 (Density-Fitted CASPT2)** - ERI reconstruction issue
+   - **Problem**: ERIs reconstructed ~1000× too large
+   - **Location**: `src/mcscf/df_caspt2.cc` lines 410-458
+   - **Impact**: E(DF-CASPT2) = +3204 Ha (should be -7.43 Ha)
+   - **Timeline**: 1-2 weeks debugging
+   - **✅ Workaround**: Use **Cholesky-CASPT2** (0.007 µHa accuracy, production-ready!)
+
 
 ### Development Setup
 
