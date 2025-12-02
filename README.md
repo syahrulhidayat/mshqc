@@ -476,17 +476,16 @@ The `examples/` directory contains numerous test cases:
 1. **SA-CASSCF (State-Averaged CASSCF)** - 85% complete
    - ✅ Framework and API ready
    - ✅ Multi-root CI solver integrated
-   - ⏳ ERI transformation needed (~150-200 lines)
-   - ⏳ Orbital optimization (~300-400 lines)
-
+   - ⏳ ERI transformation needed 
+   - ⏳ Orbital optimization 
 2. **CIPSI Build Issue** - Minor compilation error
    - Impact: Numerical validation blocked
    - **Fix**: Clean rebuild 
    
 
-3. **Analytical Gradients** - 80% complete
+3. **Analytical Gradients** - 
    - ✅ Framework implemented
-   - ⏳ Implementation details (~200 lines)
+   - ⏳ Implementation details 
 
 
 
@@ -496,7 +495,7 @@ We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guid
 Areas where help is needed:
 
 ### High Priority
-1. **DF-CASPT2 Debug**: Fix ERI reconstruction (lines 410-458)
+1. **DF-CASPT2 Debug**: Fix ERI reconstruction 
 2. **SA-CASSCF Completion**: ERI transformation and orbital optimization
 3. **Documentation**: Add more Python examples
 
