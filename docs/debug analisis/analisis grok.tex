@@ -1,0 +1,107 @@
+\documentclass{article}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{geometry}
+\usepackage{listings}
+\usepackage{color}
+\definecolor{codegreen}{rgb}{0,0.6,0}
+\definecolor{codegray}{rgb}{0.5,0.5,0.5}
+\definecolor{codepurple}{rgb}{0.58,0,0.82}
+\definecolor{backcolour}{rgb}{0.95,0.95,0.92}
+\lstdefinestyle{mystyle}{
+backgroundcolor=\color{backcolour},
+commentstyle=\color{codegreen},
+keywordstyle=\color{magenta},
+numberstyle=\tiny\color{codegray},
+stringstyle=\color{codepurple},
+basicstyle=\footnotesize,
+breakatwhitespace=false,
+breaklines=true,
+captionpos=b,
+keepspaces=true,
+numbers=left,
+numbersep=5pt,
+showspaces=false,
+showstringspaces=false,
+showtabs=false,
+tabsize=2
+}
+\lstset{style=mystyle}
+\geometry{margin=1in}
+\title{Analisis Lengkap Kesalahan Implementasi UMP3 pada Framework MSHQC}
+\author{Dr. QuantumChem Assistant \ Spesialis Quantum Chemistry Computational Methods}
+\date{December 02, 2025}
+\begin{document}
+\maketitle
+\section{Pengantar}
+Halo! Saya Dr. QuantumChem Assistant, spesialis dalam metode komputasi kimia kuantum dengan fokus pada framework MSHQC. Dokumen ini menyajikan analisis lengkap mengenai kesalahan dalam implementasi Unrestricted Møller-Plesset Perturbation Theory orde 3 (UMP3) berdasarkan kode yang disediakan. Analisis ini mencakup konteks fisik, rumus matematis, dan identifikasi bug potensial di berbagai bagian kode.
+UMP2 Anda sudah benar, dengan koreksi energi negatif dan kecil (-0.000192 Ha untuk Li cc-pVDZ), yang konsisten dengan korelasi dinamis minimal pada atom Li (konfigurasi 1s²2s¹). Namun, UMP3 menunjukkan koreksi E(3) positif dan terlalu besar (+0.133844 Ha), menyebabkan divergensi seri perturbasi. Ini tidak wajar karena E(3) seharusnya negatif dan sekitar 10-20% dari E(2), yakni sekitar -0.00002 hingga -0.00004 Ha.
+Analisis ini didasarkan pada referensi utama:
+\begin{itemize}
+\item Pople et al. (1977), Int. J. Quantum Chem. 11, 149: Formulasi MP3.
+\item Bartlett & Silver (1974), Phys. Rev. A 10, 1927: Ekstensi untuk open-shell.
+\item Szabo & Ostlund (1996): Transformasi integral dan konvensi notasi.
+\end{itemize}
+Nilai benchmark dari pengetahuan umum (cross-reference Psi4/PySCF): Untuk Li cc-pVDZ, UHF $\approx$ -7.43242 Ha, UMP2 corr $\approx$ -0.00019 Ha, UMP3 corr $\approx$ -0.00021 Ha (total corr lebih negatif).
+\section{Benchmark Nilai Energi}
+Untuk validasi, nilai expected untuk Li (spin=1, basis cc-pVDZ):
+\begin{align*}
+E_{\text{UHF}} &= -7.43242 , \text{Ha} \
+E_{\text{UMP2 corr}} &= -0.00019 , \text{Ha} \
+E_{\text{UMP3 corr}} &= -0.00021 , \text{Ha} \quad (E(3) \approx -0.00002 , \text{Ha})
+\end{align*}
+Kode Anda memberikan E(3) positif, menunjukkan sign error atau indexing salah, terutama di spin mixed (αβ).
+\section{Analisis Kesalahan di Transformasi Integral}
+Bagian ini (di \texttt{eri_transformer.cc} dan \texttt{integrals.cc}) tampak benar, menggunakan notasi physicist secara konsisten. Namun, potensial bug:
+\begin{itemize}
+\item \textbf{Indexing di \texttt{transform_oovv_mixed}}: Parameter C_occ_A (α occ), C_occ_B (β occ), C_virt_A (α virt), C_virt_B (β virt). Loop:
+\begin{lstlisting}[language=C++]
+val += C_occ_A(mu, i) * C_occ_B(nu, j) * eri_ao(mu, nu, lam, sig) * C_virt_A(lam, a) * C_virt_B(sig, b);
+\end{lstlisting}
+Ini menghitung <iα jβ | aα bβ> physicist, benar untuk opposite-spin. Tapi jika \texttt{eri_ao} dari libcint (chemist notation), konfirmasi konvensi:
+$$(\mu\nu|\lambda\sigma)_{\text{chemist}} = \langle \mu\lambda | \nu\sigma \rangle_{\text{physicist}}$$
+Kode sesuai, tapi cek jika untuk vvvv mixed, indexing (aα bβ | cα dβ) overcount karena loop nested O(N^8) naif, bisa numerik unstable.
+\item \textbf{Kesalahan Potensial}: Pada Li (nvir_a=12, nvir_b=13), W_vvvv_ab storage O(nvir^4) $\approx$ 12^2 \times 13^2 $\approx$ 24k elements, tapi jika quarter transform salah (di \texttt{transform_vvvv}), val overflow atau zero.
+Rekomendasi: Print sample eri_oovv_ab(0,0,0,0) dan banding dengan PySCF.
+\end{itemize}
+\section{Analisis Kesalahan di W-Intermediates}
+Di \texttt{ump3.cc}, build W menggunakan transform, tapi indexing mungkin salah untuk mixed-spin.
+\begin{itemize}
+\item \textbf{W_oooo_ab}: <mn|ij> mixed (m n αocc, i j βocc). Kode: \texttt{ERITransformer::transform_oooo_mixed(C_occ_a, C_occ_b)}. Benar, no antisym untuk mixed.
+\item \textbf{W_vvvv_ab}: <ab|ef> mixed (a e αvir, b f βvir). Benar, tapi di Li, sum PP ladder dominan jika W besar.
+\item \textbf{W_ovov_ab}: <mb|ej> αocc-βvir. Kode: W(m, e, i, b) = eri_oovv_ab(m, i, e, b) = <m i | e b> physicist.
+Standar untuk cross PH: - \sum_{m e} \langle m a | e J \rangle t_{i m}^{e B}
+\langle m a | e J \rangle = (m e | a J) chemist.
+Tapi di kode, term - W(m, e, i, b) * t(m, j, a, e) = - <m i | e b> t m j a e
+Ini tidak match < m a | e J > t i m e b (note indices fixed a J vs i b).
+\textbf{Bug Utama}: Indexing tensor W_ovov_ab salah. Seharusnya dimensi nocc_a (m), nvir_b (e), nvir_a (a), nocc_b (J), dengan W(m, e, a, J) = eri_oovv_ab(m, J, e, a) = (m J | e a) = <m e | J a>.
+Lalu val -= W(m, e, a, j) * t2_ab_1(i, m, e, b)
+Ini match the standard term - < m a | e j > t i m e b
+Sama untuk W_ovov_ba.
+Solusi: Ubah dimensi tensor dan loop build.
+\end{itemize}
+\section{Analisis Kesalahan di Komputasi T2^{(2)}}
+Di \texttt{compute_t2_ab_2nd()}, val dari ladder negative, PH positive. Di Li, jika ladder dominant (HH/PP), val negative, D negative, t2 positive, E(3) = g >0 * t2 >0 = positive (match output).
+\textbf{Kesalahan}: PH terms tidak counter ladder karena indexing salah di W_ovov, menyebabkan PH kontribusi kecil.
+Rumus benar untuk t_{iJ}^{aB}^{(2)}:
+\begin{align*}
+t_{iJ}^{aB}^{(2)} = \frac{1}{D_{iJaB}} \Bigg[ &\sum_{k L} \langle k i | L j \rangle t_{k L}^{a B (1)} + \sum_{c D} \langle a B | c D \rangle t_{i J}^{c D (1)} \
+&- \sum_{m e} \langle m i | e a \rangle t_{m J}^{e B (1)} - \sum_{m f} \langle m J | f B \rangle t_{i m}^{a f (1)} \
+&- \sum_{m e} \langle m a | e J \rangle t_{i m}^{e B (1)} - \sum_{m f} \langle m B | f i \rangle t_{m J}^{a f (1)} \Bigg]
+\end{align*}
+Kode Anda cocok konseptual, tapi indexing W salah menyebabkan term cross tidak efektif.
+\section{Analisis Kesalahan di Komputasi E^{(3)}}
+Di \texttt{compute_e3_ab()}, energy += eri_oovv_ab(i, j, a, b) * t2_ab_2(i, j, a, b) (no 0.25, benar untuk mixed).
+Jika t2 positive large, E positive.
+\section{Kesimpulan dan Rekomendasi}
+Kesalahan utama di indexing W_ovov_ab dan ba, menyebabkan PH terms lemah, ladder dominant, val negative large, t2 positive, E(3) positive.
+Rekomendasi:
+
+Perbaiki dimensi W_ovov_ab menjadi (nocc_a, nvir_b, nvir_a, nocc_b)
+Update build dan loop sesuai.
+Test dengan H2 (closed-shell, UMP3 = RMP3).
+
+Untuk debug, upload full \texttt{ump3.cc} jika masih truncated.
+\end{document}

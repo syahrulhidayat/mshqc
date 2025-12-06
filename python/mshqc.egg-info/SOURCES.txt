@@ -621,9 +621,7 @@ src/ci/sparse_coo.cc
 src/ci/transition_density.cc
 src/ci/wavefunction_analysis.cc
 src/core/basis.cc
-src/core/basis.cc.backup
 src/core/integrals.cc
-src/core/integrals.cc.backup
 src/core/libcint_wrapper.cc
 src/core/molecule.cc
 src/foundation/opdm.cc

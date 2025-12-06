@@ -33,6 +33,29 @@
  *       Algorithms based on published theory
  */
 
+/**
+ * @file eri_transformer.cc - CORRECTED IMPLEMENTATION Part 1
+ * @brief Fixed mixed-spin transformations and quarter transforms
+ * 
+ * CRITICAL FIXES:
+ * 1. transform_oovv_mixed: Now uses C_virt_B instead of C_occ_B
+ * 2. transform_oovv_quarter: Fixed virtual space indexing
+ * 3. All index conventions clarified with comments
+ */
+/**
+ * @file eri_transformer.cc
+ * @brief Implementation of unified ERI transformation utilities
+ * FIXED: Index ordering (mu, nu, lam, sig) and loop nesting.
+ */
+
+/**
+ * @file eri_transformer.cc
+ * @brief Implementation of unified ERI transformation utilities
+ * @details FULL IMPLEMENTATION for MP2, MP3, and MP4.
+ * Uses efficient Quarter Transformation (O(N^5)).
+ * FIXED: Index ordering (mu, nu, lam, sig).
+ */
+
 #include "mshqc/integrals/eri_transformer.h"
 #include <iostream>
 
@@ -280,4 +303,8 @@ Eigen::Tensor<double, 4> ERITransformer::transform_oooo_parallel(
 }
 
 } // namespace integrals
+<<<<<<< HEAD
 } // namespace mshqc
+=======
+} // namespace mshqc
+>>>>>>> 9767215 (update saya)

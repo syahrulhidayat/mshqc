@@ -1,28 +1,9 @@
+
 /**
  * @file uhf.cc
- * @brief Unrestricted Hartree-Fock (UHF) implementation for open-shell systems
- * 
- * Implementation of UHF with separate α and β spin Fock matrices.
- * Includes DIIS convergence acceleration and spin contamination analysis.
- * 
- * Theory References:
- *   - J. A. Pople & R. K. Nesbet, J. Chem. Phys. 22, 571 (1954)
- *     [Original UHF formulation]
- *   - G. Berthier, C. R. Acad. Sci. Paris 238, 91 (1954)
- *     [Independent UHF development]
- *   - A. Szabo & N. S. Ostlund, "Modern Quantum Chemistry" (1996)
- *     [Section 3.8.5, pp. 108-110: UHF equations and spin contamination]
- *   - P.-O. Löwdin, J. Chem. Phys. 18, 365 (1950)
- *     [Symmetric orthogonalization method]
- * 
- * @author Muhamad Sahrul Hidayat
- * @date 2025-01-29
- * @license MIT License (see LICENSE file in project root)
- * 
- * @note This is an original implementation derived from published theory.
- *       No code was copied from existing quantum chemistry software.
- *       Fock matrix construction follows Szabo & Ostlund Eq. (3.198).
- *       Spin contamination computed via Eq. (3.199).
+ * @brief Unrestricted Hartree-Fock (UHF)
+ * @details FIXED: Robust Orthogonalization & Electron Count Validation
+ * for Large/Diffuse Basis Sets (cc-pV5Z, etc.)
  */
 
 

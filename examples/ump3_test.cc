@@ -31,8 +31,8 @@ int main() {
     std::cout << "\nMolecule: Li (2\u03b1, 1\u03b2)\n";
     
     // Basis
-    BasisSet basis("cc-pVTZ", li);
-    std::cout << "Basis: cc-pVTZ (" << basis.n_basis_functions() << " functions)\n";
+    BasisSet basis("cc-pVQZ", li);
+    std::cout << "Basis: cc-pVQZ (" << basis.n_basis_functions() << " functions)\n";
     
     // Integrals
     auto integrals = std::make_shared<IntegralEngine>(li, basis);
@@ -68,12 +68,12 @@ int main() {
     std::cout << std::fixed << std::setprecision(6);
     
     std::cout << "UMP2 correlation: " << ump2_result.e_corr_total << " Ha\n";
-    std::cout << "E(3) correction:  " << ump3_result.e_mp3_corr << " Ha\n";
+    std::cout << "E(3) correction:  " << ump3_result.e_mp3 << " Ha\n";
     std::cout << "UMP3 correlation: " << ump3_result.e_corr_total << " Ha\n";
     std::cout << "\nUMP3 total:       " << ump3_result.e_total << " Ha\n";
     
     // Check E(3) is reasonable (~10-20% of E(2))
-    double ratio = std::abs(ump3_result.e_mp3_corr / ump2_result.e_corr_total);
+    double ratio = std::abs(ump3_result.e_mp3 / ump2_result.e_corr_total);
     std::cout << "\nE(3)/E(2) ratio:  " << ratio*100 << "%\n";
     
     if(ratio > 0.05 && ratio < 0.30) {

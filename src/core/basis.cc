@@ -33,12 +33,38 @@
 #include <stdexcept>
 
 namespace mshqc {
+    
+constexpr double PI = 3.14159265358979323846;
 
 // ============================================================================
 // Constants
 // ============================================================================
+// ============================================================================
+// MATH HELPERS (Tambahkan di bagian atas file basis.cc)
+// ============================================================================
 
-constexpr double PI = 3.14159265358979323846;
+// Double factorial: n!! = n * (n-2) * ... * 1
+// Dibutuhkan untuk rumus normalisasi Gaussian umum
+double df(int n) {
+    if (n <= 1) return 1.0;
+    return n * df(n - 2);
+}
+
+// Normalization constant for Single Primitive Gaussian of Angular Momentum L
+// Rumus Umum: N = [ (2alpha/pi)^(3/2) * (4alpha)^L / (2L-1)!! ]^(1/2)
+double compute_prim_norm(int L, double alpha) {
+    // Term 1: Bagian eksponensial (2a/pi)^(3/4)
+    double term1 = std::pow(2.0 * alpha / PI, 0.75); 
+    
+    // Term 2: Bagian momentum sudut (4a)^(L/2)
+    double term2 = std::pow(4.0 * alpha, (double)L / 2.0);
+    
+    // Term 3: Bagian faktorial ganda 1/sqrt((2L-1)!!)
+    double term3 = std::sqrt(1.0 / df(2 * L - 1));
+    
+    return term1 * term2 * term3;
+}
+
 
 // ============================================================================
 // Shell Implementation
@@ -59,41 +85,52 @@ int Shell::n_functions() const {
         return n_cartesian_functions(am_);
     }
 }
+// ============================================================================
+// IMPLEMENTASI BARU: Shell::normalize()
+// ============================================================================
 
 void Shell::normalize() {
-    // REFERENCE: Helgaker et al. (2000), Eq. (9.2.8), p. 320
-    // REFERENCE: Szabo & Ostlund (1996), Problem 3.25, p. 217
-    // Normalize contracted Gaussian: ⟨φ|φ⟩ = 1 where φ = Σ_i d_i N_i exp(-α_i r²)
-    
-    if (am_ != AngularMomentum::S) {
-        return; // p,d,f normalization more complex, implement when needed
+    // Ambil nilai L (0=S, 1=P, 2=D, 3=F, 4=G, 5=H)
+    int L = static_cast<int>(am_);
+
+    // LANGKAH A: Normalisasi Primitives
+    // Setiap primitive gauss g(r) harus dinormalisasi sendiri dulu
+    for (auto& p : primitives_) {
+        double N = compute_prim_norm(L, p.exponent);
+        p.coefficient *= N;
     }
+
+    // LANGKAH B: Normalisasi Contraction (Gabungan Primitive)
+    // Kita harus menghitung overlap antar primitive dalam satu shell
+    // Rumus Overlap Primitives Ternormalisasi pada pusat yang sama:
+    // <i|j> = ( 2 * sqrt(ai * aj) / (ai + aj) ) ^ (L + 1.5)
     
-    double S_self = 0.0;
-    
-    for (size_t i = 0; i < primitives_.size(); i++) {
-        double ai = primitives_[i].exponent;
-        double di = primitives_[i].coefficient;
-        double Ni = gaussian_normalization_s(ai);
-        
-        for (size_t j = 0; j < primitives_.size(); j++) {
-            double aj = primitives_[j].exponent;
-            double dj = primitives_[j].coefficient;
-            double Nj = gaussian_normalization_s(aj);
+    double sum = 0.0;
+    double power = (double)L + 1.5; // Pangkat bergantung pada L
+
+    for (const auto& pi : primitives_) {
+        for (const auto& pj : primitives_) {
+            double ai = pi.exponent;
+            double aj = pj.exponent;
+            double ci = pi.coefficient; // Koefisien ini sudah dinormalisasi di Langkah A
+            double cj = pj.coefficient;
+
+            // Hitung overlap integral <pi | pj>
+            double ratio = 2.0 * std::sqrt(ai * aj) / (ai + aj);
+            double overlap = std::pow(ratio, power);
             
-            double Sij = primitive_overlap_s(ai, aj, position_, position_);
-            S_self += di * dj * Ni * Nj * Sij;
+            sum += ci * cj * overlap;
         }
     }
-    
-    if (S_self > 0.0) {
-        double norm = 1.0 / std::sqrt(S_self);
+
+    // LANGKAH C: Terapkan Normalisasi Akhir
+    if (sum > 1e-14) { // Hindari pembagian nol
+        double contraction_norm = 1.0 / std::sqrt(sum);
         for (auto& p : primitives_) {
-            p.coefficient *= norm;
+            p.coefficient *= contraction_norm;
         }
     }
 }
-
 // ============================================================================
 // BasisSet Implementation
 // ============================================================================

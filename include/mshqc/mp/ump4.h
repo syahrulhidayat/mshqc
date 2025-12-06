@@ -140,4 +140,8 @@ private:
 } // namespace mp
 } // namespace mshqc
 
+<<<<<<< HEAD
 #endif
+=======
+#endif
+>>>>>>> 9767215 (update saya)
