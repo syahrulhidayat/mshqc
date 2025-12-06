@@ -116,6 +116,10 @@ void IntegralEngine::convert_basis_to_libint() {
         
         // Create libint2::Shell
         // Note: Libint2 uses pure (spherical) by default
+        // ... (kode sebelumnya sama) ...
+
+        // Create libint2::Shell
+        // Note: Libint2 uses pure (spherical) by default
         bool pure = qc_shell.is_spherical();
         
         // Convert std::vector to libint2::svector (boost::container::small_vector)
@@ -128,15 +132,13 @@ void IntegralEngine::convert_basis_to_libint() {
         contr.pure = pure;
         contr.coeff = coeff_sv;
         
-        // Build shell with automatic normalization
-        // 4th parameter (true) embeds normalization into coefficients
+        // Build shell - DISABLE automatic normalization
         libint2::Shell libint_shell(
             alpha_sv,
             {{contr}},
-            center
-            // default: true - embed normalization
+            center,
+            false   // <--- TAMBAHKAN INI (matikan normalisasi libint)
         );
-        
         
         libint_shells_->shells.push_back(std::move(libint_shell));
     }
