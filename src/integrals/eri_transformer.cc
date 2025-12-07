@@ -302,9 +302,102 @@ Eigen::Tensor<double, 4> ERITransformer::transform_oooo_parallel(
     return transform_oooo(eri_ao, C_occ, nbf, nocc);
 }
 
+
+// Tambahkan fungsi ini di bagian VVVO
+Eigen::Tensor<double, 4> ERITransformer::transform_vvvo(
+    const Eigen::Tensor<double, 4>& eri_ao,
+    const Eigen::MatrixXd& C_occ,
+    const Eigen::MatrixXd& C_virt,
+    int nbf, int nocc, int nvirt
+) {
+    return quarter_transform(
+        eri_ao, 
+        C_virt, C_virt, C_virt, C_occ, 
+        nbf, 
+        nvirt, nvirt, nvirt, nocc
+    );
+
+    // Panggil core dengan urutan: Virt, Virt, Virt, Occ
+    // Asumsi quarter_transform_core(eri, C1, C2, C3, C4, nbf, n1, n2, n3, n4)
+    // Silakan copy fungsi quarter_transform_core dari jawaban sebelumnya jika belum ada
+    // Untuk brevity saya panggil wrapper imajiner atau manual loop
+    
+    // Implementasi Manual (Jika quarter_transform_core tidak terekspos di header)
+    // Target: (a, b, c, k) -> (Virt, Virt, Virt, Occ)
+    
+    // 1. Transform index 4 (AO -> k) [Occ]
+    Eigen::Tensor<double, 4> t1(nbf, nbf, nbf, nocc);
+    t1.setZero();
+    #pragma omp parallel for collapse(3)
+    for(int m=0; m<nbf; ++m) for(int n=0; n<nbf; ++n) for(int l=0; l<nbf; ++l) 
+        for(int k=0; k<nocc; ++k) 
+            for(int s=0; s<nbf; ++s) t1(m,n,l,k) += C_occ(s, k) * eri_ao(m,n,l,s);
+
+    // 2. Transform index 3 (AO -> c) [Virt]
+    Eigen::Tensor<double, 4> t2(nbf, nbf, nvirt, nocc);
+    t2.setZero();
+    #pragma omp parallel for collapse(3)
+    for(int m=0; m<nbf; ++m) for(int n=0; n<nbf; ++n) for(int c=0; c<nvirt; ++c) for(int k=0; k<nocc; ++k)
+        for(int l=0; l<nbf; ++l) t2(m,n,c,k) += C_virt(l, c) * t1(m,n,l,k);
+
+    // 3. Transform index 2 (AO -> b) [Virt]
+    Eigen::Tensor<double, 4> t3(nbf, nvirt, nvirt, nocc);
+    t3.setZero();
+    #pragma omp parallel for collapse(3)
+    for(int m=0; m<nbf; ++m) for(int b=0; b<nvirt; ++b) for(int c=0; c<nvirt; ++c) for(int k=0; k<nocc; ++k)
+        for(int n=0; n<nbf; ++n) t3(m,b,c,k) += C_virt(n, b) * t2(m,n,c,k);
+
+    // 4. Transform index 1 (AO -> a) [Virt]
+    Eigen::Tensor<double, 4> result(nvirt, nvirt, nvirt, nocc);
+    result.setZero();
+    #pragma omp parallel for collapse(4)
+    for(int a=0; a<nvirt; ++a) for(int b=0; b<nvirt; ++b) for(int c=0; c<nvirt; ++c) for(int k=0; k<nocc; ++k)
+        for(int m=0; m<nbf; ++m) result(a,b,c,k) += C_virt(m, a) * t3(m,b,c,k);
+        
+    return result;
+}
+// IMPLEMENTASI YANG HILANG
+Eigen::Tensor<double, 4> ERITransformer::transform_vvvo_mixed(
+    const Eigen::Tensor<double, 4>& eri_ao,
+    const Eigen::MatrixXd& C_occ_K,
+    const Eigen::MatrixXd& C_virt_AC,
+    const Eigen::MatrixXd& C_virt_B,
+    int nbf, int nocc_K, int nvirt_AC, int nvirt_B
+) {
+    // Logika sama persis dengan transform_vvvo tapi matriks C berbeda
+    // Target: (a, b, c, k) -> (VirtAC, VirtB, VirtAC, OccK)
+    
+    // 1. Transform index 4 (AO -> k) [OccK]
+    Eigen::Tensor<double, 4> t1(nbf, nbf, nbf, nocc_K);
+    t1.setZero();
+    #pragma omp parallel for collapse(3)
+    for(int m=0; m<nbf; ++m) for(int n=0; n<nbf; ++n) for(int l=0; l<nbf; ++l) 
+        for(int k=0; k<nocc_K; ++k) 
+            for(int s=0; s<nbf; ++s) t1(m,n,l,k) += C_occ_K(s, k) * eri_ao(m,n,l,s);
+
+    // 2. Transform index 3 (AO -> c) [VirtAC]
+    Eigen::Tensor<double, 4> t2(nbf, nbf, nvirt_AC, nocc_K);
+    t2.setZero();
+    #pragma omp parallel for collapse(3)
+    for(int m=0; m<nbf; ++m) for(int n=0; n<nbf; ++n) for(int c=0; c<nvirt_AC; ++c) for(int k=0; k<nocc_K; ++k)
+        for(int l=0; l<nbf; ++l) t2(m,n,c,k) += C_virt_AC(l, c) * t1(m,n,l,k);
+
+    // 3. Transform index 2 (AO -> b) [VirtB]
+    Eigen::Tensor<double, 4> t3(nbf, nvirt_B, nvirt_AC, nocc_K);
+    t3.setZero();
+    #pragma omp parallel for collapse(3)
+    for(int m=0; m<nbf; ++m) for(int b=0; b<nvirt_B; ++b) for(int c=0; c<nvirt_AC; ++c) for(int k=0; k<nocc_K; ++k)
+        for(int n=0; n<nbf; ++n) t3(m,b,c,k) += C_virt_B(n, b) * t2(m,n,c,k);
+
+    // 4. Transform index 1 (AO -> a) [VirtAC]
+    Eigen::Tensor<double, 4> result(nvirt_AC, nvirt_B, nvirt_AC, nocc_K);
+    result.setZero();
+    #pragma omp parallel for collapse(4)
+    for(int a=0; a<nvirt_AC; ++a) for(int b=0; b<nvirt_B; ++b) for(int c=0; c<nvirt_AC; ++c) for(int k=0; k<nocc_K; ++k)
+        for(int m=0; m<nbf; ++m) result(a,b,c,k) += C_virt_AC(m, a) * t3(m,b,c,k);
+        
+    return result;
+}
+
 } // namespace integrals
-<<<<<<< HEAD
-} // namespace mshqc
-=======
-} // namespace mshqc
->>>>>>> 9767215 (update saya)
+} // namespace mshqc  

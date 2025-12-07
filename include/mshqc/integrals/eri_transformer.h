@@ -229,6 +229,26 @@ public:
         int nbf,
         int nvirt
     );
+    // --- KHUSUS TRIPLES (VVVO) ---
+    
+    // Standard VVVO (Same Spin)
+  static Eigen::Tensor<double, 4> transform_vvvo(
+        const Eigen::Tensor<double, 4>& eri_ao,
+        const Eigen::MatrixXd& C_occ,  // Untuk indeks k
+        const Eigen::MatrixXd& C_virt, // Untuk a, b, c
+        int nbf, int nocc, int nvirt
+    );
+    
+    // Mixed Spin VVVO (INI YANG HILANG)
+    // Target: <ab|ck> -> a,c (VirtA), b (VirtA/B), k (OccB)
+    static Eigen::Tensor<double, 4> transform_vvvo_mixed(
+        const Eigen::Tensor<double, 4>& eri_ao,
+        const Eigen::MatrixXd& C_occ_K,    // Index k (Occupied)
+        const Eigen::MatrixXd& C_virt_AC,  // Index a, c (Virtual)
+        const Eigen::MatrixXd& C_virt_B,   // Index b (Virtual)
+        int nbf, int nocc_K, int nvirt_AC, int nvirt_B
+    );
+
     
     /**
      * @brief Mixed-spin VVVV transformation (OPTIMIZED)
@@ -374,6 +394,8 @@ public:
         int dim1, int dim2, int dim3, int dim4,
         double time_ms
     );
+    
+    
 
 private:
     // No private members - all static utility class

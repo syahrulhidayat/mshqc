@@ -42,8 +42,17 @@
  */
 
 /**
+/**
+/**
  * @file ump4.h
- * @brief Unrestricted MP4 Header - Added Triples Support
+ * @brief Unrestricted MP4 Header (Corrected)
+ * @details Ensures UMP4Result struct has all members used in implementation.
+ */
+
+/**
+ * @file ump4.h
+ * @brief Unrestricted MP4 (Full SDTQ) Header
+ * @details Supports explicit Singles, Doubles, Triples, and Quadruples calculation.
  */
 
 #ifndef MSHQC_MP_UMP4_H
@@ -55,34 +64,15 @@
 #include <Eigen/Dense>
 #include <unsupported/Eigen/CXX11/Tensor>
 #include <memory>
-#include <tuple>
 
 namespace mshqc {
 namespace mp {
 
 struct UMP4Result {
-    double e_uhf;
-    double e_mp2;
-    double e_mp3;
-    double e_mp4_sdq;
-    double e_mp4_t;      // Triples Energy
-    double e_mp4_total;
-    double e_corr_total;
-    double e_total;
-    
-    int n_occ_alpha, n_occ_beta;
-    int n_virt_alpha, n_virt_beta;
-    
-    Eigen::Tensor<double, 2> t1_alpha_3;
-    Eigen::Tensor<double, 2> t1_beta_3;
-    Eigen::Tensor<double, 4> t2_aa_3;
-    Eigen::Tensor<double, 4> t2_bb_3;
-    Eigen::Tensor<double, 4> t2_ab_3;
-    
-    // For validation
-    Eigen::Tensor<double, 4> t2_aa_2; 
-    Eigen::Tensor<double, 4> t2_bb_2;
-    Eigen::Tensor<double, 4> t2_ab_2;
+    double e_uhf, e_mp2, e_mp3;
+    double e_s, e_d, e_q, e_t;
+    double e_mp4_sdq, e_mp4_total;
+    double e_corr_total, e_total;
 };
 
 class UMP4 {
@@ -91,57 +81,44 @@ public:
          const UMP3Result& ump3_result,
          const BasisSet& basis,
          std::shared_ptr<IntegralEngine> integrals);
-    
+
     UMP4Result compute(bool include_triples = true);
-    
-    auto get_t1_amplitudes() const -> std::pair<const Eigen::Tensor<double, 2>&, const Eigen::Tensor<double, 2>&>;
-    auto get_t2_amplitudes() const -> std::tuple<const Eigen::Tensor<double, 4>&, const Eigen::Tensor<double, 4>&, const Eigen::Tensor<double, 4>&>;
 
 private:
     const SCFResult& uhf_;
     const UMP3Result& ump3_;
     const BasisSet& basis_;
     std::shared_ptr<IntegralEngine> integrals_;
-    
+
     int nbf_;
     int nocc_a_, nocc_b_;
     int nvirt_a_, nvirt_b_;
+
+    // Integrals
+    Eigen::Tensor<double, 4> eri_oovv_aa_;
+    Eigen::Tensor<double, 4> eri_oovv_bb_; 
+    Eigen::Tensor<double, 4> eri_oovv_ab_;
     
-    // Integrals for SDQ (Occ-Occ-Virt-Virt)
-    Eigen::Tensor<double, 4> eri_ooov_aa_;
-    Eigen::Tensor<double, 4> eri_ooov_bb_;
-    Eigen::Tensor<double, 4> eri_ooov_ab_;
+    // Integrals KHUSUS untuk Triples (Baru)
+    Eigen::Tensor<double, 4> eri_vvvo_aab_; // <eb|ck>
+    Eigen::Tensor<double, 4> eri_vooo_aab_; // <mc|jk> (INI YANG ANDA CARI)
+
+    // Orbital Energies
+    Eigen::VectorXd eps_a_, eps_b_;
+
+    // Helper functions
+    void setup_integrals();
     
-    // Integrals for Triples (Virt-Virt-Virt-Occ) [NEW]
-    Eigen::Tensor<double, 4> eri_vvvo_aa_; // <ab|ci>
-    Eigen::Tensor<double, 4> eri_vvvo_bb_; // <AB|CI>
-    Eigen::Tensor<double, 4> eri_vvvo_ab_; // <aB|cI> mixed
-    Eigen::Tensor<double, 4> eri_vvvo_ba_; // <Ab|Ci> mixed
-    
-    Eigen::MatrixXd fock_mo_a_;
-    Eigen::MatrixXd fock_mo_b_;
-    
-    Eigen::Tensor<double, 2> t1_a_3_, t1_b_3_;
-    Eigen::Tensor<double, 4> t2_aa_3_, t2_bb_3_, t2_ab_3_;
-    
-    void build_fock_mo();
-    void transform_integrals_to_mo();
-    void transform_triples_integrals(); // [NEW]
-    
-    void compute_t1_third_order();
-    void compute_t2_third_order();
-    
-    double compute_singles_energy();
-    double compute_doubles_energy();
-    double compute_quadruples_energy();
-    double compute_triples_energy(); // [UPDATED]
+    // DEKLARASI FUNGSI BARU (Wajib ada!)
+    void compute_vooo_integrals(const Eigen::Tensor<double, 4>& eri_ao); 
+
+    double energy_singles();    
+    double energy_doubles();    
+    double energy_quadruples(); 
+    double energy_triples();    
 };
 
 } // namespace mp
 } // namespace mshqc
 
-<<<<<<< HEAD
-#endif
-=======
-#endif
->>>>>>> 9767215 (update saya)
+#endif // MSHQC_MP_UMP4_H

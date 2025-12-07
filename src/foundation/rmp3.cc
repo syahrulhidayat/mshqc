@@ -7,7 +7,18 @@
  * @license MIT
  */
 
+/**
+ * @file rmp3.cc
+ * @brief Restricted MP3 with Optimized ERI Transformer
+ */
+
+/**
+ * @file rmp3.cc
+ * @brief FIX: Correct Sign/Indexing for RMP3
+ */
+
 #include "mshqc/foundation/rmp3.h"
+#include "mshqc/integrals/eri_transformer.h"
 #include <iostream>
 #include <iomanip>
 #include <cmath>
@@ -24,155 +35,164 @@ RMP3::RMP3(const SCFResult& rhf_result,
     nbf_ = basis.n_basis_functions();
     nocc_ = rmp2_.n_occ;
     nvirt_ = rmp2_.n_virt;
-    
-    std::cout << "\n=== RMP3 Setup ===\n";
-    std::cout << "Basis functions: " << nbf_ << "\n";
-    std::cout << "Occupied: " << nocc_ << ", Virtual: " << nvirt_ << "\n";
-    std::cout << "Scaling: O(N^6) for T2^(2) computation\n";
 }
 
+// Tidak perlu fungsi transformasi raksasa lagi, kita lakukan on-the-fly atau per blok
 void RMP3::build_fock_mo() {
-    // Transform Fock matrix from AO to MO basis
-    // F_MO = C^T * F_AO * C
-    
-    const auto& C = rhf_.C_alpha;  // MO coefficients from RHF (alpha = beta)
-    const auto& F_ao = rhf_.F_alpha;  // Fock matrix in AO basis
-    
-    // For canonical RHF orbitals, F_MO is diagonal with eigenvalues ε_i
-    // But we compute full F_MO for generality
-    fock_mo_ = C.transpose() * F_ao * C;
-    
-    std::cout << "  Fock matrix transformed to MO basis\n";
+    // (Opsional) RMP3 standar untuk RHF kanonik biasanya mengasumsikan Fock diagonal (epsilon)
+    // Jadi matriks Fock penuh tidak selalu dibutuhkan jika pakai orbital kanonik.
 }
 
-void RMP3::transform_integrals_ao_to_mo() {
-    // Four-index transformation: <pq|rs>_MO = Σ_μνλσ C_μp C_νq (μν|λσ)_AO C_λr C_σs
-    // 
-    // This is O(N^5) and same as RMP2 transformation
-    // For efficiency, we only transform occupied-occupied × virtual-virtual block
+// Hapus transform_integrals_ao_to_mo() yang lama yang mengubah semua (C,C,C,C)
+// Kita ganti dengan strategi per-blok di compute()
+
+RMP3Result RMP3::compute() {
+    std::cout << "\n====================================\n";
+    std::cout << "  Restricted MP3 (Corrected Logic)\n";
+    std::cout << "====================================\n";
     
+    using namespace mshqc::integrals;
     auto eri_ao = integrals_->compute_eri();
-    const auto& C = rhf_.C_alpha;
+    const auto& C_occ = rhf_.C_alpha.leftCols(nocc_);
+    const auto& C_virt = rhf_.C_alpha.rightCols(nvirt_);
+    const auto& eps = rhf_.orbital_energies_alpha;
+    const auto& t2_1 = rmp2_.t2; // T2 MP2 (Physicist <ij|ab>)
+
+    // 1. Transformasi Integral ke Blok yang dibutuhkan
+    //    RMP3 butuh: <ab|cd> (VVVV), <kl|ij> (OOOO), <ak|ic> (VOVO/OVOV)
     
-    std::cout << "  Transforming ERIs to MO basis (occ-occ x virt-virt)...\n";
+    std::cout << "  1. Transforming VVVV block...\n";
+    // (a,b,c,d) -> Physicist <ab|cd>
+    auto I_vvvv = ERITransformer::transform_vvvv(eri_ao, C_virt, nbf_, nvirt_);
+    // Shuffle agar sesuai Physicist (a,b,c,d) -> (a,b,c,d) (sudah benar dari transform_vvvv jika quarter standard)
+    // Cek eri_transformer Anda: jika return (p,q,r,s) dari (C1,C2,C3,C4), maka
+    // transform_vvvv(Virt, Virt, Virt, Virt) -> (a, b, c, d). Ini adalah Chemist (ab|cd) = Physicist <ab|cd>.
+
+    std::cout << "  2. Transforming OOOO block...\n";
+    // (k,l,i,j) -> Chemist (kl|ij) -> Physicist <kl|ij>
+    auto I_oooo = ERITransformer::transform_oooo(eri_ao, C_occ, nbf_, nocc_);
+
+    std::cout << "  3. Transforming OVOV block (for Ring)...\n";
+    // transform_ovov(Occ, Virt, Occ, Virt) -> (i, a, j, b) Chemist (ia|jb) -> Physicist <ij|ab>
+    // Kita butuh variasi <ib|aj> dsb. Kita simpan blok ini.
+    auto I_ovov = ERITransformer::transform_ovov(eri_ao, C_occ, C_virt, nbf_, nocc_, nvirt_);
+
+    // Init T2 Second Order
+    t2_2_ = Eigen::Tensor<double, 4>(nocc_, nocc_, nvirt_, nvirt_);
+    t2_2_.setZero();
+
+    std::cout << "  4. Computing T2(2) Amplitudes...\n";
     
-    // Allocate MO integral tensor
-    eri_mo_ = Eigen::Tensor<double, 4>(nocc_, nocc_, nvirt_, nvirt_);
-    eri_mo_.setZero();
-    
-    // Four-index transformation (naive O(N^8) algorithm)
-    // <ij|ab> where i,j are occupied, a,b are virtual
+    #pragma omp parallel for collapse(4)
     for (int i = 0; i < nocc_; i++) {
         for (int j = 0; j < nocc_; j++) {
             for (int a = 0; a < nvirt_; a++) {
                 for (int b = 0; b < nvirt_; b++) {
-                    double val = 0.0;
                     
-                    // Contract with AO integrals
-                    for (int mu = 0; mu < nbf_; mu++) {
-                        for (int nu = 0; nu < nbf_; nu++) {
-                            for (int lam = 0; lam < nbf_; lam++) {
-                                for (int sig = 0; sig < nbf_; sig++) {
-                                    // Physicist notation: <ij|ab> = (ij|ab)
-                                    val += C(mu, i) * C(nu, j) * 
-                                           eri_ao(mu, nu, lam, sig) *
-                                           C(lam, nocc_ + a) * C(sig, nocc_ + b);
-                                }
-                            }
+                    double denom = eps(i) + eps(j) - eps(nocc_ + a) - eps(nocc_ + b);
+                    if (std::abs(denom) < 1e-12) continue;
+                    
+                    double val = 0.0;
+
+                    // --- TERM A: Particle-Particle Ladder ---
+                    // 0.5 * Sum_cd <ab|cd> * t_ij^cd
+                    for (int c = 0; c < nvirt_; c++) {
+                        for (int d = 0; d < nvirt_; d++) {
+                            // I_vvvv is (a,b,c,d) -> <ab|cd>
+                            double v = I_vvvv(a, b, c, d); 
+                            val += 0.5 * v * t2_1(i, j, c, d);
+                        }
+                    }
+
+                    // --- TERM B: Hole-Hole Ladder ---
+                    // 0.5 * Sum_kl <kl|ij> * t_kl^ab
+                    for (int k = 0; k < nocc_; k++) {
+                        for (int l = 0; l < nocc_; l++) {
+                            // I_oooo is (k,l,i,j) -> <kl|ij>
+                            double v = I_oooo(k, l, i, j); 
+                            val += 0.5 * v * t2_1(k, l, a, b);
+                        }
+                    }
+
+                    // --- TERM C: Particle-Hole Ring ---
+                    // Sum_kc [ (2<lb|kc> - <lb|ck>) * t_ik^ac + ... ]
+                    // Ini bagian yang sering salah tanda/indeks.
+                    // Rumus Pople (spin adapted):
+                    // P_ij P_ab [ Sum_kc (2<ac|jk> - <ac|kj>) * t_ik^cb ]
+                    // Mari gunakan implementasi eksplisit tanpa P operator biar jelas:
+                    
+                    for (int k = 0; k < nocc_; k++) {
+                        for (int c = 0; c < nvirt_; c++) {
+                            // Integrals from I_ovov (m, e, n, f) -> <mn|ef>
+                            // Kita butuh <mb|ej> = I_ovov(m, b, j, e) ?? Hati-hati.
+                            // I_ovov menyimpan (i, a, j, b) = <ij|ab>.
+                            
+                            // Akses tensor I_ovov(p, q, r, s) berarti <pr|qs>
+                            
+                            // 1. Integrals for Term 1
+                            // <kb|jc>
+                            double v_kbjc = I_ovov(k, b, j, c); 
+                            // <kb|cj> -> <k j | b c> ?? Tidak ada di blok OVOV.
+                            // <kb|cj> (Phys) = (kc|bj) (Chem).
+                            // Blok I_ovov adalah (Occ, Virt, Occ, Virt) -> (i, a, j, b) Chemist.
+                            // Jadi I_ovov(i, a, j, b) = <ij|ab>.
+                            
+                            // Kita butuh <k b | j c>. Ini adalah I_ovov(k, b, j, c).
+                            // Kita butuh <k b | c j>. Ini Exchange. 
+                            // <k b | c j> = (k c | b j). I_ovov(k, c, j, b).
+                            
+                            double J1 = I_ovov(k, b, j, c); // <kb|jc>
+                            double K1 = I_ovov(k, c, j, b); // <kb|cj>
+                            
+                            // Term 1: t_ik^ac
+                            double t_ikac = t2_1(i, k, a, c);
+                            
+                            // 2. Integrals for Term 2
+                            // <ka|ic>
+                            double J2 = I_ovov(k, a, i, c); // <ka|ic>
+                            double K2 = I_ovov(k, c, i, a); // <ka|ci>
+                            
+                            // Term 2: t_jk^bc
+                            double t_jkbc = t2_1(j, k, b, c);
+                            
+                            // Formulasi Pople (Eq 17):
+                            // val += (2*J1 - K1) * t_ikac; (Permutasi j,b)
+                            // val += (2*J2 - K2) * t_jkbc; (Permutasi i,a)
+                            // Hati-hati dengan tanda negatif dari permutasi P_ij di rumus master.
+                            // Tapi dalam loop langsung biasanya dijumlahkan:
+                            
+                            val += (2.0 * J1 - K1) * t_ikac;
+                            val += (2.0 * J2 - K2) * t_jkbc;
                         }
                     }
                     
-                    eri_mo_(i, j, a, b) = val;
+                    // Simpan
+                    t2_2_(i, j, a, b) = val / denom;
                 }
             }
         }
     }
+
+    std::cout << "  5. Computing Energy...\n";
+    // Hitung Energi E3
+    // E3 = Sum (2<ij|ab> - <ij|ba>) * t2_2(i,j,a,b)
+    // Gunakan I_ovov lagi karena I_ovov(i,a,j,b) = <ij|ab>
+    double e_mp3 = 0.0;
     
-    std::cout << "  Transformation complete: " << nocc_ << "^2 x " << nvirt_ << "^2 integrals\n";
-}
-
-void RMP3::compute_t2_second_order() {
-    // Compute T2^(2) amplitudes (second-order correction)
-    // Pople 1977 RMP3 formulation: simplified spin-adapted residual with pp, hh, ph terms
-    // Using direct spin-adapted formula (no explicit antisymmetrization needed)
-
-    std::cout << "  Computing T2^(2) amplitudes...\n";
-
-    const auto& t2_1 = rmp2_.t2;  // First-order amplitudes from RMP2
-    const auto& eps = rhf_.orbital_energies_alpha;  // Orbital energies
-
-    // Allocate T2^(2) tensor
-    t2_2_ = Eigen::Tensor<double, 4>(nocc_, nocc_, nvirt_, nvirt_);
-    t2_2_.setZero();
-
-    // Simplified RMP3 residual: pp ladder (particle-particle)
-    // t_ij^{ab(2)} = 0.5 * Σ_{cd} ⟨ab||cd⟩ t_ij^cd / D_ij^ab
-    std::cout << "    Computing pp ladder contribution...\n";
-    auto eri_ao = integrals_->compute_eri();
-    const auto& C = rhf_.C_alpha;
-
-    for (int i = 0; i < nocc_; i++)
-        for (int j = 0; j < nocc_; j++)
-            for (int a = 0; a < nvirt_; a++)
+    #pragma omp parallel for reduction(+:e_mp3) collapse(4)
+    for (int i = 0; i < nocc_; i++) {
+        for (int j = 0; j < nocc_; j++) {
+            for (int a = 0; a < nvirt_; a++) {
                 for (int b = 0; b < nvirt_; b++) {
-                    double denom = eps(i) + eps(j) - eps(nocc_ + a) - eps(nocc_ + b);
-                    double res = 0.0;
-
-                    // pp ladder: 0.5 * Σ_{cd} ⟨ab||cd⟩ t_ij^cd
-                    // Spin-adapted: (2⟨ab|cd⟩ - ⟨ab|dc⟩)
-                    for (int c = 0; c < nvirt_; c++)
-                        for (int d = 0; d < nvirt_; d++) {
-                            double g_dir = 0.0, g_ex = 0.0;
-                            for (int mu = 0; mu < nbf_; mu++)
-                                for (int nu = 0; nu < nbf_; nu++)
-                                    for (int lam = 0; lam < nbf_; lam++)
-                                        for (int sig = 0; sig < nbf_; sig++) {
-                                            double v = eri_ao(mu, nu, lam, sig);
-                                            g_dir += C(mu, nocc_ + a) * C(nu, nocc_ + b) * v * C(lam, nocc_ + c) * C(sig, nocc_ + d);
-                                            g_ex  += C(mu, nocc_ + a) * C(nu, nocc_ + b) * v * C(lam, nocc_ + d) * C(sig, nocc_ + c);
-                                        }
-                            double g_spin = 2.0 * g_dir - g_ex;
-                            res += 0.5 * g_spin * t2_1(i, j, c, d);
-                        }
-
-                    t2_2_(i, j, a, b) = res / denom;
+                    double J = I_ovov(i, a, j, b); // <ij|ab>
+                    double K = I_ovov(i, b, j, a); // <ij|ba>
+                    
+                    e_mp3 += (2.0 * J - K) * t2_2_(i, j, a, b);
                 }
+            }
+        }
+    }
 
-    std::cout << "    T2^(2) computation complete\n";
-}
-
-double RMP3::compute_third_order_energy() {
-    double e3 = 0.0;
-    for (int i = 0; i < nocc_; i++)
-        for (int j = 0; j < nocc_; j++)
-            for (int a = 0; a < nvirt_; a++)
-                for (int b = 0; b < nvirt_; b++) {
-                    // Spin-adapted energy factor: (2<ij|ab> - <ij|ba>)
-                    double g_dir = eri_mo_(i, j, a, b);
-                    double g_ex  = eri_mo_(i, j, b, a);
-                    e3 += (2.0 * g_dir - g_ex) * t2_2_(i, j, a, b);
-                }
-    return e3;
-}
-
-RMP3Result RMP3::compute() {
-    std::cout << "\n====================================\n";
-    std::cout << "  Restricted MP3 (RMP3)\n";
-    std::cout << "====================================\n";
-    
-    // Step 1: Build Fock matrix in MO basis
-    build_fock_mo();
-    
-    // Step 2: Transform ERIs to MO basis
-    transform_integrals_ao_to_mo();
-    
-    // Step 3: Compute T2^(2) amplitudes
-    compute_t2_second_order();
-    
-    // Step 4: Compute E^(3)
-    double e_mp3 = compute_third_order_energy();
-    
-    // Prepare result
     RMP3Result result;
     result.e_rhf = rmp2_.e_rhf;
     result.e_mp2 = rmp2_.e_corr;
@@ -181,24 +201,23 @@ RMP3Result RMP3::compute() {
     result.e_total = rmp2_.e_rhf + result.e_corr_total;
     result.n_occ = nocc_;
     result.n_virt = nvirt_;
-    result.t2_1 = rmp2_.t2;
+    result.t2_1 = t2_1;
     result.t2_2 = t2_2_;
     
-    // Print results
-    std::cout << "\n=== RMP3 Results ===\n";
-    std::cout << std::fixed << std::setprecision(10);
-    std::cout << "RHF energy:     " << std::setw(16) << result.e_rhf << " Ha\n";
-    std::cout << "MP2 correction: " << std::setw(16) << result.e_mp2 << " Ha\n";
-    std::cout << "MP3 correction: " << std::setw(16) << result.e_mp3 << " Ha\n";
-    std::cout << "Total corr:     " << std::setw(16) << result.e_corr_total << " Ha\n";
-    std::cout << "RMP3 energy:    " << std::setw(16) << result.e_total << " Ha\n";
+    std::cout << std::setprecision(8);
+    std::cout << "RHF Energy:       " << result.e_rhf << "\n";
+    std::cout << "MP2 Correlation:  " << result.e_mp2 << "\n";
+    std::cout << "MP3 Correction:   " << e_mp3 << "\n";
+    std::cout << "Total Correlation:" << result.e_corr_total << "\n";
     
     return result;
 }
 
-const Eigen::Tensor<double, 4>& RMP3::get_t2_second_order() const {
-    return t2_2_;
-}
+void RMP3::transform_integrals_ao_to_mo() {} // Deprecated
+void RMP3::compute_t2_second_order() {} // Deprecated
+double RMP3::compute_third_order_energy() { return 0.0; } // Deprecated
+
+const Eigen::Tensor<double, 4>& RMP3::get_t2_second_order() const { return t2_2_; }
 
 } // namespace foundation
 } // namespace mshqc

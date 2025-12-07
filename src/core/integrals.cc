@@ -30,6 +30,7 @@
 #include <iostream>
 #include <iomanip>
 #include <chrono>
+#include <vector>
 
 namespace mshqc {
 
@@ -430,14 +431,15 @@ Eigen::Tensor<double, 4> IntegralEngine::compute_eri() {
                                     double val = buf[0][idx];
                                     
                                     // Apply 8-fold symmetry
-                                    ERI(bf1, bf2, bf3, bf4) = val;
-                                    ERI(bf2, bf1, bf3, bf4) = val;
-                                    ERI(bf1, bf2, bf4, bf3) = val;
-                                    ERI(bf2, bf1, bf4, bf3) = val;
-                                    ERI(bf3, bf4, bf1, bf2) = val;
-                                    ERI(bf4, bf3, bf1, bf2) = val;
-                                    ERI(bf3, bf4, bf2, bf1) = val;
-                                    ERI(bf4, bf3, bf2, bf1) = val;
+                                    // Gunakan (long) atau static_cast<long>
+                                    ERI((long)bf1, (long)bf2, (long)bf3, (long)bf4) = val;
+                                    ERI((long)bf2, (long)bf1, (long)bf3, (long)bf4) = val;
+                                    ERI((long)bf1, (long)bf2, (long)bf4, (long)bf3) = val;
+                                    ERI((long)bf2, (long)bf1, (long)bf4, (long)bf3) = val;
+                                    ERI((long)bf3, (long)bf4, (long)bf1, (long)bf2) = val;
+                                    ERI((long)bf4, (long)bf3, (long)bf1, (long)bf2) = val;
+                                    ERI((long)bf3, (long)bf4, (long)bf2, (long)bf1) = val;
+                                    ERI((long)bf4, (long)bf3, (long)bf2, (long)bf1) = val;
                                 }
                             }
                         }
@@ -490,24 +492,17 @@ void IntegralEngine::print_statistics() const {
 // Free Functions
 // ============================================================================
 
+// ============================================================================
+// GANTI DARI SINI (compute_fock_matrix) SAMPAI AKHIR FUNGSI transform_eri_to_mo
+// ============================================================================
+
 Eigen::MatrixXd compute_fock_matrix(
     const Eigen::MatrixXd& H,
     const Eigen::MatrixXd& P,
     const Eigen::Tensor<double, 4>& ERI) {
     /**
      * Compute Fock matrix for closed-shell systems
-     * 
      * F_μν = H_μν + G_μν
-     *      = H_μν + Σ_λσ P_λσ [2(μν|λσ) - (μλ|νσ)]
-     * 
-     * DERIVATION:
-     * The two-electron contribution G comes from:
-     * - Coulomb operator J: J_μν = Σ_λσ P_λσ (μν|λσ)
-     * - Exchange operator K: K_μν = Σ_λσ P_λσ (μλ|νσ)
-     * - G = 2J - K (factor of 2 for closed-shell)
-     * 
-     * REFERENCE:
-     * Szabo & Ostlund (1996), Eq. (3.154), p. 139
      */
     
     size_t nbasis = H.rows();
@@ -521,12 +516,10 @@ Eigen::MatrixXd compute_fock_matrix(
             for (size_t lambda = 0; lambda < nbasis; lambda++) {
                 for (size_t sigma = 0; sigma < nbasis; sigma++) {
                     // Coulomb: 2 * P_λσ * (μν|λσ)
-                    G_mu_nu += 2.0 * P(lambda, sigma) * 
-                              ERI(mu, nu, lambda, sigma);
+                    G_mu_nu += 2.0 * P(lambda, sigma) * ERI((long)mu, (long)nu, (long)lambda, (long)sigma);
                     
                     // Exchange: -P_λσ * (μλ|νσ)
-                    G_mu_nu -= P(lambda, sigma) * 
-                              ERI(mu, lambda, nu, sigma);
+                    G_mu_nu -= P(lambda, sigma) * ERI((long)mu, (long)lambda, (long)nu, (long)sigma);
                 }
             }
             
@@ -535,26 +528,20 @@ Eigen::MatrixXd compute_fock_matrix(
     }
     
     return F;
-}
+} // <--- Pastikan kurung kurawal penutup ini ada!
 
 Eigen::Tensor<double, 4> transform_eri_to_mo(
     const Eigen::Tensor<double, 4>& ERI_AO,
     const Eigen::MatrixXd& C) {
     /**
      * Transform ERIs from AO to MO basis
-     * 
      * (pq|rs)_MO = Σ_μνλσ C_μp C_νq C_λr C_σs (μν|λσ)_AO
-     * 
-     * ALGORITHM: Quarter transformations (4 steps)
-     * This is more efficient than direct transformation (O(N^5) vs O(N^8))
-     * 
-     * REFERENCE:
-     * Helgaker et al. (2000), Section 10.7, pp. 409-413
      */
     
     size_t nbasis = C.rows();
     size_t nmo = C.cols();
     
+    // Output Tensor
     Eigen::Tensor<double, 4> ERI_MO(nmo, nmo, nmo, nmo);
     ERI_MO.setZero();
     
@@ -567,57 +554,61 @@ Eigen::Tensor<double, 4> transform_eri_to_mo(
     Temp2.setZero();
     Temp3.setZero();
     
-    // Step 1: Transform first index
-    for (size_t p = 0; p < nmo; p++) {
-        for (size_t nu = 0; nu < nbasis; nu++) {
-            for (size_t lambda = 0; lambda < nbasis; lambda++) {
-                for (size_t sigma = 0; sigma < nbasis; sigma++) {
-                    for (size_t mu = 0; mu < nbasis; mu++) {
-                        Temp1(p, nu, lambda, sigma) += 
-                            C(mu, p) * ERI_AO(mu, nu, lambda, sigma);
+    // Step 1: Transform index 1 (mu -> p)
+    for (int p = 0; p < nmo; p++) {
+        for (int nu = 0; nu < nbasis; nu++) {
+            for (int lambda = 0; lambda < nbasis; lambda++) {
+                for (int sigma = 0; sigma < nbasis; sigma++) {
+                    double val = 0.0;
+                    for (int mu = 0; mu < nbasis; mu++) {
+                        val += C(mu, p) * ERI_AO((long)mu, (long)nu, (long)lambda, (long)sigma);
                     }
+                    Temp1((long)p, (long)nu, (long)lambda, (long)sigma) = val;
                 }
             }
         }
     }
-    
-    // Step 2: Transform second index
-    for (size_t p = 0; p < nmo; p++) {
-        for (size_t q = 0; q < nmo; q++) {
-            for (size_t lambda = 0; lambda < nbasis; lambda++) {
-                for (size_t sigma = 0; sigma < nbasis; sigma++) {
-                    for (size_t nu = 0; nu < nbasis; nu++) {
-                        Temp2(p, q, lambda, sigma) += 
-                            C(nu, q) * Temp1(p, nu, lambda, sigma);
+
+    // Step 2: Transform index 2 (nu -> q)
+    for (int p = 0; p < nmo; p++) {
+        for (int q = 0; q < nmo; q++) {
+            for (int lambda = 0; lambda < nbasis; lambda++) {
+                for (int sigma = 0; sigma < nbasis; sigma++) {
+                    double val = 0.0;
+                    for (int nu = 0; nu < nbasis; nu++) {
+                        val += C(nu, q) * Temp1((long)p, (long)nu, (long)lambda, (long)sigma);
                     }
+                    Temp2((long)p, (long)q, (long)lambda, (long)sigma) = val;
                 }
             }
         }
     }
-    
-    // Step 3: Transform third index
-    for (size_t p = 0; p < nmo; p++) {
-        for (size_t q = 0; q < nmo; q++) {
-            for (size_t r = 0; r < nmo; r++) {
-                for (size_t sigma = 0; sigma < nbasis; sigma++) {
-                    for (size_t lambda = 0; lambda < nbasis; lambda++) {
-                        Temp3(p, q, r, sigma) += 
-                            C(lambda, r) * Temp2(p, q, lambda, sigma);
+
+    // Step 3: Transform index 3 (lambda -> r)
+    for (int p = 0; p < nmo; p++) {
+        for (int q = 0; q < nmo; q++) {
+            for (int r = 0; r < nmo; r++) {
+                for (int sigma = 0; sigma < nbasis; sigma++) {
+                    double val = 0.0;
+                    for (int lambda = 0; lambda < nbasis; lambda++) {
+                        val += C(lambda, r) * Temp2((long)p, (long)q, (long)lambda, (long)sigma);
                     }
+                    Temp3((long)p, (long)q, (long)r, (long)sigma) = val;
                 }
             }
         }
     }
-    
-    // Step 4: Transform fourth index
-    for (size_t p = 0; p < nmo; p++) {
-        for (size_t q = 0; q < nmo; q++) {
-            for (size_t r = 0; r < nmo; r++) {
-                for (size_t s = 0; s < nmo; s++) {
-                    for (size_t sigma = 0; sigma < nbasis; sigma++) {
-                        ERI_MO(p, q, r, s) += 
-                            C(sigma, s) * Temp3(p, q, r, sigma);
+
+    // Step 4: Transform index 4 (sigma -> s)
+    for (int p = 0; p < nmo; p++) {
+        for (int q = 0; q < nmo; q++) {
+            for (int r = 0; r < nmo; r++) {
+                for (int s = 0; s < nmo; s++) {
+                    double val = 0.0;
+                    for (int sigma = 0; sigma < nbasis; sigma++) {
+                        val += C(sigma, s) * Temp3((long)p, (long)q, (long)r, (long)sigma);
                     }
+                    ERI_MO((long)p, (long)q, (long)r, (long)s) = val;
                 }
             }
         }
@@ -782,9 +773,9 @@ Eigen::Tensor<double, 3> IntegralEngine::compute_3center_eri(
                             double val = buf[0][idx];
                             
                             // Store with μν symmetry
-                            B(bf1, bf2, bfP) = val;
+                            B((long)bf1, (long)bf2, (long)bfP) = val;
                             if (bf1 != bf2) {
-                                B(bf2, bf1, bfP) = val;
+                                B((long)bf2, (long)bf1, (long)bfP) = val;
                             }
                         }
                     }
@@ -876,7 +867,7 @@ Eigen::MatrixXd IntegralEngine::compute_2center_eri(
         max_nprim,  // DON'T add 100!
         max_l
     );
-    
+    engine.set(libint2::BraKet::xs_xs);
     auto shell2bf = aux_basis.shell_to_basis_function_map();
     
     // Loop over aux shell pairs (P, Q)
@@ -889,8 +880,7 @@ Eigen::MatrixXd IntegralEngine::compute_2center_eri(
             size_t nQ = aux_shells[sQ].size();
             
             // Compute (sP sQ | sP sQ) - self-overlap
-            engine.compute(aux_shells[sP], aux_shells[sQ],
-                          aux_shells[sP], aux_shells[sQ]);
+            engine.compute(aux_shells[sP], aux_shells[sQ]);
             
             const auto& buf = engine.results();
             if (buf[0] == nullptr) continue;

@@ -5,13 +5,15 @@
  * THEORY REFERENCES:
  *   - C. Møller & M. S. Plesset, Phys. Rev. 46, 618 (1934)
  *   - A. Szabo & N. S. Ostlund, "Modern Quantum Chemistry" (1996), Ch. 6
- * 
+*//*
+ * @brief Implementation of Restricted MP2 using Efficient Integral Transformation
  * @author Muhamad Sahrul Hidayat
- * @date 2025-11-12
- * @license MIT
+ */
+/**
  */
 
 #include "mshqc/foundation/rmp2.h"
+#include "mshqc/integrals/eri_transformer.h" // Include transformer
 #include <iostream>
 #include <iomanip>
 #include <cmath>
@@ -25,169 +27,116 @@ RMP2::RMP2(const SCFResult& rhf_result,
     : rhf_(rhf_result), basis_(basis), integrals_(integrals) {
     
     nbf_ = basis_.n_basis_functions();
-    nocc_ = rhf_.n_occ_alpha;  // For RHF, n_occ_alpha = n_occ_beta
+    nocc_ = rhf_.n_occ_alpha;
     nvirt_ = nbf_ - nocc_;
     
-    // Check that this is actually closed-shell (sanity check)
+    // Safety check for closed-shell
     if (rhf_.n_occ_alpha != rhf_.n_occ_beta) {
-        throw std::runtime_error("RMP2 requires closed-shell reference (n_alpha == n_beta)");
+        throw std::runtime_error("RMP2 Error: Reference must be closed-shell RHF.");
     }
-    
-    std::cout << "RMP2: " << nocc_ << " occupied, " << nvirt_ << " virtual orbitals\n";
-}
-
-RMP2Result RMP2::compute() {
-    std::cout << "\n=== RMP2 Calculation ===\n";
-    std::cout << "Basis functions: " << nbf_ << "\n";
-    std::cout << "Occupied orbitals: " << nocc_ << "\n";
-    std::cout << "Virtual orbitals: " << nvirt_ << "\n";
-    
-    // Step 1: Transform integrals AO → MO
-    std::cout << "Transforming integrals to MO basis...\n";
-    transform_integrals_ao_to_mo();
-    
-    // Step 2: Compute T2 amplitudes
-    std::cout << "Computing T2 amplitudes...\n";
-    compute_t2_amplitudes();
-    
-    // Step 3: Calculate correlation energy
-    std::cout << "Computing MP2 energy...\n";
-    double e_corr = compute_correlation_energy();
-    
-    // Build result
-    RMP2Result result;
-    result.e_rhf = rhf_.energy_total;
-    result.e_corr = e_corr;
-    result.e_total = rhf_.energy_total + e_corr;
-    result.n_occ = nocc_;
-    result.n_virt = nvirt_;
-    result.t2 = t2_;  // Copy T2 amplitudes
-    
-    std::cout << std::fixed << std::setprecision(8);
-    std::cout << "\nRHF energy:          " << result.e_rhf << " Ha\n";
-    std::cout << "MP2 correlation:     " << result.e_corr << " Ha\n";
-    std::cout << "Total RMP2 energy:   " << result.e_total << " Ha\n";
-    
-    return result;
 }
 
 void RMP2::transform_integrals_ao_to_mo() {
-    // REFERENCE: Szabo & Ostlund (1996), Eq. (2.282)
-    // Four-index transformation: <pq|rs>_MO = Σ_μνλσ C_μp C_νq (μν|λσ)_AO C_λr C_σs
+    std::cout << "  Transforming integrals to MO basis (Quarter Transform O(N^5))...\n";
     
-    // Get MO coefficients (use alpha coefficients, same as beta for RHF)
+    // Gunakan Integral Engine
+    auto eri_ao = integrals_->compute_eri();
+    
+    // Gunakan ERITransformer yang sudah kita buat
+    using integrals::ERITransformer;
+    
+    // RHF hanya punya satu set koefisien C (Alpha = Beta)
     const Eigen::MatrixXd& C = rhf_.C_alpha;
     
-    // Compute all AO integrals first
-    std::cout << "  Computing AO integrals...\n";
-    Eigen::Tensor<double, 4> eri_ao = integrals_->compute_eri();
+    Eigen::MatrixXd C_occ = C.leftCols(nocc_);
+    Eigen::MatrixXd C_virt = C.rightCols(nvirt_);
     
-    // Allocate MO integral tensor
-    // Only need occupied-occupied-virtual-virtual block <ij|ab>
-    eri_mo_ = Eigen::Tensor<double, 4>(nocc_, nocc_, nvirt_, nvirt_);
-    eri_mo_.setZero();
+    // Transformasi <ij|ab> menggunakan Quarter Transform
+    // Karena RHF: OccAlpha == OccBeta, VirtAlpha == VirtBeta
+    // Kita panggil transform_oovv sekali saja.
     
-    std::cout << "  Transforming integrals AO -> MO...\n";
+    // Output dari transformer: (i, a, j, b) -> Chemist Notation
+    auto eri_chemist = ERITransformer::transform_oovv_quarter(
+        eri_ao, C_occ, C_virt, nbf_, nocc_, nvirt_
+    );
     
-    // Naive O(N^8) transformation (can optimize later)
-    // For now, correctness > speed
-    for (int i = 0; i < nocc_; i++) {
-        for (int j = 0; j < nocc_; j++) {
-            for (int a = 0; a < nvirt_; a++) {
-                int a_mo = nocc_ + a;  // Virtual MO index
-                for (int b = 0; b < nvirt_; b++) {
-                    int b_mo = nocc_ + b;
-                    
-                    double eri_ijab = 0.0;
-                    
-                    // Sum over AO basis
-                    for (int mu = 0; mu < nbf_; mu++) {
-                        for (int nu = 0; nu < nbf_; nu++) {
-                            for (int lam = 0; lam < nbf_; lam++) {
-                                for (int sig = 0; sig < nbf_; sig++) {
-                                    // Transform to MO (physicist notation)
-                                    // <ij|ab> = (ia|jb) in chemist notation
-                                    eri_ijab += C(mu, i) * C(lam, a_mo) * eri_ao(mu, nu, lam, sig) * 
-                                               C(nu, j) * C(sig, b_mo);
-                                }
-                            }
-                        }
-                    }
-                    
-                    eri_mo_(i, j, a, b) = eri_ijab;
-                }
-            }
-        }
-    }
+    // RMP2 butuh Physicist Notation <ij|ab>
+    // Kita lakukan Shuffle: (i, a, j, b) -> (i, j, a, b)
+    // Indeks: 0->0, 1->2, 2->1, 3->3
+    Eigen::array<int, 4> shuf = {0, 2, 1, 3};
+    eri_mo_ = eri_chemist.shuffle(shuf);
     
-    std::cout << "Integral transformation complete.\n";
+    std::cout << "  Transformation complete.\n";
 }
 
 void RMP2::compute_t2_amplitudes() {
-    // REFERENCE: Szabo & Ostlund (1996), Eq. (6.63)
-    // Amplitude: t_ij^ab = <ij|ab> / (ε_i + ε_j - ε_a - ε_b)
-    
     const Eigen::VectorXd& eps = rhf_.orbital_energies_alpha;
     
-    // Allocate T2 tensor
     t2_ = Eigen::Tensor<double, 4>(nocc_, nocc_, nvirt_, nvirt_);
     
     for (int i = 0; i < nocc_; i++) {
         for (int j = 0; j < nocc_; j++) {
             for (int a = 0; a < nvirt_; a++) {
-                int a_mo = nocc_ + a;
                 for (int b = 0; b < nvirt_; b++) {
-                    int b_mo = nocc_ + b;
+                    // Denominator: ei + ej - ea - eb
+                    double denom = eps(i) + eps(j) - eps(nocc_ + a) - eps(nocc_ + b);
                     
-                    // Orbital energy denominator
-                    // NOTE: Always negative for occ→virt excitation
-                    double denom = eps(i) + eps(j) - eps(a_mo) - eps(b_mo);
+                    if (std::abs(denom) < 1e-12) continue;
                     
-                    if (std::abs(denom) < 1e-10) {
-                        throw std::runtime_error("MP2: near-zero denominator (degenerate orbitals?)");
-                    }
-                    
-                    // T2 amplitude from direct integral
+                    // RMP2 Amplitude: <ij|ab> / D
                     t2_(i, j, a, b) = eri_mo_(i, j, a, b) / denom;
                 }
             }
         }
     }
-    
-    std::cout << "T2 amplitudes computed.\n";
 }
 
 double RMP2::compute_correlation_energy() {
-    // REFERENCE: Szabo & Ostlund (1996), Eq. (6.74), p. 354
-    // E^(2) = Σ_ijab (2<ij|ab> - <ij|ba>) * t_ij^ab
-    //
-    // This is the spin-adapted formula for closed-shell systems.
-    // Factor of 2 accounts for spin (α and β contribute equally).
-    
+    // E(2) = sum_ijab (2<ij|ab> - <ij|ba>) * t_ij^ab
     double e_mp2 = 0.0;
     
     for (int i = 0; i < nocc_; i++) {
         for (int j = 0; j < nocc_; j++) {
             for (int a = 0; a < nvirt_; a++) {
                 for (int b = 0; b < nvirt_; b++) {
-                    double direct = eri_mo_(i, j, a, b);   // <ij|ab>
-                    double exchange = eri_mo_(i, j, b, a); // <ij|ba> (b and a swapped)
-                    double t_ijab = t2_(i, j, a, b);
+                    double dir = eri_mo_(i, j, a, b);   // <ij|ab>
+                    double ex  = eri_mo_(i, j, b, a);   // <ij|ba>
+                    double t   = t2_(i, j, a, b);
                     
-                    // Spin-adapted formula
-                    e_mp2 += (2.0 * direct - exchange) * t_ijab;
+                    e_mp2 += (2.0 * dir - ex) * t;
                 }
             }
         }
     }
-    
     return e_mp2;
 }
 
+RMP2Result RMP2::compute() {
+    std::cout << "\n=== RMP2 Calculation (Efficient) ===\n";
+    std::cout << "Basis functions: " << nbf_ << "\n";
+    std::cout << "Occupied: " << nocc_ << ", Virtual: " << nvirt_ << "\n";
+    
+    transform_integrals_ao_to_mo();
+    compute_t2_amplitudes();
+    double e_corr = compute_correlation_energy();
+    
+    RMP2Result result;
+    result.e_rhf = rhf_.energy_total;
+    result.e_corr = e_corr;
+    result.e_total = rhf_.energy_total + e_corr;
+    result.n_occ = nocc_;
+    result.n_virt = nvirt_;
+    result.t2 = t2_;
+    
+    std::cout << std::fixed << std::setprecision(8);
+    std::cout << "RHF Energy:      " << std::setw(14) << result.e_rhf << " Ha\n";
+    std::cout << "MP2 Correlation: " << std::setw(14) << result.e_corr << " Ha\n";
+    std::cout << "Total RMP2:      " << std::setw(14) << result.e_total << " Ha\n";
+    
+    return result;
+}
+
 const Eigen::Tensor<double, 4>& RMP2::get_t2_amplitudes() const {
-    if (t2_.size() == 0) {
-        throw std::runtime_error("T2 amplitudes not available. Call compute() first.");
-    }
     return t2_;
 }
 
