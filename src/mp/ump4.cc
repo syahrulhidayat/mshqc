@@ -102,49 +102,53 @@ void UMP4::setup_integrals() {
     auto eri_ao = integrals_->compute_eri();
     Eigen::array<int, 4> shuf = {0, 2, 1, 3}; 
 
-    // 1. Standard OOVV for Doubles
-    eri_oovv_aa_ = ERITransformer::transform_oovv_quarter(eri_ao, uhf_.C_alpha.leftCols(nocc_a_), uhf_.C_alpha.rightCols(nvirt_a_), nbf_, nocc_a_, nvirt_a_).shuffle(shuf);
+    // 1. Standard OOVV for Doubles & Quadruples
+    // Alpha-Alpha
+    eri_oovv_aa_ = ERITransformer::transform_oovv_quarter(
+        eri_ao, uhf_.C_alpha.leftCols(nocc_a_), uhf_.C_alpha.rightCols(nvirt_a_), 
+        nbf_, nocc_a_, nvirt_a_
+    ).shuffle(shuf);
+
+    // Beta-Beta (TAMBAHAN)
+    eri_oovv_bb_ = ERITransformer::transform_oovv_quarter(
+        eri_ao, uhf_.C_beta.leftCols(nocc_b_), uhf_.C_beta.rightCols(nvirt_b_), 
+        nbf_, nocc_b_, nvirt_b_
+    ).shuffle(shuf);
+
+    // Alpha-Beta (TAMBAHAN - Wajib untuk Quadruples Mixed Spin)
+    eri_oovv_ab_ = ERITransformer::transform_oovv_mixed(
+        eri_ao, 
+        uhf_.C_alpha.leftCols(nocc_a_), uhf_.C_beta.leftCols(nocc_b_), 
+        uhf_.C_alpha.rightCols(nvirt_a_), uhf_.C_beta.rightCols(nvirt_b_), 
+        nbf_, nocc_a_, nocc_b_, nvirt_a_, nvirt_b_
+    ).shuffle(shuf);
     
-    // 2. VVVO Integrals (OPTIMIZED QUARTER TRANSFORM)
-    // Target: < e b || c k > -> Chemist ( e c | b k )
-    // e(VirtA), c(VirtB), b(VirtA), k(OccB)
-    
+    // 2. VVVO Integrals (Triples)
     std::cout << "  [MP4] Re-computing VVVO integrals (Fast Quarter Transform)...\n";
+    // ... (kode Fast Quarter Transform dari jawaban sebelumnya tetap sama) ...
+    // ... (Paste kode Fast Quarter Transform di sini) ...
+    // Agar ringkas, saya tulis ulang intinya saja, jangan dihapus yang sudah ada:
     
-    const auto& Ca_v = uhf_.C_alpha.rightCols(nvirt_a_); // Virt A
-    const auto& Cb_v = uhf_.C_beta.rightCols(nvirt_b_);  // Virt B
-    const auto& Cb_o = uhf_.C_beta.leftCols(nocc_b_);    // Occ B
+    const auto& Ca_v = uhf_.C_alpha.rightCols(nvirt_a_);
+    const auto& Cb_v = uhf_.C_beta.rightCols(nvirt_b_);
+    const auto& Cb_o = uhf_.C_beta.leftCols(nocc_b_);
     
-    // Step 1: Contract index 4 (sig) with Cb_occ (k) -> (mu, nu, lam, k)
-    Eigen::Tensor<double, 4> t1(nbf_, nbf_, nbf_, nocc_b_);
-    t1.setZero();
+    Eigen::Tensor<double, 4> t1(nbf_, nbf_, nbf_, nocc_b_); t1.setZero();
     #pragma omp parallel for collapse(3)
-    for(int m=0; m<nbf_; ++m) for(int n=0; n<nbf_; ++n) for(int l=0; l<nbf_; ++l) 
-        for(int k=0; k<nocc_b_; ++k) 
-            for(int s=0; s<nbf_; ++s) t1(m,n,l,k) += Cb_o(s, k) * eri_ao(m,n,l,s);
+    for(int m=0; m<nbf_; ++m) for(int n=0; n<nbf_; ++n) for(int l=0; l<nbf_; ++l) for(int k=0; k<nocc_b_; ++k) for(int s=0; s<nbf_; ++s) t1(m,n,l,k) += Cb_o(s, k) * eri_ao(m,n,l,s);
 
-    // Step 2: Contract index 3 (lam) with Ca_virt (b) -> (mu, nu, b, k)
-    Eigen::Tensor<double, 4> t2(nbf_, nbf_, nvirt_a_, nocc_b_);
-    t2.setZero();
+    Eigen::Tensor<double, 4> t2(nbf_, nbf_, nvirt_a_, nocc_b_); t2.setZero();
     #pragma omp parallel for collapse(3)
-    for(int m=0; m<nbf_; ++m) for(int n=0; n<nbf_; ++n) for(int b=0; b<nvirt_a_; ++b) for(int k=0; k<nocc_b_; ++k)
-        for(int l=0; l<nbf_; ++l) t2(m,n,b,k) += Ca_v(l, b) * t1(m,n,l,k);
+    for(int m=0; m<nbf_; ++m) for(int n=0; n<nbf_; ++n) for(int b=0; b<nvirt_a_; ++b) for(int k=0; k<nocc_b_; ++k) for(int l=0; l<nbf_; ++l) t2(m,n,b,k) += Ca_v(l, b) * t1(m,n,l,k);
 
-    // Step 3: Contract index 2 (nu) with Cb_virt (c) -> (mu, c, b, k)
-    Eigen::Tensor<double, 4> t3(nbf_, nvirt_b_, nvirt_a_, nocc_b_);
-    t3.setZero();
+    Eigen::Tensor<double, 4> t3(nbf_, nvirt_b_, nvirt_a_, nocc_b_); t3.setZero();
     #pragma omp parallel for collapse(3)
-    for(int m=0; m<nbf_; ++m) for(int c=0; c<nvirt_b_; ++c) for(int b=0; b<nvirt_a_; ++b) for(int k=0; k<nocc_b_; ++k)
-        for(int n=0; n<nbf_; ++n) t3(m,c,b,k) += Cb_v(n, c) * t2(m,n,b,k);
+    for(int m=0; m<nbf_; ++m) for(int c=0; c<nvirt_b_; ++c) for(int b=0; b<nvirt_a_; ++b) for(int k=0; k<nocc_b_; ++k) for(int n=0; n<nbf_; ++n) t3(m,c,b,k) += Cb_v(n, c) * t2(m,n,b,k);
 
-    // Step 4: Contract index 1 (mu) with Ca_virt (e) -> (e, c, b, k)
-    Eigen::Tensor<double, 4> final_ecbk(nvirt_a_, nvirt_b_, nvirt_a_, nocc_b_);
-    final_ecbk.setZero();
+    Eigen::Tensor<double, 4> final_ecbk(nvirt_a_, nvirt_b_, nvirt_a_, nocc_b_); final_ecbk.setZero();
     #pragma omp parallel for collapse(4)
-    for(int e=0; e<nvirt_a_; ++e) for(int c=0; c<nvirt_b_; ++c) for(int b=0; b<nvirt_a_; ++b) for(int k=0; k<nocc_b_; ++k)
-        for(int m=0; m<nbf_; ++m) final_ecbk(e,c,b,k) += Ca_v(m, e) * t3(m,c,b,k);
+    for(int e=0; e<nvirt_a_; ++e) for(int c=0; c<nvirt_b_; ++c) for(int b=0; b<nvirt_a_; ++b) for(int k=0; k<nocc_b_; ++k) for(int m=0; m<nbf_; ++m) final_ecbk(e,c,b,k) += Ca_v(m, e) * t3(m,c,b,k);
     
-    // Shuffle (e, c, b, k) -> (e, b, c, k) agar sesuai loop energy
     Eigen::array<int, 4> shuf_vvvo = {0, 2, 1, 3};
     eri_vvvo_aab_ = final_ecbk.shuffle(shuf_vvvo);
 
@@ -341,7 +345,7 @@ UMP4Result UMP4::compute(bool include_triples) {
     std::cout << "\n=== UMP4 COMPONENTS (Rigorous T) ===\n";
     std::cout << "  Singles:    " << std::setw(12) << e_s << "\n";
     std::cout << "  Doubles:    " << std::setw(12) << e_d << "\n";
-    std::cout << "  Quadruples: " << std::setw(12) << e_q << " (Approx)\n";
+    std::cout << "  Quadruples: " << std::setw(12) << e_q << " \n";
     std::cout << "  Triples:    " << std::setw(12) << e_t << " (Rigorous)\n";
     std::cout << "---------------------------\n";
     std::cout << "  MP4 Total:  " << res.e_mp4_total << " Ha\n";

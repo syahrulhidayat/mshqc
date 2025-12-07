@@ -34,7 +34,65 @@ UMP5::UMP5(const SCFResult& uhf_result,
       verbose_(true), threshold_(1e-12) {
     
     nbf_ = basis.n_basis_functions();
-    nocc_a_ = ump4_.n_occ_alpha;
+    nocc_a_ = ump4_.n_occ_alpha;syahrul@syahrul:~/mshqc$ git status
+Pada cabang main
+Cabang Anda mutakhir dengan 'origin/main'.
+
+Perubahan yang tidak digelar untuk komit:
+  (gunakan "git add/rm <berkas>..." untuk memperbarui apa yang akan dikomit)
+  (gunakan "git restore <berkas>..." untuk membuang perubahan di direktori kerja)
+        terubah:         examples/mp_tests/ump4_test.cc
+        terhapus:        examples/ump3_pVTZ.cc
+        terubah:         include/mshqc/integrals/eri_transformer.h
+        terubah:         include/mshqc/mp/ump4.h
+        terubah:         src/core/integrals.cc
+        terubah:         src/foundation/rmp2.cc
+        terubah:         src/foundation/rmp3.cc
+        terubah:         src/integrals/eri_transformer.cc
+        terubah:         src/mp/ump4.cc
+
+Berkas tak terlacak:
+  (use "git add <berkas>..." untuk menyertakan apa yang akan dikomit)
+        build1.sh
+        examples/rmp_test.cc
+        include/mshqc/foundation/rmp4.h
+        src/foundation/rmp4.cc
+
+tidak ada perubahan untuk dikomit (gunakan "git add" dan/atau "git commit -a")
+syahrul@syahrul:~/mshqc$ git add .
+syahrul@syahrul:~/mshqc$ git commit -m "Fix syntax error in UMP4 quadruples loop"
+[main 82a28fc] Fix syntax error in UMP4 quadruples loop
+ 13 files changed, 1168 insertions(+), 848 deletions(-)
+ create mode 100644 build1.sh
+ create mode 100755 examples/rmp_test.cc
+ delete mode 100755 examples/ump3_pVTZ.cc
+ create mode 100644 include/mshqc/foundation/rmp4.h
+ create mode 100644 src/foundation/rmp4.cc
+syahrul@syahrul:~/mshqc$ git push
+To https://github.com/syahrulhidayat/mshqc.git
+ ! [rejected]        main -> main (fetch first)
+kesalahan: gagal dorong beberapa referensi ke 'https://github.com/syahrulhidayat/mshqc.git'
+petunjuk: Pembaruan ditolak karena remote berisi karya yang Anda tidak punya
+petunjuk: di lokal. Ini biasanya disebabkan repositori yang lain dorong ke
+petunjuk: referensi yang sama. Jika Anda ingin mengintegrasikan perubahan remote
+petunjuk: lakukan 'git pull' sebelum mendorong lagi.
+petunjuk: Lihat 'Note about fast-forwards' di 'git push --help' untuk selengkapnya.
+syahrul@syahrul:~/mshqc$ git push
+To https://github.com/syahrulhidayat/mshqc.git
+ ! [rejected]        main -> main (fetch first)
+kesalahan: gagal dorong beberapa referensi ke 'https://github.com/syahrulhidayat/mshqc.git'
+petunjuk: Pembaruan ditolak karena remote berisi karya yang Anda tidak punya
+petunjuk: di lokal. Ini biasanya disebabkan repositori yang lain dorong ke
+petunjuk: referensi yang sama. Jika Anda ingin mengintegrasikan perubahan remote
+petunjuk: lakukan 'git pull' sebelum mendorong lagi.
+petunjuk: Lihat 'Note about fast-forwards' di 'git push --help' untuk selengkapnya.
+syahrul@syahrul:~/mshqc$ git commit -m "Fix syntax error in UMP4 quadruples loop"
+Pada cabang main
+Cabang Anda mendahului 'origin/main' oleh 1 komit.
+  (gunakan "git push" untuk terbitkan komit lokal Anda)
+
+tidak ada yang dikomit, pohon kerja bersih
+syahrul@syahrul:~/mshqc$ 
     nocc_b_ = ump4_.n_occ_beta;
     nvirt_a_ = ump4_.n_virt_alpha;
     nvirt_b_ = ump4_.n_virt_beta;
