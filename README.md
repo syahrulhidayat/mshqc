@@ -16,7 +16,7 @@ A high-performance quantum chemistry library implementing modern electronic stru
   - DIIS convergence acceleration
 
 - **Møller-Plesset Perturbation Theory**
-  - MP2, MP3, MP4,(Restricted and Unrestricted)
+  - MP2, MP3,(Restricted and Unrestricted)
   - Orbital-Optimized MP2/MP3 (OMP2/OMP3)
   - Density-Fitted MP2 (DF-MP2)
 
