@@ -72,7 +72,7 @@ A high-performance quantum chemistry library implementing modern electronic stru
 - **MKL/OpenBLAS**: For optimized linear algebra
 
 
-##  Installation
+##  Installation Python Binding
 ## Using Conda (Cross-Platform)
 
 ```bash
