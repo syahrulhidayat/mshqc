@@ -1,0 +1,233 @@
+/**
+ * @file cholesky_uhf.h
+ * @brief UHF with Cholesky Decomposed ERIs
+ * 
+ * THEORY:
+ * Standard UHF but uses Cholesky-decomposed ERIs to reduce memory:
+ * (μν|λσ) ≈ Σ_K L^K_μν L^K_λσ
+ * 
+ * REFERENCES:
+ * - Pople & Nesbet (1954), J. Chem. Phys. 22, 571 [UHF theory]
+ * - Beebe & Linderberg (1977), Int. J. Quantum Chem. 12, 683 [Cholesky ERI]
+ * - Koch et al. (2003), J. Chem. Phys. 118, 9481 [Modern Cholesky]
+ * 
+ * ADVANTAGES:
+ * - Memory: O(N²M) vs O(N⁴) for full ERI
+ * - Speed: Fock build becomes O(N³M) with early screening
+ * - Accuracy: Controlled by threshold (typically 1e-6 Ha)
+ * 
+ * @author Muhamad Syahrul Hidayat
+ * @date 2025-12-11
+ * @license MIT
+ */
+
+#ifndef MSHQC_CHOLESKY_UHF_H
+#define MSHQC_CHOLESKY_UHF_H
+
+#include "mshqc/scf.h"
+#include "mshqc/integrals/cholesky_eri.h"
+#include <memory>
+
+namespace mshqc {
+
+// Forward declarations
+class CholeskyUHF;
+
+/**
+ * @brief Configuration for Cholesky-UHF calculation
+ */
+struct CholeskyUHFConfig {
+    // Standard SCF parameters
+    int max_iterations = 100;
+    double energy_threshold = 1e-8;
+    double density_threshold = 1e-6;
+    double diis_threshold = 1e-2;
+    int diis_max_vectors = 8;
+    int print_level = 1;
+    
+    // Cholesky-specific parameters
+    double cholesky_threshold = 1e-6;  // ERI decomposition threshold
+    bool force_decomposition = false;  // Force redecomposition even if exists
+    bool validate_cholesky = false;    // Validate decomposition accuracy
+    
+    // Memory management
+    bool use_disk_storage = false;     // Store L vectors on disk (not implemented yet)
+    int max_memory_mb = 4096;          // Max memory for Cholesky vectors
+};
+
+/**
+ * @brief UHF with Cholesky-decomposed ERIs
+ * 
+ * Main difference from standard UHF:
+ * - Fock build uses Cholesky vectors instead of full ERI tensor
+ * - Memory scaling: O(N²M) where M ≈ N to 2N typically
+ * - Speed comparable or faster due to better cache usage
+ * 
+ * REFERENCE: Aquilante et al. (2008), J. Chem. Phys. 129, 024113
+ * Efficient Cholesky-based Fock matrix construction
+ */
+class CholeskyUHF {
+public:
+    /**
+     * @brief Construct Cholesky-UHF solver
+     * @param mol Molecule object
+     * @param basis Basis set
+     * @param integrals Integral engine
+     * @param n_alpha Number of α electrons
+     * @param n_beta Number of β electrons
+     * @param config Configuration parameters
+     */
+    CholeskyUHF(const Molecule& mol,
+                const BasisSet& basis,
+                std::shared_ptr<IntegralEngine> integrals,
+                int n_alpha,
+                int n_beta,
+                const CholeskyUHFConfig& config = CholeskyUHFConfig());
+    
+    ~CholeskyUHF() = default;
+    
+    /**
+     * @brief Run Cholesky-UHF calculation
+     * @return SCF results
+     */
+    SCFResult compute();
+    
+    /**
+     * @brief Get Cholesky decomposition object
+     */
+    const integrals::CholeskyERI& get_cholesky() const { 
+        return *cholesky_; 
+    }
+    
+    /**
+     * @brief Get current energy
+     */
+    double energy() const { return energy_; }
+    
+    /**
+     * @brief Get number of basis functions
+     */
+    size_t nbasis() const { return nbasis_; }
+    
+    /**
+     * @brief Print memory statistics
+     */
+    void print_memory_usage() const;
+    
+private:
+    // System
+    const Molecule& mol_;
+    const BasisSet& basis_;
+    std::shared_ptr<IntegralEngine> integrals_;
+    CholeskyUHFConfig config_;
+    
+    // Dimensions
+    size_t nbasis_;
+    int n_alpha_;
+    int n_beta_;
+    
+    // Cholesky decomposition
+    std::unique_ptr<integrals::CholeskyERI> cholesky_;
+    int n_cholesky_vectors_ = 0;
+    
+    // Standard UHF matrices
+    Eigen::MatrixXd S_;    // overlap
+    Eigen::MatrixXd H_;    // core Hamiltonian
+    Eigen::MatrixXd X_;    // orthogonalization (S^-1/2)
+    
+    Eigen::MatrixXd C_a_;  // α MO coefficients
+    Eigen::MatrixXd C_b_;  // β MO coefficients
+    Eigen::MatrixXd P_a_;  // α density
+    Eigen::MatrixXd P_b_;  // β density
+    Eigen::MatrixXd F_a_;  // α Fock
+    Eigen::MatrixXd F_b_;  // β Fock
+    
+    Eigen::VectorXd eps_a_;  // α orbital energies
+    Eigen::VectorXd eps_b_;  // β orbital energies
+    
+    double energy_;
+    double energy_old_;
+    
+    // DIIS accelerators
+    DIIS diis_a_;
+    DIIS diis_b_;
+    
+    /**
+     * @brief Initialize integrals and perform Cholesky decomposition
+     * 
+     * REFERENCE: Koch et al. (2003), J. Chem. Phys. 118, 9481, Algorithm 1
+     * Decomposes (μν|λσ) into L^K_μν vectors with controlled accuracy
+     */
+    void init_integrals_and_cholesky();
+    
+    /**
+     * @brief Form initial guess using core Hamiltonian
+     * 
+     * REFERENCE: Szabo & Ostlund (1996), Section 3.4.4, p. 143
+     * Diagonalize H_core → Occupy lowest orbitals → Build P
+     */
+    void initial_guess();
+    
+    /**
+     * @brief Build Fock matrices using Cholesky vectors
+     * 
+     * REFERENCE: Aquilante et al. (2008), J. Chem. Phys. 129, 024113, Eq. (15)
+     * F^α_μν = H_μν + Σ_K [(L^K_μν Σ_λσ (P^α+P^β)_λσ L^K_λσ) - (L^K_μλ Σ_νσ P^α_νσ L^K_λσ)]
+     * 
+     * This is O(N³M) instead of O(N⁴) for full ERI build
+     */
+    void build_fock_cholesky();
+    
+    /**
+     * @brief Build density matrix from MO coefficients
+     * 
+     * REFERENCE: Szabo & Ostlund (1996), Eq. (3.145)
+     * P_μν = Σ_i C_μi C_νi (sum over occupied)
+     */
+    Eigen::MatrixXd build_density(const Eigen::MatrixXd& C, int n_occ);
+    
+    /**
+     * @brief Compute electronic energy
+     * 
+     * REFERENCE: Szabo & Ostlund (1996), Eq. (3.184)
+     * E = Tr[P_tot H] + ½Tr[P^α F^α + P^β F^β]
+     */
+    double compute_energy();
+    
+    /**
+     * @brief Solve Fock equation FC = SCε
+     * 
+     * REFERENCE: Szabo & Ostlund (1996), Section 3.4.5
+     * Transform to orthogonal basis → Diagonalize → Back-transform
+     */
+    void solve_fock(const Eigen::MatrixXd& F,
+                    Eigen::MatrixXd& C,
+                    Eigen::VectorXd& eps);
+    
+    /**
+     * @brief Check convergence criteria
+     */
+    bool check_convergence() const;
+    
+    /**
+     * @brief Print iteration information
+     */
+    void print_iteration(int iter, double dE, double dP) const;
+    
+    /**
+     * @brief Print final results
+     */
+    void print_results(const SCFResult& result) const;
+    
+    /**
+     * @brief Compute spin contamination <S²>
+     * 
+     * REFERENCE: Szabo & Ostlund (1996), Eq. (3.199)
+     * <S²> = S(S+1) + N_β - Σ_ij |⟨φ^α_i|φ^β_j⟩|²
+     */
+    double compute_s_squared() const;
+};
+
+} // namespace mshqc
+
+#endif // MSHQC_CHOLESKY_UHF_H

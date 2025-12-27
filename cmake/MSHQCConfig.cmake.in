@@ -1,0 +1,274 @@
+@PACKAGE_INIT@
+
+include(CMakeFindDependencyMacro)
+
+# Find dependencies
+find_dependency(Eigen3 3.3 REQUIRED)
+find_dependency(PkgConfig QUIET)
+if(PKG_CONFIG_FOUND)
+  pkg_check_modules(Libint2 REQUIRED libint2)
+endif()
+
+# Add our modules
+list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_LIST_DIR})
+
+# Find optional dependencies
+find_dependency(Libcint QUIET)
+
+# Include our targets
+include(${CMAKE_CURRENT_LIST_DIR}/MSHQCTargets.cmake)
+
+# Check that all required components are found
+check_required_components(MSHQC)
+
+# Set variables for users
+set(MSHQC_FOUND @PROJECT_NAME@)
+set(MSHQC_VERSION "@PROJECT_VERSION@")
+set(MSHQC_INCLUDE_DIRS "@CMAKE_INSTALL_PREFIX@/include")
+set(MSHQC_LIBRARIES "mshqc")
+
+# Report status
+if(Libcint_FOUND)
+  set(MSHQC_HAS_DENSITY_FITTING TRUE)
+else()
+  set(MSHQC_HAS_DENSITY_FITTING FALSE)
+  message(STATUS "Libcint not found - density fitting will not be available")
+endif()
+
+ g++ -std=c++17 -O3 -fopenmp \
+  -I/home/syahrul/mshqc/include \
+  -I/usr/include/eigen3 \
+  examples/ump3_test.cc \
+  src/core/molecule.cc \
+  src/core/basis.cc \
+  src/core/integrals.cc \
+  src/scf/uhf.cc \
+  src/scf/diis.cc \
+  src/mp2/ump2.cc \
+  src/mp3/ump3.cc \
+  src/integrals/eri_transformer.cc \
+  -lint2 \
+  -o ump3_test
+
+g++ -std=c++17 -O3 -fopenmp \
+  -I/home/syahrul/mshqc/include \
+  -I/usr/include/eigen3 \
+  src/mp3/ump3.cc \
+  -lint2 \
+
+  # Hapus semua file object dan executable lama
+cd ~/mshqc
+rm -f ump3_test
+rm -f src/mp3/*.o
+rm -f src/integrals/*.o
+
+# Rebuild dengan flag verbose
+g++ -std=c++17 -O0 -g -fopenmp \
+  -I/home/syahrul/mshqc/include \
+  -I/usr/include/eigen3 \
+  examples/ump3_test.cc \
+  src/core/molecule.cc \
+  src/core/basis.cc \
+  src/core/integrals.cc \
+  src/scf/uhf.cc \
+  src/scf/diis.cc \
+  src/mp2/ump2.cc \
+  src/mp3/ump3.cc \
+  src/integrals/eri_transformer.cc \
+  -lint2 \
+  -o ump3_test
+
+# Catatan: -O0 (tidak ada optimasi) dan -g (debug symbols)
+rm -f ump3_test
+rm -f src/mp3/*.o
+rm -f src/integrals/*.o
+#!/bin/bash
+
+echo "Building UMP4 Test..."      |                   omp_in_parallel./
+
+# Pastikan folder build ada (jika mau rapi, tapi kita compile direct aja)
+# Flags:
+# -O3: Optimasi Speed (PENTING untuk Integral)
+# -fopenmp: Parallel processing
+# -I...: Include paths
+
+g++ -std=c++17 -O3 -fopenmp \
+  -I/home/syahrul/mshqc/include \
+  -I/usr/include/eigen3 \
+  \
+  examples/mp_tests/ump4_test.cc \
+  src/core/molecule.cc \
+  src/core/basis.cc \
+  src/core/integrals.cc \
+  src/scf/uhf.cc \
+  src/scf/diis.cc \
+  src/mp2/ump2.cc \
+  src/mp3/ump3.cc \
+  src/mp/ump4.cc \
+  src/integrals/eri_transformer.cc \
+  \
+  -lint2 \
+  -o ump4_test
+
+if [ $? -eq 0 ]; then
+    echo "Build SUCCESS! Running ./ump4_test"
+    ./ump4_test
+else
+    echo "Build FAILED."
+fi
+
+
+syahrul@syahrul:~/mshqc$ cd ~/mshqc
+rm -f ump3_test
+find . -name "*.o" -type f -delete
+
+# Rebuild dengan flag verbose
+g++ -std=c++17 -O0 -g -fopenmp \
+  -I/home/syahrul/mshqc/include \
+  -I/usr/include/eigen3 \
+  examples/ump3_pV5Z.cc \
+  src/core/molecule.cc \
+  src/core/basis.cc \
+  src/core/integrals.cc \
+  src/scf/uhf.cc \
+  src/scf/diis.cc \
+  src/mp2/ump2.cc \
+  src/mp3/ump3.cc \
+  src/integrals/eri_transformer.cc \
+  -lint2 \
+  -o ump3_pV5Z
+
+  rm -f ump4_test && g++ -std=c++17 -O3 -fopenmp \
+  -I/home/syahrul/mshqc/include \
+  -I/usr/include/eigen3 \
+  examples/mp_tests/ump4_test.cc \
+  src/core/molecule.cc \
+  src/core/basis.cc \
+  src/core/integrals.cc \
+  src/core/spherical_transformer.cc \
+  src/core/spherical_integration.cc \
+  src/scf/uhf.cc \
+  src/scf/diis.cc \
+  src/mp2/ump2.cc \
+  src/mp3/ump3.cc \
+  src/mp/ump4.cc \
+  src/integrals/eri_transformer.cc \
+  -lint2 \
+  -o ump4_test
+
+  cd ~/mshqc
+
+# Build dengan urutan parameter yang sudah diperbaiki
+g++ -std=c++17 -O3 -fopenmp \
+  -I/home/syahrul/mshqc/include \
+  -I/usr/include/eigen3 \
+  \
+  examples/mp_tests/ump4_test.cc \
+  \
+  src/core/molecule.cc \
+  src/core/basis.cc \
+  src/core/integrals.cc \
+  src/core/libcint_wrapper.cc \
+  src/core/spherical_transformer.cc \
+  src/core/spherical_integration.cc \
+  \
+  src/scf/uhf.cc \
+  src/scf/diis.cc \
+  \
+  src/mp2/ump2.cc \
+  src/mp3/ump3.cc \
+  src/mp/ump4.cc \
+  \
+  src/integrals/eri_transformer.cc \
+  \
+  -lcint -lblas -llapack \
+  -o ump4_test
+
+# Run
+./ump4_testg++ -std=c++17 -O3 -fopenmp \
+  -I/home/syahrul/mshqc/include \
+  -I/usr/include/eigen3 \
+  \
+  examples/mp_tests/ump4_test.cc \
+  \
+  src/core/molecule.cc \
+  src/core/basis.cc \
+  src/core/integrals.cc \
+  src/core/libcint_wrapper.cc \
+  src/core/spherical_transformer.cc \
+  src/core/spherical_integration.cc \
+  \
+  src/scf/uhf.cc \
+  src/scf/diis.cc \
+  \
+  src/mp2/ump2.cc \
+  src/mp3/ump3.cc \
+  src/mp/ump4.cc \
+  \
+  src/integrals/eri_transformer.cc \
+  \
+  -lcint \
+  -lblas \
+  -llapack \
+  -o ump4_test
+
+g++ -std=c++17 -O3 -fopenmp \
+  -I/home/syahrul/mshqc/include \
+  -I/usr/include/eigen3 \
+  \
+  examples/mp_tests/ump4_test.cc \
+  \
+  src/core/molecule.cc \
+  src/core/basis.cc \
+  src/core/integrals.cc \
+
+  src/core/spherical_transformer.cc \
+  src/core/spherical_integration.cc \
+  \
+  src/scf/uhf.cc \
+  src/scf/diis.cc \
+  \
+  src/mp2/ump2.cc \
+  src/mp3/ump3.cc \
+  src/mp/ump4.cc \
+  \
+  src/integrals/eri_transformer.cc \
+  \
+  -lcint \
+  -lblas \
+  -llapack \
+  -o ump4_test
+
+
+g++ "-std=c++17" "-O3" "-fopenmp" \
+    "-I/home/syahrul/mshqc/include" \
+    "-I/usr/include/eigen3" \
+    \
+    examples/mp_tests/ump4_test.cc \
+    src/core/molecule.cc \
+    src/core/basis.cc \
+    src/core/integrals.cc \
+    src/scf/uhf.cc \
+    src/scf/diis.cc \
+    src/mp2/ump2.cc \
+    src/mp3/ump3.cc \
+    src/mp/ump4.cc \
+    src/integrals/eri_transformer.cc \
+    src/core/spherical_transformer.cc \
+    src/core/spherical_integration.cc \
+    \
+    "-lint2" \
+    "-o" ump4_test
+
+g++ "-std=c++17" "-O3" "-fopenmp" \
+    "-I/home/syahrul/mshqc/include" \
+    "-I/usr/include/eigen3" \
+    \
+    examples/mp_tests/ump4_test.cc \
+    src/core/molecule.cc \
+    src/core/basis.cc \
+    src/core/integrals.cc \
+    src/scf/uhf.cc \
+    src/scf/diis.cc \
+    src/mp2/ump2.cc \
+    "-o" ump4_testical_integration.cc \

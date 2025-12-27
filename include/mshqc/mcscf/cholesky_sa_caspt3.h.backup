@@ -1,0 +1,71 @@
+/**
+ * @file cholesky_sa_caspt3.h
+ * @brief Header for Matrix-Optimized Cholesky SA-CASPT3
+ */
+
+#ifndef MSHQC_MCSCF_CHOLESKY_SA_CASPT3_H
+#define MSHQC_MCSCF_CHOLESKY_SA_CASPT3_H
+
+// --- PERBAIKAN DI SINI ---
+// Ganti sacas_solver.h dengan cholesky_sa_casscf.h
+// karena SACASResult biasanya didefinisikan di sana.
+#include "mshqc/mcscf/cholesky_sa_casscf.h" 
+
+#include "mshqc/mcscf/active_space.h"
+#include <Eigen/Dense>
+#include <vector>
+#include <functional>
+
+namespace mshqc {
+namespace mcscf {
+
+struct CASPT3Config {
+    double shift = 0.25;
+    double zero_thresh = 1e-8; 
+    int print_level = 1;
+};
+
+struct CASPT3Result {
+    std::vector<double> e_cas;
+    std::vector<double> e_pt2;
+    std::vector<double> e_pt3;
+    std::vector<double> e_total;
+};
+
+class CholeskySACASPT3 {
+public:
+    // ... (sisanya sama seperti sebelumnya)
+    CholeskySACASPT3(const SACASResult& result,
+                     const std::vector<Eigen::VectorXd>& cholesky_vecs,
+                     int n_basis,
+                     const ActiveSpace& active_space,
+                     const CASPT3Config& config);
+
+    CASPT3Result compute();
+
+    void transform_cholesky_to_mo();
+    double compute_pt2_verify(int s, const Eigen::VectorXd& e);
+    double compute_state_pt3_fast(int s, const Eigen::VectorXd& e);
+
+private:
+    SACASResult cas_res_; // Ini butuh definisi lengkap dari header di atas
+    std::vector<Eigen::VectorXd> L_ao_;
+    int nbasis_;
+    ActiveSpace active_space_;
+    CASPT3Config config_;
+
+    int n_inact_, n_act_, n_virt_;
+
+    double compute_state_pt3_optimized(
+        int state_idx, 
+        const Eigen::VectorXd& eps,
+        const Eigen::MatrixXd& V_vvvv, 
+        const Eigen::MatrixXd& V_iviv, 
+        const std::function<double(int,int,int,int)>& get_int_fallback
+    );
+};
+
+} // namespace mcscf
+} // namespace mshqc
+
+#endif // MSHQC_MCSCF_CHOLESKY_SA_CASPT3_H

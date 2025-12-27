@@ -1,0 +1,26 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "${workspaceFolder}/include",
+                "${workspaceFolder}/include/eigen-3.4.0",
+                "${workspaceFolder}/include/libint2",
+                "/usr/include/eigen3",
+                "/usr/include/libint2",
+                "/usr/include",
+                "/usr/local/include",
+                "/home/syahrul/miniconda3/envs/mshqc/include/python3.11",
+                "/home/syahrul/miniconda3/envs/mshqc/lib/python3.11/site-packages/pybind11/include",
+                "/home/syahrul/miniconda3/envs/mshqc/lib/python3.11/site-packages/numpy/_core/include"
+            ],
+            "defines": [],
+            "compilerPath": "/usr/bin/g++",
+            "cStandard": "c17",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "linux-gcc-x64"
+        }
+    ],
+    "version": 4
+}

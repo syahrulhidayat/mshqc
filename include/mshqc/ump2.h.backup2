@@ -1,0 +1,99 @@
+/**
+ * @file ump2.h
+ * @brief Optimized Unrestricted MP2 Implementation
+ * @author Muhamad Syahrul Hidayat
+ * @date 2025-02-01
+ * * Fitur Utama:
+ * - Menggunakan ERITransformer untuk transformasi integral cepat (BLAS/Matrix).
+ * - Menyimpan amplitudo T2 untuk digunakan oleh UMP3/UMP4.
+ * - Mendukung perhitungan komponen spin terpisah (AA, BB, AB).
+ */
+
+#ifndef MSHQC_UMP2_H
+#define MSHQC_UMP2_H
+
+#include "mshqc/scf.h"
+#include "mshqc/basis.h"
+#include "mshqc/integrals.h"
+#include <Eigen/Dense>
+#include <unsupported/Eigen/CXX11/Tensor>
+#include <memory>
+
+namespace mshqc {
+
+// Forward declaration untuk friend classes
+class UMP3;
+namespace mp { class UMP4; }
+
+/**
+ * @brief Struktur data hasil perhitungan MP2
+ */
+struct UMP2Result {
+    double e_corr_ss_aa; // Korelasi Same-Spin Alpha-Alpha
+    double e_corr_ss_bb; // Korelasi Same-Spin Beta-Beta
+    double e_corr_os;    // Korelasi Opposite-Spin Alpha-Beta
+    double e_corr_total; // Total Energi Korelasi
+    double e_total;      // Energi Total (UHF + Korelasi)
+};
+
+/**
+ * @brief Kelas Utama UMP2
+ */
+class UMP2 {
+public:
+    // Constructor
+    UMP2(const SCFResult& uhf_result,
+         const BasisSet& basis,
+         std::shared_ptr<IntegralEngine> integrals);
+
+    // Fungsi Utama: Jalankan perhitungan
+    UMP2Result compute();
+
+    // Friend classes: Izinkan UMP3 dan UMP4 mengakses amplitudo T2 dan Integral
+    friend class UMP3;
+    friend class mp::UMP4;
+
+private:
+    // Referensi ke input (Hemat memori, tidak di-copy)
+    const SCFResult& uhf_;
+    const BasisSet& basis_;
+    std::shared_ptr<IntegralEngine> integrals_;
+
+    // Dimensi Sistem
+    int nbf_;
+    int nocc_a_, nocc_b_;
+    int nvir_a_, nvir_b_;
+
+    // ------------------------------------------------------------------------
+    // PENYIMPANAN DATA (Heavy Data)
+    // ------------------------------------------------------------------------
+    
+    // 1. Integral MO (Transformed Integrals)
+    // Disimpan dalam notasi Physicist <ij||ab> atau <ij|ab>
+    Eigen::Tensor<double, 4> g_oovv_aa_; // Alpha-Alpha
+    Eigen::Tensor<double, 4> g_oovv_bb_; // Beta-Beta
+    Eigen::Tensor<double, 4> g_oovv_ab_; // Alpha-Beta
+
+    // 2. Amplitudo T2 (First Order)
+    // Diperlukan untuk MP3 dan MP4
+    Eigen::Tensor<double, 4> t2_aa_1_; // t_ij^ab (Alpha-Alpha)
+    Eigen::Tensor<double, 4> t2_bb_1_; // t_ij^ab (Beta-Beta)
+    Eigen::Tensor<double, 4> t2_ab_1_; // t_ij^ab (Alpha-Beta)
+
+    // ------------------------------------------------------------------------
+    // FUNGSI PRIVATE (Helper)
+    // ------------------------------------------------------------------------
+    
+    // Langkah 1: Transformasi Integral (AO -> MO) menggunakan ERITransformer
+    void transform_integrals();
+
+    // Langkah 2: Menghitung Amplitudo T2 dan Energi sekaligus
+    // Mengembalikan tuple {Energi, Amplitudo}
+    double compute_aa_block();
+    double compute_bb_block();
+    double compute_ab_block();
+};
+
+} // namespace mshqc
+
+#endif // MSHQC_UMP2_H
