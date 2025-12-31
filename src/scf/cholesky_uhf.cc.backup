@@ -1,0 +1,838 @@
+/**
+ * @file cholesky_uhf_fast.cc
+ * @brief ULTRA-FAST Cholesky UHF with Libint2 + OpenMP
+ * 
+ * OPTIMIZATIONS:
+ * - Direct Libint2 ERI computation (no tensor allocation)
+ * - Schwarz screening for sparse integrals
+ * - OpenMP parallelization (Fock build, Cholesky transform)
+ * - Incremental Cholesky with early stopping
+ * - DIIS acceleration
+ * - Memory-efficient L-vector storage
+ * 
+ * TARGET: < 5s for cc-pV5Z on Li₂
+ * 
+ * REFERENCES:
+ * - Koch et al. (2003), J. Chem. Phys. 118, 9481
+ * - Aquilante et al. (2008), J. Chem. Phys. 129, 024113
+ * - Pulay (1980), Chem. Phys. Lett. 73, 393
+ * 
+ * @author Muhamad Syahrul Hidayat
+ * @date 2025-12-14
+ */
+
+#include "mshqc/cholesky_uhf.h"
+#include "mshqc/integrals/cholesky_direct.h" 
+#include <libint2.hpp>
+#include <omp.h>
+#include <iostream>
+#include <iomanip>
+#include <cmath>
+#include <chrono>
+#include <algorithm>
+#include <vector>
+
+namespace mshqc {
+
+// ============================================================================
+// CONSTRUCTOR
+// ============================================================================
+
+CholeskyUHF::CholeskyUHF(
+    const Molecule& mol,
+    const BasisSet& basis,
+    std::shared_ptr<IntegralEngine> integrals,
+    int n_alpha,
+    int n_beta,
+    const CholeskyUHFConfig& config
+) : mol_(mol),
+    basis_(basis),
+    integrals_(integrals),
+    config_(config),
+    n_alpha_(n_alpha),
+    n_beta_(n_beta),
+    diis_a_(config.diis_max_vectors),
+    diis_b_(config.diis_max_vectors)
+{
+    nbasis_ = basis.n_basis_functions();
+    energy_ = 0.0;
+    energy_old_ = 0.0;
+    
+    // Initialize Libint2
+    libint2::initialize();
+    
+    if (config_.print_level > 0) {
+        std::cout << "\n" << std::string(70, '=') << "\n";
+        std::cout << "FAST Cholesky-UHF (Libint2 + OpenMP)\n";
+        std::cout << std::string(70, '=') << "\n";
+        std::cout << "Basis functions: " << nbasis_ << "\n";
+        std::cout << "Electrons (α/β): " << n_alpha_ << "/" << n_beta_ << "\n";
+        std::cout << "Cholesky threshold: " << std::scientific 
+                  << config_.cholesky_threshold << "\n";
+        std::cout << "OpenMP threads: " << omp_get_max_threads() << "\n";
+        std::cout << std::string(70, '=') << "\n";
+    }
+}
+
+// ============================================================================
+// INITIALIZATION - ONE-ELECTRON INTEGRALS
+// ============================================================================
+
+void CholeskyUHF::init_integrals_and_cholesky() {
+    auto t_start = std::chrono::high_resolution_clock::now();
+    
+    if (config_.print_level > 0) {
+        std::cout << "\n[1/4] Computing one-electron integrals..." << std::flush;
+    }
+    
+    // Compute overlap, kinetic, nuclear using standard engine
+    S_ = integrals_->compute_overlap();
+    Eigen::MatrixXd T = integrals_->compute_kinetic();
+    Eigen::MatrixXd V = integrals_->compute_nuclear();
+    H_ = T + V;
+    
+    // Orthogonalization matrix (canonical)
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(S_);
+    Eigen::VectorXd s_vals = es.eigenvalues();
+    Eigen::MatrixXd s_vecs = es.eigenvectors();
+    
+    // S^(-1/2) = U * s^(-1/2) * U^T
+    for (int i = 0; i < s_vals.size(); i++) {
+        s_vals(i) = (s_vals(i) > 1e-12) ? 1.0 / std::sqrt(s_vals(i)) : 0.0;
+    }
+    X_ = s_vecs * s_vals.asDiagonal() * s_vecs.transpose();
+    
+    auto t_end = std::chrono::high_resolution_clock::now();
+    double dt = std::chrono::duration<double>(t_end - t_start).count();
+    
+    if (config_.print_level > 0) {
+        std::cout << " Done (" << std::fixed << std::setprecision(3) 
+                  << dt << " s)\n";
+    }
+    
+    // Cholesky decomposition of ERIs using Libint2
+    decompose_eri_libint2();
+}
+
+// ============================================================================
+// SCHWARZ SCREENING MATRIX
+// ============================================================================
+
+Eigen::MatrixXd CholeskyUHF::compute_schwarz_matrix() {
+    // Compute (μν|μν)^(1/2) for screening
+    Eigen::MatrixXd schwarz(nbasis_, nbasis_);
+    schwarz.setZero();
+    
+    // Convert mshqc basis to libint2 format
+    std::vector<libint2::Shell> libint_shells = convert_to_libint2_shells();
+    auto shell2bf = map_shell_to_basis_function();
+    
+    libint2::Engine eri_engine(
+        libint2::Operator::coulomb,
+        basis_.max_angular_momentum(),
+        0
+    );
+    
+    // Cannot use collapse(2) with non-rectangular loop
+    #pragma omp parallel for schedule(dynamic)
+    for (size_t s1 = 0; s1 < libint_shells.size(); s1++) {
+        libint2::Engine engine_local = eri_engine;
+        
+        for (size_t s2 = 0; s2 <= s1; s2++) {
+            engine_local.compute(
+                libint_shells[s1], libint_shells[s2],
+                libint_shells[s1], libint_shells[s2]
+            );
+            
+            const auto& buf_vec = engine_local.results();
+            if (buf_vec[0] == nullptr) continue;
+            
+            // Extract diagonal (μμ|νν)
+            size_t bf1 = shell2bf[s1];
+            size_t bf2 = shell2bf[s2];
+            size_t n1 = libint_shells[s1].size();
+            size_t n2 = libint_shells[s2].size();
+            
+            for (size_t f1 = 0; f1 < n1; f1++) {
+                for (size_t f2 = 0; f2 < n2; f2++) {
+                    size_t idx = f1*n2*n2*n2 + f2*n2*n2 + f1*n2 + f2;
+                    double val = std::abs(buf_vec[0][idx]);
+                    
+                    #pragma omp critical
+                    {
+                        schwarz(bf1 + f1, bf2 + f2) = std::sqrt(val);
+                        schwarz(bf2 + f2, bf1 + f1) = std::sqrt(val);
+                    }
+                }
+            }
+        }
+    }
+    
+    return schwarz;
+}
+
+// ============================================================================
+// CONVERT MSHQC BASIS TO LIBINT2
+// ============================================================================
+
+std::vector<libint2::Shell> CholeskyUHF::convert_to_libint2_shells() {
+    std::vector<libint2::Shell> libint_shells;
+    
+    for (size_t i = 0; i < basis_.n_shells(); i++) {
+        const auto& shell = basis_.shell(i);
+        
+        // Extract primitives - use svector (small_vector) for Libint2
+        libint2::svector<double> alphas;
+        for (size_t p = 0; p < shell.n_primitives(); p++) {
+            alphas.push_back(shell.primitive(p).exponent);
+        }
+        
+        // Position
+        auto pos = shell.position();
+        std::array<double, 3> origin = {pos[0], pos[1], pos[2]};
+        
+        // Create contraction - just use l and spherical, NO third parameter
+        libint2::Shell::Contraction contr{shell.l(), shell.is_spherical()};
+        
+        // Set coefficients in contraction
+        for (size_t p = 0; p < shell.n_primitives(); p++) {
+            contr.coeff.push_back(shell.primitive(p).coefficient);
+        }
+        
+        // Create contractions vector
+        libint2::svector<libint2::Shell::Contraction> contractions;
+        contractions.push_back(contr);
+        
+        // Create libint2 shell using proper constructor
+        libint2::Shell libint_shell(alphas, contractions, origin);
+        
+        libint_shells.push_back(libint_shell);
+    }
+    
+    return libint_shells;
+}
+
+std::vector<size_t> CholeskyUHF::map_shell_to_basis_function() {
+    std::vector<size_t> shell2bf(basis_.n_shells());
+    size_t bf = 0;
+    for (size_t s = 0; s < basis_.n_shells(); s++) {
+        shell2bf[s] = bf;
+        bf += basis_.shell(s).n_functions();
+    }
+    return shell2bf;
+}
+
+// ============================================================================
+// INCREMENTAL CHOLESKY DECOMPOSITION WITH LIBINT2
+// ============================================================================
+
+// ============================================================================
+// REPLACE decompose_eri_libint2() in cholesky_uhf.cc dengan ini:
+// ============================================================================
+
+
+void CholeskyUHF::decompose_eri_libint2() {
+    auto t_start = std::chrono::high_resolution_clock::now();
+    
+    if (config_.print_level > 0) {
+        std::cout << "[2/4] Cholesky decomposition (Direct)...\n";
+    }
+    
+    std::vector<libint2::Shell> libint_shells = convert_to_libint2_shells();
+    
+    integrals::DirectCholesky direct_chol(libint_shells, config_.cholesky_threshold);
+    direct_chol.compute();
+    
+    cholesky_ = std::make_unique<integrals::CholeskyERI>(config_.cholesky_threshold);
+    
+    // FIX: Create temporary and explicitly move
+    auto L_vecs = direct_chol.get_L();  // Copy from DirectCholesky
+    cholesky_->set_vectors(L_vecs);
+    n_cholesky_vectors_ = direct_chol.rank();
+    
+    auto t_end = std::chrono::high_resolution_clock::now();
+    double dt = std::chrono::duration<double>(t_end - t_start).count();
+    
+    if (config_.print_level > 0) {
+        std::cout << "   Done (" << n_cholesky_vectors_ << " vectors, " 
+                  << std::fixed << std::setprecision(2) << dt << " s)\n";
+    }
+}
+
+// ============================================================================
+// DELETE these functions (no longer needed):
+// ============================================================================
+// - compute_schwarz_matrix()
+// - compute_diagonal_eri()
+// - compute_cholesky_vector_libint2()
+//
+// They are replaced by DirectCholesky::compute()
+// ============================================================================
+
+// ============================================================================
+// PART 2: CHOLESKY HELPERS + INITIAL GUESS + FOCK BUILD
+// ============================================================================
+
+// ============================================================================
+// COMPUTE DIAGONAL ERI (μν|μν)
+// ============================================================================
+
+void CholeskyUHF::compute_diagonal_eri(
+    Eigen::VectorXd& D,
+    const Eigen::MatrixXd& schwarz
+) {
+    D.setZero();
+    
+    std::vector<libint2::Shell> libint_shells = convert_to_libint2_shells();
+    auto shell2bf = map_shell_to_basis_function();
+    
+    libint2::Engine eri_engine(
+        libint2::Operator::coulomb,
+        basis_.max_angular_momentum(),  // max L
+        0  // deriv order
+    );
+    
+    #pragma omp parallel
+    {
+        libint2::Engine engine_local = eri_engine;
+        
+        #pragma omp for schedule(dynamic)
+        for (size_t s1 = 0; s1 < libint_shells.size(); s1++) {
+            size_t bf1 = shell2bf[s1];
+            size_t n1 = libint_shells[s1].size();
+            
+            for (size_t s2 = 0; s2 <= s1; s2++) {
+                size_t bf2 = shell2bf[s2];
+                size_t n2 = libint_shells[s2].size();
+                
+                // Schwarz screening
+                double schwarz_est = schwarz(bf1, bf1) * schwarz(bf2, bf2);
+                if (schwarz_est < config_.cholesky_threshold) continue;
+                
+                engine_local.compute(
+                    libint_shells[s1], libint_shells[s2],
+                    libint_shells[s1], libint_shells[s2]
+                );
+                
+                const auto& buf_vec = engine_local.results();
+                if (buf_vec[0] == nullptr) continue;
+                
+                // Extract (μν|μν)
+                for (size_t f1 = 0; f1 < n1; f1++) {
+                    for (size_t f2 = 0; f2 < n2; f2++) {
+                        size_t idx_eri = f1*n2*n2*n2 + f2*n2*n2 + f1*n2 + f2;
+                        int idx_flat = (bf1 + f1) * nbasis_ + (bf2 + f2);
+                        D(idx_flat) = buf_vec[0][idx_eri];
+                        
+                        if (s1 != s2) {
+                            int idx_sym = (bf2 + f2) * nbasis_ + (bf1 + f1);
+                            D(idx_sym) = buf_vec[0][idx_eri];
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// ============================================================================
+// COMPUTE CHOLESKY VECTOR L^K
+// ============================================================================
+
+Eigen::VectorXd CholeskyUHF::compute_cholesky_vector_libint2(
+    int pivot,
+    const Eigen::VectorXd& D,
+    const std::vector<libint2::Shell>& libint_shells,
+    const std::vector<size_t>& shell2bf,
+    const Eigen::MatrixXd& schwarz,
+    double schwarz_thr
+) {
+    Eigen::VectorXd L(nbasis_ * nbasis_);
+    L.setZero();
+    
+    int mu_pivot = pivot / nbasis_;
+    int nu_pivot = pivot % nbasis_;
+    
+    if (D(pivot) <= 0.0) return L;
+    
+    double L_pivot = std::sqrt(D(pivot));
+    L(pivot) = L_pivot;
+    
+    // Compute L(μν) = [(μν|pivot) - Σ_k L^k_μν L^k_pivot] / L_pivot
+    // Here we compute (μν|pivot) directly via Libint2
+    
+    // PERBAIKAN: Gunakan max angular momentum dari basis set yang sebenarnya
+    libint2::Engine eri_engine(
+        libint2::Operator::coulomb,
+        basis_.max_angular_momentum(), // <--- Gunakan fungsi ini agar aman untuk semua shell (s,p,d,f,g,h...)
+        0
+    );
+    
+    #pragma omp parallel
+    {
+        libint2::Engine engine_local = eri_engine;
+        
+        #pragma omp for schedule(dynamic)
+        for (size_t s1 = 0; s1 < libint_shells.size(); s1++) {
+            size_t bf1 = shell2bf[s1];
+            size_t n1 = libint_shells[s1].size();
+            
+            for (size_t s2 = 0; s2 <= s1; s2++) {
+                size_t bf2 = shell2bf[s2];
+                size_t n2 = libint_shells[s2].size();
+                
+                // Screen
+                if (schwarz(bf1, bf1) * schwarz(bf2, bf2) < schwarz_thr) continue;
+                
+                // Find shells for pivot
+                size_t s_mu = 0, s_nu = 0;
+                for (size_t s = 0; s < libint_shells.size(); s++) {
+                    if (shell2bf[s] <= (size_t)mu_pivot && 
+                        (size_t)mu_pivot < shell2bf[s] + libint_shells[s].size()) {
+                        s_mu = s;
+                    }
+                    if (shell2bf[s] <= (size_t)nu_pivot && 
+                        (size_t)nu_pivot < shell2bf[s] + libint_shells[s].size()) {
+                        s_nu = s;
+                    }
+                }
+                
+                engine_local.compute(
+                    libint_shells[s1], libint_shells[s2],
+                    libint_shells[s_mu], libint_shells[s_nu]
+                );
+                
+                const auto& buf_vec = engine_local.results();
+                if (buf_vec[0] == nullptr) continue;
+                
+                size_t n_mu = libint_shells[s_mu].size();
+                size_t n_nu = libint_shells[s_nu].size();
+                
+                for (size_t f1 = 0; f1 < n1; f1++) {
+                    for (size_t f2 = 0; f2 < n2; f2++) {
+                        size_t f_mu = mu_pivot - shell2bf[s_mu];
+                        size_t f_nu = nu_pivot - shell2bf[s_nu];
+                        
+                        size_t idx_eri = f1*n2*n_mu*n_nu + f2*n_mu*n_nu + f_mu*n_nu + f_nu;
+                        int idx_flat = (bf1 + f1) * nbasis_ + (bf2 + f2);
+                        
+                        L(idx_flat) = buf_vec[0][idx_eri] / L_pivot;
+                        
+                        if (s1 != s2) {
+                            int idx_sym = (bf2 + f2) * nbasis_ + (bf1 + f1);
+                            L(idx_sym) = buf_vec[0][idx_eri] / L_pivot;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    return L;
+}
+
+// ============================================================================
+// INITIAL GUESS - CORE HAMILTONIAN
+// ============================================================================
+
+void CholeskyUHF::initial_guess() {
+    if (config_.print_level > 0) {
+        std::cout << "[3/4] Initial guess (core Hamiltonian)..." << std::flush;
+    }
+    
+    auto t_start = std::chrono::high_resolution_clock::now();
+    
+    // Bias for alpha/beta (helps with convergence)
+    Eigen::MatrixXd H_alpha = H_;
+    Eigen::MatrixXd H_beta = H_;
+    
+    // Small bias to break symmetry
+    for (size_t i = 0; i < nbasis_; i++) {
+        H_alpha(i, i) -= 0.3;  // Favor alpha
+        H_beta(i, i) += 0.3;   // Disfavor beta
+    }
+    
+    // Solve for alpha
+    solve_fock(H_alpha, C_a_, eps_a_);
+    P_a_ = build_density(C_a_, n_alpha_);
+    
+    // Solve for beta
+    solve_fock(H_beta, C_b_, eps_b_);
+    P_b_ = build_density(C_b_, n_beta_);
+    
+    auto t_end = std::chrono::high_resolution_clock::now();
+    double dt = std::chrono::duration<double>(t_end - t_start).count();
+    
+    if (config_.print_level > 0) {
+        std::cout << " Done (" << std::fixed << std::setprecision(3) 
+                  << dt << " s)\n";
+    }
+}
+
+// ============================================================================
+// BUILD DENSITY MATRIX
+// ============================================================================
+
+Eigen::MatrixXd CholeskyUHF::build_density(
+    const Eigen::MatrixXd& C,
+    int n_occ
+) {
+    Eigen::MatrixXd C_occ = C.leftCols(n_occ);
+    return C_occ * C_occ.transpose();
+}
+
+// ============================================================================
+// SOLVE FOCK EQUATION FC = SCε
+// ============================================================================
+
+void CholeskyUHF::solve_fock(
+    const Eigen::MatrixXd& F,
+    Eigen::MatrixXd& C,
+    Eigen::VectorXd& eps
+) {
+    // Transform to orthogonal basis: F' = X^T F X
+    Eigen::MatrixXd Fp = X_.transpose() * F * X_;
+    
+    // Diagonalize
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> solver(Fp);
+    eps = solver.eigenvalues();
+    
+    // Transform back: C = X C'
+    C = X_ * solver.eigenvectors();
+}
+
+// ============================================================================
+// FOCK BUILD WITH CHOLESKY + OpenMP (ULTRA-FAST)
+// ============================================================================
+
+void CholeskyUHF::build_fock_cholesky() {
+    // Start with core Hamiltonian
+    F_a_ = H_;
+    F_b_ = H_;
+    
+    const auto& L_vectors = cholesky_->get_L_vectors();
+    Eigen::MatrixXd P_tot = P_a_ + P_b_;
+    
+    // Parallel Fock build using Cholesky vectors
+    #pragma omp parallel
+    {
+        Eigen::MatrixXd F_a_local = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+        Eigen::MatrixXd F_b_local = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+        
+        #pragma omp for schedule(dynamic, 10)
+        for (int K = 0; K < n_cholesky_vectors_; K++) {
+            // Reshape L^K to matrix
+            Eigen::Map<const Eigen::MatrixXd> L_K(
+                L_vectors[K].data(), nbasis_, nbasis_
+            );
+            
+            // Coulomb: J = Σ_K L^K * Tr(P_tot * L^K)
+            double J_val = (P_tot.array() * L_K.array()).sum();
+            F_a_local += J_val * L_K;
+            F_b_local += J_val * L_K;
+            
+            // Exchange: K_α = Σ_K (L^K * P_α * L^K)
+            Eigen::MatrixXd K_a_contrib = L_K * P_a_ * L_K;
+            Eigen::MatrixXd K_b_contrib = L_K * P_b_ * L_K;
+            
+            F_a_local -= K_a_contrib;
+            F_b_local -= K_b_contrib;
+        }
+        
+        #pragma omp critical
+        {
+            F_a_ += F_a_local;
+            F_b_ += F_b_local;
+        }
+    }
+}
+
+// ============================================================================
+// PART 3: SCF LOOP WITH DIIS + CONVERGENCE + RESULTS
+// ============================================================================
+
+// ============================================================================
+// COMPUTE ELECTRONIC ENERGY
+// ============================================================================
+
+double CholeskyUHF::compute_energy() {
+    // E = 0.5 * Tr[P_α(H + F_α) + P_β(H + F_β)]
+    double e_alpha = 0.5 * (P_a_.array() * (H_ + F_a_).array()).sum();
+    double e_beta = 0.5 * (P_b_.array() * (H_ + F_b_).array()).sum();
+    return e_alpha + e_beta;
+}
+
+// ============================================================================
+// COMPUTE SPIN CONTAMINATION <S²>
+// ============================================================================
+
+double CholeskyUHF::compute_s_squared() const {
+    // <S²> = S(S+1) + N_β - Σ_ij |<φ_i^α|φ_j^β>|²
+    // where S = (N_α - N_β) / 2
+    
+    double S = 0.5 * (n_alpha_ - n_beta_);
+    double S_ideal = S * (S + 1.0);
+    
+    // Compute overlap <φ_i^α|φ_j^β> = C_α^T S C_β
+    Eigen::MatrixXd overlap_ao = S_;
+    Eigen::MatrixXd C_a_occ = C_a_.leftCols(n_alpha_);
+    Eigen::MatrixXd C_b_occ = C_b_.leftCols(n_beta_);
+    
+    Eigen::MatrixXd overlap_mo = C_a_occ.transpose() * overlap_ao * C_b_occ;
+    
+    double correction = (overlap_mo.array() * overlap_mo.array()).sum();
+    
+    return S_ideal + n_beta_ - correction;
+}
+
+// ============================================================================
+// MAIN SCF COMPUTATION WITH DIIS
+// ============================================================================
+
+SCFResult CholeskyUHF::compute() {
+    auto t_total_start = std::chrono::high_resolution_clock::now();
+    
+    // Step 1: Initialize integrals + Cholesky
+    init_integrals_and_cholesky();
+    
+    // Step 2: Initial guess
+    initial_guess();
+    
+    // Step 3: SCF iterations with DIIS
+    if (config_.print_level > 0) {
+        std::cout << "[4/4] SCF iterations (with DIIS)...\n";
+        std::cout << std::string(70, '-') << "\n";
+        std::cout << std::setw(6) << "Iter"
+                  << std::setw(20) << "Energy (Ha)"
+                  << std::setw(15) << "ΔE"
+                  << std::setw(15) << "RMS(DP)"
+                  << std::setw(10) << "DIIS\n";
+        std::cout << std::string(70, '-') << "\n";
+    }
+    
+    auto t_scf_start = std::chrono::high_resolution_clock::now();
+    
+    energy_ = compute_energy();
+    bool converged = false;
+    int iter = 0;
+    
+    Eigen::MatrixXd P_a_old = P_a_;
+    Eigen::MatrixXd P_b_old = P_b_;
+    
+    for (iter = 1; iter <= config_.max_iterations; iter++) {
+        energy_old_ = energy_;
+        
+        // Build Fock matrices
+        build_fock_cholesky();
+        
+        // Compute error vectors for DIIS (FPS - SPF)
+        Eigen::MatrixXd err_a = F_a_ * P_a_ * S_ - S_ * P_a_ * F_a_;
+        Eigen::MatrixXd err_b = F_b_ * P_b_ * S_ - S_ * P_b_ * F_b_;
+        
+        double rms_a = std::sqrt((err_a.array() * err_a.array()).sum() / (nbasis_ * nbasis_));
+        double rms_b = std::sqrt((err_b.array() * err_b.array()).sum() / (nbasis_ * nbasis_));
+        double rms_err = std::max(rms_a, rms_b);
+        
+        // Add to DIIS (always, even on first iteration)
+        diis_a_.add_iteration(F_a_, err_a);
+        diis_b_.add_iteration(F_b_, err_b);
+        
+        // Apply DIIS extrapolation after enough iterations
+        bool use_diis = false;
+        if (iter >= 2 && rms_err < config_.diis_threshold) {
+            if (diis_a_.can_extrapolate() && diis_b_.can_extrapolate()) {
+                F_a_ = diis_a_.extrapolate();
+                F_b_ = diis_b_.extrapolate();
+                use_diis = true;
+            }
+        }
+        
+        // Solve Fock equations
+        solve_fock(F_a_, C_a_, eps_a_);
+        solve_fock(F_b_, C_b_, eps_b_);
+        
+        // Build new densities
+        P_a_ = build_density(C_a_, n_alpha_);
+        P_b_ = build_density(C_b_, n_beta_);
+        
+        // Compute density change
+        double dp_a = (P_a_ - P_a_old).norm();
+        double dp_b = (P_b_ - P_b_old).norm();
+        double dp = std::max(dp_a, dp_b);
+        
+        // Compute energy
+        energy_ = compute_energy();
+        double dE = energy_ - energy_old_;
+        
+        // Print iteration info
+        if (config_.print_level > 0) {
+            std::cout << std::setw(6) << iter
+                      << std::setw(20) << std::fixed << std::setprecision(10) << energy_
+                      << std::setw(15) << std::scientific << std::setprecision(4) << dE
+                      << std::setw(15) << dp
+                      << std::setw(10) << (use_diis ? "ON" : "OFF")
+                      << "\n";
+        }
+        
+        // Check convergence
+        if (std::abs(dE) < config_.energy_threshold && 
+            dp < config_.density_threshold) {
+            converged = true;
+            break;
+        }
+        
+        // Update old densities
+        P_a_old = P_a_;
+        P_b_old = P_b_;
+    }
+    
+    auto t_scf_end = std::chrono::high_resolution_clock::now();
+    double scf_time = std::chrono::duration<double>(t_scf_end - t_scf_start).count();
+    
+    if (config_.print_level > 0) {
+        std::cout << std::string(70, '-') << "\n";
+        if (converged) {
+            std::cout << "SCF CONVERGED in " << iter << " iterations\n";
+        } else {
+            std::cout << "SCF DID NOT CONVERGE in " << config_.max_iterations 
+                      << " iterations\n";
+        }
+        std::cout << "SCF time: " << std::fixed << std::setprecision(3) 
+                  << scf_time << " s\n";
+    }
+    
+    // Populate result
+    SCFResult result;
+    result.energy_electronic = energy_;
+    result.energy_nuclear = mol_.nuclear_repulsion_energy();
+    result.energy_total = energy_ + result.energy_nuclear;
+    result.iterations = iter;
+    result.converged = converged;
+    
+    // Orbitals and energies
+    result.C_alpha = C_a_;
+    result.C_beta = C_b_;
+    result.orbital_energies_alpha = eps_a_;
+    result.orbital_energies_beta = eps_b_;
+    result.P_alpha = P_a_;
+    result.P_beta = P_b_;
+    result.n_occ_alpha = n_alpha_;
+    result.n_occ_beta = n_beta_;
+    
+    // Spin contamination (optional fields - skip if not in SCFResult)
+    double s_squared = compute_s_squared();
+    // result.s_squared = s_squared;  // Uncomment if SCFResult has this field
+    // result.spin_contamination = s_squared - 0.25 * (n_alpha_ - n_beta_) * (n_alpha_ - n_beta_ + 2);
+    
+    auto t_total_end = std::chrono::high_resolution_clock::now();
+    double total_time = std::chrono::duration<double>(t_total_end - t_total_start).count();
+    
+    // Print final results
+    if (config_.print_level > 0) {
+        std::cout << "\n" << std::string(70, '=') << "\n";
+        std::cout << "CHOLESKY-UHF RESULTS\n";
+        std::cout << std::string(70, '=') << "\n";
+        std::cout << std::fixed << std::setprecision(10);
+        std::cout << "Electronic energy: " << std::setw(20) << result.energy_electronic << " Ha\n";
+        std::cout << "Nuclear repulsion: " << std::setw(20) << result.energy_nuclear << " Ha\n";
+        std::cout << "Total energy:      " << std::setw(20) << result.energy_total << " Ha\n";
+        std::cout << "\n";
+        std::cout << "Spin contamination:\n";
+        std::cout << "  <S²>:            " << std::setw(20) << std::setprecision(6) 
+                  << s_squared << "\n";
+        std::cout << "  <S²> ideal:      " << std::setw(20) 
+                  << 0.25 * (n_alpha_ - n_beta_) * (n_alpha_ - n_beta_ + 2) << "\n";
+        std::cout << "  Contamination:   " << std::setw(20) 
+                  << (s_squared - 0.25 * (n_alpha_ - n_beta_) * (n_alpha_ - n_beta_ + 2)) << "\n";
+        std::cout << "\n";
+        std::cout << "Orbital energies (α):\n";
+        std::cout << "  HOMO: " << std::setw(15) << std::setprecision(6) 
+                  << eps_a_(n_alpha_ - 1) << " Ha\n";
+        std::cout << "  LUMO: " << std::setw(15) 
+                  << eps_a_(n_alpha_) << " Ha\n";
+        std::cout << "  Gap:  " << std::setw(15) 
+                  << (eps_a_(n_alpha_) - eps_a_(n_alpha_ - 1)) << " Ha\n";
+        std::cout << "\n";
+        std::cout << "Orbital energies (β):\n";
+        std::cout << "  HOMO: " << std::setw(15) 
+                  << eps_b_(n_beta_ - 1) << " Ha\n";
+        std::cout << "  LUMO: " << std::setw(15) 
+                  << eps_b_(n_beta_) << " Ha\n";
+        std::cout << "  Gap:  " << std::setw(15) 
+                  << (eps_b_(n_beta_) - eps_b_(n_beta_ - 1)) << " Ha\n";
+        std::cout << std::string(70, '=') << "\n";
+        
+        print_memory_usage();
+        
+        std::cout << "\nTOTAL TIME: " << std::fixed << std::setprecision(3) 
+                  << total_time << " s\n";
+        std::cout << std::string(70, '=') << "\n\n";
+    }
+    
+    return result;
+}
+
+// ============================================================================
+// PRINT MEMORY USAGE
+// ============================================================================
+
+void CholeskyUHF::print_memory_usage() const {
+    std::cout << "\nMemory usage:\n";
+    std::cout << std::string(70, '-') << "\n";
+    
+    // Cholesky vectors
+    size_t chol_bytes = n_cholesky_vectors_ * nbasis_ * nbasis_ * sizeof(double);
+    double chol_mb = chol_bytes / (1024.0 * 1024.0);
+    
+    // Full ERI estimate
+    size_t full_bytes = nbasis_ * nbasis_ * nbasis_ * nbasis_ * sizeof(double);
+    double full_mb = full_bytes / (1024.0 * 1024.0);
+    
+    // Compression ratio
+    double compression = (double)full_bytes / chol_bytes;
+    
+    std::cout << "  Cholesky vectors: " << n_cholesky_vectors_ << "\n";
+    std::cout << "  Cholesky storage: " << std::fixed << std::setprecision(2) 
+              << chol_mb << " MB\n";
+    std::cout << "  Full ERI (N⁴):    " << full_mb << " MB (theoretical)\n";
+    std::cout << "  Compression:      " << std::setprecision(1) 
+              << compression << "×\n";
+    
+    // Matrices
+    size_t matrix_bytes = 8 * nbasis_ * nbasis_ * sizeof(double);  // S, H, X, P_a, P_b, F_a, F_b, C_a, C_b
+    double matrix_mb = matrix_bytes / (1024.0 * 1024.0);
+    std::cout << "  SCF matrices:     " << std::setprecision(2) 
+              << matrix_mb << " MB\n";
+    
+    double total_mb = chol_mb + matrix_mb;
+    std::cout << "  Total:            " << total_mb << " MB\n";
+    std::cout << std::string(70, '-') << "\n";
+}
+
+// ============================================================================
+// DESTRUCTOR
+// ============================================================================
+
+CholeskyUHF::~CholeskyUHF() {
+    // Finalize Libint2
+    libint2::finalize();
+}
+
+} // namespace mshqc
+
+// ============================================================================
+// FIX FOR CHOLESKY_UMP3.CC - OpenMP Reduction Fix
+// ============================================================================
+// Replace in cholesky_ump3.cc lines 144, 159, 174:
+//
+// WRONG:
+// #pragma omp parallel for reduction(+:result.e_mp2_ss_aa) schedule(dynamic)
+//
+// CORRECT:
+// double e_mp2_ss_aa_local = 0.0;
+// #pragma omp parallel for reduction(+:e_mp2_ss_aa_local) schedule(dynamic)
+// for (...) {
+//     e_mp2_ss_aa_local += ...;
+// }
+// result.e_mp2_ss_aa = e_mp2_ss_aa_local;
+// ============================================================================

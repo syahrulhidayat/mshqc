@@ -1,0 +1,14 @@
+{
+    "python.analysis.extraPaths": [
+        "/home/syahrul/mshqc",
+        "/home/syahrul/mshqc/python",       
+        "/home/syahrul/mshqc/python/mshqc"  
+    ],
+    "python.autoComplete.extraPaths": [
+        "/home/syahrul/mshqc",
+        "/home/syahrul/mshqc/python",
+        "/home/syahrul/mshqc/python/mshqc"
+    ],
+    "python.analysis.indexing": true,
+    "python.analysis.typeCheckingMode": "basic"
+}

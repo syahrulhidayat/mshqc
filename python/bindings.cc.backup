@@ -1,0 +1,354 @@
+/**
+ * @file bindings.cc
+ * @brief PyBind11 C++ Bindings for MSHQC - FIXED VERSION
+ * @details Fixed: Module name consistency
+ */
+
+#include <pybind11/pybind11.h>
+#include <pybind11/eigen.h>
+#include <pybind11/stl.h>
+#include <pybind11/functional.h>
+
+// Core headers
+#include "mshqc/molecule.h"
+#include "mshqc/basis.h"
+#include "mshqc/integrals.h"
+
+// SCF headers
+#include "mshqc/scf.h"
+#include "mshqc/cholesky_uhf.h"
+
+// MP headers
+#include "mshqc/mp2.h"
+#include "mshqc/ump2.h"
+#include "mshqc/ump3.h"
+#include "mshqc/cholesky_ump2.h"
+#include "mshqc/cholesky_ump3.h"
+#include "mshqc/foundation/rmp2.h"
+#include "mshqc/foundation/rmp3.h"
+#include "mshqc/omp3.h"
+
+// MCSCF headers
+#include "mshqc/mcscf/active_space.h"
+#include "mshqc/mcscf/casscf.h"
+#include "mshqc/mcscf/sa_casscf.h"
+#include "mshqc/mcscf/cholesky_casscf.h"
+#include "mshqc/mcscf/cholesky_sa_casscf.h"
+#include "mshqc/mcscf/caspt2.h"
+#include "mshqc/mcscf/cholesky_caspt2.h"
+#include "mshqc/mcscf/cholesky_sa_caspt2.h"
+#include "mshqc/mcscf/cholesky_sa_caspt3.h"
+#include "mshqc/mcscf/cholesky_uno.h"
+
+// CI headers
+#include "mshqc/ci/determinant.h"
+#include "mshqc/ci/natural_orbitals.h"
+#include "mshqc/ci/wavefunction_analysis.h"
+
+// Integral headers
+#include "mshqc/integrals/cholesky_eri.h"
+#include "mshqc/integrals/eri_transformer.h"
+
+namespace py = pybind11;
+using namespace mshqc;
+
+// ============================================================================
+// PART 1: Core Objects
+// ============================================================================
+
+void bind_core_objects(py::module &m) {
+    py::class_<Atom>(m, "Atom")
+        .def(py::init<int, double, double, double>())
+        .def_readonly("atomic_number", &Atom::atomic_number)
+        .def_readonly("x", &Atom::x)
+        .def_readonly("y", &Atom::y)
+        .def_readonly("z", &Atom::z);
+    
+    py::class_<Molecule>(m, "Molecule")
+        .def(py::init<>())
+        .def("add_atom", py::overload_cast<int, double, double, double>(&Molecule::add_atom))
+        .def("set_charge", &Molecule::set_charge)
+        .def("set_multiplicity", &Molecule::set_multiplicity)
+        .def("n_atoms", &Molecule::n_atoms)
+        .def("n_electrons", &Molecule::n_electrons)
+        .def("charge", &Molecule::charge)
+        .def("multiplicity", &Molecule::multiplicity)
+        .def("atoms", &Molecule::atoms)
+        .def("atom", &Molecule::atom);
+    
+    py::class_<BasisSet>(m, "BasisSet")
+        .def(py::init<const std::string&, const Molecule&, const std::string&>(),
+             py::arg("basis_name"),
+             py::arg("molecule"),
+             py::arg("basis_dir") = "data/basis")
+        .def("n_basis_functions", &BasisSet::n_basis_functions)
+        .def("n_shells", &BasisSet::n_shells)
+        .def("name", &BasisSet::name)
+        .def("print", &BasisSet::print)
+        .def("is_spherical", &BasisSet::is_spherical)
+        .def("set_spherical", &BasisSet::set_spherical)
+        .def("max_angular_momentum", &BasisSet::max_angular_momentum)
+        .def("shells", &BasisSet::shells);
+    
+    py::class_<IntegralEngine, std::shared_ptr<IntegralEngine>>(m, "IntegralEngine")
+        .def(py::init<const Molecule&, const BasisSet&>())
+        .def("compute_overlap", &IntegralEngine::compute_overlap)
+        .def("compute_kinetic", &IntegralEngine::compute_kinetic)
+        .def("compute_nuclear", &IntegralEngine::compute_nuclear)
+        .def("compute_core_hamiltonian", &IntegralEngine::compute_core_hamiltonian)
+        .def("compute_eri", &IntegralEngine::compute_eri);
+}
+
+// ============================================================================
+// PART 2: SCF Methods
+// ============================================================================
+
+void bind_scf_methods(py::module &m) {
+    py::class_<SCFConfig>(m, "SCFConfig")
+        .def(py::init<>())
+        .def_readwrite("max_iterations", &SCFConfig::max_iterations)
+        .def_readwrite("energy_threshold", &SCFConfig::energy_threshold)
+        .def_readwrite("density_threshold", &SCFConfig::density_threshold)
+        .def_readwrite("print_level", &SCFConfig::print_level);
+    
+    py::class_<SCFResult>(m, "SCFResult")
+        .def(py::init<>())
+        .def_readonly("energy_total", &SCFResult::energy_total)
+        .def_readonly("energy_nuclear", &SCFResult::energy_nuclear)
+        .def_readonly("converged", &SCFResult::converged)
+        .def_readonly("C_alpha", &SCFResult::C_alpha)
+        .def_readonly("C_beta", &SCFResult::C_beta)
+        .def_readonly("orbital_energies_alpha", &SCFResult::orbital_energies_alpha)
+        .def_readonly("orbital_energies_beta", &SCFResult::orbital_energies_beta);
+    
+    py::class_<UHF>(m, "UHF")
+        .def(py::init<const Molecule&, const BasisSet&, 
+                      std::shared_ptr<IntegralEngine>, int, int, const SCFConfig&>(),
+             py::arg("molecule"), py::arg("basis"), py::arg("integrals"),
+             py::arg("n_alpha"), py::arg("n_beta"), 
+             py::arg("config") = SCFConfig())
+        .def("compute", &UHF::compute);
+    
+    py::class_<RHF>(m, "RHF")
+        .def(py::init<const Molecule&, const BasisSet&, 
+                      std::shared_ptr<IntegralEngine>, const SCFConfig&>(),
+             py::arg("molecule"), py::arg("basis"), py::arg("integrals"),
+             py::arg("config") = SCFConfig())
+        .def("compute", &RHF::compute);
+    
+    py::class_<ROHF>(m, "ROHF")
+        .def(py::init<const Molecule&, const BasisSet&, int, int, const SCFConfig&>(),
+             py::arg("molecule"), py::arg("basis"),
+             py::arg("n_alpha"), py::arg("n_beta"),
+             py::arg("config") = SCFConfig())
+        .def("run", &ROHF::run);
+    
+    py::class_<CholeskyUHFConfig>(m, "CholeskyUHFConfig")
+        .def(py::init<>())
+        .def_readwrite("cholesky_threshold", &CholeskyUHFConfig::cholesky_threshold)
+        .def_readwrite("print_level", &CholeskyUHFConfig::print_level);
+
+    py::class_<CholeskyUHF>(m, "CholeskyUHF")
+        .def(py::init<const Molecule&, const BasisSet&, 
+                      std::shared_ptr<IntegralEngine>, int, int,
+                      const CholeskyUHFConfig&>(),
+             py::arg("molecule"), py::arg("basis"), py::arg("integrals"),
+             py::arg("n_alpha"), py::arg("n_beta"),
+             py::arg("config") = CholeskyUHFConfig())
+        .def("compute", &CholeskyUHF::compute)
+        .def("set_cholesky_vectors", &CholeskyUHF::set_cholesky_vectors);
+}
+
+// ============================================================================
+// PART 3: MP Methods
+// ============================================================================
+
+void bind_mp_methods(py::module &m) {
+    py::class_<UMP2Result>(m, "UMP2Result")
+        .def(py::init<>())
+        .def_readonly("e_corr_total", &UMP2Result::e_corr_total)
+        .def_readonly("e_total", &UMP2Result::e_total);
+    
+    py::class_<UMP2>(m, "UMP2")
+        .def(py::init<const SCFResult&, const BasisSet&,
+                      std::shared_ptr<IntegralEngine>>())
+        .def("compute", &UMP2::compute);
+    
+    py::class_<OMP2Result>(m, "OMP2Result")
+        .def(py::init<>())
+        .def_readonly("energy_scf", &OMP2Result::energy_scf)
+        .def_readonly("energy_mp2_corr", &OMP2Result::energy_mp2_corr)
+        .def_readonly("energy_total", &OMP2Result::energy_total)
+        .def_readonly("converged", &OMP2Result::converged)
+        .def_readonly("iterations", &OMP2Result::iterations)
+        .def_readonly("C_alpha", &OMP2Result::C_alpha)
+        .def_readonly("C_beta", &OMP2Result::C_beta)
+        .def_readonly("orbital_energies_alpha", &OMP2Result::orbital_energies_alpha)
+        .def_readonly("orbital_energies_beta", &OMP2Result::orbital_energies_beta);
+    
+    py::class_<OMP2>(m, "OMP2")
+        .def(py::init<const Molecule&, const BasisSet&,
+                      std::shared_ptr<IntegralEngine>, const SCFResult&>())
+        .def("compute", &OMP2::compute)
+        .def("set_max_iterations", &OMP2::set_max_iterations)
+        .def("set_convergence_threshold", &OMP2::set_convergence_threshold)
+        .def("set_gradient_threshold", &OMP2::set_gradient_threshold);
+
+    py::class_<OMP3Result>(m, "OMP3Result")
+        .def(py::init<>())
+        .def_readonly("energy_total", &OMP3Result::energy_total);
+    
+    py::class_<OMP3>(m, "OMP3")
+        .def(py::init<const Molecule&, const BasisSet&,
+                      std::shared_ptr<IntegralEngine>, const OMP2Result&>())
+        .def("compute", &OMP3::compute)
+        .def("set_max_iterations", &OMP3::set_max_iterations);
+}
+
+// ============================================================================
+// PART 4: MCSCF Methods
+// ============================================================================
+
+void bind_mcscf_methods(py::module &m) {
+    py::class_<mcscf::ActiveSpace>(m, "ActiveSpace")
+        .def(py::init<>())
+        .def_static("CAS", &mcscf::ActiveSpace::CAS)
+        .def_static("CAS_Frozen", &mcscf::ActiveSpace::CAS_Frozen)
+        .def("to_string", &mcscf::ActiveSpace::to_string);
+    
+    py::class_<mcscf::CASResult>(m, "CASResult")
+        .def(py::init<>())
+        .def_readonly("e_casscf", &mcscf::CASResult::e_casscf)
+        .def_readonly("converged", &mcscf::CASResult::converged)
+        .def_readonly("n_iterations", &mcscf::CASResult::n_iterations)
+        .def_readonly("C_mo", &mcscf::CASResult::C_mo);
+    
+    py::class_<mcscf::CASSCF>(m, "CASSCF")
+        .def(py::init<const Molecule&, const BasisSet&,
+                      std::shared_ptr<IntegralEngine>,
+                      const mcscf::ActiveSpace&>())
+        .def("compute", &mcscf::CASSCF::compute)
+        .def("set_max_iterations", &mcscf::CASSCF::set_max_iterations);
+    
+    py::class_<mcscf::SACASConfig>(m, "SACASConfig")
+        .def(py::init<>())
+        .def("set_equal_weights", &mcscf::SACASConfig::set_equal_weights)
+        .def_readwrite("n_states", &mcscf::SACASConfig::n_states)
+        .def_readwrite("max_iter", &mcscf::SACASConfig::max_iter)
+        .def_readwrite("print_level", &mcscf::SACASConfig::print_level)
+        .def_readwrite("e_thresh", &mcscf::SACASConfig::e_thresh)
+        .def_readwrite("grad_thresh", &mcscf::SACASConfig::grad_thresh)
+        .def_readwrite("cholesky_thresh", &mcscf::SACASConfig::cholesky_thresh);
+
+    py::class_<mcscf::SACASResult>(m, "SACASResult")
+        .def(py::init<>())
+        .def_readonly("converged", &mcscf::SACASResult::converged)
+        .def_readonly("n_iterations", &mcscf::SACASResult::n_iterations)
+        .def_readonly("e_avg", &mcscf::SACASResult::e_avg)
+        .def_readonly("state_energies", &mcscf::SACASResult::state_energies)
+        .def_readonly("C_mo", &mcscf::SACASResult::C_mo)
+        .def_readonly("orbital_energies", &mcscf::SACASResult::orbital_energies);
+
+    py::class_<mcscf::CholeskySACASSCF>(m, "CholeskySACASSCF")
+        .def(py::init<const Molecule&, const BasisSet&,
+                      std::shared_ptr<IntegralEngine>,
+                      const mcscf::ActiveSpace&,
+                      const mcscf::SACASConfig&,
+                      const std::vector<Eigen::VectorXd>&>(),
+             py::arg("mol"), py::arg("basis"), py::arg("integrals"),
+             py::arg("active_space"), py::arg("config"),
+             py::arg("L_vectors") = std::vector<Eigen::VectorXd>())
+        .def("compute", py::overload_cast<const Eigen::MatrixXd&>(&mcscf::CholeskySACASSCF::compute))
+        .def("compute", py::overload_cast<const SCFResult&>(&mcscf::CholeskySACASSCF::compute));
+
+    py::class_<mcscf::CASPT2Result1>(m, "CASPT2Result") 
+        .def(py::init<>())
+        .def_readonly("e_casscf", &mcscf::CASPT2Result1::e_casscf)
+        .def_readonly("e_pt2", &mcscf::CASPT2Result1::e_pt2)
+        .def_readonly("e_total", &mcscf::CASPT2Result1::e_total)
+        .def_readonly("converged", &mcscf::CASPT2Result1::converged)
+        .def_readonly("status_message", &mcscf::CASPT2Result1::status_message);
+
+    py::class_<mcscf::CASPT2Config>(m, "CASPT2Config")
+        .def(py::init<>())
+        .def_readwrite("shift", &mcscf::CASPT2Config::shift)
+        .def_readwrite("export_amplitudes", &mcscf::CASPT2Config::export_amplitudes);
+
+    py::class_<mcscf::CASPT2Result>(m, "SACASPT2Result")
+        .def(py::init<>())
+        .def_readonly("e_cas", &mcscf::CASPT2Result::e_cas) 
+        .def_readonly("e_pt2", &mcscf::CASPT2Result::e_pt2) 
+        .def_readonly("e_total", &mcscf::CASPT2Result::e_total); 
+
+    py::class_<mcscf::CholeskySACASPT2>(m, "CholeskySACASPT2")
+        .def(py::init<const mcscf::SACASResult&,
+                      const std::vector<Eigen::VectorXd>&,
+                      int, const mcscf::ActiveSpace&,
+                      const mcscf::CASPT2Config&>())
+        .def("compute", &mcscf::CholeskySACASPT2::compute);
+
+    py::class_<mcscf::CASPT3Config>(m, "CASPT3Config")
+        .def(py::init<>())
+        .def_readwrite("shift", &mcscf::CASPT3Config::shift);
+
+    py::class_<mcscf::CASPT3Result>(m, "CASPT3Result")
+        .def(py::init<>())
+        .def_readonly("e_cas", &mcscf::CASPT3Result::e_cas)
+        .def_readonly("e_pt2", &mcscf::CASPT3Result::e_pt2)
+        .def_readonly("e_pt3", &mcscf::CASPT3Result::e_pt3)
+        .def_readonly("e_total", &mcscf::CASPT3Result::e_total);
+
+    py::class_<mcscf::CholeskySACASPT3>(m, "CholeskySACASPT3")
+        .def(py::init<const mcscf::SACASResult&,
+                      const std::vector<Eigen::VectorXd>&,
+                      int, const mcscf::ActiveSpace&,
+                      const mcscf::CASPT3Config&>())
+        .def("compute", &mcscf::CholeskySACASPT3::compute);
+    
+    py::class_<mcscf::UNOResult>(m, "UNOResult")
+        .def(py::init<>())
+        .def_readonly("entropy", &mcscf::UNOResult::entropy)
+        .def_readonly("C_uno", &mcscf::UNOResult::C_uno);
+    
+    py::class_<mcscf::CholeskyUNO>(m, "CholeskyUNO")
+        .def(py::init<const SCFResult&, std::shared_ptr<IntegralEngine>, int>())
+        .def("compute", &mcscf::CholeskyUNO::compute);
+}
+
+// ============================================================================
+// PART 5: CI Methods
+// ============================================================================
+
+void bind_ci_methods(py::module &m) {
+    py::class_<ci::Determinant>(m, "Determinant")
+        .def(py::init<>()) 
+        .def("to_string", &ci::Determinant::to_string);
+}
+
+// ============================================================================
+// PART 6: Integrals
+// ============================================================================
+
+void bind_integrals(py::module &m) {
+    py::class_<integrals::CholeskyERI>(m, "CholeskyERI")
+        .def(py::init<double>(), py::arg("threshold") = 1e-6)
+        .def("decompose", &integrals::CholeskyERI::decompose)
+        .def("get_L_vectors", &integrals::CholeskyERI::get_L_vectors);
+}
+
+// ============================================================================
+// Main Module - FIXED: Use _mshqc to match setup.py
+// ============================================================================
+
+PYBIND11_MODULE(_mshqc, m) {  // ✅ FIXED: Changed from mshqc_core to _mshqc
+    m.doc() = "MSHQC Python Bindings";
+    
+    bind_core_objects(m);
+    bind_scf_methods(m);
+    bind_mp_methods(m);
+    bind_mcscf_methods(m);
+    bind_ci_methods(m);
+    bind_integrals(m);
+    
+    m.attr("__version__") = "1.0.0";
+}
