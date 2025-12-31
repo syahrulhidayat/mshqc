@@ -14,12 +14,18 @@ A high-performance quantum chemistry library implementing modern electronic stru
   - Unrestricted Hartree-Fock (UHF)
   - Restricted Open-shell Hartree-Fock (ROHF)
   - DIIS convergence acceleration
-  - cholesky Unrestricted Hartree-Fock (UHF)
+  - Cholesky Unrestricted Hartree-Fock (CD-UHF)
+  - Cholesky Restricted Open-shell Hartree-Fock (CD-ROHF)
+  - Cholesky Restricted Hartree-Fock (CD-RHF)
 
 - **Møller-Plesset Perturbation Theory**
   - MP2, MP3 (Restricted and Unrestricted)
   - Orbital-Optimized MP2/MP3 (OMP2/OMP3)
-  - cholesky UMP2/UMP3
+  - Cholesky Unrestricted MP2/MP3 (CD-UMP2/CD-UMP3)
+  - Cholesky Orbital-Optimized MP2/MP3 (CD-OMP2/CD-OMP3)
+  - Cholesky Restricted MP2/MP3 (CD-RMP2/CD-CD-RMP3)
+    
+    
 
 - **Multi-Configurational Self-Consistent Field (MCSCF)**
   - Complete Active Space SCF (CASSCF)
@@ -72,7 +78,7 @@ A high-performance quantum chemistry library implementing modern electronic stru
 - **MKL/OpenBLAS**: For optimized linear algebra
 
 
-##  Installation
+##  Installation Binding Python
 ## Using Conda (Cross-Platform)
 
 ```bash
