@@ -1,0 +1,14 @@
+# Mengabaikan folder kompilasi dan hasil pengujian
+build/
+python test/
+hasil/
+
+# Mengabaikan file sementara Python dan C++
+*.so
+*.o
+*.pyc
+__pycache__/
+.vscode/
+
+# Mengabaikan data basis set (opsional, jika Anda tidak ingin mengunggah file teks data basis)
+# data/basis/

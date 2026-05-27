@@ -1,0 +1,27 @@
+name: mshqc
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  # --- Core Tools ---
+  - python>=3.8
+  - pip
+  - cmake>=3.18
+  - ninja
+  
+  # --- Compilers (Cross-Platform) ---
+  - cxx-compiler
+  - llvm-openmp
+  
+  # --- The "Ultimate Stack" C++ Libraries ---
+  - eigen
+  - libcint         # Menggantikan libint
+  - tblis           # Tensor contraction engine
+  - hdf5            # Out-of-Core storage engine
+  - jemalloc        # High-performance memory allocator
+
+  # --- Python Libraries ---
+  - pybind11
+  - numpy>=1.20
+  - scipy
+  - pytest

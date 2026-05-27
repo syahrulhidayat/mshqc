@@ -1,0 +1,150 @@
+Analisis saya terhadap keempat file tersebut menunjukkan bahwa kamu sudah memiliki "mesin" yang sangat bertenaga. Penggunaan Libcint untuk integral dan TBLIS untuk transformasi tensor adalah pilihan kelas atas yang digunakan oleh banyak kode state-of-the-art.
+
+Namun, alasan mengapa kamu masih tertinggal dari Psi4 (khususnya di sistem besar) terlihat jelas dari bagaimana data "mengalir" di antara komponen-komponen ini. Berikut adalah analisis mendalamnya:
+1. eri_transformer.cc: Si Kuat yang "Boros"
+
+Kamu sudah menggunakan TBLIS, yang secara teoritis jauh lebih cepat daripada loop 4-level. TBLIS menangani stride dan blocking dengan sangat baik.
+
+    Masalah Memori (Intermediate Tensors): Di dalam smart_transform_kernel, kamu membuat T1, T2, dan T3 sebagai Eigen::Tensor penuh.
+
+        Jika N=100, satu tensor berukuran 1004 (800 MB). Kamu punya 3 intermediate, berarti butuh ~2.4 GB hanya untuk tempat sampah sementara.
+
+        Psi4 biasanya melakukan In-place Transformation atau menggunakan buffer yang jauh lebih kecil untuk transformasi per indeks (indeks-indeks luar diubah satu per satu).
+
+    TBLIS vs DGEMM: TBLIS sangat hebat untuk tensor umum. Namun, untuk transformasi integral MP2 (Matriks × Tensor), DGEMM (Matrix Multiplication) yang dioptimasi (seperti MKL atau OpenBLAS) seringkali lebih cepat karena overhead manajemen indeks TBLIS sedikit lebih tinggi dibanding perkalian matriks murni.
+
+2. integrals.cc: Masalah "Global Cache" dan Redundansi
+
+    Static Cached ERI: Kamu menggunakan static Eigen::Tensor<double, 4> cached_eri. Ini adalah pedang bermata dua.
+
+        Kelemahan: Begitu kamu masuk ke sistem dengan 200 basis, tensor ini akan memakan ~12.8 GB RAM. Jika RAM tidak cukup, komputer akan swapping dan performa jatuh drastis. Psi4 menangani ini dengan memproses integral dalam batch atau menggunakan disk-based storage (HDF5) secara lebih cerdas.
+
+    8-fold Symmetry: Loop integral kamu sudah menggunakan simetri permutasi (8 elemen diisi sekaligus). Ini bagus. Tapi, kamu belum memanggil PetiteList di sini.
+
+3. petite_list.cc: Senjata Rahasia yang Belum Terkokang
+
+File ini diimplementasikan dengan sangat baik (menggunakan mapping posisi shell).
+
+    Potensi: Dengan simetri D2h​ (air atau molekul simetris lainnya), kamu bisa menghitung integral 8x lebih sedikit.
+
+    Analisis: Di integrals.cc, kamu masih melakukan loop s1, s2, s3, s4 secara penuh. Kamu harus mengubah loop ini agar hanya berjalan di atas unique_pairs_ dari PetiteList. Tanpa ini, kamu menghitung hal yang sama berulang-ulang, sementara Psi4 sudah selesai.
+
+4. screening.cc: Standar Industri
+
+Implementasi Schwarz Screening kamu sudah benar secara algoritma (Qij​=(ij∣ij)​).
+
+    Integrasi: Screening ini baru benar-benar terasa manfaatnya jika digunakan untuk memotong loop di integrals.cc (yang sudah kamu lakukan sebagian) dan saat membangun Matriks Fock.
+
+Kesimpulan Analisis: Mengapa Psi4 Masih Menang?
+
+Psi4 menggunakan strategi "AO-Driven" yang lebih agresif.
+
+    Memory Management: Psi4 tidak pernah menyimpan seluruh ERI AO di RAM jika tidak perlu. Mereka menghitung, mentransformasi sebagian, lalu membuangnya. Programmu "menelan" semua ERI AO ke RAM dulu, baru diproses.
+
+    Symmetry Exploitation: Psi4 secara otomatis mendeteksi Point Group dan hanya menghitung integral di irreducible wedge. Di kode kamu, PetiteList sudah ada tapi belum "dijahit" ke dalam loop utama compute_eri.
+
+    Z-Vector Bottleneck: Masalah yang kita bahas sebelumnya (Z-Vector di omp2.cc) adalah titik terlemah. Melakukan perkalian matriks N2×N2 adalah "bom atom" bagi performa.
+
+Apa Langkah Selanjutnya?
+
+Sesuai permintaanmu, kita akan fokus pada No. 2 (Optimasi OMP2) tanpa masuk ke Cholesky dulu. Strategi kita adalah:
+
+    Memperbaiki Z-Vector agar tidak menggunakan perkalian matriks raksasa (pakai loop cerdas berbasis BLAS).
+
+    Menjahit PetiteList ke dalam IntegralEngine agar perhitungan integral AO kamu sekencang Psi4.
+
+Apakah kamu ingin saya mulai menuliskan bagaimana cara mengubah loop Z-vector di omp2.cc agar lebih efisien (dan tidak menghancurkan memori)?
+
+Siap, kita bedah langsung jantung masalahnya. Masalah utama yang membuat kode kamu melambat di sistem besar adalah penggunaan Memory-Hungry AO Matrix di dalam fungsi build_generalized_fock.
+
+Berikut adalah langkah-langkah optimasi untuk mengalahkan Psi4 di mode Canonical:
+1. Menghapus Bottleneck Matriks N2×N2
+
+Di dalam kode, kamu melakukan perkalian matriks antara seluruh ERI AO dengan matriks proyeksi:
+C++
+
+// INI ADALAH PENYEBAB LAMBAT & BOROS RAM
+Eigen::Map<const Eigen::MatrixXd> ERI_mat(eri_ao.data(), nbf_ * nbf_, nbf_ * nbf_);
+Eigen::MatrixXd H_mat_AA = ERI_mat * P_mat_AA; 
+
+Jika kamu punya 200 basis functions, matriks ERI_mat berukuran 40.000×40.000. Itu butuh 12.8 GB RAM hanya untuk satu variabel.
+Solusi: AO-Driven Contraction
+
+Jangan simpan seluruh ERI. Kita akan melakukan kontraksi langsung menggunakan IntegralEngine::compute_shell_block dan memanfaatkan PetiteList untuk melewati integral yang redundan secara simetri.
+2. Implementasi Z-Vector yang Efisien (Refactor)
+
+Ubah bagian dalam build_generalized_fock di menjadi seperti ini. Teknik ini menggunakan buffer kecil sehingga RAM kamu tetap lega:
+C++
+
+// Ganti blok "ULTIMATE Z-VECTOR FACTORIZATION" dengan ini:
+if (exact_2rdm_) {
+    Z_mat_a.setZero();
+    
+    // Ambil list pasangan shell unik dari PetiteList untuk akselerasi simetri
+    // Pastikan PetiteList sudah di-build di constructor!
+    const auto& unique_pairs = pl_->get_unique_pairs(); 
+
+    #pragma omp parallel
+    {
+        size_t sz;
+        // Loop over shell pairs (mu, nu)
+        for (const auto& pair_mn : unique_pairs) {
+            int sh_mu = pair_mn.p;
+            int sh_nu = pair_mn.q;
+            double w_mn = pair_mn.weight;
+
+            // Loop over shell pairs (lam, sig)
+            for (const auto& pair_ls : unique_pairs) {
+                int sh_lam = pair_ls.p;
+                int sh_sig = pair_ls.q;
+                double w_ls = pair_ls.weight;
+
+                // Hitung block integral AO secara on-the-fly
+                const double* block = integrals_->compute_shell_block_ptr(
+                    sh_mu, sh_nu, sh_lam, sh_sig, sz
+                );
+
+                // KONTRAKSI LANGSUNG: 
+                // Di sini kamu melakukan transformasi parsial hanya untuk blok ini.
+                // Ini jauh lebih cepat daripada mengalikan matriks raksasa.
+                // Gunakan BLAS (dgemm) untuk mengalikan blok (mu,nu|lam,sig) 
+                // dengan koefisien orbital yang relevan.
+            }
+        }
+    }
+}
+
+3. "Menjahit" PetiteList ke IntegralEngine
+
+Agar mshqc setara dengan Psi4, IntegralEngine::compute_eri tidak boleh melakukan loop 4-lapis O(Nshell4​) secara mentah. Kamu harus memodifikasi integrals.cc agar mematuhi PetiteList:
+
+Langkah di src/ints/integrals.cc:
+
+    Ambil unique_pairs dari PetiteList.
+
+    Loop hanya pada pasangan representatif.
+
+    Gunakan weight dari PetiteList untuk mengisi elemen matriks Fock atau ERI.
+
+4. Optimasi eri_transformer.cc (TBLIS vs DGEMM)
+
+Meskipun TBLIS sangat canggih, untuk MP2 canonical, DGEMM (Matrix Multiplication) seringkali lebih cepat karena data MP2 sangat "matriks-sentris".
+
+Saran Optimasi:
+Di dalam smart_transform_kernel, alih-alih melakukan 4 langkah TBLIS penuh, cobalah skema Hybrid:
+
+    Ubah dimensi pertama (μ→i) menggunakan Eigen::MatrixXd dan dgemm.
+
+    Ubah dimensi kedua (ν→a) menggunakan dgemm.
+
+    Gunakan TBLIS hanya jika kamu butuh permutasi indeks yang kompleks.
+
+Apa yang harus kamu lakukan sekarang?
+
+Untuk mengalahkan Psi4, kamu perlu memprioritaskan pengurangan alokasi memori.
+
+    Hapus cached_eri di integrals.cc. Jangan paksa RAM menyimpan semuanya.
+
+    Gunakan HDF5 yang sudah kamu siapkan untuk menyimpan tensor MO hasil transformasi. Psi4 melakukan ini untuk menghemat RAM.
+
+Pertanyaan saya selanjutnya: Apakah kamu mau saya buatkan kode kontraksi Z-Vector yang lebih spesifik menggunakan BLAS agar kamu bisa langsung copy-paste ke omp2.cc?
