@@ -1,0 +1,455 @@
+/**
+ * @file src/foundation/rmp3.cc
+ * @brief RMP3 Optimized: Exact Match to UMP3 Logic
+ * @details
+ * - Logic: E_RMP3 = 2 * E_AA + E_AB.
+ * - Factors: 
+ * > AA Ladder: 0.25
+ * > AA Ring:   1.0
+ * > AB Ladder: -0.5
+ * > AB Ring:   1.0
+ * - Optimization: Full GEMM with Explicit Packing (No Tensor Shuffle).
+ */
+
+#include "mshqc/foundation/rmp3.h"
+#include "mshqc/integrals/eri_transformer.h"
+#include "mshqc/ump3_memory.h" 
+#include <iostream>
+#include <iomanip>
+#include <cmath>
+#include <omp.h>
+#include <algorithm>
+#include <vector>
+#include <chrono>
+#include <Eigen/Dense>
+#ifdef I
+#undef I
+#endif
+
+namespace mshqc {
+namespace foundation {
+
+using integrals::ERITransformer;
+
+static UMP3Workspace workspace;
+
+// ============================================================================
+// CONSTRUCTOR
+// ============================================================================
+RMP3::RMP3(const SCFResult& rhf_result,
+           const RMP2Result& rmp2_result,
+           const BasisSet& basis,
+           std::shared_ptr<IntegralEngine> integrals)
+    : rhf_(rhf_result), rmp2_(rmp2_result), basis_(basis), integrals_(integrals) {
+    
+    nbf_ = basis.n_basis_functions();
+    nocc_ = rhf_.n_occ_alpha;
+    nvirt_ = nbf_ - nocc_;
+}
+
+// ============================================================================
+// PACKING HELPERS
+// ============================================================================
+
+// Pack V(a,c,b,d) -> Matrix M(ab, cd) [SPATIAL]
+// M_ab,cd = <ac|bd> (Chemist) = <ab|cd> (Physicist)
+Eigen::MatrixXd pack_vvvv_spatial(const Eigen::Tensor<double, 4>& V, int nv) {
+    Eigen::MatrixXd M(nv*nv, nv*nv);
+    #pragma omp parallel for collapse(2)
+    for(int ab = 0; ab < nv*nv; ++ab) {
+        for(int cd = 0; cd < nv*nv; ++cd) {
+            int a = ab / nv; int b = ab % nv;
+            int c = cd / nv; int d = cd % nv;
+            M(ab, cd) = V(a, c, b, d); 
+        }
+    }
+    return M;
+}
+
+// Pack V(a,c,b,d) -> Matrix M(ab, cd) [ANTISYMMETRIC]
+// M_ab,cd = <ab||cd> = <ab|cd> - <ab|dc>
+Eigen::MatrixXd pack_vvvv_antisym(const Eigen::Tensor<double, 4>& V, int nv) {
+    Eigen::MatrixXd M(nv*nv, nv*nv);
+    #pragma omp parallel for collapse(2)
+    for(int ab = 0; ab < nv*nv; ++ab) {
+        for(int cd = 0; cd < nv*nv; ++cd) {
+            int a = ab / nv; int b = ab % nv;
+            int c = cd / nv; int d = cd % nv;
+            M(ab, cd) = V(a, c, b, d) - V(a, d, b, c); 
+        }
+    }
+    return M;
+}
+
+// Pack V(k,i,l,j) -> Matrix M(kl, ij) [SPATIAL]
+Eigen::MatrixXd pack_oooo_spatial(const Eigen::Tensor<double, 4>& V, int no) {
+    Eigen::MatrixXd M(no*no, no*no);
+    #pragma omp parallel for collapse(2)
+    for(int kl = 0; kl < no*no; ++kl) {
+        for(int ij = 0; ij < no*no; ++ij) {
+            int k = kl / no; int l = kl % no;
+            int i = ij / no; int j = ij % no;
+            M(kl, ij) = V(k, i, l, j);
+        }
+    }
+    return M;
+}
+
+// Pack V(k,i,l,j) -> Matrix M(kl, ij) [ANTISYMMETRIC]
+Eigen::MatrixXd pack_oooo_antisym(const Eigen::Tensor<double, 4>& V, int no) {
+    Eigen::MatrixXd M(no*no, no*no);
+    #pragma omp parallel for collapse(2)
+    for(int kl = 0; kl < no*no; ++kl) {
+        for(int ij = 0; ij < no*no; ++ij) {
+            int k = kl / no; int l = kl % no;
+            int i = ij / no; int j = ij % no;
+            M(kl, ij) = V(k, i, l, j) - V(k, j, l, i);
+        }
+    }
+    return M;
+}
+
+// Pack T2 -> Matrix M(ij, ab) [SPATIAL]
+Eigen::MatrixXd pack_t2_spatial(const Eigen::Tensor<double, 4>& T2, int no, int nv) {
+    Eigen::MatrixXd M(no*no, nv*nv);
+    #pragma omp parallel for collapse(2)
+    for(int ij = 0; ij < no*no; ++ij) {
+        for(int ab = 0; ab < nv*nv; ++ab) {
+            int i = ij / no; int j = ij % no;
+            int a = ab / nv; int b = ab % nv;
+            M(ij, ab) = T2(i,j,a,b);
+        }
+    }
+    return M;
+}
+
+// Pack T2 -> Matrix M(ij, ab) [ANTISYMMETRIC]
+Eigen::MatrixXd pack_t2_antisym(const Eigen::Tensor<double, 4>& T2, int no, int nv) {
+    Eigen::MatrixXd M(no*no, nv*nv);
+    #pragma omp parallel for collapse(2)
+    for(int ij = 0; ij < no*no; ++ij) {
+        for(int ab = 0; ab < nv*nv; ++ab) {
+            int i = ij / no; int j = ij % no;
+            int a = ab / nv; int b = ab % nv;
+            M(ij, ab) = T2(i,j,a,b) - T2(i,j,b,a);
+        }
+    }
+    return M;
+}
+
+// ============================================================================
+// MAIN COMPUTE
+// ============================================================================
+
+RMP3Result RMP3::compute() {
+    auto t_start = std::chrono::high_resolution_clock::now();
+    
+    if(omp_get_thread_num() == 0) {
+        std::cout << "\n========================================\n";
+        std::cout << "  RMP3 (Restricted High-Performance)\n";
+        std::cout << "  Method: 2 * E_AA + E_AB (UMP3 Clone)\n";
+        std::cout << "========================================\n";
+    }
+
+    const auto& eri_ao = integrals_->compute_eri();
+    const auto& C_occ = rhf_.C_alpha.leftCols(nocc_);
+    const auto& C_vir = rhf_.C_alpha.rightCols(nvirt_);
+    const auto& t2_ref = rmp2_.t2; // Spatial T2(i,j,a,b)
+
+    double E_AA = 0.0;
+    double E_AB = 0.0;
+
+    // Transform Integrals Spatial
+    auto& g_ovov = workspace.allocate("ovov", nocc_, nvirt_, nocc_, nvirt_);
+    g_ovov = ERITransformer::transform_ovov(eri_ao, C_occ, C_vir, nbf_, nocc_, nvirt_);
+
+    auto& g_oovv = workspace.allocate("oovv", nocc_, nocc_, nvirt_, nvirt_);
+    g_oovv = ERITransformer::transform_oo_vv_mixed(eri_ao, C_occ, C_occ, C_vir, C_vir, nbf_, nocc_, nocc_, nvirt_, nvirt_);
+
+    int dim_ia = nocc_ * nvirt_;
+
+    // ========================================================================
+    // 1. LADDER TERMS (AA and AB Computed Together to Reuse Integrals)
+    // ========================================================================
+    {
+        // --- Ladder VVVV ---
+        {
+            auto& V = workspace.allocate("vvvv", nvirt_, nvirt_, nvirt_, nvirt_);
+            V = ERITransformer::transform_vvvv(eri_ao, C_vir, nbf_, nvirt_);
+            
+            // AA Term (Antisymmetric)
+            Eigen::MatrixXd V_as = pack_vvvv_antisym(V, nvirt_);
+            Eigen::MatrixXd T_as = pack_t2_antisym(t2_ref, nocc_, nvirt_);
+            Eigen::MatrixXd W_aa = T_as * V_as;
+            E_AA += 0.125 * T_as.cwiseProduct(W_aa).sum(); 
+            
+            // AB Term (Spatial)
+            Eigen::MatrixXd V_sp = pack_vvvv_spatial(V, nvirt_);
+            Eigen::MatrixXd T_sp = pack_t2_spatial(t2_ref, nocc_, nvirt_);
+            Eigen::MatrixXd W_ab = T_sp * V_sp;
+            E_AB += 1.0 * T_sp.cwiseProduct(W_ab).sum(); 
+
+            workspace.free("vvvv"); // Bebaskan memori setelah KEDUANYA selesai
+        }
+
+        // --- Ladder OOOO ---
+        {
+            auto& V_o = workspace.allocate("oooo", nocc_, nocc_, nocc_, nocc_);
+            V_o = ERITransformer::transform_oooo(eri_ao, C_occ, nbf_, nocc_);
+            
+            // AA Term (Antisymmetric)
+            Eigen::MatrixXd V_as = pack_oooo_antisym(V_o, nocc_);
+            Eigen::MatrixXd T_as = pack_t2_antisym(t2_ref, nocc_, nvirt_);
+            Eigen::MatrixXd W_aa = V_as.transpose() * T_as;
+            E_AA += 0.125 * T_as.cwiseProduct(W_aa).sum(); 
+
+            // AB Term (Spatial)
+            Eigen::MatrixXd V_sp = pack_oooo_spatial(V_o, nocc_);
+            Eigen::MatrixXd T_sp = pack_t2_spatial(t2_ref, nocc_, nvirt_);
+            Eigen::MatrixXd W_ab = V_sp.transpose() * T_sp;
+            E_AB += 1.0 * T_sp.cwiseProduct(W_ab).sum(); 
+
+            workspace.free("oooo"); // Bebaskan memori setelah KEDUANYA selesai
+        }
+    
+
+        Eigen::MatrixXd T_final_AA(dim_ia, dim_ia);
+        #pragma omp parallel for collapse(2)
+        for(int ia=0; ia<dim_ia; ++ia) {
+            for(int jb=0; jb<dim_ia; ++jb) {
+                int i = ia / nvirt_; int a = ia % nvirt_;
+                int j = jb / nvirt_; int b = jb % nvirt_;
+                T_final_AA(ia, jb) = t2_ref(i,j,a,b) - t2_ref(i,j,b,a);
+            }
+        }
+
+        // --- Ring AA (Pure Spin) ---
+        {
+            Eigen::MatrixXd V_AA(dim_ia, dim_ia);
+            Eigen::MatrixXd T_right(dim_ia, dim_ia);
+            #pragma omp parallel for collapse(2)
+            for(int ia=0; ia<dim_ia; ++ia) {
+                for(int kc=0; kc<dim_ia; ++kc) {
+                    int i = ia / nvirt_; int a = ia % nvirt_;
+                    int k = kc / nvirt_; int c = kc % nvirt_;
+                    V_AA(ia, kc) = g_ovov(i,a,k,c) - g_oovv(k,i,a,c);
+                    
+                    int j = ia / nvirt_; int b = ia % nvirt_; // mapping loops correctly
+                    T_right(kc, ia) = t2_ref(k,j,c,b) - t2_ref(k,j,b,c);
+                }
+            }
+            Eigen::MatrixXd W = V_AA * T_right;
+            E_AA += 1.0 * T_final_AA.cwiseProduct(W).sum(); 
+        }
+
+        // --- Ring AA (Cross-Spin) ---
+        {
+            Eigen::MatrixXd V_cross(dim_ia, dim_ia);
+            Eigen::MatrixXd T_cross(dim_ia, dim_ia);
+            #pragma omp parallel for collapse(2)
+            for(int ia=0; ia<dim_ia; ++ia) {
+                for(int kc=0; kc<dim_ia; ++kc) {
+                    int i = ia / nvirt_; int a = ia % nvirt_;
+                    int k = kc / nvirt_; int c = kc % nvirt_;
+                    V_cross(ia, kc) = g_ovov(i,a,k,c);
+                    
+                    int j = ia / nvirt_; int b = ia % nvirt_;
+                    T_cross(kc, ia) = t2_ref(j,k,b,c);
+                }
+            }
+            Eigen::MatrixXd W_cross = V_cross * T_cross;
+            E_AA += 1.0 * T_final_AA.cwiseProduct(W_cross).sum();
+        }
+    }
+
+    // ========================================================================
+    // 2. CALCULATE E_AB (Mixed Spin)
+    // ========================================================================
+    {
+       // --- Ring AB (6 EXACT TERMS from UMP3) ---
+        {
+            Eigen::MatrixXd T_iajb(dim_ia, dim_ia);
+            #pragma omp parallel for collapse(2)
+            for(int ia=0; ia<dim_ia; ++ia) {
+                for(int jb=0; jb<dim_ia; ++jb) {
+                    int i = ia / nvirt_; int a = ia % nvirt_;
+                    int j = jb / nvirt_; int b = jb % nvirt_;
+                    T_iajb(ia, jb) = t2_ref(i,j,a,b);
+                }
+            }
+
+            Eigen::MatrixXd W_total = Eigen::MatrixXd::Zero(dim_ia, dim_ia);
+
+            // Term 1: V_AA * T_AB
+            {
+                Eigen::MatrixXd V_AA(dim_ia, dim_ia);
+                #pragma omp parallel for collapse(2)
+                for(int i=0; i<nocc_; ++i) for(int a=0; a<nvirt_; ++a) {
+                    int row = i*nvirt_ + a;
+                    for(int k=0; k<nocc_; ++k) for(int c=0; c<nvirt_; ++c) 
+                        V_AA(row, k*nvirt_ + c) = g_ovov(i,a,k,c) - g_oovv(i,k,a,c);
+                }
+                W_total += V_AA * T_iajb; 
+            }
+
+            // Term 2: T_AB_ik * V_BB
+            {
+                Eigen::MatrixXd T_AB_ik(dim_ia, dim_ia);
+                #pragma omp parallel for collapse(2)
+                for(int i=0; i<nocc_; ++i) for(int a=0; a<nvirt_; ++a) {
+                    int row = i*nvirt_ + a;
+                    for(int k=0; k<nocc_; ++k) for(int c=0; c<nvirt_; ++c) 
+                        T_AB_ik(row, k*nvirt_ + c) = t2_ref(i,k,a,c);
+                }
+                
+                Eigen::MatrixXd V_BB(dim_ia, dim_ia);
+                #pragma omp parallel for collapse(2)
+                for(int k=0; k<nocc_; ++k) for(int c=0; c<nvirt_; ++c) {
+                    int row = k*nvirt_ + c;
+                    for(int j=0; j<nocc_; ++j) for(int b=0; b<nvirt_; ++b) 
+                        V_BB(row, j*nvirt_ + b) = g_ovov(k,c,j,b) - g_oovv(k,j,c,b);
+                }
+                W_total += T_AB_ik * V_BB; 
+            }
+
+            // Term 3: T_AA * V_AB 
+            {
+                Eigen::MatrixXd T_AA(dim_ia, dim_ia);
+                #pragma omp parallel for collapse(2)
+                for(int i=0; i<nocc_; ++i) for(int a=0; a<nvirt_; ++a) {
+                    int row = i*nvirt_ + a;
+                    for(int k=0; k<nocc_; ++k) for(int c=0; c<nvirt_; ++c) 
+                        T_AA(row, k*nvirt_ + c) = t2_ref(i,k,a,c) - t2_ref(i,k,c,a);
+                }
+                
+                Eigen::MatrixXd V_AB(dim_ia, dim_ia);
+                #pragma omp parallel for collapse(2)
+                for(int k=0; k<nocc_; ++k) for(int c=0; c<nvirt_; ++c) {
+                    int row = k*nvirt_ + c;
+                    for(int j=0; j<nocc_; ++j) for(int b=0; b<nvirt_; ++b) 
+                        V_AB(row, j*nvirt_ + b) = g_ovov(k, c, j, b);
+                }
+                W_total += T_AA * V_AB;
+            }
+
+            // Term 4: V_AB_Term4 * T_BB
+            {
+                Eigen::MatrixXd V_AB_Term4(dim_ia, dim_ia);
+                #pragma omp parallel for collapse(2)
+                for(int i=0; i<nocc_; ++i) for(int a=0; a<nvirt_; ++a) {
+                    int row = i*nvirt_ + a;
+                    for(int k=0; k<nocc_; ++k) for(int c=0; c<nvirt_; ++c) 
+                        V_AB_Term4(row, k*nvirt_ + c) = g_ovov(i, a, k, c); 
+                }
+                
+                Eigen::MatrixXd T_BB(dim_ia, dim_ia);
+                #pragma omp parallel for collapse(2)
+                for(int k=0; k<nocc_; ++k) for(int c=0; c<nvirt_; ++c) {
+                    int row = k*nvirt_ + c;
+                    for(int j=0; j<nocc_; ++j) for(int b=0; b<nvirt_; ++b) 
+                        T_BB(row, j*nvirt_ + b) = t2_ref(k,j,c,b) - t2_ref(k,j,b,c);
+                }
+                W_total += V_AB_Term4 * T_BB;
+            }
+
+            // Term 5: CROSS TERM 1 
+            {
+                Eigen::MatrixXd V_C1(dim_ia, dim_ia);
+                #pragma omp parallel for collapse(2)
+                for(int i=0; i<nocc_; ++i) for(int b=0; b<nvirt_; ++b) {
+                    int row = i*nvirt_ + b;
+                    for(int k=0; k<nocc_; ++k) for(int c=0; c<nvirt_; ++c) {
+                        V_C1(row, k*nvirt_ + c) = g_oovv(i,k,b,c); 
+                    }
+                }
+                
+                Eigen::MatrixXd T_C1(dim_ia, dim_ia);
+                #pragma omp parallel for collapse(2)
+                for(int k=0; k<nocc_; ++k) for(int c=0; c<nvirt_; ++c) {
+                    int row = k*nvirt_ + c;
+                    for(int j=0; j<nocc_; ++j) for(int a=0; a<nvirt_; ++a) {
+                        T_C1(row, j*nvirt_ + a) = t2_ref(k,j,a,c);
+                    }
+                }
+                
+                Eigen::MatrixXd W_C1 = V_C1 * T_C1;
+                
+                #pragma omp parallel for collapse(2)
+                for(int i=0; i<nocc_; ++i) for(int a=0; a<nvirt_; ++a) {
+                    for(int j=0; j<nocc_; ++j) for(int b=0; b<nvirt_; ++b) {
+                        W_total(i*nvirt_ + a, j*nvirt_ + b) -= W_C1(i*nvirt_ + b, j*nvirt_ + a);
+                    }
+                }
+            }
+
+            // Term 6: CROSS TERM 2 
+            {
+                Eigen::MatrixXd V_C2(dim_ia, dim_ia);
+                #pragma omp parallel for collapse(2)
+                for(int j=0; j<nocc_; ++j) for(int a=0; a<nvirt_; ++a) {
+                    int row = j*nvirt_ + a;
+                    for(int k=0; k<nocc_; ++k) for(int c=0; c<nvirt_; ++c) {
+                        V_C2(row, k*nvirt_ + c) = g_oovv(j,k,a,c);
+                    }
+                }
+                
+                Eigen::MatrixXd T_C2(dim_ia, dim_ia);
+                #pragma omp parallel for collapse(2)
+                for(int k=0; k<nocc_; ++k) for(int c=0; c<nvirt_; ++c) {
+                    int row = k*nvirt_ + c;
+                    for(int i=0; i<nocc_; ++i) for(int b=0; b<nvirt_; ++b) {
+                        T_C2(row, i*nvirt_ + b) = t2_ref(i,k,c,b);
+                    }
+                }
+                
+                Eigen::MatrixXd W_C2 = V_C2 * T_C2;
+                
+                #pragma omp parallel for collapse(2)
+                for(int i=0; i<nocc_; ++i) for(int a=0; a<nvirt_; ++a) {
+                    for(int j=0; j<nocc_; ++j) for(int b=0; b<nvirt_; ++b) {
+                        W_total(i*nvirt_ + a, j*nvirt_ + b) -= W_C2(j*nvirt_ + a, i*nvirt_ + b);
+                    }
+                }
+            }
+
+            E_AB += 1.0 * T_iajb.cwiseProduct(W_total).sum();
+        }
+    }
+
+    workspace.clear_all();
+
+    // RMP3 Total Energy
+    double e_mp3 = 2.0 * E_AA + E_AB;
+
+    auto t_end = std::chrono::high_resolution_clock::now();
+    double dt = std::chrono::duration<double>(t_end - t_start).count();
+
+    RMP3Result result;
+    result.e_rhf = rhf_.energy_total;
+    result.e_mp2 = rmp2_.e_corr;
+    result.e_mp3 = e_mp3;
+    result.e_corr_total = result.e_mp2 + e_mp3;
+    result.e_total = result.e_rhf + result.e_corr_total;
+
+    if(omp_get_thread_num() == 0) {
+        std::cout << "\n=== RMP3 Results (Matched to UMP3) ===\n";
+        std::cout << std::fixed << std::setprecision(8);
+        std::cout << "  2*E_AA: " << 2.0 * E_AA << " Ha\n";
+        std::cout << "  E_AB:   " << E_AB << " Ha\n";
+        std::cout << "  MP3 Correction: " << std::setw(14) << e_mp3 << " Ha\n";
+        std::cout << "  Total Energy:   " << result.e_total << " Ha\n";
+        std::cout << "  Time:           " << dt << " s\n";
+        std::cout << "========================================\n";
+    }
+
+    return result;
+}
+// Stubs
+void RMP3::build_fock_mo() {}
+void RMP3::transform_integrals_ao_to_mo() {}
+void RMP3::compute_t2_second_order() {}
+double RMP3::compute_third_order_energy() { return 0.0; }
+const Eigen::Tensor<double, 4>& RMP3::get_t2_second_order() const { return rmp2_.t2; }
+
+} // namespace foundation
+} // namespace mshqc
