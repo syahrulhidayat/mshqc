@@ -2,7 +2,7 @@ yahrul@syahrul:~/mshqc$ /home/syahrul/miniconda3/envs/psi4env/bin/python "/home/
 
 
   Memory set to   3.725 GiB by Python driver.
-
+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
 =============================================================================================================
 
   MSHQC vs PSI4 (Detailed Timer & RAM) | Basis: cc-pCVDZ
