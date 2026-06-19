@@ -22,11 +22,14 @@ jobs:
     - name: Install Build Dependencies
       shell: bash -el {0}
       run: |
-        # Mengunduh kompiler dan library aljabar linier (Eigen) di server Ubuntu Actions
-        conda install -y cmake make compilers eigen openblas liblapacke pkg-config pip
+        # Mengunduh seluruh pustaka kuantum (compiler, Eigen, BLAS, LAPACKE, pkg-config, HDF5)
+        conda install -y -c conda-forge cmake make compilers eigen openblas liblapacke pkg-config hdf5 pip
+        
+        # Pustaka khusus kimia kuantum dari conda-forge
+        conda install -y -c conda-forge libcint tblis
+        
+        # Instalasi nanobind
         python -m pip install nanobind
-        # Jika Anda membutuhkan pustaka tambahan seperti libcint atau tblis, pasang di sini
-        # atau biarkan CMake mengunduhnya secara otomatis (FetchContent)
 
     - name: Compile C++ Source to Shared Object (.so)
       shell: bash -el {0}
