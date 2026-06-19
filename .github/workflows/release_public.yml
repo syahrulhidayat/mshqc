@@ -1,0 +1,70 @@
+name: Compile and Push Binary to Public Repo
+
+on:
+  push:
+    branches: [ "main" ] # Memicu otomatisasi setiap kali push ke branch main privat
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout Private Source Code
+      uses: actions/checkout@v3
+
+    - name: Setup Conda Environment (Python 3.10)
+      uses: conda-incubator/setup-miniconda@v2
+      with:
+        auto-update-conda: true
+        python-version: "3.10"
+        channels: conda-forge
+
+    - name: Install Build Dependencies
+      shell: bash -el {0}
+      run: |
+        # Mengunduh kompiler dan library aljabar linier (Eigen) di server Ubuntu Actions
+        conda install -y cmake make compilers eigen openblas
+        # Jika Anda membutuhkan pustaka tambahan seperti libcint atau tblis, pasang di sini
+        # atau biarkan CMake mengunduhnya secara otomatis (FetchContent)
+
+    - name: Compile C++ Source to Shared Object (.so)
+      shell: bash -el {0}
+      run: |
+        mkdir build && cd build
+        cmake -DCMAKE_BUILD_TYPE=Release ..
+        make -j$(nproc)
+        # Verifikasi apakah file .so berhasil tercipta
+        ls -la *.so || ls -la src/*.so
+
+    - name: Deploy Binary to Public Repository
+      shell: bash -el {0}
+      env:
+        API_TOKEN_GITHUB: ${{ secrets.PUBLIC_REPO_TOKEN }}
+      run: |
+        # 1. Konfigurasi identitas Git di server temporer
+        git config --global user.name "MSHQC Automation"
+        git config --global user.email "automation@mshqc.internal"
+
+        # 2. Clone repositori publik secara lokal di dalam server Actions
+        git clone https://x-access-token:${API_TOKEN_GITHUB}@github.com/syahrulhidayat/mshqc-public.git public_repo
+
+        # 3. Buat struktur folder distribusi paket python di repo publik
+        mkdir -p public_repo/mshqc
+        
+        # 4. Salin file .so hasil build ke folder distribusi (sesuaikan jalur *.so Anda)
+        cp build/*.so public_repo/mshqc/ 2>/dev/null || cp build/src/*.so public_repo/mshqc/
+
+        # 5. Buat file __init__.py otomatis agar bisa di-import langsung di Python publik
+        echo "from .mshqc import *" > public_repo/mshqc/__init__.py
+
+        # 6. Masuk ke folder publik, rekam perubahan, commit, dan push
+        cd public_repo
+        git add -A
+        
+        # Cek apakah ada perubahan nyata sebelum commit agar tidak memicu error kosong
+        if git diff-index --quiet HEAD --; then
+          echo "Tidak ada perubahan biner baru yang terdeteksi."
+        else
+          git commit -m "Automated build release: Update mshqc binary (.so) to latest core"
+          git push origin main
+        fi

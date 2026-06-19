@@ -1,9 +1,9 @@
 [build-system]
-# Menambahkan cmake dan ninja agar proses kompilasi C++ berjalan lancar
+# Wajib menggunakan nanobind agar sinkron dengan C++ bindings.cc Anda
 requires = [
     "setuptools>=64", 
     "wheel", 
-    "pybind11>=2.12", 
+    "nanobind>=1.9.0", 
     "numpy>=1.22", 
     "cmake>=3.18", 
     "ninja"
@@ -14,7 +14,7 @@ build-backend = "setuptools.build_meta"
 name = "mshqc"
 version = "0.1.0"
 authors = [
-    {name = "Muhamad Sahrul Hidayat"},
+    {name = "Muhamad Syahrul Hidayat"},
 ]
 description = "Python bindings for MSH-QC quantum mechanics library"
 readme = "README.md"
@@ -33,8 +33,10 @@ classifiers = [
     "Programming Language :: C++",
     "Topic :: Scientific/Engineering :: Chemistry",
 ]
+# Menambahkan scipy karena di setup.py Anda sebelumnya scipy merupakan requirements
 dependencies = [
     "numpy>=1.22",
+    "scipy>=1.7.0",
 ]
 
 [project.optional-dependencies]

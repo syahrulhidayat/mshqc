@@ -2,7 +2,7 @@ Metadata-Version: 2.4
 Name: mshqc
 Version: 0.1.0
 Summary: Python bindings for MSH-QC quantum mechanics library
-Author: Muhamad Sahrul Hidayat
+Author: Muhamad Syahrul Hidayat
 License: MIT
 Project-URL: Homepage, https://github.com/syahrulhidayat/mshqc
 Project-URL: Bug Tracker, https://github.com/syahrulhidayat/mshqc/issues
@@ -20,6 +20,7 @@ Classifier: Topic :: Scientific/Engineering :: Chemistry
 Requires-Python: >=3.7
 Description-Content-Type: text/markdown
 Requires-Dist: numpy>=1.22
+Requires-Dist: scipy>=1.7.0
 Provides-Extra: dev
 Requires-Dist: pytest>=6.0; extra == "dev"
 Requires-Dist: sphinx>=3.0; extra == "dev"
