@@ -1,0 +1,244 @@
+
+Scratch directory: /tmp/
+    For method 'OMP2', SCF Algorithm Type (re)set to DISK_DF.
+   => Libint2 <=
+
+    Primary   basis highest AM E, G, H:  7, 6, 3
+    Auxiliary basis highest AM E, G, H:  7, 7, 4
+    Onebody   basis highest AM E, G, H:  -, -, -
+    Solid Harmonics ordering:            Gaussian
+
+*** tstart() called on codespaces-4812bc
+*** at Thu Jun 18 08:52:02 2026
+
+   => Loading Basis Set <=
+
+    Name: CC-PVTZ
+    Role: ORBITAL
+    Keyword: BASIS
+    atoms 1 entry O          line   262 file /opt/conda/envs/psi4env/share/psi4/basis/cc-pvtz.gbs 
+
+   => Loading Basis Set <=
+
+    Name: CC-PVTZ-RI
+    Role: JKFIT
+    Keyword: DF_BASIS_SCF
+    atoms 1 entry O          line   305 file /opt/conda/envs/psi4env/share/psi4/basis/cc-pvtz-ri.gbs 
+
+
+  ==> Pre-Iterations <==
+
+  ==> Iterations <==
+
+                           Total Energy        Delta E     RMS |[F,P]|
+
+   @DF-UHF iter   1:   -67.70126364323916   -6.77013e+01   4.41285e-01 ADIIS
+   @DF-UHF iter   2:   -73.09704571904699   -5.39578e+00   1.56916e-01 ADIIS
+   @DF-UHF iter   3:   -74.60057746485015   -1.50353e+00   7.72962e-02 DIIS/ADIIS
+   @DF-UHF iter   4:   -74.80336378220117   -2.02786e-01   1.39466e-02 DIIS/ADIIS
+   @DF-UHF iter   5:   -74.81170238824910   -8.33861e-03   6.19128e-04 DIIS/ADIIS
+   @DF-UHF iter   6:   -74.81174058277423   -3.81945e-05   2.04216e-04 DIIS/ADIIS
+   @DF-UHF iter   7:   -74.81174713806681   -6.55529e-06   5.42459e-05 DIIS
+   @DF-UHF iter   8:   -74.81174763365493   -4.95588e-07   1.08252e-05 DIIS
+   @DF-UHF iter   9:   -74.81174764646917   -1.28142e-08   1.99129e-06 DIIS
+   @DF-UHF iter  10:   -74.81174764680998   -3.40805e-10   1.01186e-07 DIIS
+   @DF-UHF iter  11:   -74.81174764681104   -1.06581e-12   9.14680e-09 DIIS
+   @DF-UHF iter  12:   -74.81174764681103    1.42109e-14   2.16036e-09 DIIS
+   @DF-UHF iter  13:   -74.81174764681106   -2.84217e-14   9.62818e-11 DIIS
+  Energy and wave function converged.
+
+
+  ==> Post-Iterations <==
+
+   @Spin Contamination Metric:   7.198927904E-03
+   @S^2 Expected:                2.000000000E+00
+   @S^2 Observed:                2.007198928E+00
+   @S   Expected:                1.000000000E+00
+   @S   Observed:                1.000000000E+00
+
+  @DF-UHF Final Energy:   -74.81174764681106
+
+   => Energetics <=
+
+    Nuclear Repulsion Energy =              0.0000000000000000
+    One-Electron Energy =                -103.2667903240554779
+    Two-Electron Energy =                  28.4550426772444069
+    Total Energy =                        -74.8117476468110709
+
+  UHF NO Occupations:
+  HONO-2 :    2 Ag 1.9974943
+  HONO-1 :    1B1u 1.0000000
+  HONO-0 :    1B2u 1.0000000
+  LUNO+0 :    3 Ag 0.0025057
+  LUNO+1 :    2B3u 0.0010953
+  LUNO+2 :    4 Ag 0.0000022
+  LUNO+3 :    3B3u 0.0000000
+
+
+Computation Completed
+
+
+Properties will be evaluated at   0.000000,   0.000000,   0.000000 [a0]
+
+Properties computed using the SCF density matrix
+
+
+ Multipole Moments:
+
+ ------------------------------------------------------------------------------------
+     Multipole            Electronic (a.u.)      Nuclear  (a.u.)        Total (a.u.)
+ ------------------------------------------------------------------------------------
+
+ L = 1.  Multiply by 2.5417464519 to convert [e a0] to [Debye]
+ Dipole X            :          0.0000000            0.0000000            0.0000000
+ Dipole Y            :          0.0000000            0.0000000            0.0000000
+ Dipole Z            :          0.0000000            0.0000000            0.0000000
+ Magnitude           :                                                    0.0000000
+
+ ------------------------------------------------------------------------------------
+
+*** tstop() called on codespaces-4812bc at Thu Jun 18 08:52:02 2026
+Module time:
+	user time   =       0.19 seconds =       0.00 minutes
+	system time =       0.04 seconds =       0.00 minutes
+	total time  =          0 seconds =       0.00 minutes
+Total time:
+	user time   =       8.59 seconds =       0.14 minutes
+	system time =       2.32 seconds =       0.04 minutes
+	total time  =         20 seconds =       0.33 minutes
+
+  A requested method does not make use of molecular symmetry: further calculations in C1 point group.
+
+  Constructing Basis Sets for DFOCC...
+
+   => Loading Basis Set <=
+
+    Name: CC-PVTZ-RI
+    Role: JKFIT
+    Keyword: DF_BASIS_SCF
+    atoms 1 entry O          line   305 file /opt/conda/envs/psi4env/share/psi4/basis/cc-pvtz-ri.gbs 
+
+   => Loading Basis Set <=
+
+    Name: (CC-PVTZ AUX)
+    Role: RIFIT
+    Keyword: DF_BASIS_CC
+    atoms 1 entry O          line   305 file /opt/conda/envs/psi4env/share/psi4/basis/cc-pvtz-ri.gbs 
+
+
+*** tstart() called on codespaces-4812bc
+*** at Thu Jun 18 08:52:02 2026
+
+	Warning: cc_lambda option is changed to TRUE
+	For this residual convergence, default PCG convergence is:     1.00e-07
+	For this energy convergence, default RMS orbital gradient is:     3.16e-07
+	For this energy convergence, default MAX orbital gradient is:     2.00e-06
+
+ ============================================================================== 
+ ============================================================================== 
+ ============================================================================== 
+
+                      DF-OMP2 (DF-OO-MP2)   
+              Program Written by Ugur Bozkaya
+              Latest Revision September 9, 2017
+
+ ============================================================================== 
+ ============================================================================== 
+ ============================================================================== 
+
+	MO Hessian type is changed to 'APPROX_DIAG'
+	MO spaces... 
+
+	 FC   AOCC   BOCC  AVIR   BVIR   FV 
+	------------------------------------------
+	  0     5     3    25     27     0
+	Reading DF integrals from disk ...
+	Number of basis functions in the DF-HF basis:  81
+	Number of basis functions in the DF-CC basis:  81
+
+	Available memory                      :   3814.70 MB 
+	Minimum required memory for amplitudes:      0.36 MB 
+
+	Computing DF-MP2 energy using SCF MOs (Canonical DF-MP2)... 
+	======================================================================= 
+	Nuclear Repulsion Energy (a.u.)    :     0.00000000000000
+	DF-HF Energy (a.u.)                :   -74.81174764681106
+	REF Energy (a.u.)                  :   -74.81174764681106
+	Alpha-Alpha Contribution (a.u.)    :    -0.03295668078267
+	Alpha-Beta Contribution (a.u.)     :    -0.11626315250301
+	Beta-Beta Contribution (a.u.)      :    -0.00498973036944
+	Scaled_SS Correlation Energy (a.u.):    -0.01264880371737
+	Scaled_OS Correlation Energy (a.u.):    -0.13951578300361
+	DF-SCS-MP2 Total Energy (a.u.)     :   -74.96391223353204
+	DF-SOS-MP2 Total Energy (a.u.)     :   -74.96288974506497
+	DF-SCS(N)-MP2 Total Energy (a.u.)  :   -74.87853333043876
+	DF-MP2 Correlation Energy (a.u.)   :    -0.15420956365512
+	DF-MP2 Total Energy (a.u.)         :   -74.96595721046617
+	======================================================================= 
+
+	Number of alpha independent-pairs:125
+	Number of beta independent-pairs : 81
+
+ ============================================================================== 
+ ================ Performing DF-OMP2 iterations... ============================ 
+ ============================================================================== 
+	            Minimizing DF-MP2-L Functional 
+	            ------------------------------ 
+ Iter       E_total           DE           RMS MO Grad      MAX MO Grad      RMS T2    
+ ----    ---------------    ----------     -----------      -----------     ---------- 
+	successfully fired up coupled DIIS...
+   1     -74.9665403034     -5.83e-04       1.09e-03         5.45e-03        1.29e-05 
+   2     -74.9665598638     -1.96e-05       3.29e-04         1.54e-03        2.60e-06 
+   3     -74.9665620710     -2.21e-06       7.09e-05         3.33e-04        8.33e-07 
+   4     -74.9665622245     -1.53e-07       3.32e-05         1.89e-04        2.61e-07 
+   5     -74.9665622404     -1.59e-08       3.37e-06         2.77e-05        8.15e-08 
+   6     -74.9665622409     -4.42e-10       5.40e-07         4.16e-06        1.58e-08 
+   7     -74.9665622409     -9.45e-12       6.74e-08         4.54e-07        2.60e-09 
+   8     -74.9665622409     -8.53e-14       5.24e-09         3.63e-08        2.84e-10 
+   9     -74.9665622409      1.42e-14       4.37e-10         2.56e-09        2.36e-11 
+
+ ============================================================================== 
+ ======================== DF-OMP2 ITERATIONS ARE CONVERGED ==================== 
+ ============================================================================== 
+
+	Computing MP2 energy using optimized MOs... 
+	======================================================================= 
+	Nuclear Repulsion Energy (a.u.)    :     0.00000000000000
+	DF-HF Energy (a.u.)                :   -74.81174764681106
+	REF Energy (a.u.)                  :   -74.81114201344846
+	Alpha-Alpha Contribution (a.u.)    :    -0.03319251888112
+	Alpha-Beta Contribution (a.u.)     :    -0.11716181039790
+	Beta-Beta Contribution (a.u.)      :    -0.00506589814124
+	Scaled_SS Correlation Energy (a.u.):    -0.01275280567412
+	Scaled_OS Correlation Energy (a.u.):    -0.14059417247748
+	DF-SCS-MP2 Total Energy (a.u.)     :   -74.96448899160006
+	DF-SOS-MP2 Total Energy (a.u.)     :   -74.95173618592594
+	DF-SCS(N)-MP2 Total Energy (a.u.)  :   -74.87847682740781
+	DF-MP2 Correlation Energy (a.u.)   :    -0.15481459405765
+	DF-MP2 Total Energy (a.u.)         :   -74.96656224086871
+	======================================================================= 
+
+	======================================================================= 
+	================ DF-OMP2 FINAL RESULTS ================================ 
+	======================================================================= 
+	Nuclear Repulsion Energy (a.u.)    :     0.00000000000000
+	DF-HF Energy (a.u.)                :   -74.81174764681106
+	REF Energy (a.u.)                  :   -74.81114201344846
+	DF-SCS-OMP2 Total Energy (a.u.)    :   -74.96448899160006
+	DF-SOS-OMP2 Total Energy (a.u.)    :   -74.95173618592594
+	DF-SCS(N)-OMP2 Total Energy (a.u.) :   -74.87847682740781
+	DF-OMP2 Correlation Energy (a.u.)  :    -0.15481459405756
+	Edfomp2 - Eref (a.u.)              :    -0.15542022742015
+	DF-OMP2 Total Energy (a.u.)        :   -74.96656224086861
+	======================================================================= 
+
+
+*** tstop() called on codespaces-4812bc at Thu Jun 18 08:52:03 2026
+Module time:
+	user time   =       0.31 seconds =       0.01 minutes
+	system time =       0.56 seconds =       0.01 minutes
+	total time  =          1 seconds =       0.02 minutes
+Total time:
+	user time   =       8.94 seconds =       0.15 minutes
+	system time =       2.88 seconds =       0.05 minutes
+	total time  =         21 seconds =       0.35 minutes

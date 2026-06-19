@@ -11,4 +11,5 @@ __pycache__/
 .vscode/
 .txt
 # Mengabaikan data basis set (opsional, jika Anda tidak ingin mengunggah file teks data basis)
-# data/basis/
+# data/basis/venv/
+venv/
