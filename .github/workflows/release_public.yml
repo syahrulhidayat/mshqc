@@ -52,7 +52,7 @@ jobs:
     - name: Deploy Binary to Public Repository
       shell: bash -el {0}
       env:
-        API_TOKEN_GITHUB: ${{ secrets.PUBLIC_REPO_TOKEN }}
+        API_TOKEN_GITHUB: ${{'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'}}
       run: |
         # 1. Konfigurasi identitas Git di server temporer
         git config --global user.name "MSHQC Automation"
