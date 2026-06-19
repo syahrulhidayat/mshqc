@@ -31,9 +31,18 @@ jobs:
     - name: Compile C++ Source to Shared Object (.so)
       shell: bash -el {0}
       run: |
+        # 1. Bertanya kepada Python di mana letak folder konfigurasi CMake milik nanobind
+        NANO_PATH=$(python -m nanobind --cmake_dir)
+        echo "Ditemukan nanobind di: $NANO_PATH"
+        
+        # 2. Proses Kompilasi
         mkdir build && cd build
-        cmake -DCMAKE_BUILD_TYPE=Release ..
+        
+        # 3. Menyuntikkan NANO_PATH secara paksa ke dalam CMake
+        cmake -DCMAKE_BUILD_TYPE=Release -Dnanobind_DIR="$NANO_PATH" ..
+        
         make -j$(nproc)
+        
         # Verifikasi apakah file .so berhasil tercipta
         ls -la *.so || ls -la src/*.so
 
