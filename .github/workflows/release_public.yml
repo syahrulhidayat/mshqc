@@ -64,11 +64,12 @@ jobs:
         # 3. Buat struktur folder distribusi paket python di repo publik
         mkdir -p public_repo/mshqc
         
-        # 4. Salin file .so hasil build ke folder distribusi (sesuaikan jalur *.so Anda)
-        cp build/*.so public_repo/mshqc/ 2>/dev/null || cp build/src/*.so public_repo/mshqc/
+        # 4. Salin library C++ utama dan ekstensi Python (nanobind)
+        cp build/*.so public_repo/mshqc/ 2>/dev/null || true
+        cp python/mshqc/*.so public_repo/mshqc/ 2>/dev/null || true
 
-        # 5. Buat file __init__.py otomatis agar bisa di-import langsung di Python publik
-        echo "from .mshqc import *" > public_repo/mshqc/__init__.py
+        # 5. Buat file __init__.py agar menunjuk ke ekstensi _mshqc yang benar
+        echo "from ._mshqc import *" > public_repo/mshqc/__init__.py
 
         # 6. Masuk ke folder publik, rekam perubahan, commit, dan push
         cd public_repo
