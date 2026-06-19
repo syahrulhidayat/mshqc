@@ -23,7 +23,7 @@ jobs:
       shell: bash -el {0}
       run: |
         # Mengunduh kompiler dan library aljabar linier (Eigen) di server Ubuntu Actions
-        conda install -y cmake make compilers eigen openblas
+        conda install -y cmake make compilers eigen openblas pip
         python -m pip install nanobind
         # Jika Anda membutuhkan pustaka tambahan seperti libcint atau tblis, pasang di sini
         # atau biarkan CMake mengunduhnya secara otomatis (FetchContent)
