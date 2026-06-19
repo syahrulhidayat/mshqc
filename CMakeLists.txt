@@ -78,20 +78,23 @@ endif()
 # --- EIGEN ---
 set(EIGEN_LOCAL_PATH "${CMAKE_SOURCE_DIR}/include/eigen-3.4.0")
 if(EXISTS "${EIGEN_LOCAL_PATH}/Eigen/Dense")
-    message(STATUS ">> Linear Algebra: Menggunakan Eigen 3.4.0 Lokal")
+    message(STATUS ">> Linear Algebra: Menggunakan Eigen Lokal")
     add_library(Eigen3::Eigen INTERFACE IMPORTED)
     target_include_directories(Eigen3::Eigen INTERFACE "${EIGEN_LOCAL_PATH}")
 else()
-    message(STATUS ">> Eigen lokal tidak ditemukan. Mencari Eigen 3.4.0 di Conda/Sistem...")
-    find_package(Eigen3 3.4.0 EXACT CONFIG HINTS "$ENV{CONDA_PREFIX}/share/eigen3/cmake" "/opt/conda/share/eigen3/cmake")
+    message(STATUS ">> Eigen lokal tidak ditemukan. Mencari versi terbaru di Conda/Sistem...")
+    
+    # [PERUBAHAN]: Menghapus '3.4.0 EXACT' agar CMake otomatis menerima versi tertinggi yang tersedia
+    find_package(Eigen3 CONFIG HINTS "$ENV{CONDA_PREFIX}/share/eigen3/cmake" "/opt/conda/share/eigen3/cmake")
+    
     if(Eigen3_FOUND)
         message(STATUS ">> Linear Algebra: Eigen ${Eigen3_VERSION} ditemukan dari Conda!")
     else()
-        find_package(Eigen3 3.4 REQUIRED NO_MODULE)
+        # Fallback juga dibuat fleksibel tanpa batasan versi
+        find_package(Eigen3 REQUIRED NO_MODULE)
         message(STATUS ">> Linear Algebra: Eigen ${Eigen3_VERSION} ditemukan sebagai fallback.")
     endif()
 endif()
-
 # --- LIBCINT ---
 find_library(CINT_LIBRARY cint HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/local/lib" "/usr/lib")
 if(CINT_LIBRARY)
