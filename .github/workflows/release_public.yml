@@ -52,7 +52,7 @@ jobs:
     - name: Deploy Binary to Public Repository
       shell: bash -el {0}
       env:
-        API_TOKEN_GITHUB: ${{'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'}}
+        API_TOKEN_GITHUB: ${{'rhahasia'}}
       run: |
         # 1. Konfigurasi identitas Git di server temporer
         git config --global user.name "MSHQC Automation"
@@ -71,6 +71,7 @@ jobs:
         # Ini akan memastikan __init__.py, calculators.py, session.py Anda ikut terbawa utuh!
         cp python/mshqc/*.so public_repo/mshqc/ 2>/dev/null || true
         cp -r python/mshqc/*.py public_repo/mshqc/ 2>/dev/null || true
+        cp -r data public_repo/mshqc/ 2>/dev/null || true
 
         # 6. Masuk ke folder publik, rekam perubahan, commit, dan push
         cd public_repo
