@@ -9,9 +9,18 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-# [OPTIMASI KOMPILER TURBO]
-set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -march=native -mtune=native -funroll-loops -ftree-vectorize -DNDEBUG")
-
+# ==============================================================================
+# [OPTIMASI KOMPILER CERDAS]
+# ==============================================================================
+if(DEFINED ENV{GITHUB_ACTIONS})
+    # Jika CMake mendeteksi ia sedang berada di server GitHub Actions
+    message(STATUS ">> CI/CD Server Detected: Menggunakan optimasi Biner Universal (Aman untuk rilis publik)")
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -funroll-loops -ftree-vectorize -DNDEBUG")
+else()
+    # Jika CMake mendeteksi ia berada di laptop / Codespaces lokal Anda
+    message(STATUS ">> Local Environment Detected: Mengaktifkan Super Turbo (-march=native)")
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -march=native -mtune=native -funroll-loops -ftree-vectorize -DNDEBUG")
+endif()
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
