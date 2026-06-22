@@ -1,4 +1,4 @@
-name: Compile and Push Binary to Public Repo
+name: Compile and Release Wheel to Public Repo
 
 on:
   push:
@@ -19,38 +19,31 @@ jobs:
         python-version: "3.12"
         channels: conda-forge
 
-    - name: Install Build Dependencies (Sync with Psi4 & Conda)
+    - name: Install Build Dependencies (Sync with Psi4)
       shell: bash -el {0}
       run: |
-        # PERBAIKAN 1: Hapus openblas! Biarkan Conda memilih mesin matriks (MKL/HDF5) 
-        # yang secara natural kompatibel dengan Psi4 agar terhindar dari Segmentation Fault.
         conda install -y -c conda-forge cmake make compilers eigen pkg-config hdf5 pip libcint tblis liblapacke psi4
-        
-        # Instalasi nanobind
-        python -m pip install nanobind
+        # Tambahkan modul pembuat wheel
+        python -m pip install build wheel nanobind
 
-    - name: Compile C++ Source to Shared Object (.so)
+    - name: Build Python Wheel (.whl)
       shell: bash -el {0}
       run: |
-        # PERBAIKAN 2: Paksa CMake menggunakan Compiler bawaan Conda (bukan bawaan Ubuntu)
+        # Paksa CMake menggunakan Compiler bawaan Conda
         export CC=$CONDA_PREFIX/bin/x86_64-conda-linux-gnu-cc
         export CXX=$CONDA_PREFIX/bin/x86_64-conda-linux-gnu-c++
         
-        # PERBAIKAN 3: Hapus -march=native agar biner universal dan tidak meledak di CPU yang berbeda
+        # Biner universal tanpa -march=native
         export CXXFLAGS="-std=c++17 -fopenmp -O3 -DEIGEN_USE_BLAS -DEIGEN_USE_LAPACKE"
         
-        # Eksekusi kompilasi via setup.py (Sama seperti fast_rebuild.sh di lokal)
-        python setup.py build_ext --inplace
-        
-        # Mengumpulkan file biner .so ke satu tempat
-        mv *.so python/mshqc/ 2>/dev/null || true
-        mv build/lib*/*.so python/mshqc/ 2>/dev/null || true
+        # EKSEKUSI KUNCI: Produksi Wheel langsung (Tanpa file .so tercecer)
+        python setup.py bdist_wheel
 
-    - name: Deploy Binary to Public Repository (Closed-Source Mode)
+    - name: Deploy Wheel to Public Repository (Closed-Source Mode)
       shell: bash -el {0}
       env:
-        # PERBAIKAN 4: Panggil Secret GitHub dengan sintaks yang benar
-        API_TOKEN_GITHUB: ${{ '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' }}
+        # Panggil Secret GitHub
+        API_TOKEN_GITHUB: ${{ secrets.rahaisa }}
       run: |
         git config --global user.name "MSHQC Automation"
         git config --global user.email "automation@mshqc.internal"
@@ -58,14 +51,17 @@ jobs:
         # Clone repositori publik
         git clone https://x-access-token:${API_TOKEN_GITHUB}@github.com/syahrulhidayat/mshqc-public.git public_repo
 
-        mkdir -p public_repo/mshqc
+        # Buat direktori khusus untuk rilis jika belum ada
+        mkdir -p public_repo/releases
         
-        # KUNCI CLOSED-SOURCE: 
-        # Hanya copy file Biner (.so), Wrapper Python (.py), dan Data (Basis set).
-        # TIDAK ADA copy folder src/, include/, CMakeLists.txt, atau setup.py!
-        cp python/mshqc/*.so public_repo/mshqc/ 2>/dev/null || true
-        cp -r python/mshqc/*.py public_repo/mshqc/ 2>/dev/null || true
-        cp -r data public_repo/mshqc/ 2>/dev/null || true
+        # Hapus wheel versi sebelumnya agar tidak menumpuk
+        rm -f public_repo/releases/*.whl
+        
+        # KUNCI CLOSED-SOURCE: Hanya copy file Biner Wheel (.whl) dan Data
+        cp dist/*.whl public_repo/releases/ 2>/dev/null || true
+        
+        # Tetap copy folder data jika basis set belum masuk sepenuhnya ke dalam package
+        cp -r data public_repo/ 2>/dev/null || true
 
         # Rekam dan Push ke Publik
         cd public_repo
@@ -74,6 +70,6 @@ jobs:
         if git diff-index --quiet HEAD --; then
           echo "Tidak ada pembaruan pada biner mshqc."
         else
-          git commit -m "Auto-Deploy: Sinkronisasi Biner MSHQC (MKL & Psi4 ABI Safe)"
+          git commit -m "Auto-Deploy: Rilis MSHQC Wheel (.whl) Aman"
           git push origin main
         fi

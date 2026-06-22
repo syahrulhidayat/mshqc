@@ -1,6 +1,6 @@
 Metadata-Version: 2.4
 Name: mshqc
-Version: 0.1.0
+Version: 1.0.0
 Summary: Python bindings for MSH-QC quantum mechanics library
 Author: Muhamad Syahrul Hidayat
 License: MIT
@@ -11,13 +11,9 @@ Classifier: Intended Audience :: Science/Research
 Classifier: License :: OSI Approved :: MIT License
 Classifier: Operating System :: OS Independent
 Classifier: Programming Language :: Python :: 3
-Classifier: Programming Language :: Python :: 3.8
-Classifier: Programming Language :: Python :: 3.9
-Classifier: Programming Language :: Python :: 3.10
-Classifier: Programming Language :: Python :: 3.11
 Classifier: Programming Language :: C++
 Classifier: Topic :: Scientific/Engineering :: Chemistry
-Requires-Python: >=3.7
+Requires-Python: >=3.8
 Description-Content-Type: text/markdown
 Requires-Dist: numpy>=1.22
 Requires-Dist: scipy>=1.7.0
