@@ -75,7 +75,7 @@ else()
     message(STATUS ">> libflame tidak ditemukan. Mencari Standar LAPACK & LAPACKE Sistem...")
     find_package(LAPACK REQUIRED)
     
-    find_library(LAPACKE_LIBRARY NAMES lapacke HINTS "/usr/lib/x86_64-linux-gnu" "/usr/lib")
+    find_library(LAPACKE_LIBRARY NAMES lapacke HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/lib/x86_64-linux-gnu" "/usr/lib")
     if(LAPACKE_LIBRARY)
         message(STATUS ">> LAPACKE: Antarmuka C LAPACKE ditemukan! (${LAPACKE_LIBRARY})")
         list(APPEND LAPACK_LIBRARIES ${LAPACKE_LIBRARY})
