@@ -24,7 +24,7 @@ jobs:
       run: |
         # PERBAIKAN 1: Hapus openblas! Biarkan Conda memilih mesin matriks (MKL/HDF5) 
         # yang secara natural kompatibel dengan Psi4 agar terhindar dari Segmentation Fault.
-        conda install -y -c conda-forge cmake make compilers eigen pkg-config hdf5 pip libcint tblis psi4
+        conda install -y -c conda-forge cmake make compilers eigen pkg-config hdf5 pip libcint tblis liblapacke psi4
         
         # Instalasi nanobind
         python -m pip install nanobind
