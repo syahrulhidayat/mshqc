@@ -1,5 +1,4 @@
 [build-system]
-# Wajib menggunakan nanobind agar sinkron dengan C++ bindings.cc Anda
 requires = [
     "setuptools>=64", 
     "wheel", 
@@ -12,7 +11,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mshqc"
-version = "0.1.0"
+version = "1.0.0"
 authors = [
     {name = "Muhamad Syahrul Hidayat"},
 ]
@@ -26,14 +25,9 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
     "Programming Language :: C++",
     "Topic :: Scientific/Engineering :: Chemistry",
 ]
-# Menambahkan scipy karena di setup.py Anda sebelumnya scipy merupakan requirements
 dependencies = [
     "numpy>=1.22",
     "scipy>=1.7.0",
@@ -51,9 +45,9 @@ Homepage = "https://github.com/syahrulhidayat/mshqc"
 "Bug Tracker" = "https://github.com/syahrulhidayat/mshqc/issues"
 
 [tool.setuptools]
-# Ini memberitahu setuptools paketnya ada di folder python/mshqc
 package-dir = {"" = "python"}
 packages = ["mshqc"]
 
 [tool.setuptools.package-data]
-mshqc = ["py.typed"]
+# Memaksa setuptools memasukkan file biner (.so) dan type hints (.pyi)
+mshqc = ["*.so", "*.pyi", "py.typed"]
