@@ -25,7 +25,6 @@ class CMakeBuild(build_ext):
             self.build_extension(ext)
 
     def build_extension(self, ext):
-        # extdir adalah folder staging tempat file .whl dirakit
         extdir = os.path.abspath(os.path.dirname(self.get_ext_fullpath(ext.name)))
         
         # Pastikan output dari cmake masuk tepat ke dalam folder 'mshqc'
@@ -39,7 +38,7 @@ class CMakeBuild(build_ext):
         # CMake config
         cmake_args = [
             f'-DCMAKE_LIBRARY_OUTPUT_DIRECTORY={extdir}',
-            f'-DCMAKE_RUNTIME_OUTPUT_DIRECTORY={extdir}', # Menangkap libmshqc.so
+            f'-DCMAKE_RUNTIME_OUTPUT_DIRECTORY={extdir}', 
             f'-DPYTHON_EXECUTABLE={sys.executable}',
             f'-Dnanobind_DIR={nanobind_cmake_path}',  
             '-DCMAKE_BUILD_TYPE=Release',
@@ -47,7 +46,6 @@ class CMakeBuild(build_ext):
         
         build_args = ['--config', 'Release']
         
-        # Set eksekusi paralel OpenMP/Kompilasi
         if 'CMAKE_BUILD_PARALLEL_LEVEL' not in os.environ:
             build_args += ['-j4']
         
@@ -63,6 +61,21 @@ class CMakeBuild(build_ext):
         subprocess.check_call(['cmake', ext.sourcedir] + cmake_args, cwd=self.build_temp, env=env)
         subprocess.check_call(['cmake', '--build', '.'] + build_args, cwd=self.build_temp)
 
+        # === TAMBAHAN KUNCI: PEMINDAHAN PAKSA ===
+        # Terkadang CMake mengabaikan CMAKE_LIBRARY_OUTPUT_DIRECTORY untuk modul Python.
+        # Kita paksa cari semua .so yang baru jadi dan pindahkan ke extdir (folder perakitan Wheel)
+        import glob
+        import shutil
+        
+        # 1. Cari di dalam folder build/temp
+        for filepath in glob.glob(os.path.join(self.build_temp, "**/*.so"), recursive=True):
+            shutil.copy(filepath, extdir)
+            
+        # 2. Cari di dalam folder python/mshqc (karena CMakeLists.txt Anda mengarah ke sini)
+        for filepath in glob.glob(os.path.join(ext.sourcedir, "python", "mshqc", "*.so")):
+            # Jangan copy libmshqc.so lagi jika sudah ada (karena ukurannya besar)
+            if "_mshqc" in os.path.basename(filepath):
+                shutil.copy(filepath, extdir)
 # Read long description safely
 try:
     with open("README.md", "r", encoding="utf-8") as fh:
