@@ -9,7 +9,7 @@ Scratch directory: /tmp/
     Solid Harmonics ordering:            Gaussian
 
 *** tstart() called on codespaces-4812bc
-*** at Thu Jun 18 08:52:02 2026
+*** at Sun Jun 21 11:14:23 2026
 
    => Loading Basis Set <=
 
@@ -34,10 +34,10 @@ Scratch directory: /tmp/
 
    @DF-UHF iter   1:   -67.70126364323916   -6.77013e+01   4.41285e-01 ADIIS
    @DF-UHF iter   2:   -73.09704571904699   -5.39578e+00   1.56916e-01 ADIIS
-   @DF-UHF iter   3:   -74.60057746485015   -1.50353e+00   7.72962e-02 DIIS/ADIIS
-   @DF-UHF iter   4:   -74.80336378220117   -2.02786e-01   1.39466e-02 DIIS/ADIIS
-   @DF-UHF iter   5:   -74.81170238824910   -8.33861e-03   6.19128e-04 DIIS/ADIIS
-   @DF-UHF iter   6:   -74.81174058277423   -3.81945e-05   2.04216e-04 DIIS/ADIIS
+   @DF-UHF iter   3:   -74.60057746485015   -1.50353e+00   7.72962e-02 ADIIS/DIIS
+   @DF-UHF iter   4:   -74.80336378220117   -2.02786e-01   1.39466e-02 ADIIS/DIIS
+   @DF-UHF iter   5:   -74.81170238824910   -8.33861e-03   6.19128e-04 ADIIS/DIIS
+   @DF-UHF iter   6:   -74.81174058277423   -3.81945e-05   2.04216e-04 ADIIS/DIIS
    @DF-UHF iter   7:   -74.81174713806681   -6.55529e-06   5.42459e-05 DIIS
    @DF-UHF iter   8:   -74.81174763365493   -4.95588e-07   1.08252e-05 DIIS
    @DF-UHF iter   9:   -74.81174764646917   -1.28142e-08   1.99129e-06 DIIS
@@ -97,15 +97,15 @@ Properties computed using the SCF density matrix
 
  ------------------------------------------------------------------------------------
 
-*** tstop() called on codespaces-4812bc at Thu Jun 18 08:52:02 2026
+*** tstop() called on codespaces-4812bc at Sun Jun 21 11:14:24 2026
 Module time:
-	user time   =       0.19 seconds =       0.00 minutes
-	system time =       0.04 seconds =       0.00 minutes
-	total time  =          0 seconds =       0.00 minutes
+	user time   =       0.16 seconds =       0.00 minutes
+	system time =       0.03 seconds =       0.00 minutes
+	total time  =          1 seconds =       0.02 minutes
 Total time:
-	user time   =       8.59 seconds =       0.14 minutes
-	system time =       2.32 seconds =       0.04 minutes
-	total time  =         20 seconds =       0.33 minutes
+	user time   =       8.31 seconds =       0.14 minutes
+	system time =       1.79 seconds =       0.03 minutes
+	total time  =         18 seconds =       0.30 minutes
 
   A requested method does not make use of molecular symmetry: further calculations in C1 point group.
 
@@ -127,7 +127,7 @@ Total time:
 
 
 *** tstart() called on codespaces-4812bc
-*** at Thu Jun 18 08:52:02 2026
+*** at Sun Jun 21 11:14:24 2026
 
 	Warning: cc_lambda option is changed to TRUE
 	For this residual convergence, default PCG convergence is:     1.00e-07
@@ -233,12 +233,12 @@ Total time:
 	======================================================================= 
 
 
-*** tstop() called on codespaces-4812bc at Thu Jun 18 08:52:03 2026
+*** tstop() called on codespaces-4812bc at Sun Jun 21 11:14:25 2026
 Module time:
-	user time   =       0.31 seconds =       0.01 minutes
-	system time =       0.56 seconds =       0.01 minutes
+	user time   =       0.32 seconds =       0.01 minutes
+	system time =       0.53 seconds =       0.01 minutes
 	total time  =          1 seconds =       0.02 minutes
 Total time:
-	user time   =       8.94 seconds =       0.15 minutes
-	system time =       2.88 seconds =       0.05 minutes
-	total time  =         21 seconds =       0.35 minutes
+	user time   =       8.66 seconds =       0.14 minutes
+	system time =       2.32 seconds =       0.04 minutes
+	total time  =         19 seconds =       0.32 minutes

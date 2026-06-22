@@ -148,3 +148,127 @@ Untuk mengalahkan Psi4, kamu perlu memprioritaskan pengurangan alokasi memori.
     Gunakan HDF5 yang sudah kamu siapkan untuk menyimpan tensor MO hasil transformasi. Psi4 melakukan ini untuk menghemat RAM.
 
 Pertanyaan saya selanjutnya: Apakah kamu mau saya buatkan kode kontraksi Z-Vector yang lebih spesifik menggunakan BLAS agar kamu bisa langsung copy-paste ke omp2.cc?
+
+
+@syahrulhidayat ➜ /workspaces/mshqc-public (main) $ conda install -y -c conda-forge psi4
+Channels:
+ - conda-forge
+Platform: linux-64
+Collecting package metadata (repodata.json): done
+Solving environment: done
+
+## Package Plan ##
+
+  environment location: /opt/conda
+
+  added / updated specs:
+    - psi4
+
+
+The following packages will be downloaded:
+
+    package                    |            build
+    ---------------------------|-----------------
+    _openmp_mutex-4.5          |       7_kmp_llvm           8 KB  conda-forge
+    dkh-1.2                    |       ha94c79b_3          63 KB  conda-forge
+    flexcache-0.3              |     pyhd8ed1ab_1          16 KB  conda-forge
+    flexparser-0.4             |     pyhd8ed1ab_1          28 KB  conda-forge
+    fmt-11.1.4                 |       h07f6e7f_1         187 KB  conda-forge
+    gau2grid-2.0.9             |       hb03c661_0         334 KB  conda-forge
+    libblas-3.9.0              |  37_h5875eb1_mkl          17 KB  conda-forge
+    libcblas-3.9.0             |  37_hfef963f_mkl          17 KB  conda-forge
+    libecpint-1.0.7            |      h981d57b_12         351 KB  conda-forge
+    libint-2.13.1              |       h83f5b4b_0        69.6 MB  conda-forge
+    liblapack-3.9.0            |  37_h5e43f62_mkl          17 KB  conda-forge
+    liblapacke-3.9.0           |  37_hdba1596_mkl          17 KB  conda-forge
+    libmamba-2.2.0             |       h8dd7f75_0         2.0 MB  conda-forge
+    libmambapy-2.2.0           |  py312h8079299_0         638 KB  conda-forge
+    libpcm-1.2.3               |      h79846a8_17         577 KB  conda-forge
+    libsolv-0.7.39             |       h9463b59_0         509 KB  conda-forge
+    libxc-c-7.0.0              |   cpu_h75f4f88_6        56.0 MB  conda-forge
+    llvm-openmp-22.1.8         |       h4922eb0_0         5.8 MB  conda-forge
+    mkl-2024.2.2               |      ha770c72_17       119.2 MB  conda-forge
+    networkx-3.6.1             |     pyhcf101f3_0         1.5 MB  conda-forge
+    nlohmann_json-3.11.3       |       he02047a_1         120 KB  conda-forge
+    numpy-2.4.6                |  py312h33ff503_0         8.4 MB  conda-forge
+    optking-0.5.0              |     pyhd8ed1ab_0         182 KB  conda-forge
+    pcmsolver-1.2.3            |            py_17         101 KB  conda-forge
+    pint-0.25.3                |     pyhc364b38_0         239 KB  conda-forge
+    psi4-1.9.1                 | py312h0d38b3c_11        27.6 MB  conda-forge
+    psutil-7.2.2               |  py312h5253ce2_0         220 KB  conda-forge
+    pugixml-1.15               |       h3f63f65_0         116 KB  conda-forge
+    py-cpuinfo-9.0.0           |     pyhd8ed1ab_1          25 KB  conda-forge
+    pybind11-abi-4             |       hd8ed1ab_3          10 KB  conda-forge
+    pyyaml-6.0.3               |  py312h8a5da7c_1         194 KB  conda-forge
+    qcelemental-0.30.1         |     pyhd8ed1ab_0         248 KB  conda-forge
+    qcengine-0.34.2            |     pyhd8ed1ab_0         240 KB  conda-forge
+    scipy-1.18.0               |  py312h54fa4ab_0        16.3 MB  conda-forge
+    simdjson-3.13.0            |       h84d6215_0         242 KB  conda-forge
+    tbb-2021.13.0              |       hceb3a55_1         172 KB  conda-forge
+    yaml-0.2.5                 |       h280c20c_3          83 KB  conda-forge
+    ------------------------------------------------------------
+                                           Total:       311.3 MB
+
+The following NEW packages will be INSTALLED:
+
+  dkh                conda-forge/linux-64::dkh-1.2-ha94c79b_3 
+  flexcache          conda-forge/noarch::flexcache-0.3-pyhd8ed1ab_1 
+  flexparser         conda-forge/noarch::flexparser-0.4-pyhd8ed1ab_1 
+  gau2grid           conda-forge/linux-64::gau2grid-2.0.9-hb03c661_0 
+  libecpint          conda-forge/linux-64::libecpint-1.0.7-h981d57b_12 
+  libint             conda-forge/linux-64::libint-2.13.1-h83f5b4b_0 
+  libpcm             conda-forge/linux-64::libpcm-1.2.3-h79846a8_17 
+  libxc-c            conda-forge/linux-64::libxc-c-7.0.0-cpu_h75f4f88_6 
+  llvm-openmp        conda-forge/linux-64::llvm-openmp-22.1.8-h4922eb0_0 
+  mkl                conda-forge/linux-64::mkl-2024.2.2-ha770c72_17 
+  networkx           conda-forge/noarch::networkx-3.6.1-pyhcf101f3_0 
+  numpy              conda-forge/linux-64::numpy-2.4.6-py312h33ff503_0 
+  optking            conda-forge/noarch::optking-0.5.0-pyhd8ed1ab_0 
+  pcmsolver          conda-forge/noarch::pcmsolver-1.2.3-py_17 
+  pint               conda-forge/noarch::pint-0.25.3-pyhc364b38_0 
+  psi4               conda-forge/linux-64::psi4-1.9.1-py312h0d38b3c_11 
+  psutil             conda-forge/linux-64::psutil-7.2.2-py312h5253ce2_0 
+  pugixml            conda-forge/linux-64::pugixml-1.15-h3f63f65_0 
+  py-cpuinfo         conda-forge/noarch::py-cpuinfo-9.0.0-pyhd8ed1ab_1 
+  pyyaml             conda-forge/linux-64::pyyaml-6.0.3-py312h8a5da7c_1 
+  qcelemental        conda-forge/noarch::qcelemental-0.30.1-pyhd8ed1ab_0 
+  qcengine           conda-forge/noarch::qcengine-0.34.2-pyhd8ed1ab_0 
+  scipy              conda-forge/linux-64::scipy-1.18.0-py312h54fa4ab_0 
+  tbb                conda-forge/linux-64::tbb-2021.13.0-hceb3a55_1 
+  yaml               conda-forge/linux-64::yaml-0.2.5-h280c20c_3 
+
+The following packages will be REMOVED:
+
+  pcre2-10.46-hf426167_0
+  spdlog-1.11.0-hdb19cb5_0
+
+The following packages will be UPDATED:
+
+  fmt                       pkgs/main::fmt-9.1.0-hdb19cb5_1 --> conda-forge::fmt-11.1.4-h07f6e7f_1 
+  libmamba             pkgs/main::libmamba-2.0.5-haf1ee3a_1 --> conda-forge::libmamba-2.2.0-h8dd7f75_0 
+  libmambapy         pkgs/main::libmambapy-2.0.5-py312hdb1~ --> conda-forge::libmambapy-2.2.0-py312h8079299_0 
+  libsolv              pkgs/main::libsolv-0.7.30-h6f1ccf3_2 --> conda-forge::libsolv-0.7.39-h9463b59_0 
+  nlohmann_json      pkgs/main::nlohmann_json-3.11.2-h6a67~ --> conda-forge::nlohmann_json-3.11.3-he02047a_1 
+  simdjson            pkgs/main::simdjson-3.10.1-hdb19cb5_0 --> conda-forge::simdjson-3.13.0-h84d6215_0 
+
+The following packages will be SUPERSEDED by a higher-priority channel:
+
+  _openmp_mutex          pkgs/main::_openmp_mutex-5.1-1_gnu --> conda-forge::_openmp_mutex-4.5-7_kmp_llvm 
+  pybind11-abi         pkgs/main::pybind11-abi-5-hd3eb1b0_0 --> conda-forge::pybind11-abi-4-hd8ed1ab_3 
+
+The following packages will be DOWNGRADED:
+
+  libblas                        3.11.0-8_h4a7cf45_openblas --> 3.9.0-37_h5875eb1_mkl 
+  libcblas                       3.11.0-8_h0358290_openblas --> 3.9.0-37_hfef963f_mkl 
+  liblapack                      3.11.0-8_h47877c9_openblas --> 3.9.0-37_h5e43f62_mkl 
+  liblapacke                     3.11.0-8_h6ae95b6_openblas --> 3.9.0-37_hdba1596_mkl 
+
+
+
+Downloading and Extracting Packages:
+                                                                                                                                 
+Preparing transaction: done                                                                                                      
+Verifying transaction: done                                                                                                      
+Executing transaction: \                                                                                                         
+                        
+depencencie psi4
