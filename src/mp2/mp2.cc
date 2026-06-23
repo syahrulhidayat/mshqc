@@ -428,6 +428,7 @@ OMP2::OMP2(const Molecule& mol, const BasisSet& basis,
 // ROBUST L-BFGS OPTIMIZER (Anti-Explosion & Strict Curvature)
 // ============================================================================
 struct OrbitalLBFGS {
+    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
     int m_max = 6;
     std::vector<Eigen::VectorXd> s_hist;
     std::vector<Eigen::VectorXd> y_hist;
@@ -1919,7 +1920,8 @@ MP2Result OMP2::compute() {
         Eigen::VectorXd kappa = lbfgs_engine.get_direction(orbital_gradient_, diag_H);
         double max_val = kappa.cwiseAbs().maxCoeff();
         if (max_val > 0.35) kappa *= (0.35 / max_val);
-
+        Eigen::VectorXd actual_step = kappa * current_step;
+        lbfgs_engine.s_prev = actual_step;
         last_kappa = kappa;
         apply_orbital_rotation(kappa * current_step);
         macro_iter++;
