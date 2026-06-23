@@ -135,7 +135,7 @@ else()
 endif()
 
 # --- JEMALLOC ---
-find_library(JEMALLOC_LIB jemalloc HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/local/lib" "/usr/lib")
+#find_library(JEMALLOC_LIB jemalloc HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/local/lib" "/usr/lib")
 if(JEMALLOC_LIB)
     message(STATUS ">> Memori Allocator: Jemalloc ditemukan!")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-builtin-malloc -fno-builtin-calloc -fno-builtin-realloc -fno-builtin-free")
