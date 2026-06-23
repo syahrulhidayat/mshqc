@@ -22,7 +22,9 @@ jobs:
     - name: Install Build Dependencies (Sync with Psi4)
       shell: bash -el {0}
       run: |
-        conda install -y -c conda-forge cmake make compilers eigen pkg-config hdf5 pip libcint tblis liblapacke psi4
+        # [DITAMBAHKAN]: 'openblas' dimasukkan secara eksplisit untuk mengunci ABI dan menolak MKL
+        conda install -y -c conda-forge cmake make compilers eigen pkg-config hdf5 pip libcint tblis liblapacke openblas psi4
+        
         # Tambahkan modul pembuat wheel
         python -m pip install build wheel nanobind
 
@@ -33,8 +35,9 @@ jobs:
         export CC=$CONDA_PREFIX/bin/x86_64-conda-linux-gnu-cc
         export CXX=$CONDA_PREFIX/bin/x86_64-conda-linux-gnu-c++
         
-        # Biner universal tanpa -march=native
-        export CXXFLAGS="-std=c++17 -fopenmp -O3 -DEIGEN_USE_BLAS -DEIGEN_USE_LAPACKE"
+        # [SUPERPOWER INJECTION]: Masukkan AVX2, FMA, dan NDEBUG ke CXXFLAGS
+        # Ini memastikan setup.py meneruskan optimasi vektorisasi maksimal ke CMake!
+        export CXXFLAGS="-std=c++17 -fopenmp -O3 -mavx2 -mfma -mtune=generic -DEIGEN_USE_BLAS -DEIGEN_USE_LAPACKE -DNDEBUG"
         
         # EKSEKUSI KUNCI: Produksi Wheel langsung (Tanpa file .so tercecer)
         python setup.py bdist_wheel
