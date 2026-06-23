@@ -13,18 +13,23 @@ endif()
 # [OPTIMASI KOMPILER CERDAS]
 # ==============================================================================
 if(DEFINED ENV{GITHUB_ACTIONS})
-    # Jika CMake mendeteksi ia sedang berada di server GitHub Actions
-    message(STATUS ">> CI/CD Server Detected: Menggunakan optimasi Biner Universal (Aman untuk rilis publik)")
-    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -funroll-loops -ftree-vectorize -DNDEBUG")
+    # [PUBLIC RELEASE]: Biner Universal yang Sangat Cepat
+    # Menggunakan -O3, LTO, dan memaksa instruksi AVX2/FMA agar matriks Eigen melesat cepat
+    # tanpa mengunci ke satu arsitektur spesifik (aman lintas Intel/AMD).
+    message(STATUS ">> CI/CD Server Detected: Menggunakan optimasi Biner Universal (AVX2/FMA)")
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -funroll-loops -ftree-vectorize -mavx2 -mfma -mtune=generic -DNDEBUG")
 else()
-    # Jika CMake mendeteksi ia berada di laptop / Codespaces lokal Anda
+    # [PRIVATE/LOCAL]: Super Turbo
+    # Sepenuhnya terkalibrasi untuk silikon fisik mesin yang sedang mengompilasi.
     message(STATUS ">> Local Environment Detected: Mengaktifkan Super Turbo (-march=native)")
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -march=native -mtune=native -funroll-loops -ftree-vectorize -DNDEBUG")
 endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
+# Mengembalikan Interprocedural Optimization (IPO/LTO) yang terbukti aman!
 include(CheckIPOSupported)
 check_ipo_supported(RESULT ipo_supported OUTPUT error)
 if(ipo_supported)
