@@ -168,6 +168,11 @@ set(ALL_SOURCES
 # ==============================================================================
 add_library(mshqc SHARED ${ALL_SOURCES})
 
+set_target_properties(mshqc PROPERTIES 
+    INSTALL_RPATH "$ORIGIN:/opt/conda/lib:$ENV{CONDA_PREFIX}/lib"
+    BUILD_WITH_INSTALL_RPATH TRUE
+)
+
 target_compile_definitions(mshqc PUBLIC 
     EIGEN_USE_BLAS 
     EIGEN_USE_LAPACKE
