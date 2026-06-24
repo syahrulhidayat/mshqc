@@ -46,7 +46,7 @@ jobs:
       shell: bash -el {0}
       env:
         # Panggil Secret GitHub
-        API_TOKEN_GITHUB: ${{ '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' }}
+        API_TOKEN_GITHUB: ${{ 'rahasia' }}
       run: |
         git config --global user.name "MSHQC Automation"
         git config --global user.email "automation@mshqc.internal"
