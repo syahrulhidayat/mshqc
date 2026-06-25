@@ -18,6 +18,12 @@ jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
 
+    # =========================================================================
+    # SUNTIKKAN INI: Beri izin tulis (write) ke bot agar bisa push balik .whl
+    # =========================================================================
+    permissions:
+      contents: write
+
     steps:
     - name: Checkout Private Source Code
       uses: actions/checkout@v3
