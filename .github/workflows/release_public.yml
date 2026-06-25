@@ -23,7 +23,7 @@ jobs:
       uses: actions/checkout@v3
       with:
         # PENTING: Kita butuh token dengan hak akses tulis ke repo privat ini
-        token: ${{ secrets.GITHUB_TOKEN }}
+        token: ${{ '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' }}
 
     # =========================================================================
     # 1. CACHE CONDA: Menyimpan unduhan library agar tidak install dari 0
