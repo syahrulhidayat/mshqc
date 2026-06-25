@@ -12,61 +12,68 @@ jobs:
     - name: Checkout Private Source Code
       uses: actions/checkout@v3
 
+    # =========================================================================
+    # 1. CACHE CONDA: Menyimpan unduhan library agar tidak install dari 0
+    # =========================================================================
+    - name: Cache Conda Packages
+      uses: actions/cache@v3
+      with:
+        path: ~/conda_pkgs_dir
+        key: conda-pkgs-${{ runner.os }}-${{ hashFiles('**/CMakeLists.txt') }}
+        restore-keys: |
+          conda-pkgs-${{ runner.os }}-
+
+    # =========================================================================
+    # 2. CCACHE: Compiler Cache (Rahasia Incremental Build C++ di Cloud)
+    # =========================================================================
+    - name: Setup Compiler Cache (ccache)
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: ${{ runner.os }}-mshqc-ccache
+
     - name: Setup Conda Environment (Python 3.12)
       uses: conda-incubator/setup-miniconda@v2
       with:
         auto-update-conda: true
         python-version: "3.12"
         channels: conda-forge
+        use-only-tar-bz2: true # Membaca langsung dari Cache Conda di atas
 
     - name: Install Build Dependencies (Sync with Psi4)
       shell: bash -el {0}
       run: |
-        # [DITAMBAHKAN]: 'openblas' dimasukkan secara eksplisit untuk mengunci ABI dan menolak MKL
         conda install -y -c conda-forge cmake make compilers eigen pkg-config hdf5 pip libcint tblis liblapacke openblas psi4
-        
-        # Tambahkan modul pembuat wheel
         python -m pip install build wheel nanobind
 
     - name: Build Python Wheel (.whl)
       shell: bash -el {0}
       run: |
-        # Paksa CMake menggunakan Compiler bawaan Conda
-        export CC=$CONDA_PREFIX/bin/x86_64-conda-linux-gnu-cc
-        export CXX=$CONDA_PREFIX/bin/x86_64-conda-linux-gnu-c++
+        # [KUNCI INCREMENTAL BUILD]: Bungkus compiler Conda dengan 'ccache'
+        # Jika file .cc tidak berubah, ccache akan mengambil file .o dari memori (0 detik!)
+        export CC="ccache $CONDA_PREFIX/bin/x86_64-conda-linux-gnu-cc"
+        export CXX="ccache $CONDA_PREFIX/bin/x86_64-conda-linux-gnu-c++"
         
-        # [SUPERPOWER INJECTION]: Masukkan AVX2, FMA, dan NDEBUG ke CXXFLAGS
-        # Ini memastikan setup.py meneruskan optimasi vektorisasi maksimal ke CMake!
         export CXXFLAGS="-std=c++17 -fopenmp -O3 -mavx2 -mfma -mtune=generic -DEIGEN_USE_BLAS -DEIGEN_USE_LAPACKE -DNDEBUG"
         
-        # EKSEKUSI KUNCI: Produksi Wheel langsung (Tanpa file .so tercecer)
         python setup.py bdist_wheel
 
     - name: Deploy Wheel to Public Repository (Closed-Source Mode)
       shell: bash -el {0}
       env:
         # Panggil Secret GitHub
-        API_TOKEN_GITHUB: ${{ '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' }}
+        API_TOKEN_GITHUB: ${{ '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' }} 
       run: |
         git config --global user.name "MSHQC Automation"
         git config --global user.email "automation@mshqc.internal"
 
-        # Clone repositori publik
         git clone https://x-access-token:${API_TOKEN_GITHUB}@github.com/syahrulhidayat/mshqc-public.git public_repo
 
-        # Buat direktori khusus untuk rilis jika belum ada
         mkdir -p public_repo/releases
-        
-        # Hapus wheel versi sebelumnya agar tidak menumpuk
         rm -f public_repo/releases/*.whl
         
-        # KUNCI CLOSED-SOURCE: Hanya copy file Biner Wheel (.whl) dan Data
         cp dist/*.whl public_repo/releases/ 2>/dev/null || true
-        
-        # Tetap copy folder data jika basis set belum masuk sepenuhnya ke dalam package
         cp -r data public_repo/ 2>/dev/null || true
 
-        # Rekam dan Push ke Publik
         cd public_repo
         git add -A
         
