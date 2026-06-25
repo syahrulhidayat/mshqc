@@ -3,6 +3,16 @@ name: Compile and Release Wheel to Public Repo
 on:
   push:
     branches: [ "main" ] # Memicu otomatisasi setiap kali push ke branch main privat
+    # =========================================================================
+    # KUNCI FILTER: Hanya picu otomatisasi jika file C++/Python berikut berubah
+    # =========================================================================
+    paths:
+      - 'src/**'
+      - 'include/**'
+      - 'python/**'
+      - 'CMakeLists.txt'
+      - 'setup.py'
+      - 'pyproject.toml'
 
 jobs:
   build-and-deploy:
