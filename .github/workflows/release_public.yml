@@ -19,7 +19,7 @@ jobs:
       uses: actions/checkout@v3
       with:
         # PENTING: Kita butuh token dengan hak akses tulis ke repo privat ini
-        token: ${{ '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' }}
+        token: ${{ 'rahasia-token-github' }}
 
     # =========================================================================
     # 1. CACHE CONDA: Menyimpan unduhan library agar tidak install dari 0
@@ -97,7 +97,7 @@ jobs:
       shell: bash -el {0}
       env:
         # Isi dengan nama rahasia token Anda yang terdaftar di Repository Secrets
-        API_TOKEN_GITHUB: ${{ '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' }} 
+        API_TOKEN_GITHUB: ${{ 'rahasia-token-github' }} 
       run: |
         git config --global user.name "MSHQC Automation"
         git config --global user.email "automation@mshqc.internal"
