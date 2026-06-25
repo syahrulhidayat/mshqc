@@ -174,7 +174,7 @@ set(ALL_SOURCES
 add_library(mshqc SHARED ${ALL_SOURCES})
 
 set_target_properties(mshqc PROPERTIES 
-    INSTALL_RPATH "$ORIGIN:/opt/conda/lib:$ENV{CONDA_PREFIX}/lib"
+    INSTALL_RPATH "$ORIGIN:$ORIGIN/../../.."
     BUILD_WITH_INSTALL_RPATH TRUE
 )
 
@@ -222,7 +222,7 @@ set_target_properties(_mshqc PROPERTIES
     PREFIX "" 
     CXX_VISIBILITY_PRESET "hidden"
     VISIBILITY_INLINES_HIDDEN ON
-    INSTALL_RPATH "$ORIGIN"
+    INSTALL_RPATH "$ORIGIN:$ORIGIN/../../.."
     BUILD_WITH_INSTALL_RPATH TRUE
 )
 
