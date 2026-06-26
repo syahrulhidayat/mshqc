@@ -784,9 +784,19 @@ void OMP2::transform_integrals() {
         
         // OPTIMASI TAHAP 3: PEMBANTAIAN NESTED LOOP DENGAN EIGEN MAP GEMM
         if (g_blk) {
-            int dim_a = na_ * va_;
-            Eigen::Map<Eigen::MatrixXd> g_mat_aa(g_blk->data(), dim_a, dim_a);
-            g_mat_aa.noalias() = B_ia_P_alpha_ * B_ia_P_alpha_.transpose();
+            Eigen::MatrixXd G_tmp_aa = B_ia_P_alpha_ * B_ia_P_alpha_.transpose();
+            #pragma omp parallel for collapse(2)
+            for (int i = 0; i < na_; ++i) {
+                for (int a = 0; a < va_; ++a) {
+                    int idx_ia = i * va_ + a;
+                    for (int j = 0; j < na_; ++j) {
+                        for (int b = 0; b < va_; ++b) {
+                            int idx_jb = j * va_ + b;
+                            (*g_blk)(i, a, j, b) = G_tmp_aa(idx_ia, idx_jb);
+                        }
+                    }
+                }
+            }
         }
 
         bool is_restricted = (na_ == nb_ && va_ == vb_);
@@ -797,17 +807,37 @@ void OMP2::transform_integrals() {
             g_ab_.allocate_block(0, 0, 0, 0, na_, va_, nb_, vb_);
             auto* ptr_ab = g_ab_.get_block(0, 0, 0, 0);
             
-            int dim_b = nb_ * vb_;
-            int dim_a = na_ * va_;
+            Eigen::MatrixXd G_tmp_bb = B_ia_P_beta_ * B_ia_P_beta_.transpose();
+            Eigen::MatrixXd G_tmp_ab = B_ia_P_alpha_ * B_ia_P_beta_.transpose();
 
-            Eigen::Map<Eigen::MatrixXd> g_mat_bb(ptr_bb->data(), dim_b, dim_b);
-            g_mat_bb.noalias() = B_ia_P_beta_ * B_ia_P_beta_.transpose();
+            #pragma omp parallel for collapse(2)
+            for (int i = 0; i < nb_; ++i) {
+                for (int a = 0; a < vb_; ++a) {
+                    int idx_ia = i * vb_ + a;
+                    for (int j = 0; j < nb_; ++j) {
+                        for (int b = 0; b < vb_; ++b) {
+                            int idx_jb = j * vb_ + b;
+                            (*ptr_bb)(i, a, j, b) = G_tmp_bb(idx_ia, idx_jb);
+                        }
+                    }
+                }
+            }
 
-            Eigen::Map<Eigen::MatrixXd> g_mat_ab(ptr_ab->data(), dim_a, dim_b);
-            g_mat_ab.noalias() = B_ia_P_alpha_ * B_ia_P_beta_.transpose();
-        } 
+            #pragma omp parallel for collapse(2)
+            for (int i = 0; i < na_; ++i) {
+                for (int a = 0; a < va_; ++a) {
+                    int idx_ia = i * va_ + a;
+                    for (int j = 0; j < nb_; ++j) {
+                        for (int b = 0; b < vb_; ++b) {
+                            int idx_jb = j * vb_ + b;
+                            (*ptr_ab)(i, a, j, b) = G_tmp_ab(idx_ia, idx_jb);
+                        }
+                    }
+                }
+            }
+        }
     }
-}        
+}       
 void OMP2::pseudocanonicalize() {
     Eigen::MatrixXd F_ao_a, F_ao_b;
     build_fock_fast(scf_.P_alpha, scf_.P_beta, F_ao_a, F_ao_b);
@@ -1057,12 +1087,11 @@ void OMP2::build_opdm_alpha() {
 
                     auto* t_blk = t2_aa_.get_block(o1.id, v1.id, o2.id, v2.id);
                     if (t_blk) {
-                        // TBLIS / Row-Major Matrix Mapping
-                        using MatrixRowMajor = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
                         int rows = o1.size;
                         int cols = v1.size * o2.size * v2.size;
                         
-                        Eigen::Map<MatrixRowMajor> T_mat(t_blk->data(), rows, cols);
+                        // KUNCI PERBAIKAN: Gunakan MatrixXd default (Column-Major)
+                        Eigen::Map<Eigen::MatrixXd> T_mat(t_blk->data(), rows, cols);
                         G_oo_alpha_.block(o1.offset, o1.offset, o1.size, o1.size) -= 0.5 * (T_mat * T_mat.transpose());
                     }
                 }
