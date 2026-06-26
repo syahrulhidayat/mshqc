@@ -99,7 +99,6 @@ void DensityFittingERI::compute() {
     int n_shells_prim = primary_basis_->n_shells();
     int n_shells_aux  = aux_basis_->n_shells();
 
-    // Hitung offset manual untuk primary basis
     std::vector<int> prim_starts(n_shells_prim), prim_sizes(n_shells_prim);
     int offset_p = 0;
     for(int i = 0; i < n_shells_prim; ++i) {
@@ -108,7 +107,6 @@ void DensityFittingERI::compute() {
         offset_p += prim_sizes[i];
     }
 
-    // Hitung offset manual untuk aux basis
     std::vector<int> aux_starts(n_shells_aux), aux_sizes(n_shells_aux);
     int offset_a = 0;
     for(int i = 0; i < n_shells_aux; ++i) {
@@ -118,10 +116,31 @@ void DensityFittingERI::compute() {
     }
 
     // ========================================================================
-    // OPTIMASI TAHAP 1: LOOP INVERSION (Mencegah False Sharing)
-    // Paralelisasi diletakkan di loop 'R' (Auxiliary), BUKAN di 'i' (Primary).
-    // Karena V_mat adalah Column-Major, setiap thread menulis ke kolom yang
-    // sepenuhnya terpisah. 100% Bebas Tabrakan Memori (Cache-friendly)!
+    // TAHAP 2: PREKOMPUTASI SCHWARZ SCREENING BOUNDS
+    // ========================================================================
+    std::cout << "  Precomputing Schwarz Screening Bounds...\n";
+    std::vector<double> prim_max(n_shells_prim * n_shells_prim, 0.0);
+    for (int i = 0; i < n_shells_prim; ++i) {
+        for (int j = 0; j <= i; ++j) {
+            auto buf = integrals_->compute_shell_block(i, j, i, j);
+            double max_v = 0.0;
+            for(double v : buf) max_v = std::max(max_v, std::abs(v));
+            prim_max[i * n_shells_prim + j] = std::sqrt(max_v);
+            prim_max[j * n_shells_prim + i] = std::sqrt(max_v);
+        }
+    }
+    
+    std::vector<double> aux_max(n_shells_aux, 0.0);
+    for (int R = 0; R < n_shells_aux; ++R) {
+        int abs_R = n_shells_prim + R;
+        auto buf = integrals_->compute_2c2e_block(abs_R, abs_R);
+        double max_v = 0.0;
+        for(double v : buf) max_v = std::max(max_v, std::abs(v));
+        aux_max[R] = std::sqrt(max_v);
+    }
+
+    // ========================================================================
+    // TAHAP 1: LOOP INVERSION (Mencegah False Sharing)
     // ========================================================================
     #pragma omp parallel for schedule(dynamic, 1)
     for (int R = 0; R < n_shells_aux; ++R) {
@@ -134,6 +153,9 @@ void DensityFittingERI::compute() {
             int dim_i = prim_sizes[i];
 
             for (int j = 0; j <= i; ++j) {
+                // EKSKUSI TAHAP 2: SKIP JUTAAN INTEGRAL NOL SECARA INSTAN!
+                if (prim_max[i * n_shells_prim + j] * aux_max[R] < 1e-12) continue;
+
                 int bf_j_start = prim_starts[j];
                 int dim_j = prim_sizes[j];
 
@@ -149,7 +171,6 @@ void DensityFittingERI::compute() {
                             int row_idx_1 = (bf_i_start + p_i) * n_primary_ + (bf_j_start + p_j);
                             int row_idx_2 = (bf_j_start + p_j) * n_primary_ + (bf_i_start + p_i);
                             
-                            // Operasi Write (Menulis) sekarang sangat aman dan super cepat!
                             V_mat(row_idx_1, bf_R_start + r) = val;
                             if (row_idx_1 != row_idx_2) {
                                 V_mat(row_idx_2, bf_R_start + r) = val;
@@ -166,7 +187,7 @@ void DensityFittingERI::compute() {
 
     is_computed_ = true;
     std::cout << "  Density Fitting Decomposition Complete.\n";
-}
 
 } // namespace integrals
+}
 } // namespace mshqc
