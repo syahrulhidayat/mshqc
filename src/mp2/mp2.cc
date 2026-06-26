@@ -894,8 +894,7 @@ void OMP2::pseudocanonicalize() {
 }
 void OMP2::compute_t2_amplitudes() {
     t2_aa_.clear(); t2_bb_.clear(); t2_ab_.clear();
-    int nf = n_frozen_;
-
+    
     auto occ_spaces_a = get_irrep_spaces(scf_.irreps_alpha, 0, na_);
     auto vir_spaces_a = get_irrep_spaces(scf_.irreps_alpha, na_, va_);
 
@@ -931,10 +930,9 @@ void OMP2::compute_t2_amplitudes() {
                             
                                 for (int di = 0; di < o1.size; ++di) {
                                     int i_glb = o1.offset + di;
-                                    if (i_glb < nf) continue; // FROZEN CORE SKIP
                                     for (int dj = 0; dj < o2.size; ++dj) {
                                         int j_glb = o2.offset + dj;
-                                        if (j_glb < nf) continue; // FROZEN CORE SKIP
+                                        
                                         
                                         double e_ij = scf_.orbital_energies_alpha(i_glb) + scf_.orbital_energies_alpha(j_glb);
                                         for (int da = 0; da < v1.size; ++da) {
@@ -964,12 +962,12 @@ void OMP2::compute_t2_amplitudes() {
             auto* t_bb_blk = t2_bb_.get_block(0,0,0,0);
            
 
-            for(int i = nf; i < nb_; ++i) for(int j = nf; j < nb_; ++j) {
+            for(int i = 0; i < nb_; ++i) for(int j = 0; j < nb_; ++j) {
                 double e_ij = scf_.orbital_energies_beta(i) + scf_.orbital_energies_beta(j);
                 for(int a=0; a<vb_; ++a) {
                     double den_a = e_ij - scf_.orbital_energies_beta(nb_+a);
                     for(int b=0; b<vb_; ++b) {
-                         double den = den_a - scf_.orbital_energies_beta(nb_+b);
+                         double dint nf = n_frozen_;en = den_a - scf_.orbital_energies_beta(nb_+b);
                         double val = (*g_bb_blk)(i, a, j, b) - (*g_bb_blk)(i, b, j, a);
                         (*t_bb_blk)(i, j, a, b) = (std::abs(den) > 1e-12) ? val / den : 0.0;
                         
@@ -982,7 +980,7 @@ void OMP2::compute_t2_amplitudes() {
         if (g_ab_blk) {
             t2_ab_.allocate_block(0,0,0,0, na_, nb_, va_, vb_);
             auto* t_ab_blk = t2_ab_.get_block(0,0,0,0);
-            for(int i = nf; i < na_; ++i) for(int j = nf; j < nb_; ++j) {
+            for(int i = 0; i < na_; ++i) for(int j = 0; j < nb_; ++j) {
                 double e_ij = scf_.orbital_energies_alpha(i) + scf_.orbital_energies_beta(j);
                 for(int a=0; a<va_; ++a) {
                     double den_a = e_ij - scf_.orbital_energies_alpha(na_+a);
@@ -997,7 +995,7 @@ void OMP2::compute_t2_amplitudes() {
 }
 double OMP2::compute_mp2_energy() {
     double E_ss_aa = 0.0, E_ss_bb = 0.0, E_os = 0.0;
-    int nf = n_frozen_;
+    
     
     auto occ_spaces_a = get_irrep_spaces(scf_.irreps_alpha, 0, na_);
     auto vir_spaces_a = get_irrep_spaces(scf_.irreps_alpha, na_, va_);
@@ -1028,9 +1026,7 @@ double OMP2::compute_mp2_energy() {
 
                     if (t_blk && g_blk && ex_valid) {
                         for (int di = 0; di < o1.size; ++di) {
-                            if (o1.offset+di < nf) continue;
                             for (int dj = 0; dj < o2.size; ++dj) {
-                                if (o2.offset+dj < nf) continue;
                                 for (int da = 0; da < v1.size; ++da) {
                                     for (int db = 0; db < v2.size; ++db) {
                                         double g_val = (*g_blk)(di, da, dj, db) - (*g_blk_ex)(di, db, dj, da);
@@ -1049,13 +1045,13 @@ double OMP2::compute_mp2_energy() {
         auto* t_bb = t2_bb_.get_block(0,0,0,0);
         auto* g_bb = g_bb_.get_block(0,0,0,0);
         if (t_bb && g_bb) {
-            for(int i=nf; i<nb_; ++i) for(int j=nf; j<nb_; ++j) for(int a=0; a<vb_; ++a) for(int b=0; b<vb_; ++b)
+            for(int i=0; i<nb_; ++i) for(int j=0; j<nb_; ++j) for(int a=0; a<vb_; ++a) for(int b=0; b<vb_; ++b)
                 E_ss_bb += (*t_bb)(i, j, a, b) * ((*g_bb)(i, a, j, b) - (*g_bb)(i, b, j, a));
         }
         auto* t_ab = t2_ab_.get_block(0,0,0,0);
         auto* g_ab = g_ab_.get_block(0,0,0,0);
         if (t_ab && g_ab) {
-            for(int i=nf; i<na_; ++i) for(int j=nf; j<nb_; ++j) for(int a=0; a<va_; ++a) for(int b=0; b<vb_; ++b)
+            for(int i=0; i<na_; ++i) for(int j=0; j<nb_; ++j) for(int a=0; a<va_; ++a) for(int b=0; b<vb_; ++b)
                 E_os += (*t_ab)(i, j, a, b) * (*g_ab)(i, a, j, b);
         }
     }
@@ -1278,9 +1274,7 @@ void OMP2::build_generalized_fock() {
                                     auto* T_blk = T2_spatial.get_block(o1.id, v1.id, o2.id, v2.id);
                                     
                                     for (int di = 0; di < o1.size; ++di) {
-                                        if (o1.offset+di < n_frozen_) continue;
                                         for (int dj = 0; dj < o2.size; ++dj) {
-                                            if (o2.offset+dj < n_frozen_) continue;
                                             double e_ij = scf_.orbital_energies_alpha(o1.offset+di) + scf_.orbital_energies_alpha(o2.offset+dj);
                                             for (int da = 0; da < v1.size; ++da) {
                                                 double den_a = e_ij - scf_.orbital_energies_alpha(na_ + v1.offset+da);
