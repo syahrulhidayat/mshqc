@@ -2030,3 +2030,10 @@ MP2 Energy                          :      0.000u      0.000s      0.010w      5
 | Build (IA|jb)                     :      0.000u      0.000s      0.002w      3 calls
 
 **************************************************************************************
+ paths:
+      - 'src/**'
+      - 'include/**'
+      - 'python/**'
+      - 'CMakeLists.txt'
+      - 'setup.py'
+      - 'pyproject.toml'
