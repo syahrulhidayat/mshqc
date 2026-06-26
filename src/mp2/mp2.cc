@@ -39,6 +39,17 @@ BaseMP2::BaseMP2(const Molecule& mol, const BasisSet& basis,
     nvir_b_ = nbf_ - nocc_b_;
     
     if (config_.eri_method == "df") config_.use_df = true;
+
+    // --- DETEKSI OTOMATIS FROZEN CORE ---
+    n_frozen_ = 0;
+    for (size_t i = 0; i < mol_.n_atoms(); ++i) { 
+        int z = mol_.atom(i).atomic_number; 
+        if (z > 2 && z <= 10) n_frozen_ += 1;
+        else if (z > 10 && z <= 18) n_frozen_ += 5;
+        else if (z > 18 && z <= 36) n_frozen_ += 9;
+        else if (z > 36 && z <= 54) n_frozen_ += 18;
+        else if (z > 54 && z <= 86) n_frozen_ += 27;
+    }
 }
 
 void BaseMP2::transform_3center_mo() {
@@ -61,10 +72,12 @@ void BaseMP2::transform_3center_mo() {
         Eigen::Map<const Eigen::MatrixXd> B_AO(scf_.L_mat.col(P).data(), nbf_, nbf_);
         
         // Transformasi Alpha
+        // Transformasi Alpha
         Eigen::MatrixXd B_MO_a = Ca_occ.transpose() * (B_AO * Ca_vir);
         
-        // FIX: Manual Flattening (Mencegah mismatch Column-Major Eigen vs Row-Major MP2)
         for(int i = 0; i < nocc_a_; ++i) {
+            // TRIK HPC: Biarkan baris inti tetap 0.0 murni (Mencegah komputasi berlebih)
+            if (i < n_frozen_) continue; 
             for(int a = 0; a < nvir_a_; ++a) {
                 B_ia_P_alpha_(i * nvir_a_ + a, P) = B_MO_a(i, a);
             }
@@ -77,6 +90,7 @@ void BaseMP2::transform_3center_mo() {
             Eigen::MatrixXd B_MO_b = Cb_occ.transpose() * (B_AO * Cb_vir);
             
             for(int i = 0; i < nocc_b_; ++i) {
+                if (i < n_frozen_) continue; // Sama untuk Beta
                 for(int a = 0; a < nvir_b_; ++a) {
                     B_ia_P_beta_(i * nvir_b_ + a, P) = B_MO_b(i, a);
                 }
@@ -405,7 +419,6 @@ OMP2::OMP2(const Molecule& mol, const BasisSet& basis,
     nb_  = nocc_b_;
     va_  = nvir_a_; 
     vb_  = nvir_b_;
-    n_frozen_ = 0; // Pastikan ini ada
 
     // Mencegah cetakan -inf di iterasi awal
     e_ss_ = 0.0;
