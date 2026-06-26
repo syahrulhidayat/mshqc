@@ -773,18 +773,18 @@ void OMP2::transform_integrals() {
         // ====================================================================
         // JALUR KILAT DENSITY FITTING & CHOLESKY
         // ====================================================================
+        
         scf_.C_alpha = C_a_current_;
         scf_.C_beta = C_b_current_;
         transform_3center_mo(); 
 
         g_aa_.clear(); g_bb_.clear(); g_ab_.clear();
 
+        // FIX: Gunakan blok ID 0 agar sinkron dengan fungsi T2 dan OPDM
         g_aa_.allocate_block(0, 0, 0, 0, na_, va_, na_, va_);
         auto* g_blk = g_aa_.get_block(0, 0, 0, 0);
         
-        // OPTIMASI TAHAP 3: PEMBANTAIAN NESTED LOOP DENGAN EIGEN MAP GEMM
         if (g_blk) {
-            Eigen::MatrixXd G_tmp_aa = B_ia_P_alpha_ * B_ia_P_alpha_.transpose();
             #pragma omp parallel for collapse(2)
             for (int i = 0; i < na_; ++i) {
                 for (int a = 0; a < va_; ++a) {
@@ -792,7 +792,7 @@ void OMP2::transform_integrals() {
                     for (int j = 0; j < na_; ++j) {
                         for (int b = 0; b < va_; ++b) {
                             int idx_jb = j * va_ + b;
-                            (*g_blk)(i, a, j, b) = G_tmp_aa(idx_ia, idx_jb);
+                            (*g_blk)(i, a, j, b) = B_ia_P_alpha_.row(idx_ia).dot(B_ia_P_alpha_.row(idx_jb));
                         }
                     }
                 }
@@ -807,9 +807,6 @@ void OMP2::transform_integrals() {
             g_ab_.allocate_block(0, 0, 0, 0, na_, va_, nb_, vb_);
             auto* ptr_ab = g_ab_.get_block(0, 0, 0, 0);
             
-            Eigen::MatrixXd G_tmp_bb = B_ia_P_beta_ * B_ia_P_beta_.transpose();
-            Eigen::MatrixXd G_tmp_ab = B_ia_P_alpha_ * B_ia_P_beta_.transpose();
-
             #pragma omp parallel for collapse(2)
             for (int i = 0; i < nb_; ++i) {
                 for (int a = 0; a < vb_; ++a) {
@@ -817,7 +814,7 @@ void OMP2::transform_integrals() {
                     for (int j = 0; j < nb_; ++j) {
                         for (int b = 0; b < vb_; ++b) {
                             int idx_jb = j * vb_ + b;
-                            (*ptr_bb)(i, a, j, b) = G_tmp_bb(idx_ia, idx_jb);
+                            (*ptr_bb)(i, a, j, b) = B_ia_P_beta_.row(idx_ia).dot(B_ia_P_beta_.row(idx_jb));
                         }
                     }
                 }
@@ -830,14 +827,14 @@ void OMP2::transform_integrals() {
                     for (int j = 0; j < nb_; ++j) {
                         for (int b = 0; b < vb_; ++b) {
                             int idx_jb = j * vb_ + b;
-                            (*ptr_ab)(i, a, j, b) = G_tmp_ab(idx_ia, idx_jb);
+                            (*ptr_ab)(i, a, j, b) = B_ia_P_alpha_.row(idx_ia).dot(B_ia_P_beta_.row(idx_jb));
                         }
                     }
                 }
             }
         }
     }
-}       
+}
 void OMP2::pseudocanonicalize() {
     Eigen::MatrixXd F_ao_a, F_ao_b;
     build_fock_fast(scf_.P_alpha, scf_.P_beta, F_ao_a, F_ao_b);
@@ -1075,34 +1072,58 @@ void OMP2::build_opdm_alpha() {
     auto vir_spaces_a = get_irrep_spaces(scf_.irreps_alpha, na_, va_);
 
     for (const auto& o1 : occ_spaces_a) {
-        if (o1.size == 0) continue; 
+        if (o1.size == 0) continue; // <-- FILTER ZERO-SIZE
         for (const auto& o2 : occ_spaces_a) {
-            if (o2.size == 0) continue; 
+            if (o2.size == 0) continue; // <-- FILTER ZERO-SIZE
             for (const auto& v1 : vir_spaces_a) {
-                if (v1.size == 0) continue; 
+                if (v1.size == 0) continue; // <-- FILTER ZERO-SIZE
                 for (const auto& v2 : vir_spaces_a) {
-                    if (v2.size == 0) continue; 
+                    if (v2.size == 0) continue; // <-- FILTER ZERO-SIZE
                     
                     if ((o1.id ^ v1.id ^ o2.id ^ v2.id) != 0) continue;
 
                     auto* t_blk = t2_aa_.get_block(o1.id, v1.id, o2.id, v2.id);
                     if (t_blk) {
-                        int rows = o1.size;
-                        int cols = v1.size * o2.size * v2.size;
-                        Eigen::Map<Eigen::MatrixXd> T_mat(t_blk->data(), rows, cols);
-                        G_oo_alpha_.block(o1.offset, o1.offset, o1.size, o1.size) -= 0.5 * (T_mat * T_mat.transpose());
-
-                        // TAHAP 3: Kontraksi Native Tensor untuk G_vv (Tanpa Loop Manual!)
-                        Eigen::array<Eigen::IndexPair<int>, 3> contract_dims = {
-                            Eigen::IndexPair<int>(0, 0), // sum over 'i'
-                            Eigen::IndexPair<int>(2, 2), // sum over 'j'
-                            Eigen::IndexPair<int>(3, 3)  // sum over 'c'
-                        };
-                        Eigen::Tensor<double, 2> G_vv_t = t_blk->contract(*t_blk, contract_dims);
-                        
+                        for (int di = 0; di < o1.size; ++di) {
+                            for (int dj = 0; dj < o1.size; ++dj) {
+                                double val = 0.0;
+                                for (int dk = 0; dk < o2.size; ++dk) {
+                                    for (int da = 0; da < v1.size; ++da) {
+                                        for (int db = 0; db < v2.size; ++db) {
+                                            val += (*t_blk)(di, da, dk, db) * (*t_blk)(dj, da, dk, db);
+                                        }
+                                    }
+                                }
+                                G_oo_alpha_(o1.offset+di, o1.offset+dj) -= 0.5 * val;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    for (const auto& v1 : vir_spaces_a) {
+        if (v1.size == 0) continue; // <-- FILTER ZERO-SIZE
+        for (const auto& v2 : vir_spaces_a) {
+            if (v2.size == 0) continue; // <-- FILTER ZERO-SIZE
+            for (const auto& o1 : occ_spaces_a) {
+                if (o1.size == 0) continue; // <-- FILTER ZERO-SIZE
+                for (const auto& o2 : occ_spaces_a) {
+                    if (o2.size == 0) continue; // <-- FILTER ZERO-SIZE
+                    auto* t_blk = t2_aa_.get_block(o1.id, v1.id, o2.id, v2.id);
+                    if (t_blk) {
                         for (int da = 0; da < v1.size; ++da) {
                             for (int db = 0; db < v1.size; ++db) {
-                                G_vv_alpha_(v1.offset + da, v1.offset + db) += 0.5 * G_vv_t(da, db);
+                                double val = 0.0;
+                                for (int di = 0; di < o1.size; ++di) {
+                                    for (int dj = 0; dj < o2.size; ++dj) {
+                                        for (int dc = 0; dc < v2.size; ++dc) {
+                                            val += (*t_blk)(di, da, dj, dc) * (*t_blk)(di, db, dj, dc);
+                                        }
+                                    }
+                                }
+                                G_vv_alpha_(v1.offset+da, v1.offset+db) += 0.5 * val;
                             }
                         }
                     }
@@ -1114,17 +1135,18 @@ void OMP2::build_opdm_alpha() {
     if (nb_ > 0 && vb_ > 0) {
         auto* t_ab = t2_ab_.get_block(0,0,0,0);
         if (t_ab) {
-            Eigen::array<Eigen::IndexPair<int>, 3> dims_oo = {
-                Eigen::IndexPair<int>(1, 1), Eigen::IndexPair<int>(2, 2), Eigen::IndexPair<int>(3, 3)
-            };
-            Eigen::Tensor<double, 2> G_oo_t = t_ab->contract(*t_ab, dims_oo);
-            for(int i=0; i<na_; ++i) for(int j=0; j<na_; ++j) G_oo_alpha_(i, j) -= G_oo_t(i, j);
-
-            Eigen::array<Eigen::IndexPair<int>, 3> dims_vv = {
-                Eigen::IndexPair<int>(0, 0), Eigen::IndexPair<int>(1, 1), Eigen::IndexPair<int>(3, 3)
-            };
-            Eigen::Tensor<double, 2> G_vv_t_ab = t_ab->contract(*t_ab, dims_vv);
-            for(int a=0; a<va_; ++a) for(int c=0; c<va_; ++c) G_vv_alpha_(a, c) += G_vv_t_ab(a, c);
+            for(int i=0; i<na_; ++i) for(int j=0; j<na_; ++j) {
+                double val = 0.0;
+                for(int k=0; k<nb_; ++k) for(int a=0; a<va_; ++a) for(int b=0; b<vb_; ++b)
+                    val += (*t_ab)(i, k, a, b) * (*t_ab)(j, k, a, b);
+                G_oo_alpha_(i, j) -= val;
+            }
+            for(int a=0; a<va_; ++a) for(int c=0; c<va_; ++c) {
+                double val = 0.0;
+                for(int i=0; i<na_; ++i) for(int j=0; j<nb_; ++j) for(int b=0; b<vb_; ++b)
+                    val += (*t_ab)(i, j, a, b) * (*t_ab)(i, j, c, b);
+                G_vv_alpha_(a, c) += val;
+            }
         }
     }
 }
@@ -1138,28 +1160,32 @@ void OMP2::build_opdm_beta() {
     auto* t_ab = t2_ab_.get_block(0,0,0,0);
     
     if (t_bb) {
-        Eigen::Map<Eigen::MatrixXd> T_bb_mat(t_bb->data(), nb_, nb_ * vb_ * vb_);
-        G_oo_beta_ -= 0.5 * (T_bb_mat * T_bb_mat.transpose());
-
-        Eigen::array<Eigen::IndexPair<int>, 3> dims_vv = {
-            Eigen::IndexPair<int>(0, 0), Eigen::IndexPair<int>(1, 1), Eigen::IndexPair<int>(3, 3)
-        };
-        Eigen::Tensor<double, 2> G_vv_t = t_bb->contract(*t_bb, dims_vv);
-        for(int a=0; a<vb_; ++a) for(int c=0; c<vb_; ++c) G_vv_beta_(a, c) += 0.5 * G_vv_t(a, c);
+        for(int i=0; i<nb_; ++i) for(int j=0; j<nb_; ++j) {
+            double val = 0.0;
+            for(int k=0; k<nb_; ++k) for(int a=0; a<vb_; ++a) for(int b=0; b<vb_; ++b)
+                val += (*t_bb)(i, k, a, b) * (*t_bb)(j, k, a, b);
+            G_oo_beta_(i, j) -= 0.5 * val;
+        }
+        for(int a=0; a<vb_; ++a) for(int c=0; c<vb_; ++c) {
+            double val = 0.0;
+            for(int i=0; i<nb_; ++i) for(int j=0; j<nb_; ++j) for(int b=0; b<vb_; ++b)
+                val += (*t_bb)(i, j, a, b) * (*t_bb)(i, j, c, b);
+            G_vv_beta_(a, c) += 0.5 * val;
+        }
     }
-    
     if (t_ab) {
-        Eigen::array<Eigen::IndexPair<int>, 3> dims_oo = {
-            Eigen::IndexPair<int>(0, 0), Eigen::IndexPair<int>(2, 2), Eigen::IndexPair<int>(3, 3)
-        };
-        Eigen::Tensor<double, 2> G_oo_t = t_ab->contract(*t_ab, dims_oo);
-        for(int i=0; i<nb_; ++i) for(int j=0; j<nb_; ++j) G_oo_beta_(i, j) -= G_oo_t(i, j);
-
-        Eigen::array<Eigen::IndexPair<int>, 3> dims_vv_ab = {
-            Eigen::IndexPair<int>(0, 0), Eigen::IndexPair<int>(1, 1), Eigen::IndexPair<int>(2, 2)
-        };
-        Eigen::Tensor<double, 2> G_vv_t_ab = t_ab->contract(*t_ab, dims_vv_ab);
-        for(int a=0; a<vb_; ++a) for(int c=0; c<vb_; ++c) G_vv_beta_(a, c) += G_vv_t_ab(a, c);
+        for(int i=0; i<nb_; ++i) for(int j=0; j<nb_; ++j) {
+            double val = 0.0;
+            for(int k=0; k<na_; ++k) for(int a=0; a<va_; ++a) for(int b=0; b<vb_; ++b)
+                val += (*t_ab)(k, i, a, b) * (*t_ab)(k, j, a, b);
+            G_oo_beta_(i, j) -= val;
+        }
+        for(int a=0; a<vb_; ++a) for(int c=0; c<vb_; ++c) {
+            double val = 0.0;
+            for(int i=0; i<na_; ++i) for(int j=0; j<nb_; ++j) for(int b=0; b<va_; ++b)
+                val += (*t_ab)(i, j, b, a) * (*t_ab)(i, j, b, c);
+            G_vv_beta_(a, c) += val;
+        }
     }
 }
 // ============================================================================
