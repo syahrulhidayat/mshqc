@@ -962,15 +962,16 @@ void OMP2::compute_t2_amplitudes() {
             auto* t_bb_blk = t2_bb_.get_block(0,0,0,0);
            
 
-            for(int i = 0; i < nb_; ++i) for(int j = 0; j < nb_; ++j) {
-                double e_ij = scf_.orbital_energies_beta(i) + scf_.orbital_energies_beta(j);
-                for(int a=0; a<vb_; ++a) {
-                    double den_a = e_ij - scf_.orbital_energies_beta(nb_+a);
-                    for(int b=0; b<vb_; ++b) {
-                         double dint nf = n_frozen_;en = den_a - scf_.orbital_energies_beta(nb_+b);
-                        double val = (*g_bb_blk)(i, a, j, b) - (*g_bb_blk)(i, b, j, a);
-                        (*t_bb_blk)(i, j, a, b) = (std::abs(den) > 1e-12) ? val / den : 0.0;
-                        
+            for(int i = 0; i < nb_; ++i) {
+                for(int j = 0; j < nb_; ++j) {
+                    double e_ij = scf_.orbital_energies_beta(i) + scf_.orbital_energies_beta(j);
+                    for(int a = 0; a < vb_; ++a) {
+                        double den_a = e_ij - scf_.orbital_energies_beta(nb_ + a);
+                        for(int b = 0; b < vb_; ++b) {
+                            double den = den_a - scf_.orbital_energies_beta(nb_ + b);
+                            double val = (*g_bb_blk)(i, a, j, b) - (*g_bb_blk)(i, b, j, a);
+                            (*t_bb_blk)(i, j, a, b) = (std::abs(den) > 1e-12) ? val / den : 0.0;
+                        }
                     }
                 }
             }
