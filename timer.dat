@@ -1688,3 +1688,345 @@ MP2 Energy                          :      0.000u      0.000s      0.006w      5
 | Build (IA|jb)                     :      0.000u      0.000s      0.001w      3 calls
 
 **************************************************************************************
+Successfully installed build-1.5.0 nanobind-2.13.0 pyproject_hooks-1.2.0
+(psi4env) [syahrul@syahrul] ~/mshqc % bash fast_rebuild.sh
+=================================================================
+           MSHQC LOKAL TURBO BUILD (DEVELOPER MODE)              
+=================================================================
+[*] Mengompilasi C++ (Hanya file yang berubah)...
+/home/syahrul/miniconda3/envs/psi4env/lib/python3.12/site-packages/setuptools/config/_apply_pyprojecttoml.py:82: SetuptoolsDeprecationWarning: `project.license` as a TOML table is deprecated
+!!
+
+        ********************************************************************************
+        Please use a simple string containing a SPDX expression for `project.license`. You can also use `project.license-files`. (Both options available on setuptools>=77.0.0).
+
+        By 2027-Feb-18, you need to update your project and remove deprecated calls
+        or your builds will no longer be supported.
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  corresp(dist, value, root_dir)
+/home/syahrul/miniconda3/envs/psi4env/lib/python3.12/site-packages/setuptools/config/_apply_pyprojecttoml.py:82: SetuptoolsWarning: `install_requires` overwritten in `pyproject.toml` (dependencies)
+  corresp(dist, value, root_dir)
+/home/syahrul/miniconda3/envs/psi4env/lib/python3.12/site-packages/setuptools/config/_apply_pyprojecttoml.py:61: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: MIT License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  dist._finalize_license_expression()
+/home/syahrul/miniconda3/envs/psi4env/lib/python3.12/site-packages/setuptools/dist.py:765: SetuptoolsDeprecationWarning: License classifiers are deprecated.
+!!
+
+        ********************************************************************************
+        Please consider removing the following classifiers in favor of a SPDX license expression:
+
+        License :: OSI Approved :: MIT License
+
+        See https://packaging.python.org/en/latest/guides/writing-pyproject-toml/#license for details.
+        ********************************************************************************
+
+!!
+  self._finalize_license_expression()
+running build_ext
+-- The CXX compiler identification is GNU 14.3.0
+-- The C compiler identification is GNU 14.3.0
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /home/syahrul/miniconda3/bin/ccache - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /home/syahrul/miniconda3/bin/ccache - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- >> Local Environment Detected: Mengaktifkan Super Turbo (-march=native)
+-- >> IPO / LTO Didukung dan Diaktifkan! (Super Turbo)
+-- Found Python: /home/syahrul/miniconda3/envs/psi4env/bin/python (found version "3.12.12") found components: Interpreter Development Development.Module Development.Embed
+-- Performing Test NB_HAS_MTLS_GNU2
+-- Performing Test NB_HAS_MTLS_GNU2 - Success
+-- Found OpenMP_C: -fopenmp (found version "4.5")
+-- Found OpenMP_CXX: -fopenmp (found version "4.5")
+-- Found OpenMP: TRUE (found version "4.5")
+-- >> BLAS: BLIS ditemukan!
+-- >> libflame tidak ditemukan. Mencari Standar LAPACK & LAPACKE Sistem...
+-- Looking for sgemm_
+-- Looking for sgemm_ - not found
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+-- Found Threads: TRUE
+-- Looking for sgemm_
+-- Looking for sgemm_ - found
+-- Found BLAS: /home/syahrul/miniconda3/envs/psi4env/lib/libmkl_intel_lp64.so;/home/syahrul/miniconda3/envs/psi4env/lib/libmkl_intel_thread.so;/home/syahrul/miniconda3/envs/psi4env/lib/libmkl_core.so;/home/syahrul/miniconda3/envs/psi4env/lib/libiomp5.so;-lm;-ldl
+-- Looking for cheev_
+-- Looking for cheev_ - found
+-- Found LAPACK: /home/syahrul/miniconda3/envs/psi4env/lib/libmkl_intel_lp64.so;/home/syahrul/miniconda3/envs/psi4env/lib/libmkl_intel_thread.so;/home/syahrul/miniconda3/envs/psi4env/lib/libmkl_core.so;/home/syahrul/miniconda3/envs/psi4env/lib/libiomp5.so;-lm;-ldl;-lm;-ldl
+-- >> LAPACKE: Antarmuka C LAPACKE ditemukan! (/home/syahrul/miniconda3/envs/psi4env/lib/liblapacke.so)
+-- >> Eigen lokal tidak ditemukan. Mencari versi terbaru di Conda/Sistem...
+-- >> Linear Algebra: Eigen 5.0.1 ditemukan dari Conda!
+-- >> Integral Engine: libcint ditemukan!
+-- >> Tensor Engine: TBLIS ditemukan!
+-- >> Out-of-Core Engine: HDF5 C++ Conda ditemukan secara manual!
+-- Configuring done (4.1s)
+-- Generating done (0.0s)
+CMake Warning:
+  Manually-specified variables were not used by the project:
+
+    PYTHON_EXECUTABLE
+
+
+-- Build files have been written to: /home/syahrul/mshqc/build/temp.linux-x86_64-cpython-312
+[  4%] Building CXX object CMakeFiles/nanobind-static.dir/home/syahrul/miniconda3/envs/psi4env/lib/python3.12/site-packages/nanobind/src/nb_type.cpp.o
+[  4%] Building CXX object CMakeFiles/nanobind-static.dir/home/syahrul/miniconda3/envs/psi4env/lib/python3.12/site-packages/nanobind/src/nb_internals.cpp.o
+[  4%] Building CXX object CMakeFiles/mshqc.dir/src/core/basis.cc.o
+[  6%] Building CXX object CMakeFiles/nanobind-static.dir/home/syahrul/miniconda3/envs/psi4env/lib/python3.12/site-packages/nanobind/src/nb_func.cpp.o
+[  7%] Building CXX object CMakeFiles/mshqc.dir/src/core/molecule.cc.o
+[  9%] Building CXX object CMakeFiles/mshqc.dir/src/core/fock_builder.cc.o
+[ 10%] Building CXX object CMakeFiles/nanobind-static.dir/home/syahrul/miniconda3/envs/psi4env/lib/python3.12/site-packages/nanobind/src/nb_enum.cpp.o
+[ 12%] Building CXX object CMakeFiles/nanobind-static.dir/home/syahrul/miniconda3/envs/psi4env/lib/python3.12/site-packages/nanobind/src/nb_ndarray.cpp.o
+[ 13%] Building CXX object CMakeFiles/mshqc.dir/src/scf/diis.cc.o
+[ 15%] Building CXX object CMakeFiles/mshqc.dir/src/scf/sad_data.cc.o
+[ 16%] Building CXX object CMakeFiles/nanobind-static.dir/home/syahrul/miniconda3/envs/psi4env/lib/python3.12/site-packages/nanobind/src/nb_static_property.cpp.o
+[ 18%] Building CXX object CMakeFiles/nanobind-static.dir/home/syahrul/miniconda3/envs/psi4env/lib/python3.12/site-packages/nanobind/src/common.cpp.o
+[ 19%] Building CXX object CMakeFiles/nanobind-static.dir/home/syahrul/miniconda3/envs/psi4env/lib/python3.12/site-packages/nanobind/src/error.cpp.o
+[ 21%] Building CXX object CMakeFiles/nanobind-static.dir/home/syahrul/miniconda3/envs/psi4env/lib/python3.12/site-packages/nanobind/src/trampoline.cpp.o
+[ 22%] Building CXX object CMakeFiles/nanobind-static.dir/home/syahrul/miniconda3/envs/psi4env/lib/python3.12/site-packages/nanobind/src/implicit.cpp.o
+[ 24%] Linking CXX static library libnanobind-static.a
+[ 24%] Built target nanobind-static
+[ 25%] Building CXX object CMakeFiles/mshqc.dir/src/scf/sad_guess.cc.o
+[ 27%] Building CXX object CMakeFiles/mshqc.dir/src/scf/scf.cc.o
+[ 28%] Building CXX object CMakeFiles/mshqc.dir/src/mp2/mp2.cc.o
+[ 30%] Building CXX object CMakeFiles/mshqc.dir/src/mp2/semicanonical.cc.o
+[ 31%] Building CXX object CMakeFiles/mshqc.dir/src/mp3/ump3_kernel.cc.o
+[ 33%] Building CXX object CMakeFiles/mshqc.dir/src/mp3/ump3_memory.cc.o
+[ 34%] Building CXX object CMakeFiles/mshqc.dir/src/mcscf/active_space.cc.o
+[ 36%] Building CXX object CMakeFiles/mshqc.dir/src/mcscf/canonical_sa_caspt2.cc.o
+[ 37%] Building CXX object CMakeFiles/mshqc.dir/src/mcscf/canonical_sa_casscf.cc.o
+[ 39%] Building CXX object CMakeFiles/mshqc.dir/src/mcscf/canonical_uno.cc.o
+[ 40%] Building CXX object CMakeFiles/mshqc.dir/src/mcscf/cholesky_sa_caspt2.cc.o
+[ 42%] Building CXX object CMakeFiles/mshqc.dir/src/mcscf/cholesky_sa_casscf.cc.o
+[ 43%] Building CXX object CMakeFiles/mshqc.dir/src/mcscf/cholesky_uno.cc.o
+[ 45%] Building CXX object CMakeFiles/mshqc.dir/src/mcscf/external_space.cc.o
+[ 46%] Building CXX object CMakeFiles/mshqc.dir/src/mcscf/multi_root_ci.cc.o
+[ 48%] Building CXX object CMakeFiles/mshqc.dir/src/mcscf/sa_casscf.cc.o
+[ 50%] Building CXX object CMakeFiles/mshqc.dir/src/integrals/cholesky_eri.cc.o
+[ 51%] Building CXX object CMakeFiles/mshqc.dir/src/integrals/df_eri.cc.o
+[ 53%] Building CXX object CMakeFiles/mshqc.dir/src/integrals/eri_transformer.cc.o
+[ 54%] Building CXX object CMakeFiles/mshqc.dir/src/ints/integrals.cc.o
+[ 56%] Building CXX object CMakeFiles/mshqc.dir/src/ints/screening.cc.o
+[ 57%] Building CXX object CMakeFiles/mshqc.dir/src/ints/math_utils.cc.o
+[ 59%] Building CXX object CMakeFiles/mshqc.dir/src/foundation/fcidump.cc.o
+[ 60%] Building CXX object CMakeFiles/mshqc.dir/src/foundation/opdm.cc.o
+[ 62%] Building CXX object CMakeFiles/mshqc.dir/src/foundation/wavefunction.cc.o
+[ 63%] Building CXX object CMakeFiles/mshqc.dir/src/gradient/analytical_gradient.cc.o
+[ 65%] Building CXX object CMakeFiles/mshqc.dir/src/gradient/numerical_gradient.cc.o
+[ 66%] Building CXX object CMakeFiles/mshqc.dir/src/gradient/optimizer.cc.o
+[ 68%] Building CXX object CMakeFiles/mshqc.dir/src/integration/mp_ci_adapter.cc.o
+[ 69%] Building CXX object CMakeFiles/mshqc.dir/src/ci/ci_utils.cc.o
+[ 71%] Building CXX object CMakeFiles/mshqc.dir/src/ci/davidson.cc.o
+[ 72%] Building CXX object CMakeFiles/mshqc.dir/src/ci/determinant.cc.o
+[ 74%] Building CXX object CMakeFiles/mshqc.dir/src/ci/excitation_generator.cc.o
+[ 75%] Building CXX object CMakeFiles/mshqc.dir/src/ci/fci.cc.o
+[ 77%] Building CXX object CMakeFiles/mshqc.dir/src/ci/hamiltonian_sparse.cc.o
+[ 78%] Building CXX object CMakeFiles/mshqc.dir/src/ci/natural_orbitals.cc.o
+[ 80%] Building CXX object CMakeFiles/mshqc.dir/src/ci/size_consistency.cc.o
+[ 81%] Building CXX object CMakeFiles/mshqc.dir/src/ci/slater_condon.cc.o
+[ 83%] Building CXX object CMakeFiles/mshqc.dir/src/ci/sparse_coo.cc.o
+[ 84%] Building CXX object CMakeFiles/mshqc.dir/src/ci/transition_density.cc.o
+[ 86%] Building CXX object CMakeFiles/mshqc.dir/src/ci/wavefunction_analysis.cc.o
+[ 87%] Building CXX object CMakeFiles/mshqc.dir/src/symmetry/molecule_sym.cc.o
+[ 89%] Building CXX object CMakeFiles/mshqc.dir/src/symmetry/petite_list.cc.o
+[ 90%] Building CXX object CMakeFiles/mshqc.dir/src/symmetry/point_group.cc.o
+[ 92%] Building CXX object CMakeFiles/mshqc.dir/src/symmetry/salc_builder.cc.o
+[ 93%] Building CXX object CMakeFiles/mshqc.dir/src/utils/hardware_control.cc.o
+[ 95%] Building CXX object CMakeFiles/mshqc.dir/src/utils/hdf5_io.cc.o
+[ 96%] Linking CXX shared library /home/syahrul/mshqc/python/mshqc/libmshqc.so
+[ 96%] Built target mshqc
+[ 98%] Building CXX object CMakeFiles/_mshqc.dir/python/bindings.cc.o
+[100%] Linking CXX shared module /home/syahrul/mshqc/python/mshqc/_mshqc.cpython-312-x86_64-linux-gnu.so
+[100%] Built target _mshqc
+error: '/home/syahrul/mshqc/python/mshqc/_mshqc.cpython-312-x86_64-linux-gnu.so' and '/home/syahrul/mshqc/python/mshqc/_mshqc.cpython-312-x86_64-linux-gnu.so' are the same file
+(psi4env) [syahrul@syahrul] ~/mshqc % 
+Host: syahrul
+
+Timers On : Fri Jun 26 13:40:10 2026
+Timers Off: Fri Jun 26 13:40:39 2026
+
+Wall Time:       28.82 seconds
+
+                                                       Time (seconds)
+Module                                       User      System        Wall        Calls
+DFH: sparsity prep                  :      0.117u      0.183s      0.235w      5 calls
+Libint2ERI::Libint2ERI              :      0.383u      0.267s      0.460w     55 calls
+DFH: initialize()                   :      0.217u      0.050s      0.164w      5 calls
+DFH: AO Construction                :      0.033u      0.000s      0.032w      5 calls
+DFH: AO-Met. Contraction            :      0.017u      0.000s      0.012w      5 calls
+HF: Form core H                     :      0.017u      0.000s      0.020w     10 calls
+HF: Form S/X                        :      0.000u      0.000s      0.002w     10 calls
+HF: Guess                           :      0.183u      0.000s      0.113w     10 calls
+SAD Guess                           :      0.183u      0.000s      0.107w      2 calls
+HF: Form G                          :      0.200u      0.000s      0.161w    112 calls
+JK: D                               :      0.000u      0.000s      0.002w    112 calls
+JK: USO2AO                          :      0.017u      0.000s      0.010w    112 calls
+JK: JK                              :      0.150u      0.000s      0.130w    112 calls
+DFH: compute_JK()                   :      0.083u      0.000s      0.070w     56 calls
+DFH: Grabbing AOs                   :      0.000u      0.000s      0.000w     56 calls
+DFH: compute_J                      :      0.000u      0.000s      0.018w     56 calls
+DFH: compute_K                      :      0.083u      0.000s      0.050w     56 calls
+JK: J                               :      0.000u      0.000s      0.007w     56 calls
+JK: J1                              :      0.000u      0.000s      0.003w     89 calls
+JK: J2                              :      0.000u      0.000s      0.002w     89 calls
+JK: K                               :      0.067u      0.000s      0.049w     56 calls
+JK: K1                              :      0.067u      0.000s      0.040w     89 calls
+JK: K2                              :      0.000u      0.000s      0.008w     89 calls
+JK: AO2USO                          :      0.017u      0.000s      0.015w    112 calls
+HF: Form F                          :      0.017u      0.000s      0.002w    112 calls
+HF: DIIS                            :      3.850u      1.900s      2.482w    110 calls
+HF: Form C                          :      0.067u      0.017s      0.079w    110 calls
+HF: Form D                          :      0.000u      0.000s      0.001w    112 calls
+DFMP2 Singles                       :      0.000u      0.000s      0.000w      5 calls
+DFMP2 Aia                           :      0.100u      0.067s      0.104w      5 calls
+DFMP2 (A|mn)                        :      0.033u      0.000s      0.026w      5 calls
+DFMP2 (A|mn)C_mi                    :      0.000u      0.000s      0.003w      8 calls
+DFMP2 (A|mi)C_na                    :      0.000u      0.000s      0.002w      8 calls
+DFMP2 Aia Write                     :      0.000u      0.000s      0.001w      8 calls
+DFMP2 Bia                           :      0.083u      0.000s      0.054w      5 calls
+DFMP2 Metric                        :      0.083u      0.000s      0.043w      5 calls
+DFMP2 Aia Read                      :      0.000u      0.000s      0.002w      8 calls
+DFMP2 (ia|A)(A|Q)                   :      0.000u      0.000s      0.002w      8 calls
+DFMP2 Bia Write                     :      0.000u      0.000s      0.004w      8 calls
+DFMP2 Energy                        :      0.017u      0.000s      0.007w      5 calls
+DFMP2 Bia Read                      :      0.000u      0.000s      0.000w     22 calls
+JK: (A|mn)                          :      0.050u      0.000s      0.024w      5 calls
+JK: (A|Q)^-1/2                      :      0.067u      0.000s      0.043w      5 calls
+JK: (Q|mn)                          :      0.033u      0.000s      0.004w      5 calls
+DF CC Integrals                     :      0.850u      0.417s      0.728w     41 calls
+Form J                              :      0.017u      0.017s      0.022w      5 calls
+Form B(Q,munu)                      :      0.133u      0.000s      0.087w      5 calls
+Form B(Q,ij)                        :      0.100u      0.133s      0.124w     82 calls
+Form B(Q,ia)                        :      0.350u      0.267s      0.329w     82 calls
+Form B(Q,ab)                        :      0.400u      0.200s      0.361w     82 calls
+Trans OEI                           :      0.000u      0.000s      0.003w     41 calls
+Fock                                :      0.017u      0.100s      0.114w     41 calls
+1st-order T2                        :      0.083u      0.150s      0.185w     41 calls
+Build (IA|JB)                       :      0.050u      0.000s      0.028w     46 calls
+Build <PQ||RS>                      :      0.000u      0.017s      0.002w     60 calls
+Build (ia|jb)                       :      0.000u      0.017s      0.010w     30 calls
+Build (IA|jb)                       :      0.017u      0.000s      0.020w     30 calls
+opdm                                :      0.067u      0.067s      0.048w     41 calls
+tpdm                                :      0.100u      0.133s      0.124w     41 calls
+CCL Energy                          :      0.000u      0.050s      0.043w     41 calls
+sep_tpdm                            :      0.100u      0.283s      0.260w     41 calls
+GFM VO                              :      0.183u      0.200s      0.205w     41 calls
+GFM OV                              :      0.133u      0.100s      0.156w     41 calls
+GFM OO                              :      0.050u      0.133s      0.123w     41 calls
+GFM VV                              :      0.133u      0.200s      0.226w     41 calls
+kappa orb rot                       :      0.283u      0.200s      0.288w     36 calls
+Diagonal MO Hessian VO              :      0.083u      0.133s      0.126w     24 calls
+Build (OV|OV)                       :      0.017u      0.033s      0.010w     24 calls
+Build (ov|ov)                       :      0.017u      0.000s      0.008w     24 calls
+update_mo                           :      0.150u      0.033s      0.096w     36 calls
+DF REF Integrals                    :      0.367u      0.250s      0.342w     36 calls
+MO Grad                             :      0.000u      0.000s      0.001w     36 calls
+MP2 Energy                          :      0.000u      0.000s      0.010w      5 calls
+
+--------------------------------------------------------------------------------------
+DFH: sparsity prep                  :      0.117u      0.183s      0.235w      5 calls
+| Libint2ERI::Libint2ERI            :      0.083u      0.183s      0.211w      5 calls
+DFH: initialize()                   :      0.217u      0.050s      0.164w      5 calls
+| Libint2ERI::Libint2ERI            :      0.033u      0.017s      0.044w     10 calls
+| DFH: AO Construction              :      0.033u      0.000s      0.032w      5 calls
+| DFH: AO-Met. Contraction          :      0.017u      0.000s      0.012w      5 calls
+HF: Form core H                     :      0.017u      0.000s      0.020w     10 calls
+HF: Form S/X                        :      0.000u      0.000s      0.002w     10 calls
+HF: Guess                           :      0.183u      0.000s      0.113w     10 calls
+| SAD Guess                         :      0.183u      0.000s      0.107w      2 calls
+HF: Form G                          :      0.200u      0.000s      0.161w    112 calls
+| JK: D                             :      0.000u      0.000s      0.002w    112 calls
+| JK: USO2AO                        :      0.017u      0.000s      0.010w    112 calls
+| JK: JK                            :      0.150u      0.000s      0.130w    112 calls
+| | DFH: compute_JK()               :      0.083u      0.000s      0.070w     56 calls
+| | | DFH: Grabbing AOs             :      0.000u      0.000s      0.000w     56 calls
+| | | DFH: compute_J                :      0.000u      0.000s      0.018w     56 calls
+| | | DFH: compute_K                :      0.083u      0.000s      0.050w     56 calls
+| | JK: J                           :      0.000u      0.000s      0.007w     56 calls
+| | | JK: J1                        :      0.000u      0.000s      0.003w     89 calls
+| | | JK: J2                        :      0.000u      0.000s      0.002w     89 calls
+| | JK: K                           :      0.067u      0.000s      0.049w     56 calls
+| | | JK: K1                        :      0.067u      0.000s      0.040w     89 calls
+| | | JK: K2                        :      0.000u      0.000s      0.008w     89 calls
+| JK: AO2USO                        :      0.017u      0.000s      0.015w    112 calls
+HF: Form F                          :      0.017u      0.000s      0.002w    112 calls
+HF: DIIS                            :      3.850u      1.900s      2.482w    110 calls
+HF: Form C                          :      0.067u      0.017s      0.079w    110 calls
+HF: Form D                          :      0.000u      0.000s      0.001w    112 calls
+DFMP2 Singles                       :      0.000u      0.000s      0.000w      5 calls
+DFMP2 Aia                           :      0.100u      0.067s      0.104w      5 calls
+| Libint2ERI::Libint2ERI            :      0.050u      0.067s      0.057w      5 calls
+| DFMP2 (A|mn)                      :      0.033u      0.000s      0.026w      5 calls
+| DFMP2 (A|mn)C_mi                  :      0.000u      0.000s      0.003w      8 calls
+| DFMP2 (A|mi)C_na                  :      0.000u      0.000s      0.002w      8 calls
+| DFMP2 Aia Write                   :      0.000u      0.000s      0.001w      8 calls
+DFMP2 Bia                           :      0.083u      0.000s      0.054w      5 calls
+| DFMP2 Metric                      :      0.083u      0.000s      0.043w      5 calls
+| | Libint2ERI::Libint2ERI          :      0.000u      0.000s      0.000w      5 calls
+| DFMP2 Aia Read                    :      0.000u      0.000s      0.002w      8 calls
+| DFMP2 (ia|A)(A|Q)                 :      0.000u      0.000s      0.002w      8 calls
+| DFMP2 Bia Write                   :      0.000u      0.000s      0.004w      8 calls
+DFMP2 Energy                        :      0.017u      0.000s      0.007w      5 calls
+| DFMP2 Bia Read                    :      0.000u      0.000s      0.000w     22 calls
+Libint2ERI::Libint2ERI              :      0.083u      0.000s      0.075w     10 calls
+JK: (A|mn)                          :      0.050u      0.000s      0.024w      5 calls
+JK: (A|Q)^-1/2                      :      0.067u      0.000s      0.043w      5 calls
+| Libint2ERI::Libint2ERI            :      0.000u      0.000s      0.000w      5 calls
+JK: (Q|mn)                          :      0.033u      0.000s      0.004w      5 calls
+DF CC Integrals                     :      0.850u      0.417s      0.728w     41 calls
+| Form J                            :      0.017u      0.017s      0.022w      5 calls
+| | Libint2ERI::Libint2ERI          :      0.000u      0.000s      0.000w      5 calls
+| Form B(Q,munu)                    :      0.133u      0.000s      0.087w      5 calls
+| | Libint2ERI::Libint2ERI          :      0.067u      0.000s      0.036w      5 calls
+| Form B(Q,ij)                      :      0.050u      0.083s      0.080w     46 calls
+| Form B(Q,ia)                      :      0.200u      0.167s      0.198w     46 calls
+| Form B(Q,ab)                      :      0.250u      0.100s      0.231w     46 calls
+| Trans OEI                         :      0.000u      0.000s      0.003w     41 calls
+| Libint2ERI::Libint2ERI            :      0.067u      0.000s      0.036w      5 calls
+Fock                                :      0.017u      0.100s      0.114w     41 calls
+1st-order T2                        :      0.083u      0.150s      0.185w     41 calls
+| Build (IA|JB)                     :      0.050u      0.000s      0.025w     41 calls
+| Build <PQ||RS>                    :      0.000u      0.017s      0.001w     54 calls
+| Build (ia|jb)                     :      0.000u      0.017s      0.009w     27 calls
+| Build (IA|jb)                     :      0.017u      0.000s      0.018w     27 calls
+opdm                                :      0.067u      0.067s      0.048w     41 calls
+tpdm                                :      0.100u      0.133s      0.124w     41 calls
+CCL Energy                          :      0.000u      0.050s      0.043w     41 calls
+sep_tpdm                            :      0.100u      0.283s      0.260w     41 calls
+GFM VO                              :      0.183u      0.200s      0.205w     41 calls
+GFM OV                              :      0.133u      0.100s      0.156w     41 calls
+GFM OO                              :      0.050u      0.133s      0.123w     41 calls
+GFM VV                              :      0.133u      0.200s      0.226w     41 calls
+kappa orb rot                       :      0.283u      0.200s      0.288w     36 calls
+| Diagonal MO Hessian VO            :      0.083u      0.133s      0.126w     24 calls
+| | Build (OV|OV)                   :      0.017u      0.033s      0.010w     24 calls
+| | Build (ov|ov)                   :      0.017u      0.000s      0.008w     24 calls
+update_mo                           :      0.150u      0.033s      0.096w     36 calls
+DF REF Integrals                    :      0.367u      0.250s      0.342w     36 calls
+| Form B(Q,ij)                      :      0.050u      0.050s      0.045w     36 calls
+| Form B(Q,ia)                      :      0.150u      0.100s      0.132w     36 calls
+| Form B(Q,ab)                      :      0.150u      0.100s      0.130w     36 calls
+MO Grad                             :      0.000u      0.000s      0.001w     36 calls
+MP2 Energy                          :      0.000u      0.000s      0.010w      5 calls
+| Build (IA|JB)                     :      0.000u      0.000s      0.003w      5 calls
+| Build <PQ||RS>                    :      0.000u      0.000s      0.000w      6 calls
+| Build (ia|jb)                     :      0.000u      0.000s      0.001w      3 calls
+| Build (IA|jb)                     :      0.000u      0.000s      0.002w      3 calls
+
+**************************************************************************************
