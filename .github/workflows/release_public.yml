@@ -12,11 +12,10 @@ jobs:
     - name: Checkout Private Source Code
       uses: actions/checkout@v3
       with:
-        # PENTING: Kita butuh token dengan hak akses tulis ke repo privat ini
-        token: ${{ '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' }}
+        token: ${{'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'}} # Pastikan nama secret-nya sesuai
 
     # =========================================================================
-    # 1. CACHE CONDA: Menyimpan unduhan library agar tidak install dari 0
+    # 1. CACHE CONDA & PIP: Menyimpan unduhan library agar tidak install dari 0
     # =========================================================================
     - name: Cache Conda Packages
       uses: actions/cache@v3
@@ -33,19 +32,23 @@ jobs:
       uses: hendrikmuhs/ccache-action@v1.2
       with:
         key: ${{ runner.os }}-mshqc-ccache
+        max-size: 500M
 
     - name: Setup Conda Environment (Python 3.12)
-      uses: conda-incubator/setup-miniconda@v2
+      uses: conda-incubator/setup-miniconda@v3
       with:
         auto-update-conda: true
         python-version: "3.12"
         channels: conda-forge
         use-only-tar-bz2: true 
 
+    # =========================================================================
+    # 🔥 PENTING: Kunci versi HDF5=1.14.3 agar ABI .so stabil di semua perangkat!
+    # =========================================================================
     - name: Install Build Dependencies (Sync with Psi4)
       shell: bash -el {0}
       run: |
-        conda install -y -c conda-forge cmake make compilers eigen pkg-config hdf5 pip libcint tblis liblapacke openblas psi4
+        conda install -y -c conda-forge cmake make compilers eigen pkg-config "hdf5=1.14.3" pip libcint tblis liblapacke openblas psi4
         python -m pip install build wheel nanobind
 
     - name: Build Python Wheel (.whl)
@@ -57,9 +60,12 @@ jobs:
         export CXXFLAGS="-std=c++17 -fopenmp -O3 -mavx2 -mfma -mtune=generic -DEIGEN_USE_BLAS -DEIGEN_USE_LAPACKE -DNDEBUG"
         
         python setup.py bdist_wheel
+        
+        # Tampilkan statistik Ccache untuk membuktikan cache bekerja
+        ccache -s
 
     # =========================================================================
-    # 🔥 [DITAMBAHKAN]: COMMIT KEMBALI KE REPO PRIVAT (Agar Lokal Bisa Pull)
+    # 3. COMMIT KEMBALI KE REPO PRIVAT (Agar Lokal Bisa Pull)
     # =========================================================================
     - name: Commit and Push Wheel to Private Repo
       shell: bash -el {0}
@@ -67,11 +73,9 @@ jobs:
         git config --global user.name "MSHQC Automation"
         git config --global user.email "automation@mshqc.internal"
         
-        # Buat folder releases di repo privat jika belum ada
         mkdir -p releases
         rm -f releases/*.whl
         
-        # Salin biner baru ke folder rilis internal
         cp dist/*.whl releases/
         
         git add releases/*.whl
@@ -80,17 +84,15 @@ jobs:
           echo "Tidak ada perubahan biner baru untuk disimpan di repo privat."
         else
           git commit -m "CI-Bot: Update biner terkompilasi (.whl) [skip ci]"
-          # [skip ci] sangat penting agar push ini tidak memicu perulangan tak terbatas (looping build)
           git push origin main
         fi
 
     # =========================================================================
-    # 3. DEPLOY KE REPO PUBLIK
+    # 4. DEPLOY KE REPO PUBLIK
     # =========================================================================
     - name: Deploy Wheel to Public Repository (Closed-Source Mode)
       shell: bash -el {0}
       env:
-        # Isi dengan nama rahasia token Anda yang terdaftar di Repository Secrets
         API_TOKEN_GITHUB: ${{ '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' }} 
       run: |
         git config --global user.name "MSHQC Automation"
