@@ -3,13 +3,7 @@ name: Compile and Release Wheel to Public Repo
 on:
   push:
     branches: [ "main" ] # Memicu otomatisasi setiap kali push ke branch main privat
-    paths:
-      - 'src/**'
-      - 'include/**'
-      - 'python/**'
-      - 'CMakeLists.txt'
-      - 'setup.py'
-      - 'pyproject.toml'
+   
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
