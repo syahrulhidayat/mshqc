@@ -1094,23 +1094,28 @@ void OMP2::build_opdm_alpha() {
 
                     auto* t_blk = t2_aa_.get_block(o1.id, v1.id, o2.id, v2.id);
                     if (t_blk) {
-                        int rows = o1.size;
-                        int cols = v1.size * o2.size * v2.size;
-                        Eigen::Map<Eigen::MatrixXd> T_mat(t_blk->data(), rows, cols);
-                        G_oo_alpha_.block(o1.offset, o1.offset, o1.size, o1.size) -= 0.5 * (T_mat * T_mat.transpose());
+                        int n_i = o1.size, n_a = v1.size, n_j = o2.size, n_b = v2.size;
 
-                        // TAHAP 3: Kontraksi Native Tensor untuk G_vv (Tanpa Loop Manual!)
-                        Eigen::array<Eigen::IndexPair<int>, 3> contract_dims = {
-                            Eigen::IndexPair<int>(0, 0), // sum over 'i'
-                            Eigen::IndexPair<int>(2, 2), // sum over 'j'
-                            Eigen::IndexPair<int>(3, 3)  // sum over 'c'
-                        };
-                        Eigen::Tensor<double, 2> G_vv_t = t_blk->contract(*t_blk, contract_dims);
-                        
-                        for (int da = 0; da < v1.size; ++da) {
-                            for (int db = 0; db < v1.size; ++db) {
-                                G_vv_alpha_(v1.offset + da, v1.offset + db) += 0.5 * G_vv_t(da, db);
-                            }
+                        // SMART ROUTER 1: G_oo pakai Eigen Map (Super cepat untuk index pertama)
+                        if (o1.id == o2.id) {
+                            Eigen::Map<Eigen::MatrixXd> T_mat(t_blk->data(), n_i, n_a * n_j * n_b);
+                            G_oo_alpha_.block(o1.offset, o1.offset, n_i, n_i) -= 0.5 * (T_mat * T_mat.transpose());
+                        }
+
+                        // SMART ROUTER 2: G_vv pakai TBLIS (Ahli menangani Strided Memory)
+                        if (v1.id == v2.id) {
+                            tblis::tblis_tensor t_T, t_Gvv;
+                            tblis::len_type len_T[] = {n_i, n_a, n_j, n_b};
+                            tblis::stride_type str_T[] = {1, n_i, n_i*n_a, n_i*n_a*n_j};
+                            tblis::tblis_init_tensor_d(&t_T, 4, len_T, t_blk->data(), str_T);
+
+                            Eigen::MatrixXd G_vv_tmp = Eigen::MatrixXd::Zero(n_a, n_a);
+                            tblis::len_type len_vv[] = {n_a, n_a};
+                            tblis::stride_type str_vv[] = {1, n_a};
+                            tblis::tblis_init_tensor_d(&t_Gvv, 2, len_vv, G_vv_tmp.data(), str_vv);
+
+                            tblis::tblis_tensor_mult(nullptr, nullptr, &t_T, "iajb", &t_T, "icjb", &t_Gvv, "ac");
+                            G_vv_alpha_.block(v1.offset, v1.offset, n_a, n_a) += 0.5 * G_vv_tmp;
                         }
                     }
                 }
@@ -1121,17 +1126,23 @@ void OMP2::build_opdm_alpha() {
     if (nb_ > 0 && vb_ > 0) {
         auto* t_ab = t2_ab_.get_block(0,0,0,0);
         if (t_ab) {
-            Eigen::array<Eigen::IndexPair<int>, 3> dims_oo = {
-                Eigen::IndexPair<int>(1, 1), Eigen::IndexPair<int>(2, 2), Eigen::IndexPair<int>(3, 3)
-            };
-            Eigen::Tensor<double, 2> G_oo_t = t_ab->contract(*t_ab, dims_oo);
-            for(int i=0; i<na_; ++i) for(int j=0; j<na_; ++j) G_oo_alpha_(i, j) -= G_oo_t(i, j);
+            // Mixed Alpha-Beta: G_oo Alpha bisa di-Map langsung
+            Eigen::Map<Eigen::MatrixXd> Tab_mat(t_ab->data(), na_, nb_ * va_ * vb_);
+            G_oo_alpha_ -= (Tab_mat * Tab_mat.transpose());
 
-            Eigen::array<Eigen::IndexPair<int>, 3> dims_vv = {
-                Eigen::IndexPair<int>(0, 0), Eigen::IndexPair<int>(1, 1), Eigen::IndexPair<int>(3, 3)
-            };
-            Eigen::Tensor<double, 2> G_vv_t_ab = t_ab->contract(*t_ab, dims_vv);
-            for(int a=0; a<va_; ++a) for(int c=0; c<va_; ++c) G_vv_alpha_(a, c) += G_vv_t_ab(a, c);
+            // G_vv Alpha: Gunakan TBLIS
+            tblis::tblis_tensor t_T, t_Gvv;
+            tblis::len_type len_T[] = {na_, nb_, va_, vb_};
+            tblis::stride_type str_T[] = {1, na_, na_*nb_, na_*nb_*va_};
+            tblis::tblis_init_tensor_d(&t_T, 4, len_T, t_ab->data(), str_T);
+
+            Eigen::MatrixXd G_vv_tmp = Eigen::MatrixXd::Zero(va_, va_);
+            tblis::len_type len_vv[] = {va_, va_};
+            tblis::stride_type str_vv[] = {1, va_};
+            tblis::tblis_init_tensor_d(&t_Gvv, 2, len_vv, G_vv_tmp.data(), str_vv);
+
+            tblis::tblis_tensor_mult(nullptr, nullptr, &t_T, "ijab", &t_T, "ijcb", &t_Gvv, "ac");
+            G_vv_alpha_ += G_vv_tmp;
         }
     }
 }
@@ -1145,28 +1156,48 @@ void OMP2::build_opdm_beta() {
     auto* t_ab = t2_ab_.get_block(0,0,0,0);
     
     if (t_bb) {
+        // SMART ROUTER G_oo: Eigen Map
         Eigen::Map<Eigen::MatrixXd> T_bb_mat(t_bb->data(), nb_, nb_ * vb_ * vb_);
         G_oo_beta_ -= 0.5 * (T_bb_mat * T_bb_mat.transpose());
 
-        Eigen::array<Eigen::IndexPair<int>, 3> dims_vv = {
-            Eigen::IndexPair<int>(0, 0), Eigen::IndexPair<int>(1, 1), Eigen::IndexPair<int>(3, 3)
-        };
-        Eigen::Tensor<double, 2> G_vv_t = t_bb->contract(*t_bb, dims_vv);
-        for(int a=0; a<vb_; ++a) for(int c=0; c<vb_; ++c) G_vv_beta_(a, c) += 0.5 * G_vv_t(a, c);
-    }
-    
-    if (t_ab) {
-        Eigen::array<Eigen::IndexPair<int>, 3> dims_oo = {
-            Eigen::IndexPair<int>(0, 0), Eigen::IndexPair<int>(2, 2), Eigen::IndexPair<int>(3, 3)
-        };
-        Eigen::Tensor<double, 2> G_oo_t = t_ab->contract(*t_ab, dims_oo);
-        for(int i=0; i<nb_; ++i) for(int j=0; j<nb_; ++j) G_oo_beta_(i, j) -= G_oo_t(i, j);
+        // SMART ROUTER G_vv: TBLIS C-API
+        tblis::tblis_tensor t_T, t_Gvv;
+        tblis::len_type len_T[] = {nb_, nb_, vb_, vb_};
+        tblis::stride_type str_T[] = {1, nb_, nb_*nb_, nb_*nb_*vb_};
+        tblis::tblis_init_tensor_d(&t_T, 4, len_T, t_bb->data(), str_T);
 
-        Eigen::array<Eigen::IndexPair<int>, 3> dims_vv_ab = {
-            Eigen::IndexPair<int>(0, 0), Eigen::IndexPair<int>(1, 1), Eigen::IndexPair<int>(2, 2)
-        };
-        Eigen::Tensor<double, 2> G_vv_t_ab = t_ab->contract(*t_ab, dims_vv_ab);
-        for(int a=0; a<vb_; ++a) for(int c=0; c<vb_; ++c) G_vv_beta_(a, c) += G_vv_t_ab(a, c);
+        Eigen::MatrixXd G_vv_tmp = Eigen::MatrixXd::Zero(vb_, vb_);
+        tblis::len_type len_vv[] = {vb_, vb_};
+        tblis::stride_type str_vv[] = {1, vb_};
+        tblis::tblis_init_tensor_d(&t_Gvv, 2, len_vv, G_vv_tmp.data(), str_vv);
+
+        tblis::tblis_tensor_mult(nullptr, nullptr, &t_T, "iajb", &t_T, "icjb", &t_Gvv, "ac");
+        G_vv_beta_ += 0.5 * G_vv_tmp;
+    }
+
+    if (t_ab) {
+        // Untuk mixed Beta, indeks 'j' dan 'b' ada di tengah & belakang tensor T(i, j, a, b).
+        // Kita wajib gunakan TBLIS murni untuk menembus strided memory ini.
+        tblis::tblis_tensor t_T, t_Goo, t_Gvv;
+        tblis::len_type len_T[] = {na_, nb_, va_, vb_};
+        tblis::stride_type str_T[] = {1, na_, na_*nb_, na_*nb_*va_};
+        tblis::tblis_init_tensor_d(&t_T, 4, len_T, t_ab->data(), str_T);
+
+        // G_oo Beta
+        Eigen::MatrixXd G_oo_tmp = Eigen::MatrixXd::Zero(nb_, nb_);
+        tblis::len_type len_oo[] = {nb_, nb_};
+        tblis::stride_type str_oo[] = {1, nb_};
+        tblis::tblis_init_tensor_d(&t_Goo, 2, len_oo, G_oo_tmp.data(), str_oo);
+        tblis::tblis_tensor_mult(nullptr, nullptr, &t_T, "ikab", &t_T, "jkab", &t_Goo, "ij");
+        G_oo_beta_ -= G_oo_tmp;
+
+        // G_vv Beta
+        Eigen::MatrixXd G_vv_tmp = Eigen::MatrixXd::Zero(vb_, vb_);
+        tblis::len_type len_vv[] = {vb_, vb_};
+        tblis::stride_type str_vv[] = {1, vb_};
+        tblis::tblis_init_tensor_d(&t_Gvv, 2, len_vv, G_vv_tmp.data(), str_vv);
+        tblis::tblis_tensor_mult(nullptr, nullptr, &t_T, "ijab", &t_T, "ijac", &t_Gvv, "bc");
+        G_vv_beta_ += G_vv_tmp;
     }
 }
 // ============================================================================
