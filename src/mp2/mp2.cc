@@ -907,51 +907,42 @@ void OMP2::pseudocanonicalize() {
 }
 void OMP2::compute_t2_amplitudes() {
     t2_aa_.clear(); t2_bb_.clear(); t2_ab_.clear();
-    
+
     auto occ_spaces_a = get_irrep_spaces(scf_.irreps_alpha, 0, na_);
     auto vir_spaces_a = get_irrep_spaces(scf_.irreps_alpha, na_, va_);
 
-    // 1. ALPHA-ALPHA (Hanya komputasi blok yang sah secara simetri & non-zero)
+    // 1. ALPHA-ALPHA (Loop Inverted for Column-Major Speed)
     for (const auto& o1 : occ_spaces_a) {
-        if (o1.size == 0) continue; // <-- FILTER ZERO-SIZE
+        if (o1.size == 0) continue; 
         for (const auto& v1 : vir_spaces_a) {
-            if (v1.size == 0) continue; // <-- FILTER ZERO-SIZE
+            if (v1.size == 0) continue; 
             for (const auto& o2 : occ_spaces_a) {
-                if (o2.size == 0) continue; // <-- FILTER ZERO-SIZE
+                if (o2.size == 0) continue; 
                 for (const auto& v2 : vir_spaces_a) {
-                    if (v2.size == 0) continue; // <-- FILTER ZERO-SIZE
+                    if (v2.size == 0) continue; 
                     
                     if ((o1.id ^ v1.id ^ o2.id ^ v2.id) == 0) {
                         auto* g_blk = g_aa_.get_block(o1.id, v1.id, o2.id, v2.id);
                         auto* g_blk_ex = g_aa_.get_block(o1.id, v2.id, o2.id, v1.id);
                         
-                        // GUARD MUTLAK: Cegah Out-of-Bounds karena tabrakan dimensi
-                        bool ex_valid = false;
-                        if (g_blk_ex != nullptr) {
-                            if (g_blk_ex->dimension(1) == (Eigen::Index)v2.size && 
-                                g_blk_ex->dimension(3) == (Eigen::Index)v1.size) {
-                                ex_valid = true;
-                            }
-                        }
+                        bool ex_valid = (g_blk_ex != nullptr && g_blk_ex->dimension(1) == (Eigen::Index)v2.size && g_blk_ex->dimension(3) == (Eigen::Index)v1.size);
                         
                         if (g_blk && ex_valid) { 
                             t2_aa_.allocate_block(o1.id, v1.id, o2.id, v2.id, o1.size, v1.size, o2.size, v2.size);
                             auto* t_blk = t2_aa_.get_block(o1.id, v1.id, o2.id, v2.id);
                             
                             if (t_blk) {              
-                                t_blk->setZero(); // Wajib bersihkan sampah RAM
-                            
-                                for (int di = 0; di < o1.size; ++di) {
-                                    int i_glb = o1.offset + di;
+                                t_blk->setZero(); 
+                                // CACHE-FRIENDLY LOOP ORDER: db, dj, da, di
+                                for (int db = 0; db < v2.size; ++db) {
+                                    double e_b = scf_.orbital_energies_alpha(na_ + v2.offset + db);
                                     for (int dj = 0; dj < o2.size; ++dj) {
-                                        int j_glb = o2.offset + dj;
-                                        
-                                        
-                                        double e_ij = scf_.orbital_energies_alpha(i_glb) + scf_.orbital_energies_alpha(j_glb);
+                                        double e_j = scf_.orbital_energies_alpha(o2.offset + dj);
                                         for (int da = 0; da < v1.size; ++da) {
-                                            double den_a = e_ij - scf_.orbital_energies_alpha(na_ + v1.offset + da);
-                                            for (int db = 0; db < v2.size; ++db) {
-                                                double den = den_a - scf_.orbital_energies_alpha(na_ + v2.offset + db);
+                                            double e_a = scf_.orbital_energies_alpha(na_ + v1.offset + da);
+                                            for (int di = 0; di < o1.size; ++di) {
+                                                double e_i = scf_.orbital_energies_alpha(o1.offset + di);
+                                                double den = e_i + e_j - e_a - e_b;
                                                 double val = (*g_blk)(di, da, dj, db) - (*g_blk_ex)(di, db, dj, da);
                                                 (*t_blk)(di, da, dj, db) = (std::abs(den) > 1e-12) ? val / den : 0.0;
                                             }
@@ -966,24 +957,23 @@ void OMP2::compute_t2_amplitudes() {
         }
     }
 
-    // 2. BETA & MIXED (Open-Shell Dense Fallback)
+    // 2. BETA & MIXED (Dense Fallback with Cache-Friendly Loops)
     if (nb_ > 0 && vb_ > 0) {
         auto* g_bb_blk = g_bb_.get_block(0,0,0,0);
         if (g_bb_blk) {
-            // KOREKSI FATAL: T2_bb harus (Occ, Occ, Virt, Virt)
-            t2_bb_.allocate_block(0,0,0,0, nb_, nb_, vb_, vb_);
+            t2_bb_.allocate_block(0,0,0,0, nb_, vb_, nb_, vb_); // BENTUK WAJIB (i, a, j, b)
             auto* t_bb_blk = t2_bb_.get_block(0,0,0,0);
-           
-
-            for(int i = 0; i < nb_; ++i) {
+            for(int b = 0; b < vb_; ++b) {
+                double e_b = scf_.orbital_energies_beta(nb_+b);
                 for(int j = 0; j < nb_; ++j) {
-                    double e_ij = scf_.orbital_energies_beta(i) + scf_.orbital_energies_beta(j);
+                    double e_j = scf_.orbital_energies_beta(j);
                     for(int a = 0; a < vb_; ++a) {
-                        double den_a = e_ij - scf_.orbital_energies_beta(nb_ + a);
-                        for(int b = 0; b < vb_; ++b) {
-                            double den = den_a - scf_.orbital_energies_beta(nb_ + b);
+                        double e_a = scf_.orbital_energies_beta(nb_+a);
+                        for(int i = 0; i < nb_; ++i) {
+                            double e_i = scf_.orbital_energies_beta(i);
+                            double den = e_i + e_j - e_a - e_b;
                             double val = (*g_bb_blk)(i, a, j, b) - (*g_bb_blk)(i, b, j, a);
-                            (*t_bb_blk)(i, j, a, b) = (std::abs(den) > 1e-12) ? val / den : 0.0;
+                            (*t_bb_blk)(i, a, j, b) = (std::abs(den) > 1e-12) ? val / den : 0.0;
                         }
                     }
                 }
@@ -992,15 +982,19 @@ void OMP2::compute_t2_amplitudes() {
         
         auto* g_ab_blk = g_ab_.get_block(0,0,0,0);
         if (g_ab_blk) {
-            t2_ab_.allocate_block(0,0,0,0, na_, nb_, va_, vb_);
+            t2_ab_.allocate_block(0,0,0,0, na_, va_, nb_, vb_); // BENTUK WAJIB (i, a, j, b)
             auto* t_ab_blk = t2_ab_.get_block(0,0,0,0);
-            for(int i = 0; i < na_; ++i) for(int j = 0; j < nb_; ++j) {
-                double e_ij = scf_.orbital_energies_alpha(i) + scf_.orbital_energies_beta(j);
-                for(int a=0; a<va_; ++a) {
-                    double den_a = e_ij - scf_.orbital_energies_alpha(na_+a);
-                    for(int b=0; b<vb_; ++b) {
-                        double den = den_a - scf_.orbital_energies_beta(nb_+b);
-                        (*t_ab_blk)(i, j, a, b) = (std::abs(den) > 1e-12) ? (*g_ab_blk)(i, a, j, b) / den : 0.0;
+            for(int b = 0; b < vb_; ++b) {
+                double e_b = scf_.orbital_energies_beta(nb_+b);
+                for(int j = 0; j < nb_; ++j) {
+                    double e_j = scf_.orbital_energies_beta(j);
+                    for(int a = 0; a < va_; ++a) {
+                        double e_a = scf_.orbital_energies_alpha(na_+a);
+                        for(int i = 0; i < na_; ++i) {
+                            double e_i = scf_.orbital_energies_alpha(i);
+                            double den = e_i + e_j - e_a - e_b;
+                            (*t_ab_blk)(i, a, j, b) = (std::abs(den) > 1e-12) ? (*g_ab_blk)(i, a, j, b) / den : 0.0;
+                        }
                     }
                 }
             }
@@ -1010,18 +1004,17 @@ void OMP2::compute_t2_amplitudes() {
 double OMP2::compute_mp2_energy() {
     double E_ss_aa = 0.0, E_ss_bb = 0.0, E_os = 0.0;
     
-    
     auto occ_spaces_a = get_irrep_spaces(scf_.irreps_alpha, 0, na_);
     auto vir_spaces_a = get_irrep_spaces(scf_.irreps_alpha, na_, va_);
 
     for (const auto& o1 : occ_spaces_a) {
-        if (o1.size == 0) continue; // <-- FILTER ZERO-SIZE
+        if (o1.size == 0) continue; 
         for (const auto& v1 : vir_spaces_a) {
-            if (v1.size == 0) continue; // <-- FILTER ZERO-SIZE
+            if (v1.size == 0) continue; 
             for (const auto& o2 : occ_spaces_a) {
-                if (o2.size == 0) continue; // <-- FILTER ZERO-SIZE
+                if (o2.size == 0) continue; 
                 for (const auto& v2 : vir_spaces_a) {
-                    if (v2.size == 0) continue; // <-- FILTER ZERO-SIZE
+                    if (v2.size == 0) continue; 
                     
                     if ((o1.id ^ v1.id ^ o2.id ^ v2.id) != 0) continue;
 
@@ -1029,20 +1022,13 @@ double OMP2::compute_mp2_energy() {
                     auto* g_blk = g_aa_.get_block(o1.id, v1.id, o2.id, v2.id);
                     auto* g_blk_ex = g_aa_.get_block(o1.id, v2.id, o2.id, v1.id);
                     
-                    // GUARD DIMENSI EXCHANGE
-                    bool ex_valid = false;
-                    if (g_blk_ex != nullptr) {
-                        if (g_blk_ex->dimension(1) == (Eigen::Index)v2.size && 
-                            g_blk_ex->dimension(3) == (Eigen::Index)v1.size) {
-                            ex_valid = true;
-                        }
-                    }
+                    bool ex_valid = (g_blk_ex != nullptr && g_blk_ex->dimension(1) == (Eigen::Index)v2.size && g_blk_ex->dimension(3) == (Eigen::Index)v1.size);
 
                     if (t_blk && g_blk && ex_valid) {
-                        for (int di = 0; di < o1.size; ++di) {
+                        for (int db = 0; db < v2.size; ++db) {
                             for (int dj = 0; dj < o2.size; ++dj) {
                                 for (int da = 0; da < v1.size; ++da) {
-                                    for (int db = 0; db < v2.size; ++db) {
+                                    for (int di = 0; di < o1.size; ++di) {
                                         double g_val = (*g_blk)(di, da, dj, db) - (*g_blk_ex)(di, db, dj, da);
                                         E_ss_aa += (*t_blk)(di, da, dj, db) * g_val;
                                     }
@@ -1059,14 +1045,14 @@ double OMP2::compute_mp2_energy() {
         auto* t_bb = t2_bb_.get_block(0,0,0,0);
         auto* g_bb = g_bb_.get_block(0,0,0,0);
         if (t_bb && g_bb) {
-            for(int i=0; i<nb_; ++i) for(int j=0; j<nb_; ++j) for(int a=0; a<vb_; ++a) for(int b=0; b<vb_; ++b)
-                E_ss_bb += (*t_bb)(i, j, a, b) * ((*g_bb)(i, a, j, b) - (*g_bb)(i, b, j, a));
+            for(int b=0; b<vb_; ++b) for(int j=0; j<nb_; ++j) for(int a=0; a<vb_; ++a) for(int i=0; i<nb_; ++i)
+                E_ss_bb += (*t_bb)(i, a, j, b) * ((*g_bb)(i, a, j, b) - (*g_bb)(i, b, j, a));
         }
         auto* t_ab = t2_ab_.get_block(0,0,0,0);
         auto* g_ab = g_ab_.get_block(0,0,0,0);
         if (t_ab && g_ab) {
-            for(int i=0; i<na_; ++i) for(int j=0; j<nb_; ++j) for(int a=0; a<va_; ++a) for(int b=0; b<vb_; ++b)
-                E_os += (*t_ab)(i, j, a, b) * (*g_ab)(i, a, j, b);
+            for(int b=0; b<vb_; ++b) for(int j=0; j<nb_; ++j) for(int a=0; a<va_; ++a) for(int i=0; i<na_; ++i)
+                E_os += (*t_ab)(i, a, j, b) * (*g_ab)(i, a, j, b);
         }
     }
 
@@ -1096,13 +1082,13 @@ void OMP2::build_opdm_alpha() {
                     if (t_blk) {
                         int n_i = o1.size, n_a = v1.size, n_j = o2.size, n_b = v2.size;
 
-                        // SMART ROUTER 1: G_oo pakai Eigen Map (Super cepat untuk index pertama)
+                        // PURE EIGEN COL-MAJOR MAP (Tercepat untuk G_oo)
                         if (o1.id == o2.id) {
                             Eigen::Map<Eigen::MatrixXd> T_mat(t_blk->data(), n_i, n_a * n_j * n_b);
                             G_oo_alpha_.block(o1.offset, o1.offset, n_i, n_i) -= 0.5 * (T_mat * T_mat.transpose());
                         }
 
-                        // SMART ROUTER 2: G_vv pakai TBLIS (Ahli menangani Strided Memory)
+                        // TBLIS C-API (Spesialis G_vv)
                         if (v1.id == v2.id) {
                             tblis::tblis_tensor t_T, t_Gvv;
                             tblis::len_type len_T[] = {n_i, n_a, n_j, n_b};
@@ -1126,14 +1112,12 @@ void OMP2::build_opdm_alpha() {
     if (nb_ > 0 && vb_ > 0) {
         auto* t_ab = t2_ab_.get_block(0,0,0,0);
         if (t_ab) {
-            // Mixed Alpha-Beta: G_oo Alpha bisa di-Map langsung
-            Eigen::Map<Eigen::MatrixXd> Tab_mat(t_ab->data(), na_, nb_ * va_ * vb_);
+            Eigen::Map<Eigen::MatrixXd> Tab_mat(t_ab->data(), na_, va_ * nb_ * vb_);
             G_oo_alpha_ -= (Tab_mat * Tab_mat.transpose());
 
-            // G_vv Alpha: Gunakan TBLIS
             tblis::tblis_tensor t_T, t_Gvv;
-            tblis::len_type len_T[] = {na_, nb_, va_, vb_};
-            tblis::stride_type str_T[] = {1, na_, na_*nb_, na_*nb_*va_};
+            tblis::len_type len_T[] = {na_, va_, nb_, vb_};
+            tblis::stride_type str_T[] = {1, na_, na_*va_, na_*va_*nb_};
             tblis::tblis_init_tensor_d(&t_T, 4, len_T, t_ab->data(), str_T);
 
             Eigen::MatrixXd G_vv_tmp = Eigen::MatrixXd::Zero(va_, va_);
@@ -1141,12 +1125,11 @@ void OMP2::build_opdm_alpha() {
             tblis::stride_type str_vv[] = {1, va_};
             tblis::tblis_init_tensor_d(&t_Gvv, 2, len_vv, G_vv_tmp.data(), str_vv);
 
-            tblis::tblis_tensor_mult(nullptr, nullptr, &t_T, "ijab", &t_T, "ijcb", &t_Gvv, "ac");
+            tblis::tblis_tensor_mult(nullptr, nullptr, &t_T, "iajb", &t_T, "icjb", &t_Gvv, "ac");
             G_vv_alpha_ += G_vv_tmp;
         }
     }
 }
-
 void OMP2::build_opdm_beta() {
     G_oo_beta_ = Eigen::MatrixXd::Zero(nb_, nb_);
     G_vv_beta_ = Eigen::MatrixXd::Zero(vb_, vb_);
@@ -1156,14 +1139,12 @@ void OMP2::build_opdm_beta() {
     auto* t_ab = t2_ab_.get_block(0,0,0,0);
     
     if (t_bb) {
-        // SMART ROUTER G_oo: Eigen Map
-        Eigen::Map<Eigen::MatrixXd> T_bb_mat(t_bb->data(), nb_, nb_ * vb_ * vb_);
+        Eigen::Map<Eigen::MatrixXd> T_bb_mat(t_bb->data(), nb_, vb_ * nb_ * vb_);
         G_oo_beta_ -= 0.5 * (T_bb_mat * T_bb_mat.transpose());
 
-        // SMART ROUTER G_vv: TBLIS C-API
         tblis::tblis_tensor t_T, t_Gvv;
-        tblis::len_type len_T[] = {nb_, nb_, vb_, vb_};
-        tblis::stride_type str_T[] = {1, nb_, nb_*nb_, nb_*nb_*vb_};
+        tblis::len_type len_T[] = {nb_, vb_, nb_, vb_};
+        tblis::stride_type str_T[] = {1, nb_, nb_*vb_, nb_*vb_*nb_};
         tblis::tblis_init_tensor_d(&t_T, 4, len_T, t_bb->data(), str_T);
 
         Eigen::MatrixXd G_vv_tmp = Eigen::MatrixXd::Zero(vb_, vb_);
@@ -1176,27 +1157,25 @@ void OMP2::build_opdm_beta() {
     }
 
     if (t_ab) {
-        // Untuk mixed Beta, indeks 'j' dan 'b' ada di tengah & belakang tensor T(i, j, a, b).
-        // Kita wajib gunakan TBLIS murni untuk menembus strided memory ini.
         tblis::tblis_tensor t_T, t_Goo, t_Gvv;
-        tblis::len_type len_T[] = {na_, nb_, va_, vb_};
-        tblis::stride_type str_T[] = {1, na_, na_*nb_, na_*nb_*va_};
+        tblis::len_type len_T[] = {na_, va_, nb_, vb_};
+        tblis::stride_type str_T[] = {1, na_, na_*va_, na_*va_*nb_};
         tblis::tblis_init_tensor_d(&t_T, 4, len_T, t_ab->data(), str_T);
 
-        // G_oo Beta
+        // G_oo Beta dari Mix Alpha-Beta
         Eigen::MatrixXd G_oo_tmp = Eigen::MatrixXd::Zero(nb_, nb_);
         tblis::len_type len_oo[] = {nb_, nb_};
         tblis::stride_type str_oo[] = {1, nb_};
         tblis::tblis_init_tensor_d(&t_Goo, 2, len_oo, G_oo_tmp.data(), str_oo);
-        tblis::tblis_tensor_mult(nullptr, nullptr, &t_T, "ikab", &t_T, "jkab", &t_Goo, "ij");
+        tblis::tblis_tensor_mult(nullptr, nullptr, &t_T, "iajb", &t_T, "iakb", &t_Goo, "jk");
         G_oo_beta_ -= G_oo_tmp;
 
-        // G_vv Beta
+        // G_vv Beta dari Mix Alpha-Beta
         Eigen::MatrixXd G_vv_tmp = Eigen::MatrixXd::Zero(vb_, vb_);
         tblis::len_type len_vv[] = {vb_, vb_};
         tblis::stride_type str_vv[] = {1, vb_};
         tblis::tblis_init_tensor_d(&t_Gvv, 2, len_vv, G_vv_tmp.data(), str_vv);
-        tblis::tblis_tensor_mult(nullptr, nullptr, &t_T, "ijab", &t_T, "ijac", &t_Gvv, "bc");
+        tblis::tblis_tensor_mult(nullptr, nullptr, &t_T, "iajb", &t_T, "iajc", &t_Gvv, "bc");
         G_vv_beta_ += G_vv_tmp;
     }
 }
