@@ -1445,7 +1445,7 @@ void OMP2::build_generalized_fock() {
             }
             #pragma omp critical
             Z_mat_a += Z_local;
-        }
+        
 
         // --- DENSE FALLBACK HANYA UNTUK MOLEKUL OPEN-SHELL ---
         if (!is_restricted && has_beta) {
