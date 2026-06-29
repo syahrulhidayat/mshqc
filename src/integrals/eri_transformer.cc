@@ -11,6 +11,8 @@
 #include "mshqc/utils/hdf5_io.h" 
 #include <iostream>
 #include <iomanip>
+#include <map>
+#include <utility>
 #include <vector>
 #include <algorithm>
 #include <Eigen/Dense>
@@ -216,26 +218,100 @@ BlockedTensor4D ERITransformer::transform_ovvv_blocked(
     int no = Co.cols();
     int nv = Cv.cols();
 
-    // 1. DENSE TRANSFORMATION (1 Kali Saja)
-    Eigen::Tensor<double, 4> dense_ovvv = smart_transform_kernel(eri_ao, Co, Cv, Cv, Cv, nbf, no, nv, nv, nv);
+    using tblis::len_type;
+    using tblis::stride_type;
+    using tblis::varray_view;
 
-    // 2. SLICING MEMORY
+    auto make_view = [](const Eigen::MatrixXd& C) {
+        std::vector<len_type> len = { (len_type)C.rows(), (len_type)C.cols() };
+        std::vector<stride_type> str = { 1, (stride_type)C.rows() };
+        return varray_view<double>(len, const_cast<double*>(C.data()), str);
+    };
+
+    // ========================================================================
+    // 1. GLOBAL HALF-TRANSFORMATION (AO -> MO untuk Indeks 1 & 2)
+    // ========================================================================
+    auto t_Co = make_view(Co);
+    auto t_Cv = make_view(Cv);
+    std::vector<len_type> len_eri = { (len_type)nbf, (len_type)nbf, (len_type)nbf, (len_type)nbf };
+    std::vector<stride_type> str_eri = { 1, (stride_type)nbf, (stride_type)(nbf*nbf), (stride_type)(nbf*nbf*nbf) };
+    varray_view<double> t_eri(len_eri, const_cast<double*>(eri_ao.data()), str_eri);
+
+    Eigen::Tensor<double, 4> T1(no, nbf, nbf, nbf);
+    std::vector<len_type> len_T1 = { (len_type)no, (len_type)nbf, (len_type)nbf, (len_type)nbf };
+    std::vector<stride_type> str_T1 = { 1, (stride_type)no, (stride_type)(no*nbf), (stride_type)(no*nbf*nbf) };
+    varray_view<double> t_T1(len_T1, T1.data(), str_T1);
+    tblis::mult<double>(1.0, t_eri, "abcd", t_Co, "ae", 0.0, t_T1, "ebcd");
+
+    Eigen::Tensor<double, 4> T2(no, nv, nbf, nbf);
+    std::vector<len_type> len_T2 = { (len_type)no, (len_type)nv, (len_type)nbf, (len_type)nbf };
+    std::vector<stride_type> str_T2 = { 1, (stride_type)no, (stride_type)(no*nv), (stride_type)(no*nv*nbf) };
+    varray_view<double> t_T2(len_T2, T2.data(), str_T2);
+    tblis::mult<double>(1.0, t_T1, "ebcd", t_Cv, "bf", 0.0, t_T2, "efcd");
+
+    // ========================================================================
+    // 2. PRE-COMPUTE C23 KERNEL CACHE (Menghindari Redundansi)
+    // ========================================================================
+    std::map<std::pair<int, int>, Eigen::MatrixXd> C23_cache;
+    for (const auto& v2 : virt_spaces) {
+        if (v2.size == 0) continue;
+        for (const auto& v3 : virt_spaces) {
+            if (v3.size == 0) continue;
+            Eigen::MatrixXd C23_mat(nbf * nbf, v2.size * v3.size);
+            #pragma omp parallel for collapse(2)
+            for (int lam = 0; lam < nbf; ++lam) {
+                for (int sig = 0; sig < nbf; ++sig) {
+                    for (int b = 0; b < v2.size; ++b) {
+                        for (int c = 0; c < v3.size; ++c) {
+                            C23_mat(lam + sig * nbf, b + c * v2.size) = Cv(lam, v2.offset + b) * Cv(sig, v3.offset + c);
+                        }
+                    }
+                }
+            }
+            C23_cache[{v2.id, v3.id}] = std::move(C23_mat);
+        }
+    }
+
+    // ========================================================================
+    // 3. JIT MICRO-GEMM OVER IRREP BLOCKS (The HPC Magic)
+    // ========================================================================
     for (const auto& o1 : occ_spaces) {
         if (o1.size == 0) continue;
         for (const auto& v1 : virt_spaces) {
             if (v1.size == 0) continue;
+
+            // Flatten T2(i, a, lam, sig) menjadi Matriks 2D
+            Eigen::MatrixXd T2_mat(o1.size * v1.size, nbf * nbf);
+            #pragma omp parallel for collapse(2)
+            for (int i = 0; i < o1.size; ++i) {
+                for (int a = 0; a < v1.size; ++a) {
+                    for (int lam = 0; lam < nbf; ++lam) {
+                        for (int sig = 0; sig < nbf; ++sig) {
+                            T2_mat(i + a * o1.size, lam + sig * nbf) = T2(o1.offset + i, v1.offset + a, lam, sig);
+                        }
+                    }
+                }
+            }
+
             for (const auto& v2 : virt_spaces) {
                 if (v2.size == 0) continue;
                 for (const auto& v3 : virt_spaces) {
                     if (v3.size == 0) continue;
-                    
+
+                    // EKSEKUSI HANYA JIKA SIMETRI COCOK!
                     if ((o1.id ^ v1.id ^ v2.id ^ v3.id) == 0) {
+                        
+                        // DGEMM PURE BLAS (Mematikan overhead 4D tensor)
+                        Eigen::MatrixXd Out_mat = T2_mat * C23_cache[{v2.id, v3.id}];
+
+                        // Un-flatten kembali ke Tensor 4D
                         Eigen::Tensor<double, 4> block(o1.size, v1.size, v2.size, v3.size);
-                        for (int i = 0; i < o1.size; ++i) {
-                            for (int a = 0; a < v1.size; ++a) {
-                                for (int b = 0; b < v2.size; ++b) {
-                                    for (int c = 0; c < v3.size; ++c) {
-                                        block(i, a, b, c) = dense_ovvv(o1.offset + i, v1.offset + a, v2.offset + b, v3.offset + c);
+                        #pragma omp parallel for collapse(2)
+                        for (int b = 0; b < v2.size; ++b) {
+                            for (int c = 0; c < v3.size; ++c) {
+                                for (int i = 0; i < o1.size; ++i) {
+                                    for (int a = 0; a < v1.size; ++a) {
+                                        block(i, a, b, c) = Out_mat(i + a * o1.size, b + c * v2.size);
                                     }
                                 }
                             }
@@ -260,26 +336,89 @@ BlockedTensor4D ERITransformer::transform_ooov_blocked(
     int no = Co.cols();
     int nv = Cv.cols();
 
-    // 1. DENSE TRANSFORMATION (1 Kali Saja)
-    Eigen::Tensor<double, 4> dense_ooov = smart_transform_kernel(eri_ao, Co, Co, Co, Cv, nbf, no, no, no, nv);
+    using tblis::len_type;
+    using tblis::stride_type;
+    using tblis::varray_view;
 
-    // 2. SLICING MEMORY
+    auto make_view = [](const Eigen::MatrixXd& C) {
+        std::vector<len_type> len = { (len_type)C.rows(), (len_type)C.cols() };
+        std::vector<stride_type> str = { 1, (stride_type)C.rows() };
+        return varray_view<double>(len, const_cast<double*>(C.data()), str);
+    };
+
+    // 1. GLOBAL HALF-TRANSFORMATION
+    auto t_Co = make_view(Co);
+    std::vector<len_type> len_eri = { (len_type)nbf, (len_type)nbf, (len_type)nbf, (len_type)nbf };
+    std::vector<stride_type> str_eri = { 1, (stride_type)nbf, (stride_type)(nbf*nbf), (stride_type)(nbf*nbf*nbf) };
+    varray_view<double> t_eri(len_eri, const_cast<double*>(eri_ao.data()), str_eri);
+
+    Eigen::Tensor<double, 4> T1(no, nbf, nbf, nbf);
+    std::vector<len_type> len_T1 = { (len_type)no, (len_type)nbf, (len_type)nbf, (len_type)nbf };
+    std::vector<stride_type> str_T1 = { 1, (stride_type)no, (stride_type)(no*nbf), (stride_type)(no*nbf*nbf) };
+    varray_view<double> t_T1(len_T1, T1.data(), str_T1);
+    tblis::mult<double>(1.0, t_eri, "abcd", t_Co, "ae", 0.0, t_T1, "ebcd");
+
+    Eigen::Tensor<double, 4> T2(no, no, nbf, nbf);
+    std::vector<len_type> len_T2 = { (len_type)no, (len_type)no, (len_type)nbf, (len_type)nbf };
+    std::vector<stride_type> str_T2 = { 1, (stride_type)no, (stride_type)(no*no), (stride_type)(no*no*nbf) };
+    varray_view<double> t_T2(len_T2, T2.data(), str_T2);
+    tblis::mult<double>(1.0, t_T1, "ebcd", t_Co, "bf", 0.0, t_T2, "efcd");
+
+    // 2. PRE-COMPUTE C34 KERNEL CACHE
+    std::map<std::pair<int, int>, Eigen::MatrixXd> C34_cache;
+    for (const auto& o3 : occ_spaces) {
+        if (o3.size == 0) continue;
+        for (const auto& v1 : virt_spaces) {
+            if (v1.size == 0) continue;
+            Eigen::MatrixXd C34_mat(nbf * nbf, o3.size * v1.size);
+            #pragma omp parallel for collapse(2)
+            for (int lam = 0; lam < nbf; ++lam) {
+                for (int sig = 0; sig < nbf; ++sig) {
+                    for (int k = 0; k < o3.size; ++k) {
+                        for (int a = 0; a < v1.size; ++a) {
+                            C34_mat(lam + sig * nbf, k + a * o3.size) = Co(lam, o3.offset + k) * Cv(sig, v1.offset + a);
+                        }
+                    }
+                }
+            }
+            C34_cache[{o3.id, v1.id}] = std::move(C34_mat);
+        }
+    }
+
+    // 3. JIT MICRO-GEMM OVER IRREP BLOCKS
     for (const auto& o1 : occ_spaces) {
         if (o1.size == 0) continue;
         for (const auto& o2 : occ_spaces) {
             if (o2.size == 0) continue;
+
+            Eigen::MatrixXd T2_mat(o1.size * o2.size, nbf * nbf);
+            #pragma omp parallel for collapse(2)
+            for (int i = 0; i < o1.size; ++i) {
+                for (int j = 0; j < o2.size; ++j) {
+                    for (int lam = 0; lam < nbf; ++lam) {
+                        for (int sig = 0; sig < nbf; ++sig) {
+                            T2_mat(i + j * o1.size, lam + sig * nbf) = T2(o1.offset + i, o2.offset + j, lam, sig);
+                        }
+                    }
+                }
+            }
+
             for (const auto& o3 : occ_spaces) {
                 if (o3.size == 0) continue;
                 for (const auto& v1 : virt_spaces) {
                     if (v1.size == 0) continue;
-                    
+
+                    // EKSEKUSI HANYA JIKA SIMETRI COCOK!
                     if ((o1.id ^ o2.id ^ o3.id ^ v1.id) == 0) {
+                        Eigen::MatrixXd Out_mat = T2_mat * C34_cache[{o3.id, v1.id}];
+
                         Eigen::Tensor<double, 4> block(o1.size, o2.size, o3.size, v1.size);
-                        for (int i = 0; i < o1.size; ++i) {
-                            for (int j = 0; j < o2.size; ++j) {
-                                for (int k = 0; k < o3.size; ++k) {
-                                    for (int a = 0; a < v1.size; ++a) {
-                                        block(i, j, k, a) = dense_ooov(o1.offset + i, o2.offset + j, o3.offset + k, v1.offset + a);
+                        #pragma omp parallel for collapse(2)
+                        for (int k = 0; k < o3.size; ++k) {
+                            for (int a = 0; a < v1.size; ++a) {
+                                for (int i = 0; i < o1.size; ++i) {
+                                    for (int j = 0; j < o2.size; ++j) {
+                                        block(i, j, k, a) = Out_mat(i + j * o1.size, k + a * o3.size);
                                     }
                                 }
                             }
@@ -292,10 +431,6 @@ BlockedTensor4D ERITransformer::transform_ooov_blocked(
     }
     return result;
 }
-
-
-// WRAPPER IMPLEMENTATIONS
-// ============================================================================
 
 // ============================================================================
 // WRAPPER IMPLEMENTATIONS
