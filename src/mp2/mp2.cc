@@ -1085,7 +1085,7 @@ double OMP2::compute_mp2_energy() {
 void OMP2::build_opdm_alpha() {
     G_oo_alpha_ = Eigen::MatrixXd::Zero(na_, na_);
     G_vv_alpha_ = Eigen::MatrixXd::Zero(va_, va_);
-    
+
     auto occ_spaces_a = get_irrep_spaces(scf_.irreps_alpha, 0, na_);
     auto vir_spaces_a = get_irrep_spaces(scf_.irreps_alpha, na_, va_);
 
@@ -1104,29 +1104,25 @@ void OMP2::build_opdm_alpha() {
                     if (t_blk) {
                         int n_i = o1.size, n_a = v1.size, n_j = o2.size, n_b = v2.size;
 
-                        // PURE EIGEN COL-MAJOR MAP (Tercepat untuk G_oo)
+                        // 1. G_oo (Map Langsung Tanpa Copy)
                         if (o1.id == o2.id) {
                             Eigen::Map<Eigen::MatrixXd> T_mat(t_blk->data(), n_i, n_a * n_j * n_b);
                             G_oo_alpha_.block(o1.offset, o1.offset, n_i, n_i) -= 0.5 * (T_mat * T_mat.transpose());
                         }
 
-                        // JIT MICRO-LOOP (Spesialis G_vv untuk blok kecil, mematikan TBLIS)
+                        // 2. G_vv (JIT Flattening + GEMM)
                         if (v1.id == v2.id) {
-                            Eigen::MatrixXd G_vv_tmp = Eigen::MatrixXd::Zero(n_a, n_a);
-                            for (int a = 0; a < n_a; ++a) {
-                                for (int c = 0; c < n_a; ++c) {
-                                    double sum = 0.0;
-                                    for (int i = 0; i < n_i; ++i) {
-                                        for (int j = 0; j < n_j; ++j) {
-                                            for (int b = 0; b < n_b; ++b) {
-                                                sum += (*t_blk)(i, a, j, b) * (*t_blk)(i, c, j, b);
-                                            }
+                            Eigen::MatrixXd T_mat(n_a, n_i * n_j * n_b);
+                            for(int b=0; b<n_b; ++b) {
+                                for(int j=0; j<n_j; ++j) {
+                                    for(int a=0; a<n_a; ++a) {
+                                        for(int i=0; i<n_i; ++i) {
+                                            T_mat(a, i + j*n_i + b*n_i*n_j) = (*t_blk)(i, a, j, b);
                                         }
                                     }
-                                    G_vv_tmp(a, c) = sum;
                                 }
                             }
-                            G_vv_alpha_.block(v1.offset, v1.offset, n_a, n_a) += 0.5 * G_vv_tmp;
+                            G_vv_alpha_.block(v1.offset, v1.offset, n_a, n_a) += 0.5 * (T_mat * T_mat.transpose());
                         }
                     }
                 }
@@ -1140,21 +1136,17 @@ void OMP2::build_opdm_alpha() {
             Eigen::Map<Eigen::MatrixXd> Tab_mat(t_ab->data(), na_, va_ * nb_ * vb_);
             G_oo_alpha_ -= (Tab_mat * Tab_mat.transpose());
 
-            Eigen::MatrixXd G_vv_tmp = Eigen::MatrixXd::Zero(va_, va_);
-            for (int a = 0; a < va_; ++a) {
-                for (int c = 0; c < va_; ++c) {
-                    double sum = 0.0;
-                    for (int i = 0; i < na_; ++i) {
-                        for (int j = 0; j < nb_; ++j) {
-                            for (int b = 0; b < vb_; ++b) {
-                                sum += (*t_ab)(i, j, a, b) * (*t_ab)(i, j, c, b);
-                            }
+            Eigen::MatrixXd T_mat(va_, na_ * nb_ * vb_);
+            for(int b=0; b<vb_; ++b) {
+                for(int a=0; a<va_; ++a) {
+                    for(int j=0; j<nb_; ++j) {
+                        for(int i=0; i<na_; ++i) {
+                            T_mat(a, i + j*na_ + b*na_*nb_) = (*t_ab)(i, j, a, b);
                         }
                     }
-                    G_vv_tmp(a, c) = sum;
                 }
             }
-            G_vv_alpha_ += G_vv_tmp;
+            G_vv_alpha_ += (T_mat * T_mat.transpose());
         }
     }
 }
@@ -1171,55 +1163,43 @@ void OMP2::build_opdm_beta() {
         Eigen::Map<Eigen::MatrixXd> T_bb_mat(t_bb->data(), nb_, vb_ * nb_ * vb_);
         G_oo_beta_ -= 0.5 * (T_bb_mat * T_bb_mat.transpose());
 
-        Eigen::MatrixXd G_vv_tmp = Eigen::MatrixXd::Zero(vb_, vb_);
-        for (int a = 0; a < vb_; ++a) {
-            for (int c = 0; c < vb_; ++c) {
-                double sum = 0.0;
-                for (int i = 0; i < nb_; ++i) {
-                    for (int j = 0; j < nb_; ++j) {
-                        for (int b = 0; b < vb_; ++b) {
-                            sum += (*t_bb)(i, a, j, b) * (*t_bb)(i, c, j, b);
-                        }
+        Eigen::MatrixXd T_mat(vb_, nb_ * nb_ * vb_);
+        for(int b=0; b<vb_; ++b) {
+            for(int c=0; c<vb_; ++c) {
+                for(int j=0; j<nb_; ++j) {
+                    for(int i=0; i<nb_; ++i) {
+                        T_mat(c, i + j*nb_ + b*nb_*nb_) = (*t_bb)(i, c, j, b);
                     }
                 }
-                G_vv_tmp(a, c) = sum;
             }
         }
-        G_vv_beta_ += 0.5 * G_vv_tmp;
+        G_vv_beta_ += 0.5 * (T_mat * T_mat.transpose());
     }
 
     if (t_ab) {
-        Eigen::MatrixXd G_oo_tmp = Eigen::MatrixXd::Zero(nb_, nb_);
-        for (int j = 0; j < nb_; ++j) {
-            for (int k = 0; k < nb_; ++k) {
-                double sum = 0.0;
-                for (int i = 0; i < na_; ++i) {
-                    for (int a = 0; a < va_; ++a) {
-                        for (int b = 0; b < vb_; ++b) {
-                            sum += (*t_ab)(i, j, a, b) * (*t_ab)(i, k, a, b);
-                        }
+        Eigen::MatrixXd T_mat_oo(nb_, na_ * va_ * vb_);
+        for(int b=0; b<vb_; ++b) {
+            for(int a=0; a<va_; ++a) {
+                for(int j=0; j<nb_; ++j) {
+                    for(int i=0; i<na_; ++i) {
+                        T_mat_oo(j, i + a*na_ + b*na_*va_) = (*t_ab)(i, j, a, b);
                     }
                 }
-                G_oo_tmp(j, k) = sum;
             }
         }
-        G_oo_beta_ -= G_oo_tmp;
+        G_oo_beta_ -= (T_mat_oo * T_mat_oo.transpose());
 
-        Eigen::MatrixXd G_vv_tmp = Eigen::MatrixXd::Zero(vb_, vb_);
-        for (int b = 0; b < vb_; ++b) {
-            for (int c = 0; c < vb_; ++c) {
-                double sum = 0.0;
-                for (int i = 0; i < na_; ++i) {
-                    for (int j = 0; j < nb_; ++j) {
-                        for (int a = 0; a < va_; ++a) {
-                            sum += (*t_ab)(i, j, a, b) * (*t_ab)(i, j, a, c);
-                        }
+        Eigen::MatrixXd T_mat_vv(vb_, na_ * nb_ * va_);
+        for(int b=0; b<vb_; ++b) {
+            for(int a=0; a<va_; ++a) {
+                for(int j=0; j<nb_; ++j) {
+                    for(int i=0; i<na_; ++i) {
+                        T_mat_vv(b, i + j*na_ + a*na_*nb_) = (*t_ab)(i, j, a, b);
                     }
                 }
-                G_vv_tmp(b, c) = sum;
             }
         }
-        G_vv_beta_ += G_vv_tmp;
+        G_vv_beta_ += (T_mat_vv * T_mat_vv.transpose());
     }
 }
 // ============================================================================
@@ -1380,7 +1360,7 @@ void OMP2::build_generalized_fock() {
                         for (const auto& v_b : vir_spaces_a) {
                             if (v_b.size == 0) continue; 
                             
-                            // --- 1. KONTRAKSI OVVV (PURE C++ NATIVE) ---
+                            // --- 1. KONTRAKSI OVVV (JIT MICRO-GEMM) ---
                             for (const auto& v_c : vir_spaces_a) {
                                 if (v_c.size == 0) continue; 
                                 
@@ -1389,24 +1369,27 @@ void OMP2::build_generalized_fock() {
                                     auto* t_blk = T2_ptr->get_block(o_i.id, v_b.id, o_j.id, v_c.id);
 
                                     if (blk && t_blk) {
-                                        Eigen::MatrixXd Z_temp = Eigen::MatrixXd::Zero(o_i.size, v_a.size);
-                                        for(int di = 0; di < o_i.size; ++di) {
-                                            for(int da = 0; da < v_a.size; ++da) {
-                                                double val = 0.0;
-                                                for(int dj = 0; dj < o_j.size; ++dj) {
-                                                    for(int db = 0; db < v_b.size; ++db) {
-                                                        for(int dc = 0; dc < v_c.size; ++dc) {
-                                                            // T(ibjc) * V(jcab)
-                                                            val += (*t_blk)(di, db, dj, dc) * (*blk)(dj, dc, da, db);
-                                                        }
+                                        int ni = o_i.size, na = v_a.size, nj = o_j.size, nb = v_b.size, nc = v_c.size;
+
+                                        // Map langsung T(i, b, j, c)
+                                        Eigen::Map<const Eigen::MatrixXd> T_mat(t_blk->data(), ni, nb * nj * nc);
+
+                                        // Flatten V(j, c, a, b)
+                                        Eigen::MatrixXd V_mat(nb * nj * nc, na);
+                                        for(int a=0; a<na; ++a) {
+                                            for(int c=0; c<nc; ++c) {
+                                                for(int j=0; j<nj; ++j) {
+                                                    for(int b=0; b<nb; ++b) {
+                                                        V_mat(b + j*nb + c*nb*nj, a) = (*blk)(j, c, a, b);
                                                     }
                                                 }
-                                                Z_temp(di, da) += val;
                                             }
                                         }
 
-                                        for(int di=0; di < o_i.size; ++di) {
-                                            for(int da=0; da < v_a.size; ++da) {
+                                        // DGEMM! (O(N^5) musnah seketika)
+                                        Eigen::MatrixXd Z_temp = T_mat * V_mat;
+                                        for(int di=0; di < ni; ++di) {
+                                            for(int da=0; da < na; ++da) {
                                                 Z_local(v_a.offset + da, o_i.offset + di) += Z_temp(di, da);
                                             }
                                         }
@@ -1414,7 +1397,7 @@ void OMP2::build_generalized_fock() {
                                 }
                             }
                             
-                            // --- 2. KONTRAKSI OOOV (PURE C++ NATIVE) ---
+                            // --- 2. KONTRAKSI OOOV (JIT MICRO-GEMM) ---
                             for (const auto& o_k : occ_spaces_a) {
                                 if (o_k.size == 0) continue; 
                                 
@@ -1423,24 +1406,36 @@ void OMP2::build_generalized_fock() {
                                     auto* t_blk = T2_ptr->get_block(o_j.id, v_a.id, o_k.id, v_b.id);
 
                                     if (blk && t_blk) {
-                                        Eigen::MatrixXd Z_temp = Eigen::MatrixXd::Zero(o_i.size, v_a.size);
-                                        for(int di = 0; di < o_i.size; ++di) {
-                                            for(int da = 0; da < v_a.size; ++da) {
-                                                double val = 0.0;
-                                                for(int dj = 0; dj < o_j.size; ++dj) {
-                                                    for(int dk = 0; dk < o_k.size; ++dk) {
-                                                        for(int db = 0; db < v_b.size; ++db) {
-                                                            // V(jikb) * T(jakb)
-                                                            val += (*blk)(dj, di, dk, db) * (*t_blk)(dj, da, dk, db);
-                                                        }
+                                        int ni = o_i.size, na = v_a.size, nj = o_j.size, nk = o_k.size, nb = v_b.size;
+
+                                        // Flatten V(j, i, k, b)
+                                        Eigen::MatrixXd V_mat(ni, nj * nk * nb);
+                                        for(int b=0; b<nb; ++b) {
+                                            for(int k=0; k<nk; ++k) {
+                                                for(int i=0; i<ni; ++i) {
+                                                    for(int j=0; j<nj; ++j) {
+                                                        V_mat(i, j + k*nj + b*nj*nk) = (*blk)(j, i, k, b);
                                                     }
                                                 }
-                                                Z_temp(di, da) += val;
                                             }
                                         }
 
-                                        for(int di=0; di < o_i.size; ++di) {
-                                            for(int da=0; da < v_a.size; ++da) {
+                                        // Flatten T(j, a, k, b)
+                                        Eigen::MatrixXd T_mat(nj * nk * nb, na);
+                                        for(int a=0; a<na; ++a) {
+                                            for(int b=0; b<nb; ++b) {
+                                                for(int k=0; k<nk; ++k) {
+                                                    for(int j=0; j<nj; ++j) {
+                                                        T_mat(j + k*nj + b*nj*nk, a) = (*t_blk)(j, a, k, b);
+                                                    }
+                                                }
+                                            }
+                                        }
+
+                                        // DGEMM!
+                                        Eigen::MatrixXd Z_temp = V_mat * T_mat;
+                                        for(int di=0; di < ni; ++di) {
+                                            for(int da=0; da < na; ++da) {
                                                 Z_local(v_a.offset + da, o_i.offset + di) -= Z_temp(di, da); // PENGURANGAN
                                             }
                                         }
