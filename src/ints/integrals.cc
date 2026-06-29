@@ -385,49 +385,32 @@ const double* IntegralEngine::compute_shell_block_ptr(int sh_a, int sh_b, int sh
 // ============================================================================
 
 std::vector<double> IntegralEngine::compute_2c2e_block(int sh_P, int sh_Q) {
-    std::vector<double> t_buffer;
-    
     int dimP = CINTcgto_spheric(sh_P, bas_.data());
     int dimQ = CINTcgto_spheric(sh_Q, bas_.data());
-    size_t sz = dimP * dimQ;
-    
-    if (t_buffer.size() < sz) t_buffer.resize(sz);
+    std::vector<double> buffer(dimP * dimQ, 0.0);
     
     int shls[2] = {sh_P, sh_Q};
-    CINTOpt* tmp_opt = static_cast<CINTOpt*>(opt_); // Memakai optimizer Libcint
+    CINTOpt* tmp_opt = static_cast<CINTOpt*>(opt_); 
     
-    // Panggil Libcint 2-center 2-electron (TANPA OPTIMIZER)
-    int has_val = cint2c2e_sph(t_buffer.data(), shls, atm_.data(), mol_.n_atoms(), bas_.data(), basis_.n_shells(), env_.data(), nullptr);
+    // Optimizer diaktifkan (tmp_opt) -> Jutaan operasi nol dilewati seketika!
+    cint2c2e_sph(buffer.data(), shls, atm_.data(), mol_.n_atoms(), bas_.data(), basis_.n_shells(), env_.data(), tmp_opt);
     
-    if (!has_val) {
-        std::fill(t_buffer.begin(), t_buffer.begin() + sz, 0.0);
-    }
-    
-    return t_buffer;
+    return buffer;
 }
 
 std::vector<double> IntegralEngine::compute_3c2e_block(int sh_i, int sh_j, int sh_P) {
-    std::vector<double> t_buffer;
-    
     int dim1 = CINTcgto_spheric(sh_i, bas_.data());
     int dim2 = CINTcgto_spheric(sh_j, bas_.data());
     int dimP = CINTcgto_spheric(sh_P, bas_.data());
-    size_t sz = dim1 * dim2 * dimP;
+    std::vector<double> buffer(dim1 * dim2 * dimP, 0.0);
     
-    if (t_buffer.size() < sz) t_buffer.resize(sz);
-    
-    // Format shell Libcint: (bra1, ket1, bra2) -> i, j, P
     int shls[3] = {sh_i, sh_j, sh_P};
     CINTOpt* tmp_opt = static_cast<CINTOpt*>(opt_);
     
-    // Panggil Libcint 3-center 2-electron (TANPA OPTIMIZER)
-    int has_val = cint3c2e_sph(t_buffer.data(), shls, atm_.data(), mol_.n_atoms(), bas_.data(), basis_.n_shells(), env_.data(), nullptr);
+    // Optimizer diaktifkan (tmp_opt) -> DF Mode melesat kencang!
+    cint3c2e_sph(buffer.data(), shls, atm_.data(), mol_.n_atoms(), bas_.data(), basis_.n_shells(), env_.data(), tmp_opt);
     
-    if (!has_val) {
-        std::fill(t_buffer.begin(), t_buffer.begin() + sz, 0.0);
-    }
-    
-    return t_buffer;
+    return buffer;
 }
 
 // STUBS
