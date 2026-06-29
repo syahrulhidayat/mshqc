@@ -23,123 +23,79 @@ namespace mshqc {
 namespace integrals {
 
 // ============================================================================
-// SMART TRANSFORM KERNEL (Powered by TBLIS Native C++ API)
+// PURE EIGEN SMART TRANSFORM KERNEL (100% TBLIS-FREE)
 // ============================================================================
 static Eigen::Tensor<double, 4> smart_transform_kernel(
     const Eigen::Tensor<double, 4>& eri_ao,
-    const Eigen::MatrixXd& C1, 
-    const Eigen::MatrixXd& C2, 
-    const Eigen::MatrixXd& C3, 
-    const Eigen::MatrixXd& C4, 
+    const Eigen::MatrixXd& C1, const Eigen::MatrixXd& C2, 
+    const Eigen::MatrixXd& C3, const Eigen::MatrixXd& C4, 
     int nbf, int n1, int n2, int n3, int n4 
 ) {
-    using tblis::len_type;
-    using tblis::stride_type;
-    using tblis::varray_view;
-
-    auto make_view = [](const Eigen::MatrixXd& C) {
-        std::vector<len_type> len = { (len_type)C.rows(), (len_type)C.cols() };
-        std::vector<stride_type> str = { 1, (stride_type)C.rows() };
-        return varray_view<double>(len, const_cast<double*>(C.data()), str);
-    };
-
-    auto t_C1 = make_view(C1);
-    auto t_C2 = make_view(C2);
-    auto t_C3 = make_view(C3);
-    auto t_C4 = make_view(C4);
-
-    std::vector<len_type> len_eri = { (len_type)nbf, (len_type)nbf, (len_type)nbf, (len_type)nbf };
-    std::vector<stride_type> str_eri = { 1, (stride_type)nbf, (stride_type)(nbf*nbf), (stride_type)(nbf*nbf*nbf) };
-    varray_view<double> t_eri(len_eri, const_cast<double*>(eri_ao.data()), str_eri);
-
-    // --- STEP 1: mu -> i ---
     Eigen::Tensor<double, 4> T1(n1, nbf, nbf, nbf); 
-    // HAPUS .setZero() karena tblis::mult dengan beta=0.0 akan menimpanya!
-    std::vector<len_type> len_T1 = { (len_type)n1, (len_type)nbf, (len_type)nbf, (len_type)nbf };
-    std::vector<stride_type> str_T1 = { 1, (stride_type)n1, (stride_type)(n1*nbf), (stride_type)(n1*nbf*nbf) };
-    varray_view<double> t_T1_view(len_T1, T1.data(), str_T1);
-    tblis::mult<double>(1.0, t_eri, "abcd", t_C1, "ae", 0.0, t_T1_view, "ebcd");
+    Eigen::Map<const Eigen::MatrixXd> eri_mat(eri_ao.data(), nbf, nbf * nbf * nbf);
+    Eigen::Map<Eigen::MatrixXd> T1_mat(T1.data(), n1, nbf * nbf * nbf);
+    T1_mat.noalias() = C1.transpose() * eri_mat; 
 
-    // --- STEP 2: nu -> a ---
     Eigen::Tensor<double, 4> T2(n1, n2, nbf, nbf); 
-    std::vector<len_type> len_T2 = { (len_type)n1, (len_type)n2, (len_type)nbf, (len_type)nbf };
-    std::vector<stride_type> str_T2 = { 1, (stride_type)n1, (stride_type)(n1*n2), (stride_type)(n1*n2*nbf) };
-    varray_view<double> t_T2_view(len_T2, T2.data(), str_T2);
-    tblis::mult<double>(1.0, t_T1_view, "ebcd", t_C2, "bf", 0.0, t_T2_view, "efcd");
+    #pragma omp parallel for collapse(2) schedule(static)
+    for(int lam = 0; lam < nbf; ++lam) {
+        for(int sig = 0; sig < nbf; ++sig) {
+            Eigen::Map<const Eigen::MatrixXd> T1_slice(T1.data() + (lam + sig * nbf) * n1 * nbf, n1, nbf);
+            Eigen::Map<Eigen::MatrixXd> T2_slice(T2.data() + (lam + sig * nbf) * n1 * n2, n1, n2);
+            T2_slice.noalias() = T1_slice * C2; 
+        }
+    }
 
-    // --- STEP 3: lam -> j ---
     Eigen::Tensor<double, 4> T3(n1, n2, n3, nbf); 
-    std::vector<len_type> len_T3 = { (len_type)n1, (len_type)n2, (len_type)n3, (len_type)nbf };
-    std::vector<stride_type> str_T3 = { 1, (stride_type)n1, (stride_type)(n1*n2), (stride_type)(n1*n2*n3) };
-    varray_view<double> t_T3_view(len_T3, T3.data(), str_T3);
-    tblis::mult<double>(1.0, t_T2_view, "efcd", t_C3, "cg", 0.0, t_T3_view, "efgd");
+    #pragma omp parallel for schedule(static)
+    for(int sig = 0; sig < nbf; ++sig) {
+        Eigen::Map<const Eigen::MatrixXd> T2_slice(T2.data() + sig * n1 * n2 * nbf, n1 * n2, nbf);
+        Eigen::Map<Eigen::MatrixXd> T3_slice(T3.data() + sig * n1 * n2 * n3, n1 * n2, n3);
+        T3_slice.noalias() = T2_slice * C3; 
+    }
 
-    // --- STEP 4: sig -> b ---
     Eigen::Tensor<double, 4> result(n1, n2, n3, n4); 
-    std::vector<len_type> len_out = { (len_type)n1, (len_type)n2, (len_type)n3, (len_type)n4 };
-    std::vector<stride_type> str_out = { 1, (stride_type)n1, (stride_type)(n1*n2), (stride_type)(n1*n2*n3) };
-    varray_view<double> t_out_view(len_out, result.data(), str_out);
-    tblis::mult<double>(1.0, t_T3_view, "efgd", t_C4, "dh", 0.0, t_out_view, "efgh");
+    Eigen::Map<const Eigen::MatrixXd> T3_mat(T3.data(), n1 * n2 * n3, nbf);
+    Eigen::Map<Eigen::MatrixXd> res_mat(result.data(), n1 * n2 * n3, n4);
+    res_mat.noalias() = T3_mat * C4; 
 
     return result;
 }
 // ============================================================================
-// THE "O-O-V-V" OPTIMAL KERNEL (Trik Rahasia HPC Kimia Kuantum)
+// PURE EIGEN OPTIMAL O-O-V-V KERNEL (100% TBLIS-FREE)
 // ============================================================================
 static Eigen::Tensor<double, 4> optimal_oovv_kernel(
     const Eigen::Tensor<double, 4>& eri_ao,
     const Eigen::MatrixXd& Co, const Eigen::MatrixXd& Cv, 
     int nbf, int no, int nv 
 ) {
-    using tblis::len_type;
-    using tblis::stride_type;
-    using tblis::varray_view;
-
-    auto make_view = [](const Eigen::MatrixXd& C) {
-        std::vector<len_type> len = { (len_type)C.rows(), (len_type)C.cols() };
-        std::vector<stride_type> str = { 1, (stride_type)C.rows() };
-        return varray_view<double>(len, const_cast<double*>(C.data()), str);
-    };
-
-    auto t_Co = make_view(Co);
-    auto t_Cv = make_view(Cv);
-
-    std::vector<len_type> len_eri = { (len_type)nbf, (len_type)nbf, (len_type)nbf, (len_type)nbf };
-    std::vector<stride_type> str_eri = { 1, (stride_type)nbf, (stride_type)(nbf*nbf), (stride_type)(nbf*nbf*nbf) };
-    varray_view<double> t_eri(len_eri, const_cast<double*>(eri_ao.data()), str_eri);
-
-    // --- STEP 1: mu -> i (Menggunakan Occupied Co) ---
-    // (a,b,c,d) * (a,e) -> (e,b,c,d)
     Eigen::Tensor<double, 4> T1(no, nbf, nbf, nbf); 
-    std::vector<len_type> len_T1 = { (len_type)no, (len_type)nbf, (len_type)nbf, (len_type)nbf };
-    std::vector<stride_type> str_T1 = { 1, (stride_type)no, (stride_type)(no*nbf), (stride_type)(no*nbf*nbf) };
-    varray_view<double> t_T1_view(len_T1, T1.data(), str_T1);
-    tblis::mult<double>(1.0, t_eri, "abcd", t_Co, "ae", 0.0, t_T1_view, "ebcd");
+    Eigen::Map<const Eigen::MatrixXd> eri_mat(eri_ao.data(), nbf, nbf * nbf * nbf);
+    Eigen::Map<Eigen::MatrixXd> T1_mat(T1.data(), no, nbf * nbf * nbf);
+    T1_mat.noalias() = Co.transpose() * eri_mat;
 
-    // --- STEP 2: lam -> j (Menggunakan Occupied Co) ---
-    // KEAJAIBAN TBLIS: Kita lewati indeks ke-2 (b) dan langsung sikat indeks ke-3 (c)!
-    // (e,b,c,d) * (c,f) -> (e,b,f,d)
     Eigen::Tensor<double, 4> T2(no, nbf, no, nbf); 
-    std::vector<len_type> len_T2 = { (len_type)no, (len_type)nbf, (len_type)no, (len_type)nbf };
-    std::vector<stride_type> str_T2 = { 1, (stride_type)no, (stride_type)(no*nbf), (stride_type)(no*nbf*no) };
-    varray_view<double> t_T2_view(len_T2, T2.data(), str_T2);
-    tblis::mult<double>(1.0, t_T1_view, "ebcd", t_Co, "cf", 0.0, t_T2_view, "ebfd");
+    #pragma omp parallel for schedule(static)
+    for (int sig = 0; sig < nbf; ++sig) {
+        Eigen::Map<const Eigen::MatrixXd> T1_slice(T1.data() + sig * no * nbf * nbf, no * nbf, nbf);
+        Eigen::Map<Eigen::MatrixXd> T2_slice(T2.data() + sig * no * nbf * no, no * nbf, no);
+        T2_slice.noalias() = T1_slice * Co;
+    }
 
-    // --- STEP 3: nu -> a (Menggunakan Virtual Cv) ---
-    // (e,b,f,d) * (b,g) -> (e,g,f,d)
     Eigen::Tensor<double, 4> T3(no, nv, no, nbf); 
-    std::vector<len_type> len_T3 = { (len_type)no, (len_type)nv, (len_type)no, (len_type)nbf };
-    std::vector<stride_type> str_T3 = { 1, (stride_type)no, (stride_type)(no*nv), (stride_type)(no*nv*no) };
-    varray_view<double> t_T3_view(len_T3, T3.data(), str_T3);
-    tblis::mult<double>(1.0, t_T2_view, "ebfd", t_Cv, "bg", 0.0, t_T3_view, "egfd");
+    #pragma omp parallel for collapse(2) schedule(static)
+    for (int j = 0; j < no; ++j) {
+        for (int sig = 0; sig < nbf; ++sig) {
+            Eigen::Map<const Eigen::MatrixXd> T2_slice(T2.data() + (j + sig * no) * no * nbf, no, nbf);
+            Eigen::Map<Eigen::MatrixXd> T3_slice(T3.data() + (j + sig * no) * no * nv, no, nv);
+            T3_slice.noalias() = T2_slice * Cv;
+        }
+    }
 
-    // --- STEP 4: sig -> b (Menggunakan Virtual Cv) ---
-    // (e,g,f,d) * (d,h) -> (e,g,f,h)
     Eigen::Tensor<double, 4> result(no, nv, no, nv); 
-    std::vector<len_type> len_out = { (len_type)no, (len_type)nv, (len_type)no, (len_type)nv };
-    std::vector<stride_type> str_out = { 1, (stride_type)no, (stride_type)(no*nv), (stride_type)(no*nv*no) };
-    varray_view<double> t_out_view(len_out, result.data(), str_out);
-    tblis::mult<double>(1.0, t_T3_view, "egfd", t_Cv, "dh", 0.0, t_out_view, "egfh");
+    Eigen::Map<const Eigen::MatrixXd> T3_mat(T3.data(), no * nv * no, nbf);
+    Eigen::Map<Eigen::MatrixXd> res_mat(result.data(), no * nv * no, nv);
+    res_mat.noalias() = T3_mat * Cv;
 
     return result;
 }
@@ -207,6 +163,9 @@ BlockedTensor4D ERITransformer::transform_oovv_blocked(
 
     return result;
 }
+// ============================================================================
+// BLOCK-SPARSE TRANSFORMATIONS WITH JIT MICRO-GEMM
+// ============================================================================
 BlockedTensor4D ERITransformer::transform_ovvv_blocked(
     const Eigen::Tensor<double, 4>& eri_ao,
     const Eigen::MatrixXd& Co, const Eigen::MatrixXd& Cv,
@@ -218,40 +177,23 @@ BlockedTensor4D ERITransformer::transform_ovvv_blocked(
     int no = Co.cols();
     int nv = Cv.cols();
 
-    using tblis::len_type;
-    using tblis::stride_type;
-    using tblis::varray_view;
-
-    auto make_view = [](const Eigen::MatrixXd& C) {
-        std::vector<len_type> len = { (len_type)C.rows(), (len_type)C.cols() };
-        std::vector<stride_type> str = { 1, (stride_type)C.rows() };
-        return varray_view<double>(len, const_cast<double*>(C.data()), str);
-    };
-
-    // ========================================================================
-    // 1. GLOBAL HALF-TRANSFORMATION (AO -> MO untuk Indeks 1 & 2)
-    // ========================================================================
-    auto t_Co = make_view(Co);
-    auto t_Cv = make_view(Cv);
-    std::vector<len_type> len_eri = { (len_type)nbf, (len_type)nbf, (len_type)nbf, (len_type)nbf };
-    std::vector<stride_type> str_eri = { 1, (stride_type)nbf, (stride_type)(nbf*nbf), (stride_type)(nbf*nbf*nbf) };
-    varray_view<double> t_eri(len_eri, const_cast<double*>(eri_ao.data()), str_eri);
-
+    // 1. GLOBAL HALF-TRANSFORMATION (Pure Eigen DGEMM - Cache Optimized)
     Eigen::Tensor<double, 4> T1(no, nbf, nbf, nbf);
-    std::vector<len_type> len_T1 = { (len_type)no, (len_type)nbf, (len_type)nbf, (len_type)nbf };
-    std::vector<stride_type> str_T1 = { 1, (stride_type)no, (stride_type)(no*nbf), (stride_type)(no*nbf*nbf) };
-    varray_view<double> t_T1(len_T1, T1.data(), str_T1);
-    tblis::mult<double>(1.0, t_eri, "abcd", t_Co, "ae", 0.0, t_T1, "ebcd");
+    Eigen::Map<const Eigen::MatrixXd> eri_mat(eri_ao.data(), nbf, nbf * nbf * nbf);
+    Eigen::Map<Eigen::MatrixXd> T1_mat(T1.data(), no, nbf * nbf * nbf);
+    T1_mat.noalias() = Co.transpose() * eri_mat;
 
     Eigen::Tensor<double, 4> T2(no, nv, nbf, nbf);
-    std::vector<len_type> len_T2 = { (len_type)no, (len_type)nv, (len_type)nbf, (len_type)nbf };
-    std::vector<stride_type> str_T2 = { 1, (stride_type)no, (stride_type)(no*nv), (stride_type)(no*nv*nbf) };
-    varray_view<double> t_T2(len_T2, T2.data(), str_T2);
-    tblis::mult<double>(1.0, t_T1, "ebcd", t_Cv, "bf", 0.0, t_T2, "efcd");
+    #pragma omp parallel for collapse(2) schedule(static)
+    for (int lam = 0; lam < nbf; ++lam) {
+        for (int sig = 0; sig < nbf; ++sig) {
+            Eigen::Map<const Eigen::MatrixXd> T1_slice(T1.data() + (lam + sig * nbf) * no * nbf, no, nbf);
+            Eigen::Map<Eigen::MatrixXd> T2_slice(T2.data() + (lam + sig * nbf) * no * nv, no, nv);
+            T2_slice.noalias() = T1_slice * Cv;
+        }
+    }
 
-    // ========================================================================
     // 2. PRE-COMPUTE C23 KERNEL CACHE (Menghindari Redundansi)
-    // ========================================================================
     std::map<std::pair<int, int>, Eigen::MatrixXd> C23_cache;
     for (const auto& v2 : virt_spaces) {
         if (v2.size == 0) continue;
@@ -272,15 +214,12 @@ BlockedTensor4D ERITransformer::transform_ovvv_blocked(
         }
     }
 
-    // ========================================================================
     // 3. JIT MICRO-GEMM OVER IRREP BLOCKS (The HPC Magic)
-    // ========================================================================
     for (const auto& o1 : occ_spaces) {
         if (o1.size == 0) continue;
         for (const auto& v1 : virt_spaces) {
             if (v1.size == 0) continue;
 
-            // Flatten T2(i, a, lam, sig) menjadi Matriks 2D
             Eigen::MatrixXd T2_mat(o1.size * v1.size, nbf * nbf);
             #pragma omp parallel for collapse(2)
             for (int i = 0; i < o1.size; ++i) {
@@ -300,12 +239,9 @@ BlockedTensor4D ERITransformer::transform_ovvv_blocked(
 
                     // EKSEKUSI HANYA JIKA SIMETRI COCOK!
                     if ((o1.id ^ v1.id ^ v2.id ^ v3.id) == 0) {
-                        
-                        // DGEMM PURE BLAS (Mematikan overhead 4D tensor)
                         Eigen::MatrixXd Out_mat = T2_mat * C23_cache[{v2.id, v3.id}];
-
-                        // Un-flatten kembali ke Tensor 4D
                         Eigen::Tensor<double, 4> block(o1.size, v1.size, v2.size, v3.size);
+                        
                         #pragma omp parallel for collapse(2)
                         for (int b = 0; b < v2.size; ++b) {
                             for (int c = 0; c < v3.size; ++c) {
@@ -324,7 +260,6 @@ BlockedTensor4D ERITransformer::transform_ovvv_blocked(
     }
     return result;
 }
-
 BlockedTensor4D ERITransformer::transform_ooov_blocked(
     const Eigen::Tensor<double, 4>& eri_ao,
     const Eigen::MatrixXd& Co, const Eigen::MatrixXd& Cv,
@@ -336,33 +271,21 @@ BlockedTensor4D ERITransformer::transform_ooov_blocked(
     int no = Co.cols();
     int nv = Cv.cols();
 
-    using tblis::len_type;
-    using tblis::stride_type;
-    using tblis::varray_view;
-
-    auto make_view = [](const Eigen::MatrixXd& C) {
-        std::vector<len_type> len = { (len_type)C.rows(), (len_type)C.cols() };
-        std::vector<stride_type> str = { 1, (stride_type)C.rows() };
-        return varray_view<double>(len, const_cast<double*>(C.data()), str);
-    };
-
     // 1. GLOBAL HALF-TRANSFORMATION
-    auto t_Co = make_view(Co);
-    std::vector<len_type> len_eri = { (len_type)nbf, (len_type)nbf, (len_type)nbf, (len_type)nbf };
-    std::vector<stride_type> str_eri = { 1, (stride_type)nbf, (stride_type)(nbf*nbf), (stride_type)(nbf*nbf*nbf) };
-    varray_view<double> t_eri(len_eri, const_cast<double*>(eri_ao.data()), str_eri);
-
     Eigen::Tensor<double, 4> T1(no, nbf, nbf, nbf);
-    std::vector<len_type> len_T1 = { (len_type)no, (len_type)nbf, (len_type)nbf, (len_type)nbf };
-    std::vector<stride_type> str_T1 = { 1, (stride_type)no, (stride_type)(no*nbf), (stride_type)(no*nbf*nbf) };
-    varray_view<double> t_T1(len_T1, T1.data(), str_T1);
-    tblis::mult<double>(1.0, t_eri, "abcd", t_Co, "ae", 0.0, t_T1, "ebcd");
+    Eigen::Map<const Eigen::MatrixXd> eri_mat(eri_ao.data(), nbf, nbf * nbf * nbf);
+    Eigen::Map<Eigen::MatrixXd> T1_mat(T1.data(), no, nbf * nbf * nbf);
+    T1_mat.noalias() = Co.transpose() * eri_mat;
 
     Eigen::Tensor<double, 4> T2(no, no, nbf, nbf);
-    std::vector<len_type> len_T2 = { (len_type)no, (len_type)no, (len_type)nbf, (len_type)nbf };
-    std::vector<stride_type> str_T2 = { 1, (stride_type)no, (stride_type)(no*no), (stride_type)(no*no*nbf) };
-    varray_view<double> t_T2(len_T2, T2.data(), str_T2);
-    tblis::mult<double>(1.0, t_T1, "ebcd", t_Co, "bf", 0.0, t_T2, "efcd");
+    #pragma omp parallel for collapse(2) schedule(static)
+    for (int lam = 0; lam < nbf; ++lam) {
+        for (int sig = 0; sig < nbf; ++sig) {
+            Eigen::Map<const Eigen::MatrixXd> T1_slice(T1.data() + (lam + sig * nbf) * no * nbf, no, nbf);
+            Eigen::Map<Eigen::MatrixXd> T2_slice(T2.data() + (lam + sig * nbf) * no * no, no, no);
+            T2_slice.noalias() = T1_slice * Co;
+        }
+    }
 
     // 2. PRE-COMPUTE C34 KERNEL CACHE
     std::map<std::pair<int, int>, Eigen::MatrixXd> C34_cache;
@@ -411,8 +334,8 @@ BlockedTensor4D ERITransformer::transform_ooov_blocked(
                     // EKSEKUSI HANYA JIKA SIMETRI COCOK!
                     if ((o1.id ^ o2.id ^ o3.id ^ v1.id) == 0) {
                         Eigen::MatrixXd Out_mat = T2_mat * C34_cache[{o3.id, v1.id}];
-
                         Eigen::Tensor<double, 4> block(o1.size, o2.size, o3.size, v1.size);
+                        
                         #pragma omp parallel for collapse(2)
                         for (int k = 0; k < o3.size; ++k) {
                             for (int a = 0; a < v1.size; ++a) {
