@@ -1085,7 +1085,7 @@ double OMP2::compute_mp2_energy() {
 void OMP2::build_opdm_alpha() {
     G_oo_alpha_ = Eigen::MatrixXd::Zero(na_, na_);
     G_vv_alpha_ = Eigen::MatrixXd::Zero(va_, va_);
-
+    
     auto occ_spaces_a = get_irrep_spaces(scf_.irreps_alpha, 0, na_);
     auto vir_spaces_a = get_irrep_spaces(scf_.irreps_alpha, na_, va_);
 
@@ -1104,13 +1104,11 @@ void OMP2::build_opdm_alpha() {
                     if (t_blk) {
                         int n_i = o1.size, n_a = v1.size, n_j = o2.size, n_b = v2.size;
 
-                        // 1. G_oo (Map Langsung Tanpa Copy)
                         if (o1.id == o2.id) {
                             Eigen::Map<Eigen::MatrixXd> T_mat(t_blk->data(), n_i, n_a * n_j * n_b);
                             G_oo_alpha_.block(o1.offset, o1.offset, n_i, n_i) -= 0.5 * (T_mat * T_mat.transpose());
                         }
 
-                        // 2. G_vv (JIT Flattening + GEMM)
                         if (v1.id == v2.id) {
                             Eigen::MatrixXd T_mat(n_a, n_i * n_j * n_b);
                             for(int b=0; b<n_b; ++b) {
