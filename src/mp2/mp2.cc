@@ -5,7 +5,7 @@
 extern "C" {
 #include <cint.h>
 }
-#include <tblis/tblis.h>
+
 #include "mshqc/symmetry/salc_builder.h"
 
 #include "mshqc/mp2.h"
@@ -1110,19 +1110,22 @@ void OMP2::build_opdm_alpha() {
                             G_oo_alpha_.block(o1.offset, o1.offset, n_i, n_i) -= 0.5 * (T_mat * T_mat.transpose());
                         }
 
-                        // TBLIS C-API (Spesialis G_vv)
+                        // JIT MICRO-LOOP (Spesialis G_vv untuk blok kecil, mematikan TBLIS)
                         if (v1.id == v2.id) {
-                            tblis::tblis_tensor t_T, t_Gvv;
-                            tblis::len_type len_T[] = {n_i, n_a, n_j, n_b};
-                            tblis::stride_type str_T[] = {1, n_i, n_i*n_a, n_i*n_a*n_j};
-                            tblis::tblis_init_tensor_d(&t_T, 4, len_T, t_blk->data(), str_T);
-
                             Eigen::MatrixXd G_vv_tmp = Eigen::MatrixXd::Zero(n_a, n_a);
-                            tblis::len_type len_vv[] = {n_a, n_a};
-                            tblis::stride_type str_vv[] = {1, n_a};
-                            tblis::tblis_init_tensor_d(&t_Gvv, 2, len_vv, G_vv_tmp.data(), str_vv);
-
-                            tblis::tblis_tensor_mult(nullptr, nullptr, &t_T, "iajb", &t_T, "icjb", &t_Gvv, "ac");
+                            for (int a = 0; a < n_a; ++a) {
+                                for (int c = 0; c < n_a; ++c) {
+                                    double sum = 0.0;
+                                    for (int i = 0; i < n_i; ++i) {
+                                        for (int j = 0; j < n_j; ++j) {
+                                            for (int b = 0; b < n_b; ++b) {
+                                                sum += (*t_blk)(i, a, j, b) * (*t_blk)(i, c, j, b);
+                                            }
+                                        }
+                                    }
+                                    G_vv_tmp(a, c) = sum;
+                                }
+                            }
                             G_vv_alpha_.block(v1.offset, v1.offset, n_a, n_a) += 0.5 * G_vv_tmp;
                         }
                     }
@@ -1137,21 +1140,25 @@ void OMP2::build_opdm_alpha() {
             Eigen::Map<Eigen::MatrixXd> Tab_mat(t_ab->data(), na_, va_ * nb_ * vb_);
             G_oo_alpha_ -= (Tab_mat * Tab_mat.transpose());
 
-            tblis::tblis_tensor t_T, t_Gvv;
-            tblis::len_type len_T[] = {na_, va_, nb_, vb_};
-            tblis::stride_type str_T[] = {1, na_, na_*va_, na_*va_*nb_};
-            tblis::tblis_init_tensor_d(&t_T, 4, len_T, t_ab->data(), str_T);
-
             Eigen::MatrixXd G_vv_tmp = Eigen::MatrixXd::Zero(va_, va_);
-            tblis::len_type len_vv[] = {va_, va_};
-            tblis::stride_type str_vv[] = {1, va_};
-            tblis::tblis_init_tensor_d(&t_Gvv, 2, len_vv, G_vv_tmp.data(), str_vv);
-
-            tblis::tblis_tensor_mult(nullptr, nullptr, &t_T, "iajb", &t_T, "icjb", &t_Gvv, "ac");
+            for (int a = 0; a < va_; ++a) {
+                for (int c = 0; c < va_; ++c) {
+                    double sum = 0.0;
+                    for (int i = 0; i < na_; ++i) {
+                        for (int j = 0; j < nb_; ++j) {
+                            for (int b = 0; b < vb_; ++b) {
+                                sum += (*t_ab)(i, j, a, b) * (*t_ab)(i, j, c, b);
+                            }
+                        }
+                    }
+                    G_vv_tmp(a, c) = sum;
+                }
+            }
             G_vv_alpha_ += G_vv_tmp;
         }
     }
 }
+
 void OMP2::build_opdm_beta() {
     G_oo_beta_ = Eigen::MatrixXd::Zero(nb_, nb_);
     G_vv_beta_ = Eigen::MatrixXd::Zero(vb_, vb_);
@@ -1164,40 +1171,54 @@ void OMP2::build_opdm_beta() {
         Eigen::Map<Eigen::MatrixXd> T_bb_mat(t_bb->data(), nb_, vb_ * nb_ * vb_);
         G_oo_beta_ -= 0.5 * (T_bb_mat * T_bb_mat.transpose());
 
-        tblis::tblis_tensor t_T, t_Gvv;
-        tblis::len_type len_T[] = {nb_, vb_, nb_, vb_};
-        tblis::stride_type str_T[] = {1, nb_, nb_*vb_, nb_*vb_*nb_};
-        tblis::tblis_init_tensor_d(&t_T, 4, len_T, t_bb->data(), str_T);
-
         Eigen::MatrixXd G_vv_tmp = Eigen::MatrixXd::Zero(vb_, vb_);
-        tblis::len_type len_vv[] = {vb_, vb_};
-        tblis::stride_type str_vv[] = {1, vb_};
-        tblis::tblis_init_tensor_d(&t_Gvv, 2, len_vv, G_vv_tmp.data(), str_vv);
-
-        tblis::tblis_tensor_mult(nullptr, nullptr, &t_T, "iajb", &t_T, "icjb", &t_Gvv, "ac");
+        for (int a = 0; a < vb_; ++a) {
+            for (int c = 0; c < vb_; ++c) {
+                double sum = 0.0;
+                for (int i = 0; i < nb_; ++i) {
+                    for (int j = 0; j < nb_; ++j) {
+                        for (int b = 0; b < vb_; ++b) {
+                            sum += (*t_bb)(i, a, j, b) * (*t_bb)(i, c, j, b);
+                        }
+                    }
+                }
+                G_vv_tmp(a, c) = sum;
+            }
+        }
         G_vv_beta_ += 0.5 * G_vv_tmp;
     }
 
     if (t_ab) {
-        tblis::tblis_tensor t_T, t_Goo, t_Gvv;
-        tblis::len_type len_T[] = {na_, va_, nb_, vb_};
-        tblis::stride_type str_T[] = {1, na_, na_*va_, na_*va_*nb_};
-        tblis::tblis_init_tensor_d(&t_T, 4, len_T, t_ab->data(), str_T);
-
-        // G_oo Beta dari Mix Alpha-Beta
         Eigen::MatrixXd G_oo_tmp = Eigen::MatrixXd::Zero(nb_, nb_);
-        tblis::len_type len_oo[] = {nb_, nb_};
-        tblis::stride_type str_oo[] = {1, nb_};
-        tblis::tblis_init_tensor_d(&t_Goo, 2, len_oo, G_oo_tmp.data(), str_oo);
-        tblis::tblis_tensor_mult(nullptr, nullptr, &t_T, "iajb", &t_T, "iakb", &t_Goo, "jk");
+        for (int j = 0; j < nb_; ++j) {
+            for (int k = 0; k < nb_; ++k) {
+                double sum = 0.0;
+                for (int i = 0; i < na_; ++i) {
+                    for (int a = 0; a < va_; ++a) {
+                        for (int b = 0; b < vb_; ++b) {
+                            sum += (*t_ab)(i, j, a, b) * (*t_ab)(i, k, a, b);
+                        }
+                    }
+                }
+                G_oo_tmp(j, k) = sum;
+            }
+        }
         G_oo_beta_ -= G_oo_tmp;
 
-        // G_vv Beta dari Mix Alpha-Beta
         Eigen::MatrixXd G_vv_tmp = Eigen::MatrixXd::Zero(vb_, vb_);
-        tblis::len_type len_vv[] = {vb_, vb_};
-        tblis::stride_type str_vv[] = {1, vb_};
-        tblis::tblis_init_tensor_d(&t_Gvv, 2, len_vv, G_vv_tmp.data(), str_vv);
-        tblis::tblis_tensor_mult(nullptr, nullptr, &t_T, "iajb", &t_T, "iajc", &t_Gvv, "bc");
+        for (int b = 0; b < vb_; ++b) {
+            for (int c = 0; c < vb_; ++c) {
+                double sum = 0.0;
+                for (int i = 0; i < na_; ++i) {
+                    for (int j = 0; j < nb_; ++j) {
+                        for (int a = 0; a < va_; ++a) {
+                            sum += (*t_ab)(i, j, a, b) * (*t_ab)(i, j, a, c);
+                        }
+                    }
+                }
+                G_vv_tmp(b, c) = sum;
+            }
+        }
         G_vv_beta_ += G_vv_tmp;
     }
 }
@@ -1359,7 +1380,7 @@ void OMP2::build_generalized_fock() {
                         for (const auto& v_b : vir_spaces_a) {
                             if (v_b.size == 0) continue; 
                             
-                            // --- 1. KONTRAKSI OVVV (TRUE TBLIS C-API) ---
+                            // --- 1. KONTRAKSI OVVV (PURE C++ NATIVE) ---
                             for (const auto& v_c : vir_spaces_a) {
                                 if (v_c.size == 0) continue; 
                                 
@@ -1368,31 +1389,24 @@ void OMP2::build_generalized_fock() {
                                     auto* t_blk = T2_ptr->get_block(o_i.id, v_b.id, o_j.id, v_c.id);
 
                                     if (blk && t_blk) {
-                                        tblis::tblis_tensor t_T, t_V, t_Z;
-                                        
-                                        tblis::len_type ni = o_i.size, na = v_a.size, nb = v_b.size, nj = o_j.size, nc = v_c.size;
+                                        Eigen::MatrixXd Z_temp = Eigen::MatrixXd::Zero(o_i.size, v_a.size);
+                                        for(int di = 0; di < o_i.size; ++di) {
+                                            for(int da = 0; da < v_a.size; ++da) {
+                                                double val = 0.0;
+                                                for(int dj = 0; dj < o_j.size; ++dj) {
+                                                    for(int db = 0; db < v_b.size; ++db) {
+                                                        for(int dc = 0; dc < v_c.size; ++dc) {
+                                                            // T(ibjc) * V(jcab)
+                                                            val += (*t_blk)(di, db, dj, dc) * (*blk)(dj, dc, da, db);
+                                                        }
+                                                    }
+                                                }
+                                                Z_temp(di, da) += val;
+                                            }
+                                        }
 
-                                        // Setup Tensor T (Dimensi: i, b, j, c) - POSISI DIPERBAIKI
-                                        tblis::len_type len_T[] = {ni, nb, nj, nc};
-                                        tblis::stride_type str_T[] = {1, ni, ni*nb, ni*nb*nj};
-                                        tblis::tblis_init_tensor_d(&t_T, 4, len_T, t_blk->data(), str_T);
-
-                                        // Setup Tensor V (Dimensi: j, c, a, b) - POSISI DIPERBAIKI
-                                        tblis::len_type len_V[] = {nj, nc, na, nb};
-                                        tblis::stride_type str_V[] = {1, nj, nj*nc, nj*nc*na};
-                                        tblis::tblis_init_tensor_d(&t_V, 4, len_V, blk->data(), str_V);
-
-                                        // Setup Tensor Output Z (Dimensi: i, a) - POSISI DIPERBAIKI
-                                        Eigen::MatrixXd Z_temp = Eigen::MatrixXd::Zero(ni, na);
-                                        tblis::len_type len_Z[] = {ni, na};
-                                        tblis::stride_type str_Z[] = {1, ni};
-                                        tblis::tblis_init_tensor_d(&t_Z, 2, len_Z, Z_temp.data(), str_Z);
-
-                                        // MAGIC: Kalikan T(ibjc) * V(jcab) -> Z(ia) secara native
-                                        tblis::tblis_tensor_mult(nullptr, nullptr, &t_T, "ibjc", &t_V, "jcab", &t_Z, "ia");
-
-                                        for(int di=0; di<ni; ++di) {
-                                            for(int da=0; da<na; ++da) {
+                                        for(int di=0; di < o_i.size; ++di) {
+                                            for(int da=0; da < v_a.size; ++da) {
                                                 Z_local(v_a.offset + da, o_i.offset + di) += Z_temp(di, da);
                                             }
                                         }
@@ -1400,7 +1414,7 @@ void OMP2::build_generalized_fock() {
                                 }
                             }
                             
-                            // --- 2. KONTRAKSI OOOV (TRUE TBLIS C-API) ---
+                            // --- 2. KONTRAKSI OOOV (PURE C++ NATIVE) ---
                             for (const auto& o_k : occ_spaces_a) {
                                 if (o_k.size == 0) continue; 
                                 
@@ -1409,30 +1423,24 @@ void OMP2::build_generalized_fock() {
                                     auto* t_blk = T2_ptr->get_block(o_j.id, v_a.id, o_k.id, v_b.id);
 
                                     if (blk && t_blk) {
-                                        tblis::tblis_tensor t_V, t_T, t_Z;
-                                        tblis::len_type ni = o_i.size, na = v_a.size, nj = o_j.size, nk = o_k.size, nb = v_b.size;
+                                        Eigen::MatrixXd Z_temp = Eigen::MatrixXd::Zero(o_i.size, v_a.size);
+                                        for(int di = 0; di < o_i.size; ++di) {
+                                            for(int da = 0; da < v_a.size; ++da) {
+                                                double val = 0.0;
+                                                for(int dj = 0; dj < o_j.size; ++dj) {
+                                                    for(int dk = 0; dk < o_k.size; ++dk) {
+                                                        for(int db = 0; db < v_b.size; ++db) {
+                                                            // V(jikb) * T(jakb)
+                                                            val += (*blk)(dj, di, dk, db) * (*t_blk)(dj, da, dk, db);
+                                                        }
+                                                    }
+                                                }
+                                                Z_temp(di, da) += val;
+                                            }
+                                        }
 
-                                        // Setup Tensor V (Dimensi: j, i, k, b) - POSISI DIPERBAIKI
-                                        tblis::len_type len_V[] = {nj, ni, nk, nb};
-                                        tblis::stride_type str_V[] = {1, nj, nj*ni, nj*ni*nk};
-                                        tblis::tblis_init_tensor_d(&t_V, 4, len_V, blk->data(), str_V);
-
-                                        // Setup Tensor T (Dimensi: j, a, k, b) - POSISI DIPERBAIKI
-                                        tblis::len_type len_T[] = {nj, na, nk, nb};
-                                        tblis::stride_type str_T[] = {1, nj, nj*na, nj*na*nk};
-                                        tblis::tblis_init_tensor_d(&t_T, 4, len_T, t_blk->data(), str_T);
-
-                                        // Setup Tensor Output Z (Dimensi: i, a) - POSISI DIPERBAIKI
-                                        Eigen::MatrixXd Z_temp = Eigen::MatrixXd::Zero(ni, na);
-                                        tblis::len_type len_Z[] = {ni, na};
-                                        tblis::stride_type str_Z[] = {1, ni};
-                                        tblis::tblis_init_tensor_d(&t_Z, 2, len_Z, Z_temp.data(), str_Z);
-
-                                        // MAGIC: Kalikan V(jikb) * T(jakb) -> Z(ia) secara native
-                                        tblis::tblis_tensor_mult(nullptr, nullptr, &t_V, "jikb", &t_T, "jakb", &t_Z, "ia");
-
-                                        for(int di=0; di<ni; ++di) {
-                                            for(int da=0; da<na; ++da) {
+                                        for(int di=0; di < o_i.size; ++di) {
+                                            for(int da=0; da < v_a.size; ++da) {
                                                 Z_local(v_a.offset + da, o_i.offset + di) -= Z_temp(di, da); // PENGURANGAN
                                             }
                                         }
