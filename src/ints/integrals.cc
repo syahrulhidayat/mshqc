@@ -390,10 +390,14 @@ std::vector<double> IntegralEngine::compute_2c2e_block(int sh_P, int sh_Q) {
     std::vector<double> buffer(dimP * dimQ, 0.0);
     
     int shls[2] = {sh_P, sh_Q};
-    CINTOpt* tmp_opt = static_cast<CINTOpt*>(opt_); 
     
-    // Optimizer diaktifkan (tmp_opt) -> Jutaan operasi nol dilewati seketika!
-    cint2c2e_sph(buffer.data(), shls, atm_.data(), mol_.n_atoms(), bas_.data(), basis_.n_shells(), env_.data(), tmp_opt);
+    // KEMBALIKAN KE nullptr! Memasukkan 4-center optimizer ke sini merusak memori.
+    int has_val = cint2c2e_sph(buffer.data(), shls, atm_.data(), mol_.n_atoms(), 
+                               bas_.data(), basis_.n_shells(), env_.data(), nullptr);
+    
+    if (!has_val) {
+        std::fill(buffer.begin(), buffer.end(), 0.0);
+    }
     
     return buffer;
 }
@@ -405,10 +409,14 @@ std::vector<double> IntegralEngine::compute_3c2e_block(int sh_i, int sh_j, int s
     std::vector<double> buffer(dim1 * dim2 * dimP, 0.0);
     
     int shls[3] = {sh_i, sh_j, sh_P};
-    CINTOpt* tmp_opt = static_cast<CINTOpt*>(opt_);
     
-    // Optimizer diaktifkan (tmp_opt) -> DF Mode melesat kencang!
-    cint3c2e_sph(buffer.data(), shls, atm_.data(), mol_.n_atoms(), bas_.data(), basis_.n_shells(), env_.data(), tmp_opt);
+    // KEMBALIKAN KE nullptr!
+    int has_val = cint3c2e_sph(buffer.data(), shls, atm_.data(), mol_.n_atoms(), 
+                               bas_.data(), basis_.n_shells(), env_.data(), nullptr);
+    
+    if (!has_val) {
+        std::fill(buffer.begin(), buffer.end(), 0.0);
+    }
     
     return buffer;
 }
