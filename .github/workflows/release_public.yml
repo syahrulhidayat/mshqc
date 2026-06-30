@@ -83,16 +83,16 @@ jobs:
         mkdir -p releases
         rm -f releases/*.whl
         
-        # [PENTING] Ambil dari folder wheelhouse, BUKAN dist
         cp wheelhouse/*.whl releases/
         
-        git add releases/*.whl
+        # Ditambahkan -f agar lolos dari jeratan .gitignore
+        git add -f releases/*.whl
         
         if git diff-index --quiet HEAD --; then
           echo "Tidak ada perubahan biner baru untuk disimpan di repo privat."
         else
           git commit -m "CI-Bot: Update biner terkompilasi (.whl) [skip ci]"
-          git push origin main
+          git push origin HEAD # Dorong aman ke cabang aktif Anda saat ini
         fi
 
     # =========================================================================
