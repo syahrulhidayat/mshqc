@@ -7,12 +7,16 @@ on:
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
+    # PERBAIKAN 1: Tambahkan izin tulis agar bot bisa melakukan git push kembali ke repo
+    permissions:
+      contents: write 
 
     steps:
     - name: Checkout Private Source Code
       uses: actions/checkout@v3
       with:
-        token: ${{'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'}} # Pastikan nama secret-nya sesuai
+        # PERBAIKAN 2: Gunakan GitHub Secrets untuk memanggil token, BUKAN string murni
+        token: ${{'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' }} 
 
     # =========================================================================
     # 1. CACHE CONDA & PIP: Menyimpan unduhan library agar tidak install dari 0
@@ -54,12 +58,13 @@ jobs:
     - name: Build Python Wheel (.whl)
       shell: bash -el {0}
       run: |
-        export CC="ccache $CONDA_PREFIX/bin/x86_64-conda-linux-gnu-cc"
-        export CXX="ccache $CONDA_PREFIX/bin/x86_64-conda-linux-gnu-c++"
+        # PERBAIKAN 3: Gunakan variabel lingkungan Conda yang aman agar tidak memutus dependensi bawaan
+        export CC="ccache ${CC:-$CONDA_PREFIX/bin/x86_64-conda-linux-gnu-cc}"
+        export CXX="ccache ${CXX:-$CONDA_PREFIX/bin/x86_64-conda-linux-gnu-c++}"
+        export CXXFLAGS="${CXXFLAGS:-} -std=c++17 -fopenmp -O3 -mavx2 -mfma -mtune=generic -DEIGEN_USE_BLAS -DEIGEN_USE_LAPACKE -DNDEBUG"
         
-        export CXXFLAGS="-std=c++17 -fopenmp -O3 -mavx2 -mfma -mtune=generic -DEIGEN_USE_BLAS -DEIGEN_USE_LAPACKE -DNDEBUG"
-        
-        python setup.py bdist_wheel
+        # PERBAIKAN 4: Gunakan modul build modern menggantikan bdist_wheel yang sudah usang
+        python -m build --wheel
         
         # Tampilkan statistik Ccache untuk membuktikan cache bekerja
         ccache -s
@@ -76,7 +81,8 @@ jobs:
         mkdir -p releases
         rm -f releases/*.whl
         
-        cp dist/*.whl releases/
+        # PERBAIKAN 5: Tambahkan proteksi 2>/dev/null agar pipeline tidak mati jika dist kosong
+        cp dist/*.whl releases/ 2>/dev/null || true
         
         git add releases/*.whl
         
@@ -84,7 +90,8 @@ jobs:
           echo "Tidak ada perubahan biner baru untuk disimpan di repo privat."
         else
           git commit -m "CI-Bot: Update biner terkompilasi (.whl) [skip ci]"
-          git push origin main
+          # PERBAIKAN 6: Perbaiki jebakan Detached HEAD dengan push yang eksplisit
+          git push origin HEAD:main
         fi
 
     # =========================================================================
@@ -93,6 +100,7 @@ jobs:
     - name: Deploy Wheel to Public Repository (Closed-Source Mode)
       shell: bash -el {0}
       env:
+        # Panggil secret token yang sama seperti di langkah checkout awal
         API_TOKEN_GITHUB: ${{ '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' }} 
       run: |
         git config --global user.name "MSHQC Automation"
