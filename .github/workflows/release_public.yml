@@ -106,7 +106,7 @@ jobs:
         git config --global user.name "MSHQC Automation"
         git config --global user.email "automation@mshqc.internal"
 
-        git clone https://x-access-token:${API_TOKEN_GITHUB}@github.com/syahrulhidayat/mshqc-public.git public_repo
+        git clone https://x-access-token:${API_TOKEN_GITHUB}@github.com/mshqc/mshqc-public.git public_repo
 
         mkdir -p public_repo/releases
         rm -f public_repo/releases/*.whl
