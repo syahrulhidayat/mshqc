@@ -1461,57 +1461,93 @@ void OMP2::build_generalized_fock() {
             auto* t_ab_dense = t2_ab_.get_block(0,0,0,0);
 
             if (t_bb_dense && t_ab_dense) {
-                #pragma omp parallel for
-                for (int i = 0; i < nb_; ++i) {
-                    for (int a = 0; a < vb_; ++a) {
-                        if ((scf_.irreps_beta[i] ^ scf_.irreps_beta[nb_+a]) != 0) continue; 
-                        double z1 = 0.0, z2 = 0.0;
-                        for (int j = 0; j < nb_; ++j) {
-                            for (int b = 0; b < vb_; ++b) {
-                                for (int c = 0; c < vb_; ++c) z1 += (*t_bb_dense)(i, j, b, c) * ovvv_bb(j, c, a, b);
-                                for (int k = 0; k < nb_; ++k) z2 += (*t_bb_dense)(j, k, a, b) * ooov_bb(j, i, k, b);
-                            }
+                // ==========================================
+                // 1. KONTRAKSI BETA-BETA (Z_mat_b)
+                // ==========================================
+                Eigen::MatrixXd T_bb_mat1(nb_, nb_ * vb_ * vb_);
+                Eigen::MatrixXd V_bb_mat1(nb_ * vb_ * vb_, vb_);
+                for(int j=0; j<nb_; ++j) {
+                    for(int b=0; b<vb_; ++b) {
+                        for(int c=0; c<vb_; ++c) {
+                            int col = j + b*nb_ + c*nb_*vb_;
+                            for(int i=0; i<nb_; ++i) T_bb_mat1(i, col) = (*t_bb_dense)(i, j, b, c);
+                            for(int a=0; a<vb_; ++a) V_bb_mat1(col, a) = ovvv_bb(j, c, a, b);
                         }
-                        Z_mat_b(a, i) += z1 - z2;
                     }
                 }
-                
-                #pragma omp parallel for
-                for (int i = 0; i < na_; ++i) {
-                    for (int a = 0; a < va_; ++a) {
-                        if ((scf_.irreps_alpha[i] ^ scf_.irreps_alpha[na_+a]) != 0) continue; 
-                        double z1 = 0.0, z2 = 0.0;
-                        for (int j = 0; j < nb_; ++j) {
-                            for (int b = 0; b < va_; ++b) {
-                                for (int c = 0; c < vb_; ++c) z1 += (*t_ab_dense)(i, j, b, c) * ovvv_ba_aa(j, c, a, b);
-                            }
-                        }
-                        for (int j = 0; j < na_; ++j) {
-                            for (int b = 0; b < vb_; ++b) {
-                                for (int k = 0; k < nb_; ++k) z2 += (*t_ab_dense)(j, k, a, b) * ooov_aa_bb(j, i, k, b);
-                            }
-                        }
-                        Z_mat_a(a, i) += z1 - z2;
-                    }
-                }
+                Z_mat_b += (T_bb_mat1 * V_bb_mat1).transpose();
 
-                #pragma omp parallel for
-                for (int i = 0; i < nb_; ++i) {
-                    for (int a = 0; a < vb_; ++a) {
-                        if ((scf_.irreps_beta[i] ^ scf_.irreps_beta[nb_+a]) != 0) continue; 
-                        double z1 = 0.0, z2 = 0.0;
-                        for (int j = 0; j < na_; ++j) {
-                            for (int b = 0; b < vb_; ++b) {
-                                for (int c = 0; c < va_; ++c) z1 += (*t_ab_dense)(j, i, c, b) * ovvv_ab_bb(j, c, a, b);
-                            }
+                Eigen::MatrixXd T_bb_mat2(nb_ * nb_ * vb_, vb_);
+                Eigen::MatrixXd V_bb_mat2(nb_, nb_ * nb_ * vb_);
+                for(int j=0; j<nb_; ++j) {
+                    for(int k=0; k<nb_; ++k) {
+                        for(int b=0; b<vb_; ++b) {
+                            int row = j + k*nb_ + b*nb_*nb_;
+                            for(int a=0; a<vb_; ++a) T_bb_mat2(row, a) = (*t_bb_dense)(j, k, a, b);
+                            for(int i=0; i<nb_; ++i) V_bb_mat2(i, row) = ooov_bb(j, i, k, b);
                         }
-                        for (int j = 0; j < nb_; ++j) {
-                            for (int b = 0; b < va_; ++b) {
-                                for (int k = 0; k < na_; ++k) z2 += (*t_ab_dense)(k, j, b, a) * ooov_bb_aa(j, i, k, b);
-                            }
-                        }
-                        Z_mat_b(a, i) += z1 - z2;
                     }
+                }
+                Z_mat_b -= (V_bb_mat2 * T_bb_mat2).transpose();
+
+                // ==========================================
+                // 2. KONTRAKSI ALPHA-BETA untuk Z_mat_a
+                // ==========================================
+                Eigen::MatrixXd T_ab_mat1(na_, nb_ * va_ * vb_);
+                Eigen::MatrixXd V_ab_mat1(nb_ * va_ * vb_, va_);
+                for(int j=0; j<nb_; ++j) {
+                    for(int b=0; b<va_; ++b) {
+                        for(int c=0; c<vb_; ++c) {
+                            int col = j + b*nb_ + c*nb_*va_;
+                            for(int i=0; i<na_; ++i) T_ab_mat1(i, col) = (*t_ab_dense)(i, j, b, c);
+                            for(int a=0; a<va_; ++a) V_ab_mat1(col, a) = ovvv_ba_aa(j, c, a, b);
+                        }
+                    }
+                }
+                Z_mat_a += (T_ab_mat1 * V_ab_mat1).transpose();
+
+                Eigen::MatrixXd T_ab_mat2(na_ * nb_ * vb_, va_);
+                Eigen::MatrixXd V_ab_mat2(na_, na_ * nb_ * vb_);
+                for(int j=0; j<na_; ++j) {
+                    for(int k=0; k<nb_; ++k) {
+                        for(int b=0; b<vb_; ++b) {
+                            int row = j + k*na_ + b*na_*nb_;
+                            for(int a=0; a<va_; ++a) T_ab_mat2(row, a) = (*t_ab_dense)(j, k, a, b);
+                            for(int i=0; i<na_; ++i) V_ab_mat2(i, row) = ooov_aa_bb(j, i, k, b);
+                        }
+                    }
+                }
+                Z_mat_a -= (V_ab_mat2 * T_ab_mat2).transpose();
+
+                // ==========================================
+                // 3. KONTRAKSI ALPHA-BETA untuk Z_mat_b
+                // ==========================================
+                Eigen::MatrixXd T_ab_mat3(nb_, na_ * vb_ * va_);
+                Eigen::MatrixXd V_ab_mat3(na_ * vb_ * va_, vb_);
+                for(int j=0; j<na_; ++j) {
+                    for(int b=0; b<vb_; ++b) {
+                        for(int c=0; c<va_; ++c) {
+                            int col = j + b*na_ + c*na_*vb_;
+                            for(int i=0; i<nb_; ++i) T_ab_mat3(i, col) = (*t_ab_dense)(j, i, c, b);
+                            for(int a=0; a<vb_; ++a) V_ab_mat3(col, a) = ovvv_ab_bb(j, c, a, b);
+                        }
+                    }
+                }
+                Z_mat_b += (T_ab_mat3 * V_ab_mat3).transpose();
+
+                Eigen::MatrixXd T_ab_mat4(nb_ * na_ * va_, vb_);
+                Eigen::MatrixXd V_ab_mat4(nb_, nb_ * na_ * va_);
+                for(int j=0; j<nb_; ++j) {
+                    for(int k=0; k<na_; ++k) {
+                        for(int b=0; b<va_; ++b) {
+                            int row = j + k*nb_ + b*nb_*na_;
+                            for(int a=0; a<vb_; ++a) T_ab_mat4(row, a) = (*t_ab_dense)(k, j, b, a);
+                            for(int i=0; i<nb_; ++i) V_ab_mat4(i, row) = ooov_bb_aa(j, i, k, b);
+                        }
+                    }
+                }
+                Z_mat_b -= (V_ab_mat4 * T_ab_mat4).transpose();
+            }
                 }
             }
         } else if (is_restricted) {
