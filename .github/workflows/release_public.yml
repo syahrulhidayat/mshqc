@@ -2,24 +2,20 @@ name: Compile and Release Wheel to Public Repo
 
 on:
   push:
-    branches: [ "main" ] # Memicu otomatisasi setiap kali push ke branch main privat
+    branches: [ "main" ]
    
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
-    # PERBAIKAN 1: Tambahkan izin tulis agar bot bisa melakukan git push kembali ke repo
-    permissions:
-      contents: write 
 
     steps:
     - name: Checkout Private Source Code
       uses: actions/checkout@v3
       with:
-        # PERBAIKAN 2: Gunakan GitHub Secrets untuk memanggil token, BUKAN string murni
-        token: ${{'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' }} 
+        token: ${{ ''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' }} # Gunakan GitHub Secrets
 
     # =========================================================================
-    # 1. CACHE CONDA & PIP: Menyimpan unduhan library agar tidak install dari 0
+    # 1. CACHE CONDA & PIP
     # =========================================================================
     - name: Cache Conda Packages
       uses: actions/cache@v3
@@ -30,7 +26,7 @@ jobs:
           conda-pkgs-${{ runner.os }}-
 
     # =========================================================================
-    # 2. CCACHE: Compiler Cache (Rahasia Incremental Build C++ di Cloud)
+    # 2. CCACHE: Compiler Cache
     # =========================================================================
     - name: Setup Compiler Cache (ccache)
       uses: hendrikmuhs/ccache-action@v1.2
@@ -47,30 +43,37 @@ jobs:
         use-only-tar-bz2: true 
 
     # =========================================================================
-    # 🔥 PENTING: Kunci versi HDF5=1.14.3 agar ABI .so stabil di semua perangkat!
+    # 3. INSTALL BUILD DEPENDENCIES
     # =========================================================================
-    - name: Install Build Dependencies (Sync with Psi4)
+    - name: Install Build Dependencies
       shell: bash -el {0}
       run: |
         conda install -y -c conda-forge cmake make compilers eigen pkg-config "hdf5=1.14.3" pip libcint tblis liblapacke openblas psi4
-        python -m pip install build wheel nanobind
+        python -m pip install build wheel nanobind auditwheel
 
-    - name: Build Python Wheel (.whl)
+    # =========================================================================
+    # 4. BUILD & REPAIR WHEEL (KUNCI KOMPATIBILITAS UNIVERSAL)
+    # =========================================================================
+    - name: Build and Repair Python Wheel (.whl)
       shell: bash -el {0}
       run: |
-        # PERBAIKAN 3: Gunakan variabel lingkungan Conda yang aman agar tidak memutus dependensi bawaan
-        export CC="ccache ${CC:-$CONDA_PREFIX/bin/x86_64-conda-linux-gnu-cc}"
-        export CXX="ccache ${CXX:-$CONDA_PREFIX/bin/x86_64-conda-linux-gnu-c++}"
-        export CXXFLAGS="${CXXFLAGS:-} -std=c++17 -fopenmp -O3 -mavx2 -mfma -mtune=generic -DEIGEN_USE_BLAS -DEIGEN_USE_LAPACKE -DNDEBUG"
+        export CC="ccache $CONDA_PREFIX/bin/x86_64-conda-linux-gnu-cc"
+        export CXX="ccache $CONDA_PREFIX/bin/x86_64-conda-linux-gnu-c++"
+        export CXXFLAGS="-std=c++17 -fopenmp -O3 -mavx2 -mfma -mtune=generic -DEIGEN_USE_BLAS -DEIGEN_USE_LAPACKE -DNDEBUG"
         
-        # PERBAIKAN 4: Gunakan modul build modern menggantikan bdist_wheel yang sudah usang
-        python -m build --wheel
+        # 1. Build roda mentah ke folder dist/
+        echo ">> Membangun roda biner mentah..."
+        python setup.py bdist_wheel
         
-        # Tampilkan statistik Ccache untuk membuktikan cache bekerja
+        # 2. Injeksi dependencies (HDF5, TBLIS, dll) ke dalam roda
+        echo ">> Memperbaiki roda untuk kompatibilitas lintas-Linux (manylinux)..."
+        # auditwheel akan mengekstrak roda di dist/, memasukkan .so, dan menaruh hasil akhirnya di wheelhouse/
+        auditwheel repair dist/*.whl --wheel-dir wheelhouse/
+        
         ccache -s
 
     # =========================================================================
-    # 3. COMMIT KEMBALI KE REPO PRIVAT (Agar Lokal Bisa Pull)
+    # 5. COMMIT KEMBALI KE REPO PRIVAT
     # =========================================================================
     - name: Commit and Push Wheel to Private Repo
       shell: bash -el {0}
@@ -81,8 +84,8 @@ jobs:
         mkdir -p releases
         rm -f releases/*.whl
         
-        # PERBAIKAN 5: Tambahkan proteksi 2>/dev/null agar pipeline tidak mati jika dist kosong
-        cp dist/*.whl releases/ 2>/dev/null || true
+        # [PENTING] Ambil dari folder wheelhouse, BUKAN dist
+        cp wheelhouse/*.whl releases/
         
         git add releases/*.whl
         
@@ -90,17 +93,15 @@ jobs:
           echo "Tidak ada perubahan biner baru untuk disimpan di repo privat."
         else
           git commit -m "CI-Bot: Update biner terkompilasi (.whl) [skip ci]"
-          # PERBAIKAN 6: Perbaiki jebakan Detached HEAD dengan push yang eksplisit
-          git push origin HEAD:main
+          git push origin main
         fi
 
     # =========================================================================
-    # 4. DEPLOY KE REPO PUBLIK
+    # 6. DEPLOY KE REPO PUBLIK
     # =========================================================================
-    - name: Deploy Wheel to Public Repository (Closed-Source Mode)
+    - name: Deploy Wheel to Public Repository
       shell: bash -el {0}
       env:
-        # Panggil secret token yang sama seperti di langkah checkout awal
         API_TOKEN_GITHUB: ${{ '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' }} 
       run: |
         git config --global user.name "MSHQC Automation"
@@ -111,7 +112,8 @@ jobs:
         mkdir -p public_repo/releases
         rm -f public_repo/releases/*.whl
         
-        cp dist/*.whl public_repo/releases/ 2>/dev/null || true
+        # [PENTING] Ambil dari folder wheelhouse, BUKAN dist
+        cp wheelhouse/*.whl public_repo/releases/ 2>/dev/null || true
         cp -r data public_repo/ 2>/dev/null || true
 
         cd public_repo
