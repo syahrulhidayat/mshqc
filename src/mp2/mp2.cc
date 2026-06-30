@@ -5,9 +5,8 @@
 extern "C" {
 #include <cint.h>
 }
-
+#include <tblis/tblis.h>
 #include "mshqc/symmetry/salc_builder.h"
-
 #include "mshqc/mp2.h"
 #include "mshqc/integrals/eri_transformer.h"
 #include <unsupported/Eigen/MatrixFunctions>
@@ -39,17 +38,6 @@ BaseMP2::BaseMP2(const Molecule& mol, const BasisSet& basis,
     nvir_b_ = nbf_ - nocc_b_;
     
     if (config_.eri_method == "df") config_.use_df = true;
-
-    // --- DETEKSI OTOMATIS FROZEN CORE ---
-    n_frozen_ = 0;
-    for (size_t i = 0; i < mol_.n_atoms(); ++i) { 
-        int z = mol_.atom(i).atomic_number; 
-        if (z > 2 && z <= 10) n_frozen_ += 1;
-        else if (z > 10 && z <= 18) n_frozen_ += 5;
-        else if (z > 18 && z <= 36) n_frozen_ += 9;
-        else if (z > 36 && z <= 54) n_frozen_ += 18;
-        else if (z > 54 && z <= 86) n_frozen_ += 27;
-    }
 }
 
 void BaseMP2::transform_3center_mo() {
@@ -72,12 +60,10 @@ void BaseMP2::transform_3center_mo() {
         Eigen::Map<const Eigen::MatrixXd> B_AO(scf_.L_mat.col(P).data(), nbf_, nbf_);
         
         // Transformasi Alpha
-        // Transformasi Alpha
         Eigen::MatrixXd B_MO_a = Ca_occ.transpose() * (B_AO * Ca_vir);
         
+        // FIX: Manual Flattening (Mencegah mismatch Column-Major Eigen vs Row-Major MP2)
         for(int i = 0; i < nocc_a_; ++i) {
-            // TRIK HPC: Biarkan baris inti tetap 0.0 murni (Mencegah komputasi berlebih)
-            if (i < n_frozen_) continue; 
             for(int a = 0; a < nvir_a_; ++a) {
                 B_ia_P_alpha_(i * nvir_a_ + a, P) = B_MO_a(i, a);
             }
@@ -90,7 +76,6 @@ void BaseMP2::transform_3center_mo() {
             Eigen::MatrixXd B_MO_b = Cb_occ.transpose() * (B_AO * Cb_vir);
             
             for(int i = 0; i < nocc_b_; ++i) {
-                if (i < n_frozen_) continue; // Sama untuk Beta
                 for(int a = 0; a < nvir_b_; ++a) {
                     B_ia_P_beta_(i * nvir_b_ + a, P) = B_MO_b(i, a);
                 }
@@ -419,6 +404,7 @@ OMP2::OMP2(const Molecule& mol, const BasisSet& basis,
     nb_  = nocc_b_;
     va_  = nvir_a_; 
     vb_  = nvir_b_;
+    n_frozen_ = 0; // Pastikan ini ada
 
     // Mencegah cetakan -inf di iterasi awal
     e_ss_ = 0.0;
@@ -441,7 +427,6 @@ OMP2::OMP2(const Molecule& mol, const BasisSet& basis,
 // ROBUST L-BFGS OPTIMIZER (Anti-Explosion & Strict Curvature)
 // ============================================================================
 struct OrbitalLBFGS {
-    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
     int m_max = 6;
     std::vector<Eigen::VectorXd> s_hist;
     std::vector<Eigen::VectorXd> y_hist;
@@ -907,40 +892,53 @@ void OMP2::pseudocanonicalize() {
 }
 void OMP2::compute_t2_amplitudes() {
     t2_aa_.clear(); t2_bb_.clear(); t2_ab_.clear();
+    int nf = n_frozen_;
 
     auto occ_spaces_a = get_irrep_spaces(scf_.irreps_alpha, 0, na_);
     auto vir_spaces_a = get_irrep_spaces(scf_.irreps_alpha, na_, va_);
 
+    // 1. ALPHA-ALPHA (Hanya komputasi blok yang sah secara simetri & non-zero)
     for (const auto& o1 : occ_spaces_a) {
-        if (o1.size == 0) continue; 
+        if (o1.size == 0) continue; // <-- FILTER ZERO-SIZE
         for (const auto& v1 : vir_spaces_a) {
-            if (v1.size == 0) continue; 
+            if (v1.size == 0) continue; // <-- FILTER ZERO-SIZE
             for (const auto& o2 : occ_spaces_a) {
-                if (o2.size == 0) continue; 
+                if (o2.size == 0) continue; // <-- FILTER ZERO-SIZE
                 for (const auto& v2 : vir_spaces_a) {
-                    if (v2.size == 0) continue; 
+                    if (v2.size == 0) continue; // <-- FILTER ZERO-SIZE
                     
                     if ((o1.id ^ v1.id ^ o2.id ^ v2.id) == 0) {
                         auto* g_blk = g_aa_.get_block(o1.id, v1.id, o2.id, v2.id);
                         auto* g_blk_ex = g_aa_.get_block(o1.id, v2.id, o2.id, v1.id);
-                        bool ex_valid = (g_blk_ex != nullptr && g_blk_ex->dimension(1) == (Eigen::Index)v2.size && g_blk_ex->dimension(3) == (Eigen::Index)v1.size);
+                        
+                        // GUARD MUTLAK: Cegah Out-of-Bounds karena tabrakan dimensi
+                        bool ex_valid = false;
+                        if (g_blk_ex != nullptr) {
+                            if (g_blk_ex->dimension(1) == (Eigen::Index)v2.size && 
+                                g_blk_ex->dimension(3) == (Eigen::Index)v1.size) {
+                                ex_valid = true;
+                            }
+                        }
                         
                         if (g_blk && ex_valid) { 
                             t2_aa_.allocate_block(o1.id, v1.id, o2.id, v2.id, o1.size, v1.size, o2.size, v2.size);
                             auto* t_blk = t2_aa_.get_block(o1.id, v1.id, o2.id, v2.id);
+                            
                             if (t_blk) {              
-                                t_blk->setZero(); 
-                                // MENGAKTIFKAN KEMBALI 4 CORE CODESPACE!
-                                #pragma omp parallel for collapse(2) schedule(dynamic)
-                                for (int db = 0; db < v2.size; ++db) {
+                                t_blk->setZero(); // Wajib bersihkan sampah RAM
+                            
+                                for (int di = 0; di < o1.size; ++di) {
+                                    int i_glb = o1.offset + di;
+                                    if (i_glb < nf) continue; // FROZEN CORE SKIP
                                     for (int dj = 0; dj < o2.size; ++dj) {
-                                        double e_b = scf_.orbital_energies_alpha(na_ + v2.offset + db);
-                                        double e_j = scf_.orbital_energies_alpha(o2.offset + dj);
+                                        int j_glb = o2.offset + dj;
+                                        if (j_glb < nf) continue; // FROZEN CORE SKIP
+                                        
+                                        double e_ij = scf_.orbital_energies_alpha(i_glb) + scf_.orbital_energies_alpha(j_glb);
                                         for (int da = 0; da < v1.size; ++da) {
-                                            double e_a = scf_.orbital_energies_alpha(na_ + v1.offset + da);
-                                            for (int di = 0; di < o1.size; ++di) {
-                                                double e_i = scf_.orbital_energies_alpha(o1.offset + di);
-                                                double den = e_i + e_j - e_a - e_b;
+                                            double den_a = e_ij - scf_.orbital_energies_alpha(na_ + v1.offset + da);
+                                            for (int db = 0; db < v2.size; ++db) {
+                                                double den = den_a - scf_.orbital_energies_alpha(na_ + v2.offset + db);
                                                 double val = (*g_blk)(di, da, dj, db) - (*g_blk_ex)(di, db, dj, da);
                                                 (*t_blk)(di, da, dj, db) = (std::abs(den) > 1e-12) ? val / den : 0.0;
                                             }
@@ -955,24 +953,24 @@ void OMP2::compute_t2_amplitudes() {
         }
     }
 
+    // 2. BETA & MIXED (Open-Shell Dense Fallback)
     if (nb_ > 0 && vb_ > 0) {
         auto* g_bb_blk = g_bb_.get_block(0,0,0,0);
         if (g_bb_blk) {
-            t2_bb_.allocate_block(0,0,0,0, nb_, vb_, nb_, vb_);
+            // KOREKSI FATAL: T2_bb harus (Occ, Occ, Virt, Virt)
+            t2_bb_.allocate_block(0,0,0,0, nb_, nb_, vb_, vb_);
             auto* t_bb_blk = t2_bb_.get_block(0,0,0,0);
-            #pragma omp parallel for collapse(2) schedule(dynamic)
-            for(int b = 0; b < vb_; ++b) {
-                for(int j = 0; j < nb_; ++j) {
-                    double e_b = scf_.orbital_energies_beta(nb_+b);
-                    double e_j = scf_.orbital_energies_beta(j);
-                    for(int a = 0; a < vb_; ++a) {
-                        double e_a = scf_.orbital_energies_beta(nb_+a);
-                        for(int i = 0; i < nb_; ++i) {
-                            double e_i = scf_.orbital_energies_beta(i);
-                            double den = e_i + e_j - e_a - e_b;
-                            double val = (*g_bb_blk)(i, a, j, b) - (*g_bb_blk)(i, b, j, a);
-                            (*t_bb_blk)(i, a, j, b) = (std::abs(den) > 1e-12) ? val / den : 0.0;
-                        }
+           
+
+            for(int i = nf; i < nb_; ++i) for(int j = nf; j < nb_; ++j) {
+                double e_ij = scf_.orbital_energies_beta(i) + scf_.orbital_energies_beta(j);
+                for(int a=0; a<vb_; ++a) {
+                    double den_a = e_ij - scf_.orbital_energies_beta(nb_+a);
+                    for(int b=0; b<vb_; ++b) {
+                         double den = den_a - scf_.orbital_energies_beta(nb_+b);
+                        double val = (*g_bb_blk)(i, a, j, b) - (*g_bb_blk)(i, b, j, a);
+                        (*t_bb_blk)(i, j, a, b) = (std::abs(den) > 1e-12) ? val / den : 0.0;
+                        
                     }
                 }
             }
@@ -980,20 +978,15 @@ void OMP2::compute_t2_amplitudes() {
         
         auto* g_ab_blk = g_ab_.get_block(0,0,0,0);
         if (g_ab_blk) {
-            t2_ab_.allocate_block(0,0,0,0, na_, va_, nb_, vb_);
+            t2_ab_.allocate_block(0,0,0,0, na_, nb_, va_, vb_);
             auto* t_ab_blk = t2_ab_.get_block(0,0,0,0);
-            #pragma omp parallel for collapse(2) schedule(dynamic)
-            for(int b = 0; b < vb_; ++b) {
-                for(int j = 0; j < nb_; ++j) {
-                    double e_b = scf_.orbital_energies_beta(nb_+b);
-                    double e_j = scf_.orbital_energies_beta(j);
-                    for(int a = 0; a < va_; ++a) {
-                        double e_a = scf_.orbital_energies_alpha(na_+a);
-                        for(int i = 0; i < na_; ++i) {
-                            double e_i = scf_.orbital_energies_alpha(i);
-                            double den = e_i + e_j - e_a - e_b;
-                            (*t_ab_blk)(i, a, j, b) = (std::abs(den) > 1e-12) ? (*g_ab_blk)(i, a, j, b) / den : 0.0;
-                        }
+            for(int i = nf; i < na_; ++i) for(int j = nf; j < nb_; ++j) {
+                double e_ij = scf_.orbital_energies_alpha(i) + scf_.orbital_energies_beta(j);
+                for(int a=0; a<va_; ++a) {
+                    double den_a = e_ij - scf_.orbital_energies_alpha(na_+a);
+                    for(int b=0; b<vb_; ++b) {
+                        double den = den_a - scf_.orbital_energies_beta(nb_+b);
+                        (*t_ab_blk)(i, j, a, b) = (std::abs(den) > 1e-12) ? (*g_ab_blk)(i, a, j, b) / den : 0.0;
                     }
                 }
             }
@@ -1002,40 +995,48 @@ void OMP2::compute_t2_amplitudes() {
 }
 double OMP2::compute_mp2_energy() {
     double E_ss_aa = 0.0, E_ss_bb = 0.0, E_os = 0.0;
+    int nf = n_frozen_;
     
     auto occ_spaces_a = get_irrep_spaces(scf_.irreps_alpha, 0, na_);
     auto vir_spaces_a = get_irrep_spaces(scf_.irreps_alpha, na_, va_);
 
     for (const auto& o1 : occ_spaces_a) {
-        if (o1.size == 0) continue; 
+        if (o1.size == 0) continue; // <-- FILTER ZERO-SIZE
         for (const auto& v1 : vir_spaces_a) {
-            if (v1.size == 0) continue; 
+            if (v1.size == 0) continue; // <-- FILTER ZERO-SIZE
             for (const auto& o2 : occ_spaces_a) {
-                if (o2.size == 0) continue; 
+                if (o2.size == 0) continue; // <-- FILTER ZERO-SIZE
                 for (const auto& v2 : vir_spaces_a) {
-                    if (v2.size == 0) continue; 
+                    if (v2.size == 0) continue; // <-- FILTER ZERO-SIZE
                     
                     if ((o1.id ^ v1.id ^ o2.id ^ v2.id) != 0) continue;
 
                     auto* t_blk = t2_aa_.get_block(o1.id, v1.id, o2.id, v2.id);
                     auto* g_blk = g_aa_.get_block(o1.id, v1.id, o2.id, v2.id);
                     auto* g_blk_ex = g_aa_.get_block(o1.id, v2.id, o2.id, v1.id);
-                    bool ex_valid = (g_blk_ex != nullptr && g_blk_ex->dimension(1) == (Eigen::Index)v2.size && g_blk_ex->dimension(3) == (Eigen::Index)v1.size);
+                    
+                    // GUARD DIMENSI EXCHANGE
+                    bool ex_valid = false;
+                    if (g_blk_ex != nullptr) {
+                        if (g_blk_ex->dimension(1) == (Eigen::Index)v2.size && 
+                            g_blk_ex->dimension(3) == (Eigen::Index)v1.size) {
+                            ex_valid = true;
+                        }
+                    }
 
                     if (t_blk && g_blk && ex_valid) {
-                        double local_E = 0.0;
-                        #pragma omp parallel for collapse(2) reduction(+:local_E)
-                        for (int db = 0; db < v2.size; ++db) {
+                        for (int di = 0; di < o1.size; ++di) {
+                            if (o1.offset+di < nf) continue;
                             for (int dj = 0; dj < o2.size; ++dj) {
+                                if (o2.offset+dj < nf) continue;
                                 for (int da = 0; da < v1.size; ++da) {
-                                    for (int di = 0; di < o1.size; ++di) {
+                                    for (int db = 0; db < v2.size; ++db) {
                                         double g_val = (*g_blk)(di, da, dj, db) - (*g_blk_ex)(di, db, dj, da);
-                                        local_E += (*t_blk)(di, da, dj, db) * g_val;
+                                        E_ss_aa += (*t_blk)(di, da, dj, db) * g_val;
                                     }
                                 }
                             }
                         }
-                        E_ss_aa += local_E;
                     }
                 }
             }
@@ -1046,35 +1047,14 @@ double OMP2::compute_mp2_energy() {
         auto* t_bb = t2_bb_.get_block(0,0,0,0);
         auto* g_bb = g_bb_.get_block(0,0,0,0);
         if (t_bb && g_bb) {
-            double local_bb = 0.0;
-            #pragma omp parallel for collapse(2) reduction(+:local_bb)
-            for(int b=0; b<vb_; ++b) {
-                for(int j=0; j<nb_; ++j) {
-                    for(int a=0; a<vb_; ++a) {
-                        for(int i=0; i<nb_; ++i) {
-                            local_bb += (*t_bb)(i, a, j, b) * ((*g_bb)(i, a, j, b) - (*g_bb)(i, b, j, a));
-                        }
-                    }
-                }
-            }
-            E_ss_bb += local_bb;
+            for(int i=nf; i<nb_; ++i) for(int j=nf; j<nb_; ++j) for(int a=0; a<vb_; ++a) for(int b=0; b<vb_; ++b)
+                E_ss_bb += (*t_bb)(i, j, a, b) * ((*g_bb)(i, a, j, b) - (*g_bb)(i, b, j, a));
         }
-        
         auto* t_ab = t2_ab_.get_block(0,0,0,0);
         auto* g_ab = g_ab_.get_block(0,0,0,0);
         if (t_ab && g_ab) {
-            double local_ab = 0.0;
-            #pragma omp parallel for collapse(2) reduction(+:local_ab)
-            for(int b=0; b<vb_; ++b) {
-                for(int j=0; j<nb_; ++j) {
-                    for(int a=0; a<va_; ++a) {
-                        for(int i=0; i<na_; ++i) {
-                            local_ab += (*t_ab)(i, a, j, b) * (*g_ab)(i, a, j, b);
-                        }
-                    }
-                }
-            }
-            E_os += local_ab;
+            for(int i=nf; i<na_; ++i) for(int j=nf; j<nb_; ++j) for(int a=0; a<va_; ++a) for(int b=0; b<vb_; ++b)
+                E_os += (*t_ab)(i, j, a, b) * (*g_ab)(i, a, j, b);
         }
     }
 
@@ -1090,37 +1070,59 @@ void OMP2::build_opdm_alpha() {
     auto vir_spaces_a = get_irrep_spaces(scf_.irreps_alpha, na_, va_);
 
     for (const auto& o1 : occ_spaces_a) {
-        if (o1.size == 0) continue; 
+        if (o1.size == 0) continue; // <-- FILTER ZERO-SIZE
         for (const auto& o2 : occ_spaces_a) {
-            if (o2.size == 0) continue; 
+            if (o2.size == 0) continue; // <-- FILTER ZERO-SIZE
             for (const auto& v1 : vir_spaces_a) {
-                if (v1.size == 0) continue; 
+                if (v1.size == 0) continue; // <-- FILTER ZERO-SIZE
                 for (const auto& v2 : vir_spaces_a) {
-                    if (v2.size == 0) continue; 
+                    if (v2.size == 0) continue; // <-- FILTER ZERO-SIZE
                     
                     if ((o1.id ^ v1.id ^ o2.id ^ v2.id) != 0) continue;
 
                     auto* t_blk = t2_aa_.get_block(o1.id, v1.id, o2.id, v2.id);
                     if (t_blk) {
-                        int n_i = o1.size, n_a = v1.size, n_j = o2.size, n_b = v2.size;
-
-                        if (o1.id == o2.id) {
-                            Eigen::Map<Eigen::MatrixXd> T_mat(t_blk->data(), n_i, n_a * n_j * n_b);
-                            G_oo_alpha_.block(o1.offset, o1.offset, n_i, n_i) -= 0.5 * (T_mat * T_mat.transpose());
-                        }
-
-                        if (v1.id == v2.id) {
-                            Eigen::MatrixXd T_mat(n_a, n_i * n_j * n_b);
-                            for(int b=0; b<n_b; ++b) {
-                                for(int j=0; j<n_j; ++j) {
-                                    for(int a=0; a<n_a; ++a) {
-                                        for(int i=0; i<n_i; ++i) {
-                                            T_mat(a, i + j*n_i + b*n_i*n_j) = (*t_blk)(i, a, j, b);
+                        for (int di = 0; di < o1.size; ++di) {
+                            for (int dj = 0; dj < o1.size; ++dj) {
+                                double val = 0.0;
+                                for (int dk = 0; dk < o2.size; ++dk) {
+                                    for (int da = 0; da < v1.size; ++da) {
+                                        for (int db = 0; db < v2.size; ++db) {
+                                            val += (*t_blk)(di, da, dk, db) * (*t_blk)(dj, da, dk, db);
                                         }
                                     }
                                 }
+                                G_oo_alpha_(o1.offset+di, o1.offset+dj) -= 0.5 * val;
                             }
-                            G_vv_alpha_.block(v1.offset, v1.offset, n_a, n_a) += 0.5 * (T_mat * T_mat.transpose());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    for (const auto& v1 : vir_spaces_a) {
+        if (v1.size == 0) continue; // <-- FILTER ZERO-SIZE
+        for (const auto& v2 : vir_spaces_a) {
+            if (v2.size == 0) continue; // <-- FILTER ZERO-SIZE
+            for (const auto& o1 : occ_spaces_a) {
+                if (o1.size == 0) continue; // <-- FILTER ZERO-SIZE
+                for (const auto& o2 : occ_spaces_a) {
+                    if (o2.size == 0) continue; // <-- FILTER ZERO-SIZE
+                    auto* t_blk = t2_aa_.get_block(o1.id, v1.id, o2.id, v2.id);
+                    if (t_blk) {
+                        for (int da = 0; da < v1.size; ++da) {
+                            for (int db = 0; db < v1.size; ++db) {
+                                double val = 0.0;
+                                for (int di = 0; di < o1.size; ++di) {
+                                    for (int dj = 0; dj < o2.size; ++dj) {
+                                        for (int dc = 0; dc < v2.size; ++dc) {
+                                            val += (*t_blk)(di, da, dj, dc) * (*t_blk)(di, db, dj, dc);
+                                        }
+                                    }
+                                }
+                                G_vv_alpha_(v1.offset+da, v1.offset+db) += 0.5 * val;
+                            }
                         }
                     }
                 }
@@ -1131,20 +1133,18 @@ void OMP2::build_opdm_alpha() {
     if (nb_ > 0 && vb_ > 0) {
         auto* t_ab = t2_ab_.get_block(0,0,0,0);
         if (t_ab) {
-            Eigen::Map<Eigen::MatrixXd> Tab_mat(t_ab->data(), na_, va_ * nb_ * vb_);
-            G_oo_alpha_ -= (Tab_mat * Tab_mat.transpose());
-
-            Eigen::MatrixXd T_mat(va_, na_ * nb_ * vb_);
-            for(int b=0; b<vb_; ++b) {
-                for(int a=0; a<va_; ++a) {
-                    for(int j=0; j<nb_; ++j) {
-                        for(int i=0; i<na_; ++i) {
-                            T_mat(a, i + j*na_ + b*na_*nb_) = (*t_ab)(i, j, a, b);
-                        }
-                    }
-                }
+            for(int i=0; i<na_; ++i) for(int j=0; j<na_; ++j) {
+                double val = 0.0;
+                for(int k=0; k<nb_; ++k) for(int a=0; a<va_; ++a) for(int b=0; b<vb_; ++b)
+                    val += (*t_ab)(i, k, a, b) * (*t_ab)(j, k, a, b);
+                G_oo_alpha_(i, j) -= val;
             }
-            G_vv_alpha_ += (T_mat * T_mat.transpose());
+            for(int a=0; a<va_; ++a) for(int c=0; c<va_; ++c) {
+                double val = 0.0;
+                for(int i=0; i<na_; ++i) for(int j=0; j<nb_; ++j) for(int b=0; b<vb_; ++b)
+                    val += (*t_ab)(i, j, a, b) * (*t_ab)(i, j, c, b);
+                G_vv_alpha_(a, c) += val;
+            }
         }
     }
 }
@@ -1158,46 +1158,32 @@ void OMP2::build_opdm_beta() {
     auto* t_ab = t2_ab_.get_block(0,0,0,0);
     
     if (t_bb) {
-        Eigen::Map<Eigen::MatrixXd> T_bb_mat(t_bb->data(), nb_, vb_ * nb_ * vb_);
-        G_oo_beta_ -= 0.5 * (T_bb_mat * T_bb_mat.transpose());
-
-        Eigen::MatrixXd T_mat(vb_, nb_ * nb_ * vb_);
-        for(int b=0; b<vb_; ++b) {
-            for(int c=0; c<vb_; ++c) {
-                for(int j=0; j<nb_; ++j) {
-                    for(int i=0; i<nb_; ++i) {
-                        T_mat(c, i + j*nb_ + b*nb_*nb_) = (*t_bb)(i, c, j, b);
-                    }
-                }
-            }
+        for(int i=0; i<nb_; ++i) for(int j=0; j<nb_; ++j) {
+            double val = 0.0;
+            for(int k=0; k<nb_; ++k) for(int a=0; a<vb_; ++a) for(int b=0; b<vb_; ++b)
+                val += (*t_bb)(i, k, a, b) * (*t_bb)(j, k, a, b);
+            G_oo_beta_(i, j) -= 0.5 * val;
         }
-        G_vv_beta_ += 0.5 * (T_mat * T_mat.transpose());
+        for(int a=0; a<vb_; ++a) for(int c=0; c<vb_; ++c) {
+            double val = 0.0;
+            for(int i=0; i<nb_; ++i) for(int j=0; j<nb_; ++j) for(int b=0; b<vb_; ++b)
+                val += (*t_bb)(i, j, a, b) * (*t_bb)(i, j, c, b);
+            G_vv_beta_(a, c) += 0.5 * val;
+        }
     }
-
     if (t_ab) {
-        Eigen::MatrixXd T_mat_oo(nb_, na_ * va_ * vb_);
-        for(int b=0; b<vb_; ++b) {
-            for(int a=0; a<va_; ++a) {
-                for(int j=0; j<nb_; ++j) {
-                    for(int i=0; i<na_; ++i) {
-                        T_mat_oo(j, i + a*na_ + b*na_*va_) = (*t_ab)(i, j, a, b);
-                    }
-                }
-            }
+        for(int i=0; i<nb_; ++i) for(int j=0; j<nb_; ++j) {
+            double val = 0.0;
+            for(int k=0; k<na_; ++k) for(int a=0; a<va_; ++a) for(int b=0; b<vb_; ++b)
+                val += (*t_ab)(k, i, a, b) * (*t_ab)(k, j, a, b);
+            G_oo_beta_(i, j) -= val;
         }
-        G_oo_beta_ -= (T_mat_oo * T_mat_oo.transpose());
-
-        Eigen::MatrixXd T_mat_vv(vb_, na_ * nb_ * va_);
-        for(int b=0; b<vb_; ++b) {
-            for(int a=0; a<va_; ++a) {
-                for(int j=0; j<nb_; ++j) {
-                    for(int i=0; i<na_; ++i) {
-                        T_mat_vv(b, i + j*na_ + a*na_*nb_) = (*t_ab)(i, j, a, b);
-                    }
-                }
-            }
+        for(int a=0; a<vb_; ++a) for(int c=0; c<vb_; ++c) {
+            double val = 0.0;
+            for(int i=0; i<na_; ++i) for(int j=0; j<nb_; ++j) for(int b=0; b<va_; ++b)
+                val += (*t_ab)(i, j, b, a) * (*t_ab)(i, j, b, c);
+            G_vv_beta_(a, c) += val;
         }
-        G_vv_beta_ += (T_mat_vv * T_mat_vv.transpose());
     }
 }
 // ============================================================================
@@ -1319,7 +1305,9 @@ void OMP2::build_generalized_fock() {
                                     auto* T_blk = T2_spatial.get_block(o1.id, v1.id, o2.id, v2.id);
                                     
                                     for (int di = 0; di < o1.size; ++di) {
+                                        if (o1.offset+di < n_frozen_) continue;
                                         for (int dj = 0; dj < o2.size; ++dj) {
+                                            if (o2.offset+dj < n_frozen_) continue;
                                             double e_ij = scf_.orbital_energies_alpha(o1.offset+di) + scf_.orbital_energies_alpha(o2.offset+dj);
                                             for (int da = 0; da < v1.size; ++da) {
                                                 double den_a = e_ij - scf_.orbital_energies_alpha(na_ + v1.offset+da);
@@ -1341,8 +1329,12 @@ void OMP2::build_generalized_fock() {
             }
             T2_ptr = &T2_spatial;
         }
+
+       #pragma omp parallel
+        {
             Eigen::MatrixXd Z_local = Eigen::MatrixXd::Zero(va_, na_);
-  
+
+            #pragma omp for schedule(dynamic)
             for (int s_i = 0; s_i < occ_spaces_a.size(); ++s_i) {
                 const auto& o_i = occ_spaces_a[s_i];
                 if (o_i.size == 0) continue; 
@@ -1358,7 +1350,7 @@ void OMP2::build_generalized_fock() {
                         for (const auto& v_b : vir_spaces_a) {
                             if (v_b.size == 0) continue; 
                             
-                            // --- 1. KONTRAKSI OVVV (JIT MICRO-GEMM) ---
+                            // --- 1. KONTRAKSI OVVV (TRUE TBLIS C-API) ---
                             for (const auto& v_c : vir_spaces_a) {
                                 if (v_c.size == 0) continue; 
                                 
@@ -1367,27 +1359,31 @@ void OMP2::build_generalized_fock() {
                                     auto* t_blk = T2_ptr->get_block(o_i.id, v_b.id, o_j.id, v_c.id);
 
                                     if (blk && t_blk) {
-                                        int ni = o_i.size, na = v_a.size, nj = o_j.size, nb = v_b.size, nc = v_c.size;
+                                        tblis::tblis_tensor t_T, t_V, t_Z;
+                                        
+                                        tblis::len_type ni = o_i.size, na = v_a.size, nb = v_b.size, nj = o_j.size, nc = v_c.size;
 
-                                        // Map langsung T(i, b, j, c)
-                                        Eigen::Map<const Eigen::MatrixXd> T_mat(t_blk->data(), ni, nb * nj * nc);
+                                        // Setup Tensor T (Dimensi: i, b, j, c) - POSISI DIPERBAIKI
+                                        tblis::len_type len_T[] = {ni, nb, nj, nc};
+                                        tblis::stride_type str_T[] = {1, ni, ni*nb, ni*nb*nj};
+                                        tblis::tblis_init_tensor_d(&t_T, 4, len_T, t_blk->data(), str_T);
 
-                                        // Flatten V(j, c, a, b)
-                                        Eigen::MatrixXd V_mat(nb * nj * nc, na);
-                                        for(int a=0; a<na; ++a) {
-                                            for(int c=0; c<nc; ++c) {
-                                                for(int j=0; j<nj; ++j) {
-                                                    for(int b=0; b<nb; ++b) {
-                                                        V_mat(b + j*nb + c*nb*nj, a) = (*blk)(j, c, a, b);
-                                                    }
-                                                }
-                                            }
-                                        }
+                                        // Setup Tensor V (Dimensi: j, c, a, b) - POSISI DIPERBAIKI
+                                        tblis::len_type len_V[] = {nj, nc, na, nb};
+                                        tblis::stride_type str_V[] = {1, nj, nj*nc, nj*nc*na};
+                                        tblis::tblis_init_tensor_d(&t_V, 4, len_V, blk->data(), str_V);
 
-                                        // DGEMM! (O(N^5) musnah seketika)
-                                        Eigen::MatrixXd Z_temp = T_mat * V_mat;
-                                        for(int di=0; di < ni; ++di) {
-                                            for(int da=0; da < na; ++da) {
+                                        // Setup Tensor Output Z (Dimensi: i, a) - POSISI DIPERBAIKI
+                                        Eigen::MatrixXd Z_temp = Eigen::MatrixXd::Zero(ni, na);
+                                        tblis::len_type len_Z[] = {ni, na};
+                                        tblis::stride_type str_Z[] = {1, ni};
+                                        tblis::tblis_init_tensor_d(&t_Z, 2, len_Z, Z_temp.data(), str_Z);
+
+                                        // MAGIC: Kalikan T(ibjc) * V(jcab) -> Z(ia) secara native
+                                        tblis::tblis_tensor_mult(nullptr, nullptr, &t_T, "ibjc", &t_V, "jcab", &t_Z, "ia");
+
+                                        for(int di=0; di<ni; ++di) {
+                                            for(int da=0; da<na; ++da) {
                                                 Z_local(v_a.offset + da, o_i.offset + di) += Z_temp(di, da);
                                             }
                                         }
@@ -1395,7 +1391,7 @@ void OMP2::build_generalized_fock() {
                                 }
                             }
                             
-                            // --- 2. KONTRAKSI OOOV (JIT MICRO-GEMM) ---
+                            // --- 2. KONTRAKSI OOOV (TRUE TBLIS C-API) ---
                             for (const auto& o_k : occ_spaces_a) {
                                 if (o_k.size == 0) continue; 
                                 
@@ -1404,36 +1400,30 @@ void OMP2::build_generalized_fock() {
                                     auto* t_blk = T2_ptr->get_block(o_j.id, v_a.id, o_k.id, v_b.id);
 
                                     if (blk && t_blk) {
-                                        int ni = o_i.size, na = v_a.size, nj = o_j.size, nk = o_k.size, nb = v_b.size;
+                                        tblis::tblis_tensor t_V, t_T, t_Z;
+                                        tblis::len_type ni = o_i.size, na = v_a.size, nj = o_j.size, nk = o_k.size, nb = v_b.size;
 
-                                        // Flatten V(j, i, k, b)
-                                        Eigen::MatrixXd V_mat(ni, nj * nk * nb);
-                                        for(int b=0; b<nb; ++b) {
-                                            for(int k=0; k<nk; ++k) {
-                                                for(int i=0; i<ni; ++i) {
-                                                    for(int j=0; j<nj; ++j) {
-                                                        V_mat(i, j + k*nj + b*nj*nk) = (*blk)(j, i, k, b);
-                                                    }
-                                                }
-                                            }
-                                        }
+                                        // Setup Tensor V (Dimensi: j, i, k, b) - POSISI DIPERBAIKI
+                                        tblis::len_type len_V[] = {nj, ni, nk, nb};
+                                        tblis::stride_type str_V[] = {1, nj, nj*ni, nj*ni*nk};
+                                        tblis::tblis_init_tensor_d(&t_V, 4, len_V, blk->data(), str_V);
 
-                                        // Flatten T(j, a, k, b)
-                                        Eigen::MatrixXd T_mat(nj * nk * nb, na);
-                                        for(int a=0; a<na; ++a) {
-                                            for(int b=0; b<nb; ++b) {
-                                                for(int k=0; k<nk; ++k) {
-                                                    for(int j=0; j<nj; ++j) {
-                                                        T_mat(j + k*nj + b*nj*nk, a) = (*t_blk)(j, a, k, b);
-                                                    }
-                                                }
-                                            }
-                                        }
+                                        // Setup Tensor T (Dimensi: j, a, k, b) - POSISI DIPERBAIKI
+                                        tblis::len_type len_T[] = {nj, na, nk, nb};
+                                        tblis::stride_type str_T[] = {1, nj, nj*na, nj*na*nk};
+                                        tblis::tblis_init_tensor_d(&t_T, 4, len_T, t_blk->data(), str_T);
 
-                                        // DGEMM!
-                                        Eigen::MatrixXd Z_temp = V_mat * T_mat;
-                                        for(int di=0; di < ni; ++di) {
-                                            for(int da=0; da < na; ++da) {
+                                        // Setup Tensor Output Z (Dimensi: i, a) - POSISI DIPERBAIKI
+                                        Eigen::MatrixXd Z_temp = Eigen::MatrixXd::Zero(ni, na);
+                                        tblis::len_type len_Z[] = {ni, na};
+                                        tblis::stride_type str_Z[] = {1, ni};
+                                        tblis::tblis_init_tensor_d(&t_Z, 2, len_Z, Z_temp.data(), str_Z);
+
+                                        // MAGIC: Kalikan V(jikb) * T(jakb) -> Z(ia) secara native
+                                        tblis::tblis_tensor_mult(nullptr, nullptr, &t_V, "jikb", &t_T, "jakb", &t_Z, "ia");
+
+                                        for(int di=0; di<ni; ++di) {
+                                            for(int da=0; da<na; ++da) {
                                                 Z_local(v_a.offset + da, o_i.offset + di) -= Z_temp(di, da); // PENGURANGAN
                                             }
                                         }
@@ -1446,8 +1436,7 @@ void OMP2::build_generalized_fock() {
             }
             #pragma omp critical
             Z_mat_a += Z_local;
-        
-        
+        }
 
         // --- DENSE FALLBACK HANYA UNTUK MOLEKUL OPEN-SHELL ---
         if (!is_restricted && has_beta) {
@@ -1462,99 +1451,64 @@ void OMP2::build_generalized_fock() {
             auto* t_ab_dense = t2_ab_.get_block(0,0,0,0);
 
             if (t_bb_dense && t_ab_dense) {
-                // ==========================================
-                // 1. KONTRAKSI BETA-BETA (Z_mat_b)
-                // ==========================================
-                Eigen::MatrixXd T_bb_mat1(nb_, nb_ * vb_ * vb_);
-                Eigen::MatrixXd V_bb_mat1(nb_ * vb_ * vb_, vb_);
-                for(int j=0; j<nb_; ++j) {
-                    for(int b=0; b<vb_; ++b) {
-                        for(int c=0; c<vb_; ++c) {
-                            int col = j + b*nb_ + c*nb_*vb_;
-                            for(int i=0; i<nb_; ++i) T_bb_mat1(i, col) = (*t_bb_dense)(i, j, b, c);
-                            for(int a=0; a<vb_; ++a) V_bb_mat1(col, a) = ovvv_bb(j, c, a, b);
+                #pragma omp parallel for
+                for (int i = 0; i < nb_; ++i) {
+                    for (int a = 0; a < vb_; ++a) {
+                        if ((scf_.irreps_beta[i] ^ scf_.irreps_beta[nb_+a]) != 0) continue; 
+                        double z1 = 0.0, z2 = 0.0;
+                        for (int j = 0; j < nb_; ++j) {
+                            for (int b = 0; b < vb_; ++b) {
+                                for (int c = 0; c < vb_; ++c) z1 += (*t_bb_dense)(i, j, b, c) * ovvv_bb(j, c, a, b);
+                                for (int k = 0; k < nb_; ++k) z2 += (*t_bb_dense)(j, k, a, b) * ooov_bb(j, i, k, b);
+                            }
                         }
+                        Z_mat_b(a, i) += z1 - z2;
                     }
                 }
-                Z_mat_b += (T_bb_mat1 * V_bb_mat1).transpose();
-
-                Eigen::MatrixXd T_bb_mat2(nb_ * nb_ * vb_, vb_);
-                Eigen::MatrixXd V_bb_mat2(nb_, nb_ * nb_ * vb_);
-                for(int j=0; j<nb_; ++j) {
-                    for(int k=0; k<nb_; ++k) {
-                        for(int b=0; b<vb_; ++b) {
-                            int row = j + k*nb_ + b*nb_*nb_;
-                            for(int a=0; a<vb_; ++a) T_bb_mat2(row, a) = (*t_bb_dense)(j, k, a, b);
-                            for(int i=0; i<nb_; ++i) V_bb_mat2(i, row) = ooov_bb(j, i, k, b);
-                        }
-                    }
-                }
-                Z_mat_b -= (V_bb_mat2 * T_bb_mat2).transpose();
-
-                // ==========================================
-                // 2. KONTRAKSI ALPHA-BETA untuk Z_mat_a
-                // ==========================================
-                Eigen::MatrixXd T_ab_mat1(na_, nb_ * va_ * vb_);
-                Eigen::MatrixXd V_ab_mat1(nb_ * va_ * vb_, va_);
-                for(int j=0; j<nb_; ++j) {
-                    for(int b=0; b<va_; ++b) {
-                        for(int c=0; c<vb_; ++c) {
-                            int col = j + b*nb_ + c*nb_*va_;
-                            for(int i=0; i<na_; ++i) T_ab_mat1(i, col) = (*t_ab_dense)(i, j, b, c);
-                            for(int a=0; a<va_; ++a) V_ab_mat1(col, a) = ovvv_ba_aa(j, c, a, b);
-                        }
-                    }
-                }
-                Z_mat_a += (T_ab_mat1 * V_ab_mat1).transpose();
-
-                Eigen::MatrixXd T_ab_mat2(na_ * nb_ * vb_, va_);
-                Eigen::MatrixXd V_ab_mat2(na_, na_ * nb_ * vb_);
-                for(int j=0; j<na_; ++j) {
-                    for(int k=0; k<nb_; ++k) {
-                        for(int b=0; b<vb_; ++b) {
-                            int row = j + k*na_ + b*na_*nb_;
-                            for(int a=0; a<va_; ++a) T_ab_mat2(row, a) = (*t_ab_dense)(j, k, a, b);
-                            for(int i=0; i<na_; ++i) V_ab_mat2(i, row) = ooov_aa_bb(j, i, k, b);
-                        }
-                    }
-                }
-                Z_mat_a -= (V_ab_mat2 * T_ab_mat2).transpose();
-
-                // ==========================================
-                // 3. KONTRAKSI ALPHA-BETA untuk Z_mat_b
-                // ==========================================
-                Eigen::MatrixXd T_ab_mat3(nb_, na_ * vb_ * va_);
-                Eigen::MatrixXd V_ab_mat3(na_ * vb_ * va_, vb_);
-                for(int j=0; j<na_; ++j) {
-                    for(int b=0; b<vb_; ++b) {
-                        for(int c=0; c<va_; ++c) {
-                            int col = j + b*na_ + c*na_*vb_;
-                            for(int i=0; i<nb_; ++i) T_ab_mat3(i, col) = (*t_ab_dense)(j, i, c, b);
-                            for(int a=0; a<vb_; ++a) V_ab_mat3(col, a) = ovvv_ab_bb(j, c, a, b);
-                        }
-                    }
-                }
-                Z_mat_b += (T_ab_mat3 * V_ab_mat3).transpose();
-
-                Eigen::MatrixXd T_ab_mat4(nb_ * na_ * va_, vb_);
-                Eigen::MatrixXd V_ab_mat4(nb_, nb_ * na_ * va_);
-                for(int j=0; j<nb_; ++j) {
-                    for(int k=0; k<na_; ++k) {
-                        for(int b=0; b<va_; ++b) {
-                            int row = j + k*nb_ + b*nb_*na_;
-                            for(int a=0; a<vb_; ++a) T_ab_mat4(row, a) = (*t_ab_dense)(k, j, b, a);
-                            for(int i=0; i<nb_; ++i) V_ab_mat4(i, row) = ooov_bb_aa(j, i, k, b);
-                        }
-                    }
-                }
-                Z_mat_b -= (V_ab_mat4 * T_ab_mat4).transpose();
                 
-                } 
-            } else if (is_restricted) { // <-- GABUNGKAN LANGSUNG KE SINI
-                Z_mat_b = Z_mat_a; // Copy langsung dari Alpha
+                #pragma omp parallel for
+                for (int i = 0; i < na_; ++i) {
+                    for (int a = 0; a < va_; ++a) {
+                        if ((scf_.irreps_alpha[i] ^ scf_.irreps_alpha[na_+a]) != 0) continue; 
+                        double z1 = 0.0, z2 = 0.0;
+                        for (int j = 0; j < nb_; ++j) {
+                            for (int b = 0; b < va_; ++b) {
+                                for (int c = 0; c < vb_; ++c) z1 += (*t_ab_dense)(i, j, b, c) * ovvv_ba_aa(j, c, a, b);
+                            }
+                        }
+                        for (int j = 0; j < na_; ++j) {
+                            for (int b = 0; b < vb_; ++b) {
+                                for (int k = 0; k < nb_; ++k) z2 += (*t_ab_dense)(j, k, a, b) * ooov_aa_bb(j, i, k, b);
+                            }
+                        }
+                        Z_mat_a(a, i) += z1 - z2;
+                    }
+                }
+
+                #pragma omp parallel for
+                for (int i = 0; i < nb_; ++i) {
+                    for (int a = 0; a < vb_; ++a) {
+                        if ((scf_.irreps_beta[i] ^ scf_.irreps_beta[nb_+a]) != 0) continue; 
+                        double z1 = 0.0, z2 = 0.0;
+                        for (int j = 0; j < na_; ++j) {
+                            for (int b = 0; b < vb_; ++b) {
+                                for (int c = 0; c < va_; ++c) z1 += (*t_ab_dense)(j, i, c, b) * ovvv_ab_bb(j, c, a, b);
+                            }
+                        }
+                        for (int j = 0; j < nb_; ++j) {
+                            for (int b = 0; b < va_; ++b) {
+                                for (int k = 0; k < na_; ++k) z2 += (*t_ab_dense)(k, j, b, a) * ooov_bb_aa(j, i, k, b);
+                            }
+                        }
+                        Z_mat_b(a, i) += z1 - z2;
+                    }
+                }
             }
+        } else if (is_restricted) {
+            Z_mat_b = Z_mat_a; // Copy langsung dari Alpha
+        }
         
-            if (config_.print_level > 0) std::cout << "  [DEBUG] Evaluasi Z-Vector Irrep-Blocked Selesai!" << std::endl;
+        if (config_.print_level > 0) std::cout << "  [DEBUG] Evaluasi Z-Vector Irrep-Blocked Selesai!" << std::endl;
     } else {
         if (config_.print_level > 0) std::cout << "  [DEBUG] Memulai evaluasi Z-Vector O(N^4) Density Fitting/Cholesky..." << std::endl;
         
@@ -1964,8 +1918,7 @@ MP2Result OMP2::compute() {
         Eigen::VectorXd kappa = lbfgs_engine.get_direction(orbital_gradient_, diag_H);
         double max_val = kappa.cwiseAbs().maxCoeff();
         if (max_val > 0.35) kappa *= (0.35 / max_val);
-        Eigen::VectorXd actual_step = kappa * current_step;
-        lbfgs_engine.s_prev = actual_step;
+
         last_kappa = kappa;
         apply_orbital_rotation(kappa * current_step);
         macro_iter++;
