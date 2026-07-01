@@ -178,7 +178,7 @@ else()
 endif()
 
 # --- JEMALLOC ---
-#find_library(JEMALLOC_LIB jemalloc HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/local/lib" "/usr/lib")
+
 if(JEMALLOC_LIB)
     message(STATUS ">> Memori Allocator: Jemalloc ditemukan!")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-builtin-malloc -fno-builtin-calloc -fno-builtin-realloc -fno-builtin-free")
@@ -234,9 +234,7 @@ target_link_libraries(mshqc PUBLIC
     OpenMP::OpenMP_CXX   
 )
 
-if(JEMALLOC_LIB)
-    target_link_libraries(mshqc PUBLIC ${JEMALLOC_LIB})
-endif()
+
 target_include_directories(mshqc PUBLIC 
     $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
     $<BUILD_INTERFACE:$ENV{CONDA_PREFIX}/include>   
@@ -247,11 +245,7 @@ target_include_directories(mshqc PUBLIC
 # ==============================================================================
 nanobind_add_module(_mshqc "python/bindings.cc")
 
-if(JEMALLOC_LIB)
-    target_link_libraries(_mshqc PRIVATE mshqc ${CINT_LIBRARY} ${TBLIS_LIBRARY} ${JEMALLOC_LIB})
-else()
-    target_link_libraries(_mshqc PRIVATE mshqc ${CINT_LIBRARY} ${TBLIS_LIBRARY})
-endif()
+target_link_libraries(_mshqc PRIVATE mshqc ${CINT_LIBRARY} ${TBLIS_LIBRARY})
 
 set_target_properties(_mshqc PROPERTIES 
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/python/mshqc"
