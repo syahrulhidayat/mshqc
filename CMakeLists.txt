@@ -72,59 +72,42 @@ find_package(nanobind CONFIG REQUIRED)
 # 3. PENCARIAN PUSTAKA "ULTIMATE STACK" 
 # ==============================================================================
 find_package(OpenMP REQUIRED)
-
-# --- BLAS & LAPACK ---
-
-if(DEFINED ENV{GITHUB_ACTIONS})
-    set(BLA_VENDOR OpenBLAS) 
-    message(STATUS ">> CI/CD Server Detected: Memaksa pencarian OpenBLAS murni untuk auditwheel")
-endif()
-
-find_library(BLIS_LIBRARY NAMES blis-mt blis HINTS "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/lib64" "/usr/lib")
-find_library(FLAME_LIBRARY NAMES flame HINTS "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/lib64" "/usr/lib")
-
-if(BLIS_LIBRARY)
-    message(STATUS ">> BLAS: BLIS ditemukan!")
-    set(BLAS_LIBRARIES ${BLIS_LIBRARY})
-else()
-    message(STATUS ">> BLIS tidak ditemukan. Mencari Standar BLAS Sistem...")
-    find_package(BLAS REQUIRED)
-endif()
-if(FLAME_LIBRARY)
-    message(STATUS ">> LAPACK: libflame ditemukan!")
-    set(LAPACK_LIBRARIES ${FLAME_LIBRARY})
-else()
-    message(STATUS ">> libflame tidak ditemukan. Mencari Standar LAPACK & LAPACKE Sistem...")
-    find_package(LAPACK REQUIRED)
+# --- BLAS & LAPACK (SMART DYNAMIC DISPATCH) ---
+if(DEFINED ENV{GITHUB_ACTIONS} OR DEFINED ENV{CIBUILDWHEEL})
+    message(STATUS ">> CI/CD Server Detected: Memaksa OpenBLAS untuk PyPI Wheel (Portabilitas & Ukuran Ideal)")
     
-    find_library(LAPACKE_LIBRARY NAMES lapacke HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/lib/x86_64-linux-gnu" "/usr/lib")
-    if(LAPACKE_LIBRARY)
-        message(STATUS ">> LAPACKE: Antarmuka C LAPACKE ditemukan! (${LAPACKE_LIBRARY})")
-        list(APPEND LAPACK_LIBRARIES ${LAPACKE_LIBRARY})
+    find_library(OPENBLAS_LIBRARY NAMES openblas openblas_pthread HINTS "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/lib")
+    if(OPENBLAS_LIBRARY)
+        message(STATUS ">> BLAS/LAPACK: OpenBLAS Ditemukan untuk Biner Publik!")
+        set(BLAS_LIBRARIES ${OPENBLAS_LIBRARY})
+        set(LAPACK_LIBRARIES ${OPENBLAS_LIBRARY})
     else()
-        message(FATAL_ERROR "CRITICAL: LAPACKE (lapacke) tidak ditemukan di sistem!")
+        message(FATAL_ERROR "CRITICAL: OpenBLAS tidak ditemukan di CI!")
+    endif()
+
+else()
+    message(STATUS ">> Local Build Detected: Mencari Intel MKL (Skala Prioritas 1)...")
+    
+    find_library(MKL_RT_LIBRARY NAMES mkl_rt HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/local/lib" "/usr/lib")
+    if(MKL_RT_LIBRARY)
+        message(STATUS ">> BLAS/LAPACK: Intel MKL (mkl_rt) Ditemukan! Mengaktifkan optimasi Intel dengan GNU OpenMP.")
+        set(BLAS_LIBRARIES ${MKL_RT_LIBRARY})
+        set(LAPACK_LIBRARIES ${MKL_RT_LIBRARY})
+        
+        # INJEKSI KRUSIAL: Paksa MKL memakai libgomp agar tidak Segfault
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DMKL_SET_INTERFACE_GNU")
+    else()
+        message(STATUS ">> MKL tidak ditemukan. Fallback ke OpenBLAS (Prioritas 2)...")
+        find_library(OPENBLAS_LIBRARY NAMES openblas openblas_pthread HINTS "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/lib")
+        if(OPENBLAS_LIBRARY)
+            message(STATUS ">> BLAS/LAPACK: OpenBLAS Ditemukan!")
+            set(BLAS_LIBRARIES ${OPENBLAS_LIBRARY})
+            set(LAPACK_LIBRARIES ${OPENBLAS_LIBRARY})
+        else()
+            message(FATAL_ERROR "CRITICAL: MKL dan OpenBLAS tidak ditemukan! Silakan install salah satu.")
+        endif()
     endif()
 endif()
-
-# --- EIGEN ---
-set(EIGEN_LOCAL_PATH "${CMAKE_SOURCE_DIR}/include/eigen-3.4.0")
-if(EXISTS "${EIGEN_LOCAL_PATH}/Eigen/Dense")
-    message(STATUS ">> Linear Algebra: Menggunakan Eigen Lokal")
-    add_library(Eigen3::Eigen INTERFACE IMPORTED)
-    target_include_directories(Eigen3::Eigen INTERFACE "${EIGEN_LOCAL_PATH}")
-else()
-    message(STATUS ">> Eigen lokal tidak ditemukan. Mencari versi terbaru di Conda/Sistem...")
-    
-    find_package(Eigen3 CONFIG HINTS "$ENV{CONDA_PREFIX}/share/eigen3/cmake" "/opt/conda/share/eigen3/cmake")
-    
-    if(Eigen3_FOUND)
-        message(STATUS ">> Linear Algebra: Eigen ${Eigen3_VERSION} ditemukan dari Conda!")
-    else()
-        find_package(Eigen3 REQUIRED NO_MODULE)
-        message(STATUS ">> Linear Algebra: Eigen ${Eigen3_VERSION} ditemukan sebagai fallback.")
-    endif()
-endif()
-
 # --- LIBCINT ---
 find_path(CINT_INCLUDE_DIR "cint.h" HINTS "$ENV{CONDA_PREFIX}/include" "/opt/conda/include" "/usr/local/include" "/usr/include")
 find_library(CINT_LIBRARY cint HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/local/lib" "/usr/lib")
