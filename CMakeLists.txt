@@ -3,24 +3,37 @@ cmake_minimum_required(VERSION 3.14)
 # ==============================================================================
 # 1. INFORMASI PROYEK
 # ==============================================================================
-project(mshqc VERSION 1.0.0 LANGUAGES CXX C)
+project(mshqc LANGUAGES CXX C)
 
-if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE Release)
+# Jika dikompilasi lewat pip/setuptools, ambil versi dari environment variable
+if(DEFINED ENV{SETUPTOOLS_SCM_PRETEND_VERSION})
+    set(MSHQC_VERSION "$ENV{SETUPTOOLS_SCM_PRETEND_VERSION}")
+else()
+    set(MSHQC_VERSION "1.0.0-dev") # Fallback lokal jika tidak lewat Git
 endif()
+
+message(STATUS ">> Membangun MSHQC Versi: ${MSHQC_VERSION}")
 
 # ==============================================================================
 # [OPTIMASI KOMPILER CERDAS]
 # ==============================================================================
-if(DEFINED ENV{GITHUB_ACTIONS})
-    # [PUBLIC RELEASE]: Biner Universal yang Sangat Cepat
-    # Menggunakan -O3, LTO, dan memaksa instruksi AVX2/FMA agar matriks Eigen melesat cepat
-    # tanpa mengunci ke satu arsitektur spesifik (aman lintas Intel/AMD).
-    message(STATUS ">> CI/CD Server Detected: Menggunakan optimasi Biner Universal (AVX2/FMA)")
-    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -funroll-loops -ftree-vectorize -mavx2 -mfma -mtune=generic -DNDEBUG")
+include(CheckCXXCompilerFlag)
+
+if(DEFINED ENV{GITHUB_ACTIONS} OR DEFINED ENV{CIBUILDWHEEL})
+    # [PUBLIC RELEASE]: Biner Universal Berkekuatan Tinggi (manylinux safe)
+    message(STATUS ">> CI/CD Server Detected: Menyiapkan optimasi Universal HPC")
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -funroll-loops -ftree-vectorize -mtune=generic -DNDEBUG")
+    
+    # Deteksi aman untuk injeksi AVX2/FMA agar tidak crash di CPU lawas
+    check_cxx_compiler_flag("-mavx2" COMPILER_SUPPORTS_AVX2)
+    check_cxx_compiler_flag("-mfma" COMPILER_SUPPORTS_FMA)
+    
+    if(COMPILER_SUPPORTS_AVX2 AND COMPILER_SUPPORTS_FMA)
+        message(STATUS ">> Menginjeksi instruksi Vektor AVX2 & FMA secara aman.")
+        set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -mavx2 -mfma")
+    endif()
 else()
-    # [PRIVATE/LOCAL]: Super Turbo
-    # Sepenuhnya terkalibrasi untuk silikon fisik mesin yang sedang mengompilasi.
+    # [PRIVATE/LOCAL]: Super Turbo (Maksimal untuk mesin saat ini)
     message(STATUS ">> Local Environment Detected: Mengaktifkan Super Turbo (-march=native)")
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -march=native -mtune=native -funroll-loops -ftree-vectorize -DNDEBUG")
 endif()
@@ -61,31 +74,55 @@ find_package(nanobind CONFIG REQUIRED)
 # ==============================================================================
 find_package(OpenMP REQUIRED)
 
-# --- BLAS & LAPACK ---
-find_library(BLIS_LIBRARY NAMES blis-mt blis HINTS "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/lib64" "/usr/lib")
-find_library(FLAME_LIBRARY NAMES flame HINTS "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/lib64" "/usr/lib")
-
-if(BLIS_LIBRARY)
-    message(STATUS ">> BLAS: BLIS ditemukan!")
-    set(BLAS_LIBRARIES ${BLIS_LIBRARY})
-else()
-    message(STATUS ">> BLIS tidak ditemukan. Mencari Standar BLAS Sistem...")
-    find_package(BLAS REQUIRED)
-endif()
-
-if(FLAME_LIBRARY)
-    message(STATUS ">> LAPACK: libflame ditemukan!")
-    set(LAPACK_LIBRARIES ${FLAME_LIBRARY})
-else()
-    message(STATUS ">> libflame tidak ditemukan. Mencari Standar LAPACK & LAPACKE Sistem...")
-    find_package(LAPACK REQUIRED)
+# --- BLAS & LAPACK (SMART DYNAMIC DISPATCH) ---
+if(DEFINED ENV{GITHUB_ACTIONS} OR DEFINED ENV{CIBUILDWHEEL})
+    message(STATUS ">> CI/CD Server Detected: Mengunci OpenBLAS untuk PyPI Wheel (Ramping & Portabel)")
     
-    find_library(LAPACKE_LIBRARY NAMES lapacke HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/lib/x86_64-linux-gnu" "/usr/lib")
-    if(LAPACKE_LIBRARY)
-        message(STATUS ">> LAPACKE: Antarmuka C LAPACKE ditemukan! (${LAPACKE_LIBRARY})")
-        list(APPEND LAPACK_LIBRARIES ${LAPACKE_LIBRARY})
+    find_library(OPENBLAS_LIBRARY NAMES openblas openblas_pthread HINTS "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/lib")
+    if(OPENBLAS_LIBRARY)
+        message(STATUS ">> BLAS/LAPACK Backend: OpenBLAS Dikunci! (${OPENBLAS_LIBRARY})")
+        set(BLAS_LIBRARIES ${OPENBLAS_LIBRARY})
+        set(LAPACK_LIBRARIES ${OPENBLAS_LIBRARY})
     else()
-        message(FATAL_ERROR "CRITICAL: LAPACKE (lapacke) tidak ditemukan di sistem!")
+        message(FATAL_ERROR "CRITICAL: OpenBLAS tidak ditemukan di server CI!")
+    endif()
+
+else()
+    message(STATUS ">> Local Environment Detected: Membuka Skala Prioritas Akselerasi CPU...")
+    
+    # Prioritas 1: Intel MKL (Raja Intel Xeon / Core i9)
+    find_library(MKL_RT_LIBRARY NAMES mkl_rt HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/local/lib" "/usr/lib")
+    
+    # Prioritas 2: BLIS (Sangat Overpowered untuk AMD EPYC / Ryzen)
+    find_library(BLIS_MT_LIBRARY NAMES blis-mt blis HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/local/lib" "/usr/lib")
+
+    if(MKL_RT_LIBRARY)
+        message(STATUS ">> BLAS/LAPACK Backend: Intel MKL (mkl_rt) Ditemukan! Menginjeksi Thread GNU Interface.")
+        set(BLAS_LIBRARIES ${MKL_RT_LIBRARY})
+        set(LAPACK_LIBRARIES ${MKL_RT_LIBRARY})
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DMKL_SET_INTERFACE_GNU") # Solusi anti-crash dua OpenMP
+        
+    elseif(BLIS_MT_LIBRARY)
+        message(STATUS ">> BLAS/LAPACK Backend: Intel MKL absen. Mengaktifkan BLIS Teroptimasi AMD!")
+        set(BLAS_LIBRARIES ${BLIS_MT_LIBRARY})
+        
+        # BLIS butuh antarmuka LAPACK standar, cari lapacke bawaan sistem/conda
+        find_library(LAPACKE_LIBRARY NAMES lapacke HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/lib")
+        if(LAPACKE_LIBRARY)
+            set(LAPACK_LIBRARIES ${LAPACKE_LIBRARY})
+        else()
+            message(FATAL_ERROR "CRITICAL: BLIS ditemukan tapi LAPACKE absen!")
+        endif()
+        
+    else()
+        message(STATUS ">> MKL & BLIS absen. Fallback ke OpenBLAS Universal.")
+        find_library(OPENBLAS_LIBRARY NAMES openblas HINTS "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/lib")
+        if(OPENBLAS_LIBRARY)
+            set(BLAS_LIBRARIES ${OPENBLAS_LIBRARY})
+            set(LAPACK_LIBRARIES ${OPENBLAS_LIBRARY})
+        else()
+            message(FATAL_ERROR "CRITICAL: Tidak ada BLAS engine yang terdeteksi di mesin lokal!")
+        endif()
     endif()
 endif()
 
@@ -97,24 +134,24 @@ if(EXISTS "${EIGEN_LOCAL_PATH}/Eigen/Dense")
     target_include_directories(Eigen3::Eigen INTERFACE "${EIGEN_LOCAL_PATH}")
 else()
     message(STATUS ">> Eigen lokal tidak ditemukan. Mencari versi terbaru di Conda/Sistem...")
-    
-    # [PERUBAHAN]: Menghapus '3.4.0 EXACT' agar CMake otomatis menerima versi tertinggi yang tersedia
     find_package(Eigen3 CONFIG HINTS "$ENV{CONDA_PREFIX}/share/eigen3/cmake" "/opt/conda/share/eigen3/cmake")
-    
     if(Eigen3_FOUND)
         message(STATUS ">> Linear Algebra: Eigen ${Eigen3_VERSION} ditemukan dari Conda!")
     else()
-        # Fallback juga dibuat fleksibel tanpa batasan versi
         find_package(Eigen3 REQUIRED NO_MODULE)
         message(STATUS ">> Linear Algebra: Eigen ${Eigen3_VERSION} ditemukan sebagai fallback.")
     endif()
 endif()
+
 # --- LIBCINT ---
+find_path(CINT_INCLUDE_DIR "cint.h" HINTS "$ENV{CONDA_PREFIX}/include" "/opt/conda/include" "/usr/local/include" "/usr/include")
 find_library(CINT_LIBRARY cint HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/local/lib" "/usr/lib")
-if(CINT_LIBRARY)
-    message(STATUS ">> Integral Engine: libcint ditemukan!")
+
+if(CINT_LIBRARY AND CINT_INCLUDE_DIR)
+    message(STATUS ">> Integral Engine: libcint ditemukan di ${CINT_INCLUDE_DIR}!")
+    include_directories(${CINT_INCLUDE_DIR}) 
 else()
-    message(FATAL_ERROR "CRITICAL: libcint tidak ditemukan!")
+    message(FATAL_ERROR "CRITICAL: libcint (library atau header) tidak ditemukan!")
 endif()
 
 # --- TBLIS ---
@@ -125,25 +162,39 @@ else()
     message(FATAL_ERROR "CRITICAL: TBLIS tidak ditemukan!")
 endif()
 
-# --- [PERBAIKAN FINAL]: HDF5 DIKUNCI KE CONDA ---
-# Kita gunakan pencarian manual untuk menghindari CMake memuat pustaka dari Ubuntu
-find_path(HDF5_INCLUDE_DIRS "H5Cpp.h" HINTS "$ENV{CONDA_PREFIX}/include" NO_DEFAULT_PATH)
-find_library(HDF5_C_LIB hdf5 HINTS "$ENV{CONDA_PREFIX}/lib" NO_DEFAULT_PATH)
-find_library(HDF5_CXX_LIB hdf5_cpp HINTS "$ENV{CONDA_PREFIX}/lib" NO_DEFAULT_PATH)
+# --- HDF5 FLEKSIBEL (CONDA FIRST, LALU SISTEM) ---
+find_path(HDF5_INCLUDE_DIRS "H5Cpp.h" 
+    HINTS "$ENV{CONDA_PREFIX}/include" "/opt/conda/include" 
+    PATHS "/usr/include/hdf5/serial" "/usr/local/include"
+)
+find_library(HDF5_C_LIB hdf5 
+    HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" 
+    PATHS "/usr/lib/x86_64-linux-gnu/hdf5/serial" "/usr/local/lib" "/usr/lib64"
+)
+find_library(HDF5_CXX_LIB hdf5_cpp 
+    HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" 
+    PATHS "/usr/lib/x86_64-linux-gnu/hdf5/serial" "/usr/local/lib" "/usr/lib64"
+)
 
 if(HDF5_INCLUDE_DIRS AND HDF5_C_LIB AND HDF5_CXX_LIB)
-    message(STATUS ">> Out-of-Core Engine: HDF5 C++ Conda ditemukan secara manual!")
+    message(STATUS ">> Out-of-Core Engine: HDF5 C++ ditemukan di ${HDF5_INCLUDE_DIRS}")
     include_directories(${HDF5_INCLUDE_DIRS})
     set(HDF5_LIBRARIES ${HDF5_CXX_LIB} ${HDF5_C_LIB})
 else()
-    message(FATAL_ERROR "CRITICAL: HDF5 C++ tidak ditemukan di Conda psi4env!")
+    message(STATUS ">> HDF5 manual tidak ditemukan. Beralih ke modul FindHDF5 bawaan CMake...")
+    find_package(HDF5 COMPONENTS CXX REQUIRED)
+    if(HDF5_FOUND)
+        message(STATUS ">> HDF5 ditemukan via FindHDF5.")
+        include_directories(${HDF5_INCLUDE_DIRS})
+    else()
+        message(FATAL_ERROR "CRITICAL: Pustaka HDF5 C++ sama sekali tidak ditemukan di sistem ini!")
+    endif()
 endif()
 
-# --- JEMALLOC ---
-#find_library(JEMALLOC_LIB jemalloc HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/local/lib" "/usr/lib")
+# --- JEMALLOC (DIKEMBALIKAN DENGAN AMAN) ---
+find_library(JEMALLOC_LIB jemalloc HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/local/lib" "/usr/lib")
 if(JEMALLOC_LIB)
-    message(STATUS ">> Memori Allocator: Jemalloc ditemukan!")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-builtin-malloc -fno-builtin-calloc -fno-builtin-realloc -fno-builtin-free")
+    message(STATUS ">> Memori Allocator: Jemalloc ditemukan! (${JEMALLOC_LIB})")
 endif()
 
 # ==============================================================================
@@ -185,7 +236,6 @@ target_compile_definitions(mshqc PUBLIC
     EIGEN_MPL2_ONLY
 )
 
-# [PENTING] HDF5_LIBRARIES ditambahkan di sini agar simbol C++ terhubung ke biner
 target_link_libraries(mshqc PUBLIC 
     Eigen3::Eigen
     ${CINT_LIBRARY}
@@ -196,13 +246,14 @@ target_link_libraries(mshqc PUBLIC
     OpenMP::OpenMP_CXX   
 )
 
+# Tautkan Jemalloc secara aman tanpa membajak sistem malloc Python
 if(JEMALLOC_LIB)
     target_link_libraries(mshqc PUBLIC ${JEMALLOC_LIB})
 endif()
 
 target_include_directories(mshqc PUBLIC 
     $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
-    $<BUILD_INTERFACE:${HDF5_INCLUDE_DIRS}>
+    $<BUILD_INTERFACE:$ENV{CONDA_PREFIX}/include>   
     $<INSTALL_INTERFACE:include>
 )
 
