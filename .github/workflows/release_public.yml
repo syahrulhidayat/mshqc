@@ -1,12 +1,17 @@
 name: Compile and Release Wheel to Public Repo
 
 on:
+  # 1. Trigger Manual lewat tombol di GitHub UI
+  workflow_dispatch:
+
+  # 2. Trigger Otomatis saat push (tetap dipertahankan)
   push:
-    # Sengaja cuma fitur ini aja, main dipisah total biar aman dari reset!
+   
     branches: [ "fitur_tblis-dan-perbaikan-code" ]
     tags: [ "v*" ]
-    
-jobs:
+
+jobs: 
+
   # =========================================================================
   # JOB 1: MERAKIT BINER (PARALEL 4 ROBOT)
   # =========================================================================
