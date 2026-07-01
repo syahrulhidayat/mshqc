@@ -2,6 +2,7 @@ name: Compile and Release Wheel to Public Repo
 
 on:
   push:
+    # Sengaja cuma fitur ini aja, main dipisah total biar aman dari reset!
     branches: [ "fitur_tblis-dan-perbaikan-code" ]
     tags: [ "v*" ]
    
