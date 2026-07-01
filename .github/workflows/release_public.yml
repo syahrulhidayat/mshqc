@@ -52,7 +52,7 @@ jobs:
       shell: bash -el {0}
       run: |
        
-        conda install -y -c conda-forge cmake make compilers eigen pkg-config "hdf5=1.14.3" pip libcint tblis liblapacke openblas
+        conda install -y -c conda-forge cmake make compilers eigen pkg-config "hdf5=1.14.3" pip libcint tblis liblapacke openblas blis mkl jemalloc
         python -m pip install build wheel nanobind auditwheel setuptools_scm
     - name: Build and Repair Python Wheel (.whl)
       shell: bash -el {0}
