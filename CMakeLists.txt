@@ -125,9 +125,9 @@ find_path(CINT_INCLUDE_DIR "cint.h" HINTS "$ENV{CONDA_PREFIX}/include" "/opt/con
 find_library(CINT_LIBRARY cint HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/local/lib" "/usr/lib")
 
 if(CINT_LIBRARY AND CINT_INCLUDE_DIR)
-    message(STATUS ">> Integral Engine: libcint ditemukan di ${CINT_INCLUDE_DIR}")
+    message(STATUS ">> Integral Engine: libcint ditemukan di ${CINT_INCLUDE_DIR}!")
 else()
-    message(FATAL_ERROR "CRITICAL: libcint (atau header cint.h) tidak ditemukan!")
+    message(FATAL_ERROR "CRITICAL: libcint (library atau header) tidak ditemukan!")
 endif()
 # --- TBLIS ---
 find_library(TBLIS_LIBRARY tblis HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/local/lib" "/usr/lib")
@@ -232,7 +232,7 @@ endif()
 target_include_directories(mshqc PUBLIC 
     $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
     $<BUILD_INTERFACE:${HDF5_INCLUDE_DIRS}>
-    $<BUILD_INTERFACE:${CINT_INCLUDE_DIR}>
+    $<BUILD_INTERFACE:${CINT_INCLUDE_DIR}>   
     $<INSTALL_INTERFACE:include>
 )
 # ==============================================================================
