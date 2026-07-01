@@ -1,117 +1,147 @@
 name: Compile and Release Wheel to Public Repo
 
 on:
+  # 1. Trigger Manual lewat tombol di GitHub UI
+  workflow_dispatch:
+
+  # 2. Trigger Otomatis saat push (tetap dipertahankan)
   push:
-    branches: [ "main" ] # Memicu otomatisasi setiap kali push ke branch main privat
    
-jobs:
-  build-and-deploy:
+    #branches: [ "fix-eri-tblis-clean" ]
+    #tags: [ "v*" ]
+
+jobs: 
+
+  # =========================================================================
+  # JOB 1: MERAKIT BINER (PARALEL 4 ROBOT)
+  # =========================================================================
+  build-wheels:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false 
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
 
     steps:
     - name: Checkout Private Source Code
       uses: actions/checkout@v3
       with:
-        token: ${{'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'}} # Pastikan nama secret-nya sesuai
+        fetch-depth: 0 
 
-    # =========================================================================
-    # 1. CACHE CONDA & PIP: Menyimpan unduhan library agar tidak install dari 0
-    # =========================================================================
     - name: Cache Conda Packages
       uses: actions/cache@v3
       with:
         path: ~/conda_pkgs_dir
-        key: conda-pkgs-${{ runner.os }}-${{ hashFiles('**/CMakeLists.txt') }}
-        restore-keys: |
-          conda-pkgs-${{ runner.os }}-
+        key: conda-pkgs-v2-${{ runner.os }}-py${{ matrix.python-version }}-${{ hashFiles('**/CMakeLists.txt') }}
 
-    # =========================================================================
-    # 2. CCACHE: Compiler Cache (Rahasia Incremental Build C++ di Cloud)
-    # =========================================================================
     - name: Setup Compiler Cache (ccache)
       uses: hendrikmuhs/ccache-action@v1.2
       with:
-        key: ${{ runner.os }}-mshqc-ccache
+        key: ${{ runner.os }}-mshqc-ccache-v2-py${{ matrix.python-version }}
         max-size: 500M
 
-    - name: Setup Conda Environment (Python 3.12)
+    - name: Setup Conda Environment
       uses: conda-incubator/setup-miniconda@v3
       with:
         auto-update-conda: true
-        python-version: "3.12"
+        python-version: ${{ matrix.python-version }}
         channels: conda-forge
         use-only-tar-bz2: true 
 
-    # =========================================================================
-    # 🔥 PENTING: Kunci versi HDF5=1.14.3 agar ABI .so stabil di semua perangkat!
-    # =========================================================================
-    - name: Install Build Dependencies (Sync with Psi4)
+    - name: Install Build Dependencies
       shell: bash -el {0}
       run: |
-        conda install -y -c conda-forge cmake make compilers eigen pkg-config "hdf5=1.14.3" pip libcint tblis liblapacke openblas psi4
-        python -m pip install build wheel nanobind
-
-    - name: Build Python Wheel (.whl)
+       
+        conda install -y -c conda-forge cmake make compilers eigen pkg-config "hdf5=1.14.3" pip libcint tblis liblapacke openblas blis mkl jemalloc
+        python -m pip install build wheel nanobind auditwheel setuptools_scm
+    - name: Build and Repair Python Wheel (.whl)
       shell: bash -el {0}
       run: |
+        rm -rf build/ dist/ wheelhouse/
+        mkdir -p wheelhouse/
+        
         export CC="ccache $CONDA_PREFIX/bin/x86_64-conda-linux-gnu-cc"
         export CXX="ccache $CONDA_PREFIX/bin/x86_64-conda-linux-gnu-c++"
-        
-        export CXXFLAGS="-std=c++17 -fopenmp -O3 -mavx2 -mfma -mtune=generic -DEIGEN_USE_BLAS -DEIGEN_USE_LAPACKE -DNDEBUG"
+        export CXXFLAGS="-std=c++17 -fopenmp -O3 -mavx2 -mfma -mtune=generic -DEIGEN_USE_BLAS -DEIGEN_USE_LAPACKE -DNDEBUG -s"
+        export SETUPTOOLS_SCM_PRETEND_VERSION="1.0.0.dev${GITHUB_RUN_NUMBER}"
         
         python setup.py bdist_wheel
-        
-        # Tampilkan statistik Ccache untuk membuktikan cache bekerja
+        auditwheel repair dist/*.whl --wheel-dir wheelhouse/
         ccache -s
+        
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: python-wheels-py${{ matrix.python-version }}
+        path: wheelhouse/*.whl
 
-    # =========================================================================
-    # 3. COMMIT KEMBALI KE REPO PRIVAT (Agar Lokal Bisa Pull)
-    # =========================================================================
-    - name: Commit and Push Wheel to Private Repo
-      shell: bash -el {0}
+  # =========================================================================
+  # JOB 2: DEPLOY KE GITHUB & PYPI (HANYA 1 ROBOT)
+  # =========================================================================
+  deploy:
+    # Job ini hanya akan berjalan jika keempat robot di atas sudah selesai 100%
+    needs: build-wheels 
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout Private Source Code
+      uses: actions/checkout@v3
+      with:
+        token: ${{ secrets.MY_GITHUB_TOKEN }}
+        fetch-depth: 0
+
+    - name: Download all wheels
+      uses: actions/download-artifact@v4
+      with:
+        pattern: python-wheels-*
+        path: all_wheels/
+        merge-multiple: true
+
+    - name: Commit and Push Wheels to Private Repo
       run: |
         git config --global user.name "MSHQC Automation"
         git config --global user.email "automation@mshqc.internal"
         
         mkdir -p releases
         rm -f releases/*.whl
-        
-        cp dist/*.whl releases/
-        
-        git add releases/*.whl
+        cp all_wheels/*.whl releases/
+        git add -f releases/*.whl
         
         if git diff-index --quiet HEAD --; then
-          echo "Tidak ada perubahan biner baru untuk disimpan di repo privat."
+          echo "Tidak ada perubahan biner baru."
         else
-          git commit -m "CI-Bot: Update biner terkompilasi (.whl) [skip ci]"
-          git push origin main
+          git commit -m "CI-Bot: Update seluruh biner Python [skip ci]"
+          git push origin HEAD
         fi
 
-    # =========================================================================
-    # 4. DEPLOY KE REPO PUBLIK
-    # =========================================================================
-    - name: Deploy Wheel to Public Repository (Closed-Source Mode)
-      shell: bash -el {0}
+    - name: Deploy Wheels to Public Repository
       env:
-        API_TOKEN_GITHUB: ${{ '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' }} 
+        API_TOKEN_GITHUB: ${{ secrets.MY_GITHUB_TOKEN }} 
       run: |
         git config --global user.name "MSHQC Automation"
         git config --global user.email "automation@mshqc.internal"
 
-        git clone https://x-access-token:${API_TOKEN_GITHUB}@github.com/syahrulhidayat/mshqc-public.git public_repo
-
+        git clone https://x-access-token:${API_TOKEN_GITHUB}@github.com/mshqc/mshqc-public.git public_repo
+        
         mkdir -p public_repo/releases
         rm -f public_repo/releases/*.whl
-        
-        cp dist/*.whl public_repo/releases/ 2>/dev/null || true
+        cp all_wheels/*.whl public_repo/releases/ 2>/dev/null || true
         cp -r data public_repo/ 2>/dev/null || true
 
         cd public_repo
         git add -A
         
         if git diff-index --quiet HEAD --; then
-          echo "Tidak ada pembaruan pada biner mshqc."
+          echo "Tidak ada pembaruan pada biner publik."
         else
-          git commit -m "Auto-Deploy: Rilis MSHQC Wheel (.whl) Aman"
+          git commit -m "Auto-Deploy: Rilis Seluruh MSHQC Wheels"
           git push origin main
         fi
+
+    # MENGGUNAKAN PYPA ACTION RESMI UNTUK UPLOAD KE PYPI
+    - name: Publish to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        password: ${{ secrets.PYPI_API_TOKEN }}
+        packages-dir: all_wheels/
+        skip-existing: true
