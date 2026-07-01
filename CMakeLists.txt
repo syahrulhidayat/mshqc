@@ -126,6 +126,9 @@ find_library(CINT_LIBRARY cint HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "
 
 if(CINT_LIBRARY AND CINT_INCLUDE_DIR)
     message(STATUS ">> Integral Engine: libcint ditemukan di ${CINT_INCLUDE_DIR}!")
+  
+    include_directories(${CINT_INCLUDE_DIR}) 
+    
 else()
     message(FATAL_ERROR "CRITICAL: libcint (library atau header) tidak ditemukan!")
 endif()
