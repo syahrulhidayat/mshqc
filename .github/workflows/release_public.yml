@@ -1,9 +1,8 @@
 name: Compile and Release Wheel to Public Repo
 
 on:
-  push:
-    branches: [ "fitur_tblis-dan-perbaikan-code" ]
-   
+  workflow_dispatch: # Mengaktifkan tombol jalankan manual di GitHub UI
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
