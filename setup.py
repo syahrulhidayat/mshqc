@@ -62,8 +62,6 @@ class CMakeBuild(build_ext):
         subprocess.check_call(['cmake', '--build', '.'] + build_args, cwd=self.build_temp)
 
         # === TAMBAHAN KUNCI: PEMINDAHAN PAKSA ===
-        # Terkadang CMake mengabaikan CMAKE_LIBRARY_OUTPUT_DIRECTORY untuk modul Python.
-        # Kita paksa cari semua .so yang baru jadi dan pindahkan ke extdir (folder perakitan Wheel)
         import glob
         import shutil
         
@@ -71,11 +69,11 @@ class CMakeBuild(build_ext):
         for filepath in glob.glob(os.path.join(self.build_temp, "**/*.so"), recursive=True):
             shutil.copy(filepath, extdir)
             
-        # 2. Cari di dalam folder python/mshqc (karena CMakeLists.txt Anda mengarah ke sini)
+        # 2. Cari di dalam folder python/mshqc
         for filepath in glob.glob(os.path.join(ext.sourcedir, "python", "mshqc", "*.so")):
-            # Jangan copy libmshqc.so lagi jika sudah ada (karena ukurannya besar)
             if "_mshqc" in os.path.basename(filepath):
                 shutil.copy(filepath, extdir)
+
 # Read long description safely
 try:
     with open("README.md", "r", encoding="utf-8") as fh:
@@ -85,7 +83,16 @@ except FileNotFoundError:
 
 setup(
     name="mshqc",
-    version="1.0.0",
+    # HAPUS: version="1.0.0",
+    
+    # TAMBAHAN UTAMA: Membaca versi otomatis berbasis Git commit
+    use_scm_version={
+        "root": ".",
+        "relative_to": __file__,
+        "local_scheme": "node-and-date"
+    },
+    setup_requires=['setuptools_scm'],
+    
     author="Muhamad Syahrul Hidayat",
     description="Multi-State High-Quality Calculations",
     long_description=long_description,
@@ -93,7 +100,6 @@ setup(
     packages=['mshqc'],
     package_dir={'': 'python'},
     
-    # Memastikan file biner terbungkus dengan aman (zip_safe=False sangat penting untuk C++)
     package_data={
         "mshqc": ["*.so", "*.pyi"],
     },
