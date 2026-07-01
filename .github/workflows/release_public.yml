@@ -62,10 +62,10 @@ jobs:
         python setup.py bdist_wheel
         auditwheel repair dist/*.whl --wheel-dir wheelhouse/
         ccache -s
-
-    # Simpan hasil roda biner untuk diambil oleh Job 2 (Sang Mandor)
+        
+    # UBAH MENJADI:
     - name: Upload Artifacts
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: python-wheels
         path: wheelhouse/*.whl
@@ -86,9 +86,9 @@ jobs:
         token: ${{ secrets.MY_GITHUB_TOKEN }}
         fetch-depth: 0
 
-    # Ambil SEMUA roda biner dari 4 robot di atas dan letakkan di folder 'all_wheels'
+    # UBAH MENJADI:
     - name: Download all wheels
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
       with:
         name: python-wheels
         path: all_wheels/
