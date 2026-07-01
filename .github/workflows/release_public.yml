@@ -5,7 +5,7 @@ on:
     # Sengaja cuma fitur ini aja, main dipisah total biar aman dari reset!
     branches: [ "fitur_tblis-dan-perbaikan-code" ]
     tags: [ "v*" ]
-   
+    
 jobs:
   # =========================================================================
   # JOB 1: MERAKIT BINER (PARALEL 4 ROBOT)
@@ -27,16 +27,14 @@ jobs:
       uses: actions/cache@v3
       with:
         path: ~/conda_pkgs_dir
-        # TAMBAHKAN '-v2-' UNTUK MERESET CACHE CONDA
         key: conda-pkgs-v2-${{ runner.os }}-py${{ matrix.python-version }}-${{ hashFiles('**/CMakeLists.txt') }}
 
     - name: Setup Compiler Cache (ccache)
       uses: hendrikmuhs/ccache-action@v1.2
       with:
-        # TAMBAHKAN '-v2-' UNTUK MERESET CACHE KOMPILER
         key: ${{ runner.os }}-mshqc-ccache-v2-py${{ matrix.python-version }}
         max-size: 500M
-        
+
     - name: Setup Conda Environment
       uses: conda-incubator/setup-miniconda@v3
       with:
@@ -48,9 +46,9 @@ jobs:
     - name: Install Build Dependencies
       shell: bash -el {0}
       run: |
-        conda install -y -c conda-forge cmake make compilers eigen pkg-config "hdf5=1.14.3" pip libcint tblis liblapacke openblas psi4
+       
+        conda install -y -c conda-forge cmake make compilers eigen pkg-config "hdf5=1.14.3" pip libcint tblis liblapacke openblas
         python -m pip install build wheel nanobind auditwheel setuptools_scm
-
     - name: Build and Repair Python Wheel (.whl)
       shell: bash -el {0}
       run: |
@@ -61,17 +59,16 @@ jobs:
         export CXX="ccache $CONDA_PREFIX/bin/x86_64-conda-linux-gnu-c++"
         export CXXFLAGS="-std=c++17 -fopenmp -O3 -mavx2 -mfma -mtune=generic -DEIGEN_USE_BLAS -DEIGEN_USE_LAPACKE -DNDEBUG -s"
         export SETUPTOOLS_SCM_PRETEND_VERSION="1.0.0.dev${GITHUB_RUN_NUMBER}"
+        
         python setup.py bdist_wheel
         auditwheel repair dist/*.whl --wheel-dir wheelhouse/
         ccache -s
         
-    # UBAH MENJADI:
     - name: Upload Artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: python-wheels
+        name: python-wheels-py${{ matrix.python-version }}
         path: wheelhouse/*.whl
-
 
   # =========================================================================
   # JOB 2: DEPLOY KE GITHUB & PYPI (HANYA 1 ROBOT)
@@ -88,12 +85,12 @@ jobs:
         token: ${{ secrets.MY_GITHUB_TOKEN }}
         fetch-depth: 0
 
-    # UBAH MENJADI:
     - name: Download all wheels
       uses: actions/download-artifact@v4
       with:
-        name: python-wheels
+        pattern: python-wheels-*
         path: all_wheels/
+        merge-multiple: true
 
     - name: Commit and Push Wheels to Private Repo
       run: |
@@ -136,11 +133,10 @@ jobs:
           git push origin main
         fi
 
+    # MENGGUNAKAN PYPA ACTION RESMI UNTUK UPLOAD KE PYPI
     - name: Publish to PyPI
-      env:
-        TWINE_USERNAME: __token__
-        TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-      run: |
-        python -m pip install twine
-        # Upload semua versi Python sekaligus ke PyPI
-        twine upload --skip-existing all_wheels/*.whl
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        password: ${{ secrets.PYPI_API_TOKEN }}
+        packages-dir: all_wheels/
+        skip-existing: true
