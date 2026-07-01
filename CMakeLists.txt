@@ -106,7 +106,7 @@ set(EIGEN_LOCAL_PATH "${CMAKE_SOURCE_DIR}/include/eigen-3.4.0")
 if(EXISTS "${EIGEN_LOCAL_PATH}/Eigen/Dense")
     message(STATUS ">> Linear Algebra: Menggunakan Eigen Lokal")
     add_library(Eigen3::Eigen INTERFACE IMPORTED)
-    target_include_directories(Eigen3::Eigen INTERFACE "${EIGEN_LOCAL_PATH}")
+    target_include_directories(Eigen3# --- LIBCINT ---::Eigen INTERFACE "${EIGEN_LOCAL_PATH}")
 else()
     message(STATUS ">> Eigen lokal tidak ditemukan. Mencari versi terbaru di Conda/Sistem...")
     
@@ -122,11 +122,14 @@ else()
     endif()
 endif()
 # --- LIBCINT ---
+
+find_path(CINT_INCLUDE_DIR "cint.h" HINTS "$ENV{CONDA_PREFIX}/include" "/opt/conda/include" "/usr/local/include" "/usr/include")
 find_library(CINT_LIBRARY cint HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/local/lib" "/usr/lib")
-if(CINT_LIBRARY)
-    message(STATUS ">> Integral Engine: libcint ditemukan!")
+
+if(CINT_LIBRARY AND CINT_INCLUDE_DIR)
+    message(STATUS ">> Integral Engine: libcint ditemukan di ${CINT_INCLUDE_DIR}")
 else()
-    message(FATAL_ERROR "CRITICAL: libcint tidak ditemukan!")
+    message(FATAL_ERROR "CRITICAL: libcint (atau header cint.h) tidak ditemukan!")
 endif()
 
 # --- TBLIS ---
