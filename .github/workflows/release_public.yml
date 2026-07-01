@@ -1,8 +1,9 @@
 name: Compile and Release Wheel to Public Repo
 
 on:
-  workflow_dispatch: # Mengaktifkan tombol jalankan manual di GitHub UI
-
+  push:
+    branches: [ "fitur_tblis-dan-perbaikan-code"]
+    tags: [ "v*" ] # Otomatis menyala jika Anda membuat tag (contoh: git tag v1.0.1)
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
