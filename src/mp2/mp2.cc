@@ -1920,6 +1920,7 @@ MP2Result OMP2::compute() {
         if (max_val > 0.35) kappa *= (0.35 / max_val);
 
         last_kappa = kappa;
+        lbfgs_engine.s_prev = kappa * current_step;
         apply_orbital_rotation(kappa * current_step);
         macro_iter++;
     }
