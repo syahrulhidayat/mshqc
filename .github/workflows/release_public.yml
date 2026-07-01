@@ -27,14 +27,16 @@ jobs:
       uses: actions/cache@v3
       with:
         path: ~/conda_pkgs_dir
-        key: conda-pkgs-${{ runner.os }}-py${{ matrix.python-version }}-${{ hashFiles('**/CMakeLists.txt') }}
+        # TAMBAHKAN '-v2-' UNTUK MERESET CACHE CONDA
+        key: conda-pkgs-v2-${{ runner.os }}-py${{ matrix.python-version }}-${{ hashFiles('**/CMakeLists.txt') }}
 
     - name: Setup Compiler Cache (ccache)
       uses: hendrikmuhs/ccache-action@v1.2
       with:
-        key: ${{ runner.os }}-mshqc-ccache-py${{ matrix.python-version }}
+        # TAMBAHKAN '-v2-' UNTUK MERESET CACHE KOMPILER
+        key: ${{ runner.os }}-mshqc-ccache-v2-py${{ matrix.python-version }}
         max-size: 500M
-
+        
     - name: Setup Conda Environment
       uses: conda-incubator/setup-miniconda@v3
       with:
