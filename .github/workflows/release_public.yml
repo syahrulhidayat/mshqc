@@ -7,21 +7,32 @@ jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
 
+    # =========================================================================
+    # MULTI-PYTHON MATRIX (Kompilasi paralel dari Python 3.10 s/d 3.13)
+    # =========================================================================
+    strategy:
+      fail-fast: false 
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13"]
+
     steps:
     - name: Checkout Private Source Code
       uses: actions/checkout@v3
       with:
-        token: ${{ secrets.MY_GITHUB_TOKEN }} # Gunakan GitHub Secrets
-    # =======================================================================
+        token: ${{ secrets.MY_GITHUB_TOKEN }}
+        # [PENTING]: fetch-depth 0 wajib agar setuptools-scm bisa membaca riwayat versi/tag Git
+        fetch-depth: 0 
+
+    # =========================================================================
     # 1. CACHE CONDA & PIP
-    # ========================================================================
+    # =========================================================================
     - name: Cache Conda Packages
       uses: actions/cache@v3
       with:
         path: ~/conda_pkgs_dir
-        key: conda-pkgs-${{ runner.os }}-${{ hashFiles('**/CMakeLists.txt') }}
+        key: conda-pkgs-${{ runner.os }}-py${{ matrix.python-version }}-${{ hashFiles('**/CMakeLists.txt') }}
         restore-keys: |
-          conda-pkgs-${{ runner.os }}-
+          conda-pkgs-${{ runner.os }}-py${{ matrix.python-version }}-
 
     # =========================================================================
     # 2. CCACHE: Compiler Cache
@@ -29,14 +40,14 @@ jobs:
     - name: Setup Compiler Cache (ccache)
       uses: hendrikmuhs/ccache-action@v1.2
       with:
-        key: ${{ runner.os }}-mshqc-ccache
+        key: ${{ runner.os }}-mshqc-ccache-py${{ matrix.python-version }}
         max-size: 500M
 
-    - name: Setup Conda Environment (Python 3.12)
+    - name: Setup Conda Environment
       uses: conda-incubator/setup-miniconda@v3
       with:
         auto-update-conda: true
-        python-version: "3.12"
+        python-version: ${{ matrix.python-version }}
         channels: conda-forge
         use-only-tar-bz2: true 
 
@@ -47,10 +58,11 @@ jobs:
       shell: bash -el {0}
       run: |
         conda install -y -c conda-forge cmake make compilers eigen pkg-config "hdf5=1.14.3" pip libcint tblis liblapacke openblas psi4
-        python -m pip install build wheel nanobind auditwheel
+        # setuptools_scm ditambahkan agar bisa membuat versi otomatis
+        python -m pip install build wheel nanobind auditwheel setuptools_scm
 
     # =========================================================================
-    # 4. BUILD & REPAIR WHEEL (KUNCI KOMPATIBILITAS UNIVERSAL)
+    # 4. BUILD & REPAIR WHEEL (DENGAN VERSI DINAMIS)
     # =========================================================================
     - name: Build and Repair Python Wheel (.whl)
       shell: bash -el {0}
@@ -59,13 +71,10 @@ jobs:
         export CXX="ccache $CONDA_PREFIX/bin/x86_64-conda-linux-gnu-c++"
         export CXXFLAGS="-std=c++17 -fopenmp -O3 -mavx2 -mfma -mtune=generic -DEIGEN_USE_BLAS -DEIGEN_USE_LAPACKE -DNDEBUG"
         
-        # 1. Build roda mentah ke folder dist/
-        echo ">> Membangun roda biner mentah..."
+        echo ">> Membangun roda biner mentah untuk Python ${{ matrix.python-version }}..."
         python setup.py bdist_wheel
         
-        # 2. Injeksi dependencies (HDF5, TBLIS, dll) ke dalam roda
         echo ">> Memperbaiki roda untuk kompatibilitas lintas-Linux (manylinux)..."
-        # auditwheel akan mengekstrak roda di dist/, memasukkan .so, dan menaruh hasil akhirnya di wheelhouse/
         auditwheel repair dist/*.whl --wheel-dir wheelhouse/
         
         ccache -s
@@ -80,18 +89,16 @@ jobs:
         git config --global user.email "automation@mshqc.internal"
         
         mkdir -p releases
-        rm -f releases/*.whl
-        
+        rm -f releases/*.whl # Bersihkan versi lama agar tidak menumpuk
         cp wheelhouse/*.whl releases/
-        
-        # Ditambahkan -f agar lolos dari jeratan .gitignore
         git add -f releases/*.whl
         
         if git diff-index --quiet HEAD --; then
-          echo "Tidak ada perubahan biner baru untuk disimpan di repo privat."
+          echo "Tidak ada perubahan biner baru."
         else
-          git commit -m "CI-Bot: Update biner terkompilasi (.whl) [skip ci]"
-          git push origin HEAD # Dorong aman ke cabang aktif Anda saat ini
+          git commit -m "CI-Bot: Update biner terkompilasi Python ${{ matrix.python-version }} [skip ci]"
+          git pull --rebase origin HEAD
+          git push origin HEAD
         fi
 
     # =========================================================================
@@ -106,11 +113,9 @@ jobs:
         git config --global user.email "automation@mshqc.internal"
 
         git clone https://x-access-token:${API_TOKEN_GITHUB}@github.com/mshqc/mshqc-public.git public_repo
-
-        mkdir -p public_repo/releases
-        rm -f public_repo/releases/*.whl
         
-        # [PENTING] Ambil dari folder wheelhouse, BUKAN dist
+        mkdir -p public_repo/releases
+        rm -f public_repo/releases/*.whl # Bersihkan roda versi lama
         cp wheelhouse/*.whl public_repo/releases/ 2>/dev/null || true
         cp -r data public_repo/ 2>/dev/null || true
 
@@ -118,13 +123,15 @@ jobs:
         git add -A
         
         if git diff-index --quiet HEAD --; then
-          echo "Tidak ada pembaruan pada biner mshqc."
+          echo "Tidak ada pembaruan pada biner publik."
         else
-          git commit -m "Auto-Deploy: Rilis MSHQC Wheel (.whl) Aman"
+          git commit -m "Auto-Deploy: Rilis MSHQC Wheel Python ${{ matrix.python-version }}"
+          git pull --rebase origin main
           git push origin main
         fi
+
     # =========================================================================
-    # 7. DEPLOY KE PYPI (Opsional untuk masa depan)
+    # 7. DEPLOY KE PYPI
     # =========================================================================
     - name: Publish to PyPI
       env:
@@ -132,4 +139,4 @@ jobs:
         TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
       run: |
         python -m pip install twine
-        twine upload wheelhouse/*.whl
+        twine upload --skip-existing wheelhouse/*.whl
