@@ -74,6 +74,12 @@ find_package(nanobind CONFIG REQUIRED)
 find_package(OpenMP REQUIRED)
 
 # --- BLAS & LAPACK ---
+
+if(DEFINED ENV{GITHUB_ACTIONS})
+    set(BLA_VENDOR OpenBLAS) 
+    message(STATUS ">> CI/CD Server Detected: Memaksa pencarian OpenBLAS murni untuk auditwheel")
+endif()
+
 find_library(BLIS_LIBRARY NAMES blis-mt blis HINTS "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/lib64" "/usr/lib")
 find_library(FLAME_LIBRARY NAMES flame HINTS "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/lib64" "/usr/lib")
 
@@ -84,7 +90,6 @@ else()
     message(STATUS ">> BLIS tidak ditemukan. Mencari Standar BLAS Sistem...")
     find_package(BLAS REQUIRED)
 endif()
-
 if(FLAME_LIBRARY)
     message(STATUS ">> LAPACK: libflame ditemukan!")
     set(LAPACK_LIBRARIES ${FLAME_LIBRARY})
