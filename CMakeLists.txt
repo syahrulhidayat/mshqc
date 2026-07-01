@@ -234,8 +234,7 @@ if(JEMALLOC_LIB)
 endif()
 target_include_directories(mshqc PUBLIC 
     $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
-    $<BUILD_INTERFACE:${HDF5_INCLUDE_DIRS}>
-    $<BUILD_INTERFACE:${CINT_INCLUDE_DIR}>   
+    $<BUILD_INTERFACE:$ENV{CONDA_PREFIX}/include>   
     $<INSTALL_INTERFACE:include>
 )
 # ==============================================================================
