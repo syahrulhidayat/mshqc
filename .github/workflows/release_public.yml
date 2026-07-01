@@ -2,15 +2,15 @@ name: Compile and Release Wheel to Public Repo
 
 on:
   push:
-    branches: [ "fitur_tblis-dan-perbaikan-code"]
-    tags: [ "v*" ] # Otomatis menyala jika Anda membuat tag (contoh: git tag v1.0.1)
+    branches: [ "fitur_tblis-dan-perbaikan-code", "main" ]
+    tags: [ "v*" ]
+   
 jobs:
-  build-and-deploy:
+  # =========================================================================
+  # JOB 1: MERAKIT BINER (PARALEL 4 ROBOT)
+  # =========================================================================
+  build-wheels:
     runs-on: ubuntu-latest
-
-    # =========================================================================
-    # MULTI-PYTHON MATRIX (Kompilasi paralel dari Python 3.10 s/d 3.13)
-    # =========================================================================
     strategy:
       fail-fast: false 
       matrix:
@@ -20,24 +20,14 @@ jobs:
     - name: Checkout Private Source Code
       uses: actions/checkout@v3
       with:
-        token: ${{ secrets.MY_GITHUB_TOKEN }}
-        # [PENTING]: fetch-depth 0 wajib agar setuptools-scm bisa membaca riwayat versi/tag Git
         fetch-depth: 0 
 
-    # =========================================================================
-    # 1. CACHE CONDA & PIP
-    # =========================================================================
     - name: Cache Conda Packages
       uses: actions/cache@v3
       with:
         path: ~/conda_pkgs_dir
         key: conda-pkgs-${{ runner.os }}-py${{ matrix.python-version }}-${{ hashFiles('**/CMakeLists.txt') }}
-        restore-keys: |
-          conda-pkgs-${{ runner.os }}-py${{ matrix.python-version }}-
 
-    # =========================================================================
-    # 2. CCACHE: Compiler Cache
-    # =========================================================================
     - name: Setup Compiler Cache (ccache)
       uses: hendrikmuhs/ccache-action@v1.2
       with:
@@ -52,65 +42,74 @@ jobs:
         channels: conda-forge
         use-only-tar-bz2: true 
 
-    # =========================================================================
-    # 3. INSTALL BUILD DEPENDENCIES
-    # =========================================================================
     - name: Install Build Dependencies
       shell: bash -el {0}
       run: |
         conda install -y -c conda-forge cmake make compilers eigen pkg-config "hdf5=1.14.3" pip libcint tblis liblapacke openblas psi4
-        # setuptools_scm ditambahkan agar bisa membuat versi otomatis
         python -m pip install build wheel nanobind auditwheel setuptools_scm
 
-    # =========================================================================
-    # 4. BUILD & REPAIR WHEEL (DENGAN VERSI DINAMIS)
-    # =========================================================================
     - name: Build and Repair Python Wheel (.whl)
       shell: bash -el {0}
       run: |
-        # 1. BERSIHKAN FOLDER SISA BUILD SEBELUMNYA (Anti Ghost-Wheel)
         rm -rf build/ dist/ wheelhouse/
         mkdir -p wheelhouse/
         
-        # 2. SETTING COMPILER HPC
         export CC="ccache $CONDA_PREFIX/bin/x86_64-conda-linux-gnu-cc"
         export CXX="ccache $CONDA_PREFIX/bin/x86_64-conda-linux-gnu-c++"
         export CXXFLAGS="-std=c++17 -fopenmp -O3 -mavx2 -mfma -mtune=generic -DEIGEN_USE_BLAS -DEIGEN_USE_LAPACKE -DNDEBUG"
         
-        echo ">> Membangun roda biner mentah untuk Python ${{ matrix.python-version }}..."
         python setup.py bdist_wheel
-        
-        echo ">> Memperbaiki roda untuk kompatibilitas lintas-Linux (manylinux)..."
         auditwheel repair dist/*.whl --wheel-dir wheelhouse/
-        
         ccache -s
-    # =========================================================================
-    # 5. COMMIT KEMBALI KE REPO PRIVAT
-    # =========================================================================
-    - name: Commit and Push Wheel to Private Repo
-      shell: bash -el {0}
+
+    # Simpan hasil roda biner untuk diambil oleh Job 2 (Sang Mandor)
+    - name: Upload Artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: python-wheels
+        path: wheelhouse/*.whl
+
+
+  # =========================================================================
+  # JOB 2: DEPLOY KE GITHUB & PYPI (HANYA 1 ROBOT)
+  # =========================================================================
+  deploy:
+    # Job ini hanya akan berjalan jika keempat robot di atas sudah selesai 100%
+    needs: build-wheels 
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout Private Source Code
+      uses: actions/checkout@v3
+      with:
+        token: ${{ secrets.MY_GITHUB_TOKEN }}
+        fetch-depth: 0
+
+    # Ambil SEMUA roda biner dari 4 robot di atas dan letakkan di folder 'all_wheels'
+    - name: Download all wheels
+      uses: actions/download-artifact@v3
+      with:
+        name: python-wheels
+        path: all_wheels/
+
+    - name: Commit and Push Wheels to Private Repo
       run: |
         git config --global user.name "MSHQC Automation"
         git config --global user.email "automation@mshqc.internal"
         
         mkdir -p releases
-        rm -f releases/*.whl # Bersihkan versi lama agar tidak menumpuk
-        cp wheelhouse/*.whl releases/
+        rm -f releases/*.whl
+        cp all_wheels/*.whl releases/
         git add -f releases/*.whl
         
         if git diff-index --quiet HEAD --; then
           echo "Tidak ada perubahan biner baru."
         else
-          git commit -m "CI-Bot: Update biner terkompilasi Python ${{ matrix.python-version }} [skip ci]"
-          git pull --rebase origin HEAD
+          git commit -m "CI-Bot: Update seluruh biner Python [skip ci]"
           git push origin HEAD
         fi
 
-    # =========================================================================
-    # 6. DEPLOY KE REPO PUBLIK
-    # =========================================================================
-    - name: Deploy Wheel to Public Repository
-      shell: bash -el {0}
+    - name: Deploy Wheels to Public Repository
       env:
         API_TOKEN_GITHUB: ${{ secrets.MY_GITHUB_TOKEN }} 
       run: |
@@ -120,8 +119,8 @@ jobs:
         git clone https://x-access-token:${API_TOKEN_GITHUB}@github.com/mshqc/mshqc-public.git public_repo
         
         mkdir -p public_repo/releases
-        rm -f public_repo/releases/*.whl # Bersihkan roda versi lama
-        cp wheelhouse/*.whl public_repo/releases/ 2>/dev/null || true
+        rm -f public_repo/releases/*.whl
+        cp all_wheels/*.whl public_repo/releases/ 2>/dev/null || true
         cp -r data public_repo/ 2>/dev/null || true
 
         cd public_repo
@@ -130,18 +129,15 @@ jobs:
         if git diff-index --quiet HEAD --; then
           echo "Tidak ada pembaruan pada biner publik."
         else
-          git commit -m "Auto-Deploy: Rilis MSHQC Wheel Python ${{ matrix.python-version }}"
-          git pull --rebase origin main
+          git commit -m "Auto-Deploy: Rilis Seluruh MSHQC Wheels"
           git push origin main
         fi
 
-    # =========================================================================
-    # 7. DEPLOY KE PYPI
-    # =========================================================================
     - name: Publish to PyPI
       env:
         TWINE_USERNAME: __token__
         TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
       run: |
         python -m pip install twine
-        twine upload --skip-existing wheelhouse/*.whl
+        # Upload semua versi Python sekaligus ke PyPI
+        twine upload --skip-existing all_wheels/*.whl
