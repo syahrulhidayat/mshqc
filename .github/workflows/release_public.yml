@@ -7,7 +7,7 @@ on:
   # 2. Trigger Otomatis saat push (tetap dipertahankan)
   push:
    
-    branches: [ "fitur_tblis-dan-perbaikan-code" ]
+    branches: [ "fix-eri-tblis-clean" ]
     tags: [ "v*" ]
 
 jobs: 
