@@ -12,15 +12,23 @@ endif()
 # ==============================================================================
 # [OPTIMASI KOMPILER CERDAS]
 # ==============================================================================
-if(DEFINED ENV{GITHUB_ACTIONS})
-    # [PUBLIC RELEASE]: Biner Universal yang Sangat Cepat
-    # Menggunakan -O3, LTO, dan memaksa instruksi AVX2/FMA agar matriks Eigen melesat cepat
-    # tanpa mengunci ke satu arsitektur spesifik (aman lintas Intel/AMD).
-    message(STATUS ">> CI/CD Server Detected: Menggunakan optimasi Biner Universal (AVX2/FMA)")
-    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -funroll-loops -ftree-vectorize -mavx2 -mfma -mtune=generic -DNDEBUG")
+include(CheckCXXCompilerFlag)
+
+if(DEFINED ENV{GITHUB_ACTIONS} OR DEFINED ENV{CIBUILDWHEEL})
+    # [PUBLIC RELEASE]: Biner Universal Berkekuatan Tinggi (manylinux safe)
+    message(STATUS ">> CI/CD Server Detected: Menyiapkan optimasi Universal HPC")
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -funroll-loops -ftree-vectorize -mtune=generic -DNDEBUG")
+    
+    # Deteksi aman untuk injeksi AVX2/FMA agar tidak crash di CPU lawas
+    check_cxx_compiler_flag("-mavx2" COMPILER_SUPPORTS_AVX2)
+    check_cxx_compiler_flag("-mfma" COMPILER_SUPPORTS_FMA)
+    
+    if(COMPILER_SUPPORTS_AVX2 AND COMPILER_SUPPORTS_FMA)
+        message(STATUS ">> Menginjeksi instruksi Vektor AVX2 & FMA secara aman.")
+        set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -mavx2 -mfma")
+    endif()
 else()
-    # [PRIVATE/LOCAL]: Super Turbo
-    # Sepenuhnya terkalibrasi untuk silikon fisik mesin yang sedang mengompilasi.
+    # [PRIVATE/LOCAL]: Super Turbo (Maksimal untuk mesin saat ini)
     message(STATUS ">> Local Environment Detected: Mengaktifkan Super Turbo (-march=native)")
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -march=native -mtune=native -funroll-loops -ftree-vectorize -DNDEBUG")
 endif()
@@ -125,18 +133,36 @@ else()
     message(FATAL_ERROR "CRITICAL: TBLIS tidak ditemukan!")
 endif()
 
-# --- [PERBAIKAN FINAL]: HDF5 DIKUNCI KE CONDA ---
-# Kita gunakan pencarian manual untuk menghindari CMake memuat pustaka dari Ubuntu
-find_path(HDF5_INCLUDE_DIRS "H5Cpp.h" HINTS "$ENV{CONDA_PREFIX}/include" NO_DEFAULT_PATH)
-find_library(HDF5_C_LIB hdf5 HINTS "$ENV{CONDA_PREFIX}/lib" NO_DEFAULT_PATH)
-find_library(HDF5_CXX_LIB hdf5_cpp HINTS "$ENV{CONDA_PREFIX}/lib" NO_DEFAULT_PATH)
+# --- [PERBAIKAN FINAL]: HDF5 FLEKSIBEL (CONDA FIRST, LALU SISTEM) ---
+# HINTS akan mencari di Conda terlebih dahulu. Jika gagal, akan mencari di standar sistem operasi.
+find_path(HDF5_INCLUDE_DIRS "H5Cpp.h" 
+    HINTS "$ENV{CONDA_PREFIX}/include" "/opt/conda/include" 
+    PATHS "/usr/include/hdf5/serial" "/usr/local/include"
+)
+find_library(HDF5_C_LIB hdf5 
+    HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" 
+    PATHS "/usr/lib/x86_64-linux-gnu/hdf5/serial" "/usr/local/lib" "/usr/lib64"
+)
+find_library(HDF5_CXX_LIB hdf5_cpp 
+    HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" 
+    PATHS "/usr/lib/x86_64-linux-gnu/hdf5/serial" "/usr/local/lib" "/usr/lib64"
+)
 
 if(HDF5_INCLUDE_DIRS AND HDF5_C_LIB AND HDF5_CXX_LIB)
-    message(STATUS ">> Out-of-Core Engine: HDF5 C++ Conda ditemukan secara manual!")
+    message(STATUS ">> Out-of-Core Engine: HDF5 C++ ditemukan di ${HDF5_INCLUDE_DIRS}")
     include_directories(${HDF5_INCLUDE_DIRS})
     set(HDF5_LIBRARIES ${HDF5_CXX_LIB} ${HDF5_C_LIB})
 else()
-    message(FATAL_ERROR "CRITICAL: HDF5 C++ tidak ditemukan di Conda psi4env!")
+    # Jaring Pengaman Terakhir: Gunakan modul bawaan CMake jika pencarian manual di atas meleset
+    message(STATUS ">> HDF5 manual tidak ditemukan. Beralih ke modul FindHDF5 bawaan CMake...")
+    find_package(HDF5 COMPONENTS CXX REQUIRED)
+    if(HDF5_FOUND)
+        message(STATUS ">> HDF5 ditemukan via FindHDF5.")
+        include_directories(${HDF5_INCLUDE_DIRS})
+        # HDF5_LIBRARIES sudah otomatis terisi oleh modul ini
+    else()
+        message(FATAL_ERROR "CRITICAL: Pustaka HDF5 C++ sama sekali tidak ditemukan di sistem ini!")
+    endif()
 endif()
 
 # --- JEMALLOC ---
