@@ -5,13 +5,13 @@ requires = [
     "nanobind>=1.9.0", 
     "numpy>=1.22", 
     "cmake>=3.18", 
-    "ninja"
+    "ninja",
+    "setuptools-scm>=8.0" # TAMBAHAN KUNCI: Pemicu versi otomatis
 ]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "mshqc"
-version = "1.0.0"
 authors = [
     {name = "Muhamad Syahrul Hidayat"},
 ]
@@ -19,6 +19,8 @@ description = "Python bindings for MSH-QC quantum mechanics library"
 readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.8"
+dynamic = ["version"] # TAMBAHAN KUNCI: Menandakan versi diatur secara dinamis oleh Git
+
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Science/Research",
@@ -49,5 +51,9 @@ package-dir = {"" = "python"}
 packages = ["mshqc"]
 
 [tool.setuptools.package-data]
-# Memaksa setuptools memasukkan file biner (.so) dan type hints (.pyi)
 mshqc = ["*.so", "*.pyi", "py.typed"]
+
+# KUNFI CONFIG: Mengatur format nama versi otomatis yang dikirim ke PyPI
+[tool.setuptools_scm]
+version_scheme = "release-branch-semver"
+local_scheme = "node-and-date"
