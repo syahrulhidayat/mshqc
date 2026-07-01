@@ -7,8 +7,8 @@ on:
   # 2. Trigger Otomatis saat push (tetap dipertahankan)
   push:
    
-    #branches: [ "fix-eri-tblis-clean" ]
-    #tags: [ "v*" ]
+    branches: [ "fix-eri-tblis-clean" ]
+    tags: [ "v*" ]
 
 jobs: 
 
