@@ -5,10 +5,10 @@ on:
   workflow_dispatch:
 
   # 2. Trigger Otomatis saat push (tetap dipertahankan)
-  #push:
+  push:
    
-    #branches: [ "fitur_tblis-dan-perbaikan-code" ]
-    #tags: [ "v*" ]
+    branches: [ "fitur_tblis-dan-perbaikan-code" ]
+    tags: [ "v*" ]
 
 jobs: 
 
