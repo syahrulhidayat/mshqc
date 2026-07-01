@@ -3,12 +3,16 @@ cmake_minimum_required(VERSION 3.14)
 # ==============================================================================
 # 1. INFORMASI PROYEK
 # ==============================================================================
-project(mshqc VERSION 1.0.0 LANGUAGES CXX C)
+project(mshqc LANGUAGES CXX C)
 
-if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE Release)
+# Jika dikompilasi lewat pip/setuptools, ambil versi dari environment variable
+if(DEFINED ENV{SETUPTOOLS_SCM_PRETEND_VERSION})
+    set(MSHQC_VERSION "$ENV{SETUPTOOLS_SCM_PRETEND_VERSION}")
+else()
+    set(MSHQC_VERSION "1.0.0-dev") # Fallback lokal jika tidak lewat Git
 endif()
 
+message(STATUS ">> Membangun MSHQC Versi: ${MSHQC_VERSION}")
 # ==============================================================================
 # [OPTIMASI KOMPILER CERDAS]
 # ==============================================================================
