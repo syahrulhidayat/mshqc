@@ -106,23 +106,21 @@ set(EIGEN_LOCAL_PATH "${CMAKE_SOURCE_DIR}/include/eigen-3.4.0")
 if(EXISTS "${EIGEN_LOCAL_PATH}/Eigen/Dense")
     message(STATUS ">> Linear Algebra: Menggunakan Eigen Lokal")
     add_library(Eigen3::Eigen INTERFACE IMPORTED)
-    target_include_directories(Eigen3# --- LIBCINT ---::Eigen INTERFACE "${EIGEN_LOCAL_PATH}")
+    target_include_directories(Eigen3::Eigen INTERFACE "${EIGEN_LOCAL_PATH}")
 else()
     message(STATUS ">> Eigen lokal tidak ditemukan. Mencari versi terbaru di Conda/Sistem...")
     
-    # [PERUBAHAN]: Menghapus '3.4.0 EXACT' agar CMake otomatis menerima versi tertinggi yang tersedia
     find_package(Eigen3 CONFIG HINTS "$ENV{CONDA_PREFIX}/share/eigen3/cmake" "/opt/conda/share/eigen3/cmake")
     
     if(Eigen3_FOUND)
         message(STATUS ">> Linear Algebra: Eigen ${Eigen3_VERSION} ditemukan dari Conda!")
     else()
-        # Fallback juga dibuat fleksibel tanpa batasan versi
         find_package(Eigen3 REQUIRED NO_MODULE)
         message(STATUS ">> Linear Algebra: Eigen ${Eigen3_VERSION} ditemukan sebagai fallback.")
     endif()
 endif()
-# --- LIBCINT ---
 
+# --- LIBCINT ---
 find_path(CINT_INCLUDE_DIR "cint.h" HINTS "$ENV{CONDA_PREFIX}/include" "/opt/conda/include" "/usr/local/include" "/usr/include")
 find_library(CINT_LIBRARY cint HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/local/lib" "/usr/lib")
 
@@ -131,7 +129,6 @@ if(CINT_LIBRARY AND CINT_INCLUDE_DIR)
 else()
     message(FATAL_ERROR "CRITICAL: libcint (atau header cint.h) tidak ditemukan!")
 endif()
-
 # --- TBLIS ---
 find_library(TBLIS_LIBRARY tblis HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/local/lib" "/usr/lib")
 if(TBLIS_LIBRARY)
@@ -232,13 +229,12 @@ target_link_libraries(mshqc PUBLIC
 if(JEMALLOC_LIB)
     target_link_libraries(mshqc PUBLIC ${JEMALLOC_LIB})
 endif()
-
 target_include_directories(mshqc PUBLIC 
     $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
     $<BUILD_INTERFACE:${HDF5_INCLUDE_DIRS}>
+    $<BUILD_INTERFACE:${CINT_INCLUDE_DIR}>
     $<INSTALL_INTERFACE:include>
 )
-
 # ==============================================================================
 # 6. TARGET: PYTHON MODULE (_mshqc)
 # ==============================================================================
