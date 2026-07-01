@@ -13,6 +13,7 @@ else()
 endif()
 
 message(STATUS ">> Membangun MSHQC Versi: ${MSHQC_VERSION}")
+
 # ==============================================================================
 # [OPTIMASI KOMPILER CERDAS]
 # ==============================================================================
@@ -72,54 +73,87 @@ find_package(nanobind CONFIG REQUIRED)
 # 3. PENCARIAN PUSTAKA "ULTIMATE STACK" 
 # ==============================================================================
 find_package(OpenMP REQUIRED)
+
 # --- BLAS & LAPACK (SMART DYNAMIC DISPATCH) ---
 if(DEFINED ENV{GITHUB_ACTIONS} OR DEFINED ENV{CIBUILDWHEEL})
-    message(STATUS ">> CI/CD Server Detected: Memaksa OpenBLAS untuk PyPI Wheel (Portabilitas & Ukuran Ideal)")
+    message(STATUS ">> CI/CD Server Detected: Mengunci OpenBLAS untuk PyPI Wheel (Ramping & Portabel)")
     
     find_library(OPENBLAS_LIBRARY NAMES openblas openblas_pthread HINTS "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/lib")
     if(OPENBLAS_LIBRARY)
-        message(STATUS ">> BLAS/LAPACK: OpenBLAS Ditemukan untuk Biner Publik!")
+        message(STATUS ">> BLAS/LAPACK Backend: OpenBLAS Dikunci! (${OPENBLAS_LIBRARY})")
         set(BLAS_LIBRARIES ${OPENBLAS_LIBRARY})
         set(LAPACK_LIBRARIES ${OPENBLAS_LIBRARY})
     else()
-        message(FATAL_ERROR "CRITICAL: OpenBLAS tidak ditemukan di CI!")
+        message(FATAL_ERROR "CRITICAL: OpenBLAS tidak ditemukan di server CI!")
     endif()
 
 else()
-    message(STATUS ">> Local Build Detected: Mencari Intel MKL (Skala Prioritas 1)...")
+    message(STATUS ">> Local Environment Detected: Membuka Skala Prioritas Akselerasi CPU...")
     
+    # Prioritas 1: Intel MKL (Raja Intel Xeon / Core i9)
     find_library(MKL_RT_LIBRARY NAMES mkl_rt HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/local/lib" "/usr/lib")
+    
+    # Prioritas 2: BLIS (Sangat Overpowered untuk AMD EPYC / Ryzen)
+    find_library(BLIS_MT_LIBRARY NAMES blis-mt blis HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/local/lib" "/usr/lib")
+
     if(MKL_RT_LIBRARY)
-        message(STATUS ">> BLAS/LAPACK: Intel MKL (mkl_rt) Ditemukan! Mengaktifkan optimasi Intel dengan GNU OpenMP.")
+        message(STATUS ">> BLAS/LAPACK Backend: Intel MKL (mkl_rt) Ditemukan! Menginjeksi Thread GNU Interface.")
         set(BLAS_LIBRARIES ${MKL_RT_LIBRARY})
         set(LAPACK_LIBRARIES ${MKL_RT_LIBRARY})
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DMKL_SET_INTERFACE_GNU") # Solusi anti-crash dua OpenMP
         
-        # INJEKSI KRUSIAL: Paksa MKL memakai libgomp agar tidak Segfault
-        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -DMKL_SET_INTERFACE_GNU")
+    elseif(BLIS_MT_LIBRARY)
+        message(STATUS ">> BLAS/LAPACK Backend: Intel MKL absen. Mengaktifkan BLIS Teroptimasi AMD!")
+        set(BLAS_LIBRARIES ${BLIS_MT_LIBRARY})
+        
+        # BLIS butuh antarmuka LAPACK standar, cari lapacke bawaan sistem/conda
+        find_library(LAPACKE_LIBRARY NAMES lapacke HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/lib")
+        if(LAPACKE_LIBRARY)
+            set(LAPACK_LIBRARIES ${LAPACKE_LIBRARY})
+        else()
+            message(FATAL_ERROR "CRITICAL: BLIS ditemukan tapi LAPACKE absen!")
+        endif()
+        
     else()
-        message(STATUS ">> MKL tidak ditemukan. Fallback ke OpenBLAS (Prioritas 2)...")
-        find_library(OPENBLAS_LIBRARY NAMES openblas openblas_pthread HINTS "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/lib")
+        message(STATUS ">> MKL & BLIS absen. Fallback ke OpenBLAS Universal.")
+        find_library(OPENBLAS_LIBRARY NAMES openblas HINTS "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/lib")
         if(OPENBLAS_LIBRARY)
-            message(STATUS ">> BLAS/LAPACK: OpenBLAS Ditemukan!")
             set(BLAS_LIBRARIES ${OPENBLAS_LIBRARY})
             set(LAPACK_LIBRARIES ${OPENBLAS_LIBRARY})
         else()
-            message(FATAL_ERROR "CRITICAL: MKL dan OpenBLAS tidak ditemukan! Silakan install salah satu.")
+            message(FATAL_ERROR "CRITICAL: Tidak ada BLAS engine yang terdeteksi di mesin lokal!")
         endif()
     endif()
 endif()
+
+# --- EIGEN ---
+set(EIGEN_LOCAL_PATH "${CMAKE_SOURCE_DIR}/include/eigen-3.4.0")
+if(EXISTS "${EIGEN_LOCAL_PATH}/Eigen/Dense")
+    message(STATUS ">> Linear Algebra: Menggunakan Eigen Lokal")
+    add_library(Eigen3::Eigen INTERFACE IMPORTED)
+    target_include_directories(Eigen3::Eigen INTERFACE "${EIGEN_LOCAL_PATH}")
+else()
+    message(STATUS ">> Eigen lokal tidak ditemukan. Mencari versi terbaru di Conda/Sistem...")
+    find_package(Eigen3 CONFIG HINTS "$ENV{CONDA_PREFIX}/share/eigen3/cmake" "/opt/conda/share/eigen3/cmake")
+    if(Eigen3_FOUND)
+        message(STATUS ">> Linear Algebra: Eigen ${Eigen3_VERSION} ditemukan dari Conda!")
+    else()
+        find_package(Eigen3 REQUIRED NO_MODULE)
+        message(STATUS ">> Linear Algebra: Eigen ${Eigen3_VERSION} ditemukan sebagai fallback.")
+    endif()
+endif()
+
 # --- LIBCINT ---
 find_path(CINT_INCLUDE_DIR "cint.h" HINTS "$ENV{CONDA_PREFIX}/include" "/opt/conda/include" "/usr/local/include" "/usr/include")
 find_library(CINT_LIBRARY cint HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/local/lib" "/usr/lib")
 
 if(CINT_LIBRARY AND CINT_INCLUDE_DIR)
     message(STATUS ">> Integral Engine: libcint ditemukan di ${CINT_INCLUDE_DIR}!")
-  
     include_directories(${CINT_INCLUDE_DIR}) 
-    
 else()
     message(FATAL_ERROR "CRITICAL: libcint (library atau header) tidak ditemukan!")
 endif()
+
 # --- TBLIS ---
 find_library(TBLIS_LIBRARY tblis HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/local/lib" "/usr/lib")
 if(TBLIS_LIBRARY)
@@ -128,8 +162,7 @@ else()
     message(FATAL_ERROR "CRITICAL: TBLIS tidak ditemukan!")
 endif()
 
-# --- [PERBAIKAN FINAL]: HDF5 FLEKSIBEL (CONDA FIRST, LALU SISTEM) ---
-# HINTS akan mencari di Conda terlebih dahulu. Jika gagal, akan mencari di standar sistem operasi.
+# --- HDF5 FLEKSIBEL (CONDA FIRST, LALU SISTEM) ---
 find_path(HDF5_INCLUDE_DIRS "H5Cpp.h" 
     HINTS "$ENV{CONDA_PREFIX}/include" "/opt/conda/include" 
     PATHS "/usr/include/hdf5/serial" "/usr/local/include"
@@ -148,23 +181,20 @@ if(HDF5_INCLUDE_DIRS AND HDF5_C_LIB AND HDF5_CXX_LIB)
     include_directories(${HDF5_INCLUDE_DIRS})
     set(HDF5_LIBRARIES ${HDF5_CXX_LIB} ${HDF5_C_LIB})
 else()
-    # Jaring Pengaman Terakhir: Gunakan modul bawaan CMake jika pencarian manual di atas meleset
     message(STATUS ">> HDF5 manual tidak ditemukan. Beralih ke modul FindHDF5 bawaan CMake...")
     find_package(HDF5 COMPONENTS CXX REQUIRED)
     if(HDF5_FOUND)
         message(STATUS ">> HDF5 ditemukan via FindHDF5.")
         include_directories(${HDF5_INCLUDE_DIRS})
-        # HDF5_LIBRARIES sudah otomatis terisi oleh modul ini
     else()
         message(FATAL_ERROR "CRITICAL: Pustaka HDF5 C++ sama sekali tidak ditemukan di sistem ini!")
     endif()
 endif()
 
-# --- JEMALLOC ---
-
+# --- JEMALLOC (DIKEMBALIKAN DENGAN AMAN) ---
+find_library(JEMALLOC_LIB jemalloc HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/local/lib" "/usr/lib")
 if(JEMALLOC_LIB)
-    message(STATUS ">> Memori Allocator: Jemalloc ditemukan!")
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-builtin-malloc -fno-builtin-calloc -fno-builtin-realloc -fno-builtin-free")
+    message(STATUS ">> Memori Allocator: Jemalloc ditemukan! (${JEMALLOC_LIB})")
 endif()
 
 # ==============================================================================
@@ -206,7 +236,6 @@ target_compile_definitions(mshqc PUBLIC
     EIGEN_MPL2_ONLY
 )
 
-# [PENTING] HDF5_LIBRARIES ditambahkan di sini agar simbol C++ terhubung ke biner
 target_link_libraries(mshqc PUBLIC 
     Eigen3::Eigen
     ${CINT_LIBRARY}
@@ -217,18 +246,27 @@ target_link_libraries(mshqc PUBLIC
     OpenMP::OpenMP_CXX   
 )
 
+# Tautkan Jemalloc secara aman tanpa membajak sistem malloc Python
+if(JEMALLOC_LIB)
+    target_link_libraries(mshqc PUBLIC ${JEMALLOC_LIB})
+endif()
 
 target_include_directories(mshqc PUBLIC 
     $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
     $<BUILD_INTERFACE:$ENV{CONDA_PREFIX}/include>   
     $<INSTALL_INTERFACE:include>
 )
+
 # ==============================================================================
 # 6. TARGET: PYTHON MODULE (_mshqc)
 # ==============================================================================
 nanobind_add_module(_mshqc "python/bindings.cc")
 
-target_link_libraries(_mshqc PRIVATE mshqc ${CINT_LIBRARY} ${TBLIS_LIBRARY})
+if(JEMALLOC_LIB)
+    target_link_libraries(_mshqc PRIVATE mshqc ${CINT_LIBRARY} ${TBLIS_LIBRARY} ${JEMALLOC_LIB})
+else()
+    target_link_libraries(_mshqc PRIVATE mshqc ${CINT_LIBRARY} ${TBLIS_LIBRARY})
+endif()
 
 set_target_properties(_mshqc PROPERTIES 
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/python/mshqc"
