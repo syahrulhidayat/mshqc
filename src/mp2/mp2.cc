@@ -56,36 +56,30 @@ void BaseMP2::transform_3center_mo() {
     const Eigen::MatrixXd& Ca_occ = scf_.C_alpha.leftCols(nocc_a_);
     const Eigen::MatrixXd& Ca_vir = scf_.C_alpha.rightCols(nvir_a_);
     
-    #pragma omp parallel
-    {
-        // Alokasi buffer privat agar thread tidak saling tabrak
-        Eigen::MatrixXd Half_a(nocc_a_, nbf_);
-        Eigen::MatrixXd Half_b;
-        if (nocc_b_ > 0 && nvir_b_ > 0) Half_b.resize(nocc_b_, nbf_);
+    #pragma omp parallel for schedule(dynamic)
+    for (int P = 0; P < n_aux; ++P) {
+        Eigen::Map<const Eigen::MatrixXd> B_AO(scf_.L_mat.col(P).data(), nbf_, nbf_);
         
-        #pragma omp for schedule(dynamic)
-        for (int P = 0; P < n_aux; ++P) {
-            Eigen::Map<const Eigen::MatrixXd> B_AO(scf_.L_mat.col(P).data(), nbf_, nbf_);
+        // Transformasi Alpha
+        Eigen::MatrixXd B_MO_a = Ca_occ.transpose() * (B_AO * Ca_vir);
+        
+        // FIX: Manual Flattening (Mencegah mismatch Column-Major Eigen vs Row-Major MP2)
+        for(int i = 0; i < nocc_a_; ++i) {
+            for(int a = 0; a < nvir_a_; ++a) {
+                B_ia_P_alpha_(i * nvir_a_ + a, P) = B_MO_a(i, a);
+            }
+        }
             
-            // O(N^3) DGEMM Murni (noalias mencegah Eigen membuat memori temporer)
-            Half_a.noalias() = Ca_occ.transpose() * B_AO;
-            Eigen::MatrixXd B_MO_a = Half_a * Ca_vir;
+        // Transformasi Beta (jika Open-Shell)
+        if (nocc_b_ > 0 && nvir_b_ > 0) {
+            const Eigen::MatrixXd& Cb_occ = scf_.C_beta.leftCols(nocc_b_);
+            const Eigen::MatrixXd& Cb_vir = scf_.C_beta.rightCols(nvir_b_);
+            Eigen::MatrixXd B_MO_b = Cb_occ.transpose() * (B_AO * Cb_vir);
             
-            // FIX: Transpose untuk mengubah ColMajor menjadi RowMajor, 
-            // lalu Map langsung ke memori kolom P (Bebas dari perulangan manual)
-            Eigen::MatrixXd B_MO_a_T = B_MO_a.transpose();
-            B_ia_P_alpha_.col(P) = Eigen::Map<Eigen::VectorXd>(B_MO_a_T.data(), nocc_a_ * nvir_a_);
-            
-            // Transformasi Beta (jika Open-Shell)
-            if (nocc_b_ > 0 && nvir_b_ > 0) {
-                const Eigen::MatrixXd& Cb_occ = scf_.C_beta.leftCols(nocc_b_);
-                const Eigen::MatrixXd& Cb_vir = scf_.C_beta.rightCols(nvir_b_);
-                
-                Half_b.noalias() = Cb_occ.transpose() * B_AO;
-                Eigen::MatrixXd B_MO_b = Half_b * Cb_vir;
-                
-                Eigen::MatrixXd B_MO_b_T = B_MO_b.transpose();
-                B_ia_P_beta_.col(P) = Eigen::Map<Eigen::VectorXd>(B_MO_b_T.data(), nocc_b_ * nvir_b_);
+            for(int i = 0; i < nocc_b_; ++i) {
+                for(int a = 0; a < nvir_b_; ++a) {
+                    B_ia_P_beta_(i * nvir_b_ + a, P) = B_MO_b(i, a);
+                }
             }
         }
     }
