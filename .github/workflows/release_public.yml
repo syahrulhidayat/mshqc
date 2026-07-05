@@ -2,8 +2,8 @@ name: Compile and Release Wheel to Public Repo
 
 on:
   push:
-    branches: [ "lembaran-baru" ] # Memicu otomatisasi setiap kali push ke branch main privat
-   
+    branches: [ "lembaran-baru"] # Memicu otomatisasi di branch pengembanganmu
+
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
@@ -12,10 +12,10 @@ jobs:
     - name: Checkout Private Source Code
       uses: actions/checkout@v3
       with:
-        token: ${{'secrest.MY_GITHUB_TOKEN'}} # Pastikan nama secret-nya sesuai
+        token: ${{ secrets.MY_GITHUB_TOKEN }} # [FIX] Sintaks pemanggilan rahasia yang benar
 
     # =========================================================================
-    # 1. CACHE CONDA & PIP: Menyimpan unduhan library agar tidak install dari 0
+    # 1. CACHE CONDA & PIP
     # =========================================================================
     - name: Cache Conda Packages
       uses: actions/cache@v3
@@ -43,7 +43,7 @@ jobs:
         use-only-tar-bz2: true 
 
     # =========================================================================
-    # 🔥 PENTING: Kunci versi HDF5=1.14.3 agar ABI .so stabil di semua perangkat!
+    # 3. KUNCI ULTIMATE STACK (SINKRON DENGAN CMakeLists.txt)
     # =========================================================================
     - name: Install Build Dependencies (Sync with Psi4)
       shell: bash -el {0}
@@ -58,6 +58,7 @@ jobs:
         export CXX="ccache $CONDA_PREFIX/bin/x86_64-conda-linux-gnu-c++"
         
         export CXXFLAGS="-std=c++17 -fopenmp -O3 -mavx2 -mfma -mtune=generic -DEIGEN_USE_BLAS -DEIGEN_USE_LAPACKE -DNDEBUG"
+        export CMAKE_BUILD_PARALLEL_LEVEL=4 
         
         python setup.py bdist_wheel
         
@@ -65,7 +66,7 @@ jobs:
         ccache -s
 
     # =========================================================================
-    # 3. COMMIT KEMBALI KE REPO PRIVAT (Agar Lokal Bisa Pull)
+    # 4. COMMIT KEMBALI KE REPO PRIVAT (Dinamis Mengikuti Branch)
     # =========================================================================
     - name: Commit and Push Wheel to Private Repo
       shell: bash -el {0}
@@ -84,16 +85,17 @@ jobs:
           echo "Tidak ada perubahan biner baru untuk disimpan di repo privat."
         else
           git commit -m "CI-Bot: Update biner terkompilasi (.whl) [skip ci]"
-          git push origin main
+          # [FIX] Push dinamis agar tidak menabrak branch main saat bekerja di branch lain
+          git push origin HEAD:${GITHUB_REF#refs/heads/}
         fi
 
     # =========================================================================
-    # 4. DEPLOY KE REPO PUBLIK
+    # 5. DEPLOY KE REPO PUBLIK
     # =========================================================================
     - name: Deploy Wheel to Public Repository (Closed-Source Mode)
       shell: bash -el {0}
       env:
-        API_TOKEN_GITHUB: ${{ 'secrets.MY_GITHUB_TOKEN' }} 
+        API_TOKEN_GITHUB: ${{ secrets.MY_GITHUB_TOKEN }} # [FIX] Sintaks pemanggilan rahasia
       run: |
         git config --global user.name "MSHQC Automation"
         git config --global user.email "automation@mshqc.internal"
