@@ -12,7 +12,7 @@ jobs:
     - name: Checkout Private Source Code
       uses: actions/checkout@v3
       with:
-        token: ${{'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'}} # Pastikan nama secret-nya sesuai
+        token: ${{'secrest.MY_GITHUB_TOKEN'}} # Pastikan nama secret-nya sesuai
 
     # =========================================================================
     # 1. CACHE CONDA & PIP: Menyimpan unduhan library agar tidak install dari 0
@@ -93,7 +93,7 @@ jobs:
     - name: Deploy Wheel to Public Repository (Closed-Source Mode)
       shell: bash -el {0}
       env:
-        API_TOKEN_GITHUB: ${{ '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' }} 
+        API_TOKEN_GITHUB: ${{ 'secrets.MY_GITHUB_TOKEN' }} 
       run: |
         git config --global user.name "MSHQC Automation"
         git config --global user.email "automation@mshqc.internal"
