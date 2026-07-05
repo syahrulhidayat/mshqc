@@ -1694,7 +1694,7 @@ void OMP2::execute_macro_iterations(DIIS& diis_a, DIIS& diis_b, int macro_iter) 
     Eigen::MatrixXd F_ext_ao_a = (macro_iter < 1) ? F_ao_a : diis_a.extrapolate();
     F_gen_a_ = scf_.C_alpha.transpose() * F_ext_ao_a * scf_.C_alpha;
     
-    F_gen_a_ = scf_.C_alpha.transpose() * F_ao_a * scf_.C_alpha;
+   
 
     bool is_restricted = (na_ == nb_ && va_ == vb_);
     if (!is_restricted && nb_ > 0) {
@@ -1703,6 +1703,7 @@ void OMP2::execute_macro_iterations(DIIS& diis_a, DIIS& diis_b, int macro_iter) 
         Eigen::MatrixXd SP_b = S_ * scf_.P_beta;
         Eigen::MatrixXd Err_ao_b = F_ao_b * PS_b - SP_b * F_ao_b;   
         diis_b.add_iteration(F_ao_b, Err_ao_b, scf_.P_beta);
+        Eigen::MatrixXd F_ext_ao_b = (macro_iter < 1) ? F_ao_b : diis_b.extrapolate();
         F_gen_b_ = scf_.C_beta.transpose() * F_ext_ao_b * scf_.C_beta;
     } else if (is_restricted && nb_ > 0) {
         F_gen_b_ = F_gen_a_; 
