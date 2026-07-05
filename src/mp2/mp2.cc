@@ -1686,17 +1686,24 @@ void OMP2::execute_macro_iterations(DIIS& diis_a, DIIS& diis_b, int macro_iter) 
     build_generalized_fock();
 
     Eigen::MatrixXd F_ao_a = S_ * scf_.C_alpha * F_gen_a_ * scf_.C_alpha.transpose() * S_;
+    Eigen::MatrixXd PS_a = scf_.P_alpha * S_;
+    Eigen::MatrixXd SP_a = S_ * scf_.P_alpha;
+    Eigen::MatrixXd Err_ao_a = F_ao_a * PS_a - SP_a * F_ao_a;
+
+    diis_a.add_iteration(F_ao_a, Err_ao_a, scf_.P_alpha);
+    Eigen::MatrixXd F_ext_ao_a = (macro_iter < 1) ? F_ao_a : diis_a.extrapolate();
+    F_gen_a_ = scf_.C_alpha.transpose() * F_ext_ao_a * scf_.C_alpha;
     
     F_gen_a_ = scf_.C_alpha.transpose() * F_ao_a * scf_.C_alpha;
 
     bool is_restricted = (na_ == nb_ && va_ == vb_);
     if (!is_restricted && nb_ > 0) {
         Eigen::MatrixXd F_ao_b = S_ * scf_.C_beta * F_gen_b_ * scf_.C_beta.transpose() * S_;
-        
-        
-        
-       
-        F_gen_b_ = scf_.C_beta.transpose() * F_ao_b * scf_.C_beta;
+        Eigen::MatrixXd PS_b = scf_.P_beta * S_;
+        Eigen::MatrixXd SP_b = S_ * scf_.P_beta;
+        Eigen::MatrixXd Err_ao_b = F_ao_b * PS_b - SP_b * F_ao_b;   
+        diis_b.add_iteration(F_ao_b, Err_ao_b, scf_.P_beta);
+        F_gen_b_ = scf_.C_beta.transpose() * F_ext_ao_b * scf_.C_beta;
     } else if (is_restricted && nb_ > 0) {
         F_gen_b_ = F_gen_a_; 
     }
