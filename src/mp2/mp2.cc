@@ -413,10 +413,11 @@ OMP2::OMP2(const Molecule& mol, const BasisSet& basis,
     
     max_iter_ = config_.max_iterations; 
     conv_thresh_ = config_.energy_threshold; 
-   if (config_.gradient_threshold > 0.0) {
+   // UBAH MENJADI:
+    if (config_.gradient_threshold > 0.0) {
         grad_thresh_ = config_.gradient_threshold; 
     } else {
-        grad_thresh_ = std::sqrt(config_.energy_threshold); 
+        grad_thresh_ = 1e-7; 
     }
 
     if (pg_ && pl_) {
@@ -1692,14 +1693,10 @@ void OMP2::execute_macro_iterations(DIIS& diis_a, DIIS& diis_b, int macro_iter) 
     bool is_restricted = (na_ == nb_ && va_ == vb_);
     if (!is_restricted && nb_ > 0) {
         Eigen::MatrixXd F_ao_b = S_ * scf_.C_beta * F_gen_b_ * scf_.C_beta.transpose() * S_;
-        Eigen::MatrixXd PS_b = scf_.P_beta * S_;
-        Eigen::MatrixXd SP_b = S_ * scf_.P_beta;
-        Eigen::MatrixXd Err_ao_b = F_ao_b * PS_b - SP_b * F_ao_b;
-
+        
         diis_b.add_iteration(F_ao_b, Err_ao_b, scf_.P_beta);
         
-        // FIX: Sama untuk beta
-        Eigen::MatrixXd F_ext_ao_b = (macro_iter < 1) ? F_ao_b : diis_b.extrapolate();
+       
         F_gen_b_ = scf_.C_beta.transpose() * F_ext_ao_b * scf_.C_beta;
     } else if (is_restricted && nb_ > 0) {
         F_gen_b_ = F_gen_a_; 
