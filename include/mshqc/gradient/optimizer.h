@@ -332,6 +332,37 @@ private:
      */
     void compute_statistics(const Eigen::VectorXd& vec, double& rms, double& max_val);
 };
+// ============================================================================
+// Matrix-Free Second-Order SCF (SOSCF) Optimizer untuk Orbital Elektronik
+// ============================================================================
+
+struct SOSCFConfig {
+    int max_micro_iter = 15;      // Maksimal iterasi Preconditioned Conjugate Gradient (PCG)
+    double micro_thresh = 1e-3;   // Toleransi konvergensi micro-step
+    double level_shift = 0.05;    // Shift dinamis untuk menjamin Hessian Positif Definit
+    int print_level = 0;
+};
+
+class SOSCF {
+public:
+    SOSCF(const SOSCFConfig& config = SOSCFConfig());
+
+    /**
+     * @brief Matrix-Free Newton-Raphson Solver (PCG Algorithm)
+     * * @param gradient Vektor gradien orbital (g) dari OMP2/CASSCF
+     * @param diag_hessian Vektor diagonal Hessian (Preconditioner)
+     * @param compute_hessian_vector Fungsi CPHF (Hessian-Vector Product)
+     * @return Vektor rotasi orbital (kappa) optimal
+     */
+    Eigen::VectorXd solve(
+        const Eigen::VectorXd& gradient,
+        const Eigen::VectorXd& diag_hessian,
+        std::function<Eigen::VectorXd(const Eigen::VectorXd&)> compute_hessian_vector
+    );
+
+private:
+    SOSCFConfig config_;
+};
 
 // ============================================================================
 // Utility Functions
