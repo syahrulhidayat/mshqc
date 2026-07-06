@@ -1665,7 +1665,7 @@ Eigen::VectorXd OMP2::compute_soscf_step() {
 
     if (hessian_diag_.size() != n_params) hessian_diag_.resize(n_params);
     int idx = 0;
-    
+    double grad_norm = 0.0;
     // Level Shift untuk menjamin Hessian selalu Definit Positif (Super Stabil)
     double level_shift = (grad_norm > 0.1) ? 0.02 : 1e-4; 
     bool is_restricted = (na_ == nb_ && va_ == vb_);
