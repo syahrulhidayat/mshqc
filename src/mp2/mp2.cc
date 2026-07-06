@@ -7,9 +7,9 @@ extern "C" {
 }
 #include <tblis/tblis.h>
 #include "mshqc/symmetry/salc_builder.h"
-
 #include "mshqc/mp2.h"
 #include "mshqc/integrals/eri_transformer.h"
+#include "mshqc/gradient/optimizer.h"
 #include <unsupported/Eigen/MatrixFunctions>
 #include <iostream>
 #include <iomanip>
@@ -1913,14 +1913,43 @@ MP2Result OMP2::compute() {
             }
         }
 
-        Eigen::VectorXd kappa = lbfgs_engine.get_direction(orbital_gradient_, diag_H);
+        Eigen::VectorXd kappa;
+        // ====================================================================
+        // 2. DUAL-MODE OPTIMIZER SWITCH (L-BFGS vs SOSCF)
+        // ====================================================================
+        if (config_.opt_method == "soscf") {
+            // MODE A: Exact Newton-Raphson (Matrix-Free SOSCF)
+            mshqc::gradient::SOSCFConfig soscf_conf;
+            soscf_conf.print_level = config_.print_level;
+            mshqc::gradient::SOSCF soscf_engine(soscf_conf);
+
+            // FUNCTOR: HESSIAN-VECTOR PRODUCT
+            auto compute_hessian_vector = [&](const Eigen::VectorXd& p_vec) -> Eigen::VectorXd {
+                // Saat ini menggunakan Diagonal Hessian (nantinya akan diisi CPHF eksak untuk CASSCF)
+                return diag_H.cwiseProduct(p_vec); 
+            };
+
+            kappa = soscf_engine.solve(orbital_gradient_, diag_H, compute_hessian_vector);
+        } else {
+            // MODE B: Quasi-Newton (Robust L-BFGS)
+            kappa = lbfgs_engine.get_direction(orbital_gradient_, diag_H);
+        }
+
+        // ====================================================================
+        // 3. TRUST-REGION & ORBITAL ROTATION
+        // ====================================================================
         double max_val = kappa.cwiseAbs().maxCoeff();
-        if (max_val > 0.35) kappa *= (0.45 / max_val);
+        if (max_val > 0.35) kappa *= (0.35 / max_val);
+        
         Eigen::VectorXd actual_step = kappa * current_step;
-        lbfgs_engine.s_prev = actual_step;
+        
+        // Simpan riwayat memori L-BFGS (SOSCF tidak membutuhkan histori ini)
+        if (config_.opt_method != "soscf") {
+            lbfgs_engine.s_prev = actual_step;
+        }
+        
         last_kappa = kappa;
-        apply_orbital_rotation(kappa * current_step);
-        macro_iter++;
+        apply_orbital_rotation(actual_step);
     }
 
     MP2Result res;
