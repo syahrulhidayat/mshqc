@@ -1824,7 +1824,11 @@ MP2Result OMP2::compute() {
     if(omp_get_thread_num() == 0) {
         std::cout << "\n========================================================\n";
         std::cout << "      Orbital-Optimized MP2 (OMP2)\n";
-        std::cout << "      Macro-Micro Robust L-BFGS with Dynamic Shift\n";
+        if (config_.opt_method == "soscf") {
+            std::cout << "      Trust-Region SOSCF (Approximate Hessian)\n";
+        } else {
+            std::cout << "      Macro-Micro Robust L-BFGS with Dynamic Shift\n";
+        }
         std::cout << "========================================================\n";
     }
 
@@ -1833,48 +1837,13 @@ MP2Result OMP2::compute() {
     bool is_restricted = (na_ == nb_ && va_ == vb_);
 
     while (macro_iter < config_.max_iterations) {
-        
-        
-        Eigen::MatrixXd F_ao_a, F_ao_b;
-        build_fock_fast(scf_.P_alpha, scf_.P_beta, F_ao_a, F_ao_b);
-
-        
-        
-        
-        Eigen::MatrixXd F_mo_a = C_a_current_.transpose() * F_ao_a * C_a_current_;
-        
-        Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_occ_a(F_mo_a.topLeftCorner(na_, na_));
-        C_a_current_.leftCols(na_) = C_a_current_.leftCols(na_) * es_occ_a.eigenvectors();
-        scf_.orbital_energies_alpha.head(na_) = es_occ_a.eigenvalues();
-
-        if (va_ > 0) {
-            Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_vir_a(F_mo_a.bottomRightCorner(va_, va_));
-            C_a_current_.rightCols(va_) = C_a_current_.rightCols(va_) * es_vir_a.eigenvectors();
-            scf_.orbital_energies_alpha.tail(va_) = es_vir_a.eigenvalues();
-        }
-
-        if (!is_restricted && nb_ > 0) {
-            Eigen::MatrixXd F_mo_b = C_b_current_.transpose() * F_ao_b * C_b_current_;
-            Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_occ_b(F_mo_b.topLeftCorner(nb_, nb_));
-            C_b_current_.leftCols(nb_) = C_b_current_.leftCols(nb_) * es_occ_b.eigenvectors();
-            scf_.orbital_energies_beta.head(nb_) = es_occ_b.eigenvalues();
-
-            if (vb_ > 0) {
-                Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_vir_b(F_mo_b.bottomRightCorner(vb_, vb_));
-                C_b_current_.rightCols(vb_) = C_b_current_.rightCols(vb_) * es_vir_b.eigenvectors();
-                scf_.orbital_energies_beta.tail(vb_) = es_vir_b.eigenvalues();
-            }
-        } else {
-            C_b_current_ = C_a_current_;
-            scf_.orbital_energies_beta = scf_.orbital_energies_alpha;
-        }
-
-        
         scf_.C_alpha = C_a_current_;
         scf_.C_beta  = C_b_current_;
         
-        
+       
         execute_micro_iterations();
+        Eigen::MatrixXd F_ao_a, F_ao_b;
+        build_fock_fast(scf_.P_alpha, scf_.P_beta, F_ao_a, F_ao_b);
         
         
         double e_scf = 0.5 * (scf_.P_alpha.cwiseProduct(H_core_ + F_ao_a).sum() + 
@@ -2004,12 +1973,14 @@ MP2Result OMP2::compute() {
               if (!is_restricted || nb_ > 0) F1_b -= H_core_;
           
               // 5. Transformasi kembali ke basis MO dan tambahkan ke Hp
+              double spin_factor = is_restricted ? 4.0 : 2.0;
+
               if (dim_a > 0) {
                   Eigen::MatrixXd H_kappa_a = C_a_current_.leftCols(na_).transpose() * F1_a * C_a_current_.rightCols(va_);
                   int idx_h = 0;
                   for (int a = 0; a < va_; ++a) {
                       for (int i = 0; i < na_; ++i) {
-                          Hp(idx_h++) += 4.0 * H_kappa_a(i, a); // Faktor 4.0 dari spin adaptasi CPHF
+                          Hp(idx_h++) += spin_factor * H_kappa_a(i, a); 
                       }
                   }
               }
@@ -2019,7 +1990,7 @@ MP2Result OMP2::compute() {
                   int idx_h = dim_a;
                   for (int a = 0; a < vb_; ++a) {
                       for (int i = 0; i < nb_; ++i) {
-                          Hp(idx_h++) += 4.0 * H_kappa_b(i, a);
+                          Hp(idx_h++) += spin_factor * H_kappa_b(i, a);
                       }
                   }
               }
