@@ -352,6 +352,7 @@ NB_MODULE(_mshqc, m) {
         .def_rw("energy_threshold", &MP2Config::energy_threshold)
         .def_rw("gradient_threshold", &MP2Config::gradient_threshold) 
         .def_rw("print_level", &MP2Config::print_level);
+        .def_rw("opt_method", &MP2Config::opt_method);
         
     nb::class_<MP2Result>(m, "MP2Result")
         .def(nb::init<>())
