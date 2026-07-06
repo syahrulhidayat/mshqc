@@ -530,64 +530,90 @@ OptResult optimize_uhf(
     return optimizer.optimize(initial_geom);
 }
 // ============================================================================
-// Implementasi SOSCF (Matrix-Free Preconditioned Conjugate Gradient)
+// Implementasi Trust-Region Steihaug-Toint TCG
 // ============================================================================
 
-SOSCF::SOSCF(const SOSCFConfig& config) : config_(config) {}
+TrustRegionSOSCF::TrustRegionSOSCF(const TrustRegionConfig& config) : config_(config) {}
 
-Eigen::VectorXd SOSCF::solve(
+TrustRegionResult TrustRegionSOSCF::solve(
     const Eigen::VectorXd& gradient,
     const Eigen::VectorXd& diag_hessian,
+    double trust_radius,
     std::function<Eigen::VectorXd(const Eigen::VectorXd&)> compute_hessian_vector)
 {
-    int n_params = gradient.size();
-    Eigen::VectorXd kappa = Eigen::VectorXd::Zero(n_params);
+    int n = gradient.size();
+    Eigen::VectorXd z = Eigen::VectorXd::Zero(n); 
+    Eigen::VectorXd r = gradient;
     
-    // Residual awal: r_0 = H*kappa_0 + g = g (karena kappa_0 = 0)
-    Eigen::VectorXd r = gradient; 
+    // Preconditioner M^-1. Kita gunakan abs() dan max() untuk mencegah pembagian dengan nol
+    // atau nilai negatif tanpa perlu menambahkan manual level shift.
+    Eigen::VectorXd M_inv = diag_hessian.cwiseAbs().cwiseMax(1e-12).cwiseInverse();
+    Eigen::VectorXd p = -M_inv.cwiseProduct(r);
     
-    // Preconditioner (M^-1 = 1 / (Diag_H + shift)) dengan optimasi SIMD
-    Eigen::VectorXd M_inv = (diag_hessian.array() + config_.level_shift).cwiseInverse();
-    
-    Eigen::VectorXd z = M_inv.cwiseProduct(r);
-    Eigen::VectorXd p = -z; // Arah konjugat pertama
-    
-    double rz_old = r.dot(z);
-    
-    if (config_.print_level > 1) {
-        std::cout << "      [SOSCF] Micro-iterations started. |g_0| = " 
-                  << std::scientific << gradient.norm() << "\n";
-    }
+    double r_norm = r.norm();
+    if (r_norm < config_.micro_thresh) return {z, 0.0, false};
 
+    double r_M_r_old = r.dot(-p); // sama dengan r.dot(M_inv * r)
+    
     for (int iter = 0; iter < config_.max_micro_iter; ++iter) {
-        // Panggil fungsi eksak CPHF tanpa pernah membuat matriks Hessian!
+        // Panggil Hessian-Vector murni (Tidak ada manipulasi diagonal di dalam fungsi ini lagi)
         Eigen::VectorXd Hp = compute_hessian_vector(p);
         
-        double p_Hp = p.dot(Hp);
+        // Evaluasi kelengkungan (curvature)
+        double kappa = p.dot(Hp);
         
-        // Anti-Explosion: Jika kelengkungan negatif (saddle point), hentikan!
-        if (p_Hp < 1e-14) { 
-            if (iter == 0) return -M_inv.cwiseProduct(gradient); // Fallback ke Steepest Descent
-            break;
+        // KASUS 1: Kelengkungan Negatif / Nol (Menemukan Saddle Point)
+        if (kappa <= 0.0) {
+            double tau = compute_boundary_intersection(z, p, trust_radius);
+            Eigen::VectorXd step = z + tau * p;
+            return {step, compute_model_energy(gradient, step, compute_hessian_vector), true};
         }
         
-        double alpha = rz_old / p_Hp;
-        kappa += alpha * p;
+        double alpha = r_M_r_old / kappa;
+        Eigen::VectorXd z_next = z + alpha * p;
+        
+        // KASUS 2: Langkah konjugat berikutnya keluar dari batas Trust Region
+        if (z_next.norm() >= trust_radius) {
+            double tau = compute_boundary_intersection(z, p, trust_radius);
+            Eigen::VectorXd step = z + tau * p;
+            return {step, compute_model_energy(gradient, step, compute_hessian_vector), true};
+        }
+        
+        // Update langkah dan residual
+        z = z_next;
         r += alpha * Hp;
         
-        double r_norm = r.norm();
-        if (r_norm < config_.micro_thresh) break; 
+        if (r.norm() < config_.micro_thresh) {
+            return {z, compute_model_energy(gradient, z, compute_hessian_vector), false};
+        }
         
-        z = M_inv.cwiseProduct(r);
-        double rz_new = r.dot(z);
+        Eigen::VectorXd z_M_inv = M_inv.cwiseProduct(r);
+        double r_M_r_new = r.dot(z_M_inv);
         
-        double beta = rz_new / rz_old; // Polak-Ribiere / Fletcher-Reeves
-        p = -z + beta * p;
-        
-        rz_old = rz_new;
+        double beta = r_M_r_new / r_M_r_old;
+        p = -z_M_inv + beta * p;
+        r_M_r_old = r_M_r_new;
     }
     
-    return kappa;
+    return {z, compute_model_energy(gradient, z, compute_hessian_vector), false};
+}
+
+double TrustRegionSOSCF::compute_boundary_intersection(const Eigen::VectorXd& z, const Eigen::VectorXd& p, double R) {
+    double a = p.squaredNorm();
+    double b = 2.0 * z.dot(p);
+    double c = z.squaredNorm() - (R * R);
+    
+    double discriminant = (b * b) - (4.0 * a * c);
+    if (discriminant < 0.0) return 0.0; // Fallback numerik jika ada error presisi
+    
+    // Ambil akar positif karena kita ingin bergerak maju searah vektor p
+    return (-b + std::sqrt(discriminant)) / (2.0 * a);
+}
+
+double TrustRegionSOSCF::compute_model_energy(const Eigen::VectorXd& g, const Eigen::VectorXd& step, 
+                                              std::function<Eigen::VectorXd(const Eigen::VectorXd&)>& compute_H_vec) {
+    // Model Taylor Orde 2: m(s) = g^T s + 0.5 * s^T H s
+    return g.dot(step) + 0.5 * step.dot(compute_H_vec(step));
 }
 
 } // namespace gradient
