@@ -2,7 +2,7 @@ name: Compile and Release Wheel to Public Repo
 
 on:
   push:
-    branches: [ "lembaran-baru" ] # Memicu otomatisasi setiap kali push ke branch lembaran-baru
+    branches: [ "" ] # Memicu otomatisasi setiap kali push ke branch lembaran-baru
 
 jobs:
   build-and-deploy:
