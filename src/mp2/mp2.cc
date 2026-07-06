@@ -1872,6 +1872,9 @@ MP2Result OMP2::compute() {
             is_converged = true; break;
         }
 
+        // ====================================================================
+        // UPGRADE L-BFGS PRECONDITIONER: EXACT DIAGONAL HESSIAN
+        // ====================================================================
         int n_params = orbital_gradient_.size();
         Eigen::VectorXd diag_H(n_params);
         int idx = 0;
@@ -1881,13 +1884,31 @@ MP2Result OMP2::compute() {
         
         for (int a = 0; a < va_; ++a) {
             for (int i = 0; i < na_; ++i) {
-                diag_H(idx++) = 4.0 * std::abs(scf_.orbital_energies_alpha(na_ + a) - scf_.orbital_energies_alpha(i)) + level_shift; 
+                double eps_diff = scf_.orbital_energies_alpha(na_ + a) - scf_.orbital_energies_alpha(i);
+                
+                // Tambahkan elemen Coulomb diagonal eksak (ia|ia) dari tensor DF
+                double J_ia = 0.0;
+                if (config_.eri_method != "exact") {
+                    // J_ia = sum_P (B_{ia}^P)^2
+                    J_ia = B_ia_P_alpha_.row(i * va_ + a).squaredNorm(); 
+                }
+                
+                // Rumus Exact Diagonal Hessian untuk OMP2
+                diag_H(idx++) = 4.0 * std::abs(eps_diff) + 8.0 * J_ia + level_shift; 
             }
         }
+        
         if (!is_restricted && nb_ > 0) {
             for (int a = 0; a < vb_; ++a) {
                 for (int i = 0; i < nb_; ++i) {
-                    diag_H(idx++) = 4.0 * std::abs(scf_.orbital_energies_beta(nb_ + a) - scf_.orbital_energies_beta(i)) + level_shift;
+                    double eps_diff = scf_.orbital_energies_beta(nb_ + a) - scf_.orbital_energies_beta(i);
+                    
+                    double J_ia = 0.0;
+                    if (config_.eri_method != "exact") {
+                        J_ia = B_ia_P_beta_.row(i * vb_ + a).squaredNorm(); 
+                    }
+                    
+                    diag_H(idx++) = 4.0 * std::abs(eps_diff) + 8.0 * J_ia + level_shift;
                 }
             }
         }
