@@ -1967,34 +1967,65 @@ MP2Result OMP2::compute() {
             mshqc::gradient::TrustRegionSOSCF soscf_engine(tr_conf);
 
             auto compute_hessian_vector = [&](const Eigen::VectorXd& p_vec) -> Eigen::VectorXd {
-                Eigen::VectorXd Hp = diag_H.cwiseProduct(p_vec);
-                
-                if (config_.eri_method != "exact") {
-                    int dim_a = va_ * na_;
-                    int dim_b = (is_restricted) ? 0 : (vb_ * nb_);
-                    
-                    Eigen::VectorXd X_P_a;
-                    
-                    if (dim_a > 0) {
-                        Eigen::VectorXd p_a = p_vec.head(dim_a);
-                        X_P_a = B_ia_P_alpha_.transpose() * p_a;
-                        Hp.head(dim_a) += 4.0 * (B_ia_P_alpha_ * X_P_a);
-                    }
-                    
-                    if (!is_restricted && dim_b > 0) {
-                        Eigen::VectorXd p_b = p_vec.segment(dim_a, dim_b);
-                        Eigen::VectorXd X_P_b = B_ia_P_beta_.transpose() * p_b;
-                        
-                        Hp.segment(dim_a, dim_b) += 4.0 * (B_ia_P_beta_ * X_P_b);
-                        Hp.head(dim_a) += 2.0 * (B_ia_P_alpha_ * X_P_b);
-                        
-                        if (dim_a > 0) {
-                            Hp.segment(dim_a, dim_b) += 2.0 * (B_ia_P_beta_ * X_P_a);
-                        }
-                    }
-                }
-                return Hp;
-            };
+              // 1. Bagian Diagonal: (eps_a - eps_i) * kappa_ia
+              Eigen::VectorXd Hp = diag_H.cwiseProduct(p_vec);
+              
+              int dim_a = va_ * na_;
+              int dim_b = (is_restricted) ? 0 : (vb_ * nb_);
+              
+              // 2. Bangun Matriks Rotasi Kappa
+              Eigen::MatrixXd kappa_a = Eigen::MatrixXd::Zero(na_, va_);
+              if (dim_a > 0) kappa_a = Eigen::Map<const Eigen::MatrixXd>(p_vec.data(), na_, va_);
+              
+              Eigen::MatrixXd kappa_b = Eigen::MatrixXd::Zero(nb_, vb_);
+              if (!is_restricted && dim_b > 0) kappa_b = Eigen::Map<const Eigen::MatrixXd>(p_vec.data() + dim_a, nb_, vb_);
+              
+              // 3. Bangun Respons Matriks Densitas (P1)
+              Eigen::MatrixXd P1_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
+              if (dim_a > 0) {
+                  P1_a = C_a_current_.leftCols(na_) * kappa_a * C_a_current_.rightCols(va_).transpose();
+                  P1_a += P1_a.transpose(); 
+              }
+              
+              Eigen::MatrixXd P1_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
+              if (!is_restricted && dim_b > 0) {
+                  P1_b = C_b_current_.leftCols(nb_) * kappa_b * C_b_current_.rightCols(vb_).transpose();
+                  P1_b += P1_b.transpose();
+              } else if (is_restricted) {
+                  P1_b = P1_a; 
+              }
+          
+              // 4. Bangun Respons Fock Eksak (F1 = J(P1) - K(P1)) menggunakan engine fast Anda
+              // Karena F_a dan F_b merespons P1 (yang trace-nya 0), H_core otomatis terhapus jika di dalam 
+              // build_fock_fast tidak di-hardcode. Jika H_core ikut masuk, kita kurangi.
+              Eigen::MatrixXd F1_a, F1_b;
+              build_fock_fast(P1_a, P1_b, F1_a, F1_b);
+              F1_a -= H_core_; 
+              if (!is_restricted || nb_ > 0) F1_b -= H_core_;
+          
+              // 5. Transformasi kembali ke basis MO dan tambahkan ke Hp
+              if (dim_a > 0) {
+                  Eigen::MatrixXd H_kappa_a = C_a_current_.leftCols(na_).transpose() * F1_a * C_a_current_.rightCols(va_);
+                  int idx_h = 0;
+                  for (int a = 0; a < va_; ++a) {
+                      for (int i = 0; i < na_; ++i) {
+                          Hp(idx_h++) += 4.0 * H_kappa_a(i, a); // Faktor 4.0 dari spin adaptasi CPHF
+                      }
+                  }
+              }
+              
+              if (!is_restricted && dim_b > 0) {
+                  Eigen::MatrixXd H_kappa_b = C_b_current_.leftCols(nb_).transpose() * F1_b * C_b_current_.rightCols(vb_);
+                  int idx_h = dim_a;
+                  for (int a = 0; a < vb_; ++a) {
+                      for (int i = 0; i < nb_; ++i) {
+                          Hp(idx_h++) += 4.0 * H_kappa_b(i, a);
+                      }
+                  }
+              }
+              
+              return Hp;
+          };
 
             
             mshqc::gradient::TrustRegionResult step_info = soscf_engine.solve(orbital_gradient_, diag_H, 0.50, compute_hessian_vector);
