@@ -1849,6 +1849,7 @@ MP2Result OMP2::compute() {
             Eigen::VectorXd actual_step = last_kappa * current_step;
             lbfgs_engine.s_prev = actual_step; 
             apply_orbital_rotation(actual_step);
+            macro_iter++;
             continue; 
         }
 
