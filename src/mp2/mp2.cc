@@ -1879,7 +1879,7 @@ MP2Result OMP2::compute() {
         Eigen::VectorXd diag_H(n_params);
         int idx = 0;
         
-        double level_shift = (grad_norm > 0.1) ? 0.02 : 1e-4; 
+        double level_shift = (grad_norm > 0.1) ? 0.05 : 0.005;
         bool is_restricted = (na_ == nb_ && va_ == vb_);
         
         for (int a = 0; a < va_; ++a) {
@@ -1903,7 +1903,7 @@ MP2Result OMP2::compute() {
                 for (int i = 0; i < nb_; ++i) {
                     double eps_diff = scf_.orbital_energies_beta(nb_ + a) - scf_.orbital_energies_beta(i);
                     
-                    double J_ia = 0.0;
+                    double J_ia = 0.0;// FUNCTOR: HESSIAN
                     if (config_.eri_method != "exact") {
                         J_ia = B_ia_P_beta_.row(i * vb_ + a).squaredNorm(); 
                     }
@@ -1923,10 +1923,51 @@ MP2Result OMP2::compute() {
             soscf_conf.print_level = config_.print_level;
             mshqc::gradient::SOSCF soscf_engine(soscf_conf);
 
-            // FUNCTOR: HESSIAN-VECTOR PRODUCT
+            // ================================================================
+            // FUNCTOR: EXACT DENSITY-FITTING HESSIAN-VECTOR PRODUCT (CPHF)
+            // ================================================================
             auto compute_hessian_vector = [&](const Eigen::VectorXd& p_vec) -> Eigen::VectorXd {
-                // Saat ini menggunakan Diagonal Hessian (nantinya akan diisi CPHF eksak untuk CASSCF)
-                return diag_H.cwiseProduct(p_vec); 
+                // 1. Bagian Diagonal Eksak (H_0)
+                Eigen::VectorXd Hp = diag_H.cwiseProduct(p_vec); 
+                
+                // 2. Bagian Kopling Off-Diagonal Coulomb Eksak: 4 * (ia|jb) * p_jb
+                // Menggunakan resolusi identitas: (ia|jb) = sum_P B_{ia}^P * B_{jb}^P
+                // Operasi dieksekusi sebagai: B_ia * (B_jb^T * p_jb) -> Super Cepat!
+                if (config_.eri_method != "exact") {
+                    if (va_ > 0 && na_ > 0) {
+                        int dim_a = va_ * na_;
+                        Eigen::VectorXd p_a = p_vec.head(dim_a);
+                        
+                        // Proyeksi rotasi ke Auxiliary Basis (O(N^2 * N_aux))
+                        Eigen::VectorXd X_P_a = B_ia_P_alpha_.transpose() * p_a;
+                        
+                        // Tarik kembali ke Orbital Basis
+                        Eigen::VectorXd J_coupling_a = B_ia_P_alpha_ * X_P_a;
+                        
+                        Hp.head(dim_a) += 4.0 * J_coupling_a;
+                    }
+                    
+                    if (!is_restricted && vb_ > 0 && nb_ > 0) {
+                        int dim_a = va_ * na_;
+                        int dim_b = vb_ * nb_;
+                        Eigen::VectorXd p_b = p_vec.segment(dim_a, dim_b);
+                        
+                        Eigen::VectorXd X_P_b = B_ia_P_beta_.transpose() * p_b;
+                        Eigen::VectorXd J_coupling_b = B_ia_P_beta_ * X_P_b;
+                        
+                        Hp.segment(dim_a, dim_b) += 4.0 * J_coupling_b;
+                        
+                        // Kopling Silang Alpha-Beta (Spin-Opposite Coulomb)
+                        // (ia|jb_beta) * p_jb_beta
+                        Eigen::VectorXd J_cross_ab = B_ia_P_alpha_ * X_P_b;
+                        Eigen::VectorXd J_cross_ba = B_ia_P_beta_ * X_P_a;
+                        
+                        Hp.head(dim_a) += 2.0 * J_cross_ab;
+                        Hp.segment(dim_a, dim_b) += 2.0 * J_cross_ba;
+                    }
+                }
+                
+                return Hp;
             };
 
             kappa = soscf_engine.solve(orbital_gradient_, diag_H, compute_hessian_vector);
