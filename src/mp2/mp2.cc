@@ -1076,6 +1076,10 @@ void OMP2::build_opdm_alpha() {
     auto occ_spaces_a = get_irrep_spaces(scf_.irreps_alpha, 0, na_);
     auto vir_spaces_a = get_irrep_spaces(scf_.irreps_alpha, na_, va_);
 
+    // =========================================================================
+    // 1. G_oo_alpha DARI T2_AA (EIGEN MAP / NATIVE BLAS GEMM)
+    // Blok ini sudah optimal karena mengonversi loop O(N^3) menjadi perkalian matriks
+    // =========================================================================
     for (const auto& o1 : occ_spaces_a) {
         if (o1.size == 0) continue; 
         for (const auto& o2 : occ_spaces_a) {
@@ -1092,7 +1096,6 @@ void OMP2::build_opdm_alpha() {
                         int rows = o1.size;
                         int cols = v1.size * o2.size * v2.size;
                         
-                        
                         Eigen::Map<Eigen::MatrixXd> T_mat(t_blk->data(), rows, cols);
                         G_oo_alpha_.block(o1.offset, o1.offset, o1.size, o1.size) -= 0.5 * (T_mat * T_mat.transpose());
                     }
@@ -1101,51 +1104,88 @@ void OMP2::build_opdm_alpha() {
         }
     }
     
-    for (const auto& v1 : vir_spaces_a) {
-        if (v1.size == 0) continue; 
-        for (const auto& v2 : vir_spaces_a) {
-            if (v2.size == 0) continue; 
-            for (const auto& o1 : occ_spaces_a) {
-                if (o1.size == 0) continue; 
-                for (const auto& o2 : occ_spaces_a) {
-                    if (o2.size == 0) continue; 
-                    auto* t_blk = t2_aa_.get_block(o1.id, v1.id, o2.id, v2.id);
-                    if (t_blk) {
-                      #pragma omp parallel for collapse(2)
-                        for (int da = 0; da < v1.size; ++da) {
-                            for (int db = 0; db < v1.size; ++db) {
-                                double val = 0.0;
-                                for (int di = 0; di < o1.size; ++di) {
-                                    for (int dj = 0; dj < o2.size; ++dj) {
-                                        for (int dc = 0; dc < v2.size; ++dc) {
-                                            val += (*t_blk)(di, da, dj, dc) * (*t_blk)(di, db, dj, dc);
-                                        }
-                                    }
-                                }
-                                G_vv_alpha_(v1.offset+da, v1.offset+db) += 0.5 * val;
-                            }
+    // =========================================================================
+    // 2. G_vv_alpha DARI T2_AA (TBLIS TENSOR CONTRACTION)
+    // Menghapus 5 for-loop bertingkat menjadi satu pemanggilan TBLIS GotoBLAS
+    // =========================================================================
+    #pragma omp parallel
+    {
+        Eigen::MatrixXd G_vv_local = Eigen::MatrixXd::Zero(va_, va_);
+        
+        #pragma omp for schedule(dynamic)
+        for (size_t s_v1 = 0; s_v1 < vir_spaces_a.size(); ++s_v1) {
+            const auto& v1 = vir_spaces_a[s_v1];
+            if (v1.size == 0) continue; 
+            for (const auto& v2 : vir_spaces_a) {
+                if (v2.size == 0) continue; 
+                for (const auto& o1 : occ_spaces_a) {
+                    if (o1.size == 0) continue; 
+                    for (const auto& o2 : occ_spaces_a) {
+                        if (o2.size == 0) continue; 
+                        
+                        if ((o1.id ^ v1.id ^ o2.id ^ v2.id) != 0) continue;
+
+                        auto* t_blk = t2_aa_.get_block(o1.id, v1.id, o2.id, v2.id);
+                        if (t_blk) {
+                            // Setup dimensi tensor untuk TBLIS (ColMajor)
+                            tblis::len_type ni = o1.size, na_len = v1.size, nj = o2.size, nc = v2.size;
+                            tblis::len_type len_T[] = {ni, na_len, nj, nc};
+                            tblis::stride_type str_T[] = {1, ni, ni*na_len, ni*na_len*nj};
+                            
+                            tblis::tblis_tensor t_T;
+                            tblis::tblis_init_tensor_d(&t_T, 4, len_T, t_blk->data(), str_T);
+
+                            // Setup matriks output sementara
+                            Eigen::MatrixXd Gvv_temp = Eigen::MatrixXd::Zero(na_len, na_len);
+                            tblis::len_type len_G[] = {na_len, na_len};
+                            tblis::stride_type str_G[] = {1, na_len};
+                            
+                            tblis::tblis_tensor t_Gvv;
+                            tblis::tblis_init_tensor_d(&t_Gvv, 2, len_G, Gvv_temp.data(), str_G);
+
+                            // TBLIS Eksekusi: G(a,b) = sum_{i,j,c} T(i,a,j,c) * T(i,b,j,c)
+                            tblis::tblis_tensor_mult(nullptr, nullptr, &t_T, "iajc", &t_T, "ibjc", &t_Gvv, "ab");
+
+                            // Akumulasi ke memori thread-local
+                            G_vv_local.block(v1.offset, v1.offset, na_len, na_len) += 0.5 * Gvv_temp;
                         }
                     }
                 }
             }
         }
+        // Gabungkan hasil dari tiap thread dengan aman
+        #pragma omp critical
+        {
+            G_vv_alpha_ += G_vv_local;
+        }
     }
 
+    // =========================================================================
+    // 3. G_oo_alpha & G_vv_alpha DARI T2_AB (EIGEN MAP + TBLIS)
+    // =========================================================================
     if (nb_ > 0 && vb_ > 0) {
         auto* t_ab = t2_ab_.get_block(0,0,0,0);
         if (t_ab) {
-            for(int i=0; i<na_; ++i) for(int j=0; j<na_; ++j) {
-                double val = 0.0;
-                for(int k=0; k<nb_; ++k) for(int a=0; a<va_; ++a) for(int b=0; b<vb_; ++b)
-                    val += (*t_ab)(i, k, a, b) * (*t_ab)(j, k, a, b);
-                G_oo_alpha_(i, j) -= val;
-            }
-            for(int a=0; a<va_; ++a) for(int c=0; c<va_; ++c) {
-                double val = 0.0;
-                for(int i=0; i<na_; ++i) for(int j=0; j<nb_; ++j) for(int b=0; b<vb_; ++b)
-                    val += (*t_ab)(i, j, a, b) * (*t_ab)(i, j, c, b);
-                G_vv_alpha_(a, c) += val;
-            }
+            // 3A. G_oo_alpha (Zero-Copy Native BLAS GEMM)
+            // Memori t_ab tersusun sebagai (na_, nb_ * va_ * vb_), kita petakan langsung!
+            Eigen::Map<Eigen::MatrixXd> Tab_mat(t_ab->data(), na_, nb_ * va_ * vb_);
+            G_oo_alpha_ -= Tab_mat * Tab_mat.transpose();
+
+            // 3B. G_vv_alpha (TBLIS Tensor Contraction)
+            tblis::len_type len_Tab[] = {na_, nb_, va_, vb_};
+            tblis::stride_type str_Tab[] = {1, na_, na_*nb_, na_*nb_*va_};
+            tblis::tblis_tensor t_Tab;
+            tblis::tblis_init_tensor_d(&t_Tab, 4, len_Tab, t_ab->data(), str_Tab);
+
+            Eigen::MatrixXd Gvv_temp = Eigen::MatrixXd::Zero(va_, va_);
+            tblis::len_type len_G[] = {va_, va_};
+            tblis::stride_type str_G[] = {1, va_};
+            tblis::tblis_tensor t_Gvv;
+            tblis::tblis_init_tensor_d(&t_Gvv, 2, len_G, Gvv_temp.data(), str_G);
+
+            // TBLIS Eksekusi: G(a,c) = sum_{i,j,b} T(i,j,a,b) * T(i,j,c,b)
+            tblis::tblis_tensor_mult(nullptr, nullptr, &t_Tab, "ijab", &t_Tab, "ijcb", &t_Gvv, "ac");
+            G_vv_alpha_ += Gvv_temp;
         }
     }
 }
@@ -1158,33 +1198,58 @@ void OMP2::build_opdm_beta() {
     auto* t_bb = t2_bb_.get_block(0,0,0,0);
     auto* t_ab = t2_ab_.get_block(0,0,0,0);
     
+    // =========================================================================
+    // OPTIMASI ULTRA HPC: OPDM BETA DARI T2_BB
+    // =========================================================================
     if (t_bb) {
-        for(int i=0; i<nb_; ++i) for(int j=0; j<nb_; ++j) {
-            double val = 0.0;
-            for(int k=0; k<nb_; ++k) for(int a=0; a<vb_; ++a) for(int b=0; b<vb_; ++b)
-                val += (*t_bb)(i, k, a, b) * (*t_bb)(j, k, a, b);
-            G_oo_beta_(i, j) -= 0.5 * val;
-        }
-        for(int a=0; a<vb_; ++a) for(int c=0; c<vb_; ++c) {
-            double val = 0.0;
-            for(int i=0; i<nb_; ++i) for(int j=0; j<nb_; ++j) for(int b=0; b<vb_; ++b)
-                val += (*t_bb)(i, j, a, b) * (*t_bb)(i, j, c, b);
-            G_vv_beta_(a, c) += 0.5 * val;
-        }
+        // G_oo_beta (Native Eigen GEMM)
+        Eigen::Map<Eigen::MatrixXd> Tbb_mat(t_bb->data(), nb_, nb_ * vb_ * vb_);
+        G_oo_beta_ -= 0.5 * (Tbb_mat * Tbb_mat.transpose());
+
+        // G_vv_beta (TBLIS)
+        tblis::len_type len_Tbb[] = {nb_, nb_, vb_, vb_};
+        tblis::stride_type str_Tbb[] = {1, nb_, nb_*nb_, nb_*nb_*vb_};
+        tblis::tblis_tensor t_Tbb;
+        tblis::tblis_init_tensor_d(&t_Tbb, 4, len_Tbb, t_bb->data(), str_Tbb);
+
+        Eigen::MatrixXd Gvv_temp = Eigen::MatrixXd::Zero(vb_, vb_);
+        tblis::len_type len_G[] = {vb_, vb_};
+        tblis::stride_type str_G[] = {1, vb_};
+        tblis::tblis_tensor t_Gvv;
+        tblis::tblis_init_tensor_d(&t_Gvv, 2, len_G, Gvv_temp.data(), str_G);
+
+        tblis::tblis_tensor_mult(nullptr, nullptr, &t_Tbb, "ijab", &t_Tbb, "ijcb", &t_Gvv, "ac");
+        G_vv_beta_ += 0.5 * Gvv_temp;
     }
+
+    // =========================================================================
+    // OPTIMASI ULTRA HPC: OPDM BETA DARI T2_AB
+    // =========================================================================
     if (t_ab) {
-        for(int i=0; i<nb_; ++i) for(int j=0; j<nb_; ++j) {
-            double val = 0.0;
-            for(int k=0; k<na_; ++k) for(int a=0; a<va_; ++a) for(int b=0; b<vb_; ++b)
-                val += (*t_ab)(k, i, a, b) * (*t_ab)(k, j, a, b);
-            G_oo_beta_(i, j) -= val;
-        }
-        for(int a=0; a<vb_; ++a) for(int c=0; c<vb_; ++c) {
-            double val = 0.0;
-            for(int i=0; i<na_; ++i) for(int j=0; j<nb_; ++j) for(int b=0; b<va_; ++b)
-                val += (*t_ab)(i, j, b, a) * (*t_ab)(i, j, b, c);
-            G_vv_beta_(a, c) += val;
-        }
+        tblis::len_type len_Tab[] = {na_, nb_, va_, vb_};
+        tblis::stride_type str_Tab[] = {1, na_, na_*nb_, na_*nb_*va_};
+        tblis::tblis_tensor t_Tab;
+        tblis::tblis_init_tensor_d(&t_Tab, 4, len_Tab, t_ab->data(), str_Tab);
+
+        // G_oo_beta: G(i,j) = T_ab(k,i,a,b) * T_ab(k,j,a,b)
+        Eigen::MatrixXd Goo_temp = Eigen::MatrixXd::Zero(nb_, nb_);
+        tblis::len_type len_Goo[] = {nb_, nb_};
+        tblis::stride_type str_Goo[] = {1, nb_};
+        tblis::tblis_tensor t_Goo;
+        tblis::tblis_init_tensor_d(&t_Goo, 2, len_Goo, Goo_temp.data(), str_Goo);
+
+        tblis::tblis_tensor_mult(nullptr, nullptr, &t_Tab, "kiab", &t_Tab, "kjab", &t_Goo, "ij");
+        G_oo_beta_ -= Goo_temp;
+
+        // G_vv_beta: G(a,c) = T_ab(i,j,b,a) * T_ab(i,j,b,c)
+        Eigen::MatrixXd Gvv_temp = Eigen::MatrixXd::Zero(vb_, vb_);
+        tblis::len_type len_Gvv[] = {vb_, vb_};
+        tblis::stride_type str_Gvv[] = {1, vb_};
+        tblis::tblis_tensor t_Gvv;
+        tblis::tblis_init_tensor_d(&t_Gvv, 2, len_Gvv, Gvv_temp.data(), str_Gvv);
+
+        tblis::tblis_tensor_mult(nullptr, nullptr, &t_Tab, "ijba", &t_Tab, "ijbc", &t_Gvv, "ac");
+        G_vv_beta_ += Gvv_temp;
     }
 }
 
@@ -1538,7 +1603,7 @@ void OMP2::build_generalized_fock() {
                         T2_ab(i*va_+a, j*vb_+b) = (*t_ab_blk)(i, j, a, b);
             }
             auto* t_bb_blk = t2_bb_.get_block(0,0,0,0);
-            #pragma omp parallel for collapse(2)
+            
             if (t_bb_blk) {
                 #pragma omp parallel for collapse(2)
                 for (int i = 0; i < nb_; ++i) for (int a = 0; a < vb_; ++a)
