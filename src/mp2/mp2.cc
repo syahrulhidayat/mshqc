@@ -1053,6 +1053,7 @@ double OMP2::compute_mp2_energy() {
         auto* t_bb = t2_bb_.get_block(0,0,0,0);
         auto* g_bb = g_bb_.get_block(0,0,0,0);
         if (t_bb && g_bb) {
+          #pragma omp parallel for collapse(2) reduction(+:E_ss_bb)
             for(int i=nf; i<nb_; ++i) for(int j=nf; j<nb_; ++j) for(int a=0; a<vb_; ++a) for(int b=0; b<vb_; ++b)
                 E_ss_bb += (*t_bb)(i, j, a, b) * ((*g_bb)(i, a, j, b) - (*g_bb)(i, b, j, a));
         }
@@ -1110,6 +1111,7 @@ void OMP2::build_opdm_alpha() {
                     if (o2.size == 0) continue; 
                     auto* t_blk = t2_aa_.get_block(o1.id, v1.id, o2.id, v2.id);
                     if (t_blk) {
+                      #pragma omp parallel for collapse(2)
                         for (int da = 0; da < v1.size; ++da) {
                             for (int db = 0; db < v1.size; ++db) {
                                 double val = 0.0;
@@ -1536,6 +1538,7 @@ void OMP2::build_generalized_fock() {
                         T2_ab(i*va_+a, j*vb_+b) = (*t_ab_blk)(i, j, a, b);
             }
             auto* t_bb_blk = t2_bb_.get_block(0,0,0,0);
+            #pragma omp parallel for collapse(2)
             if (t_bb_blk) {
                 #pragma omp parallel for collapse(2)
                 for (int i = 0; i < nb_; ++i) for (int a = 0; a < vb_; ++a)
