@@ -1828,23 +1828,13 @@ MP2Result OMP2::compute() {
 
     while (macro_iter < config_.max_iterations) {
         
-        // ====================================================================
-        // 0. KUNCI ANTI-INFINITE LOOP (SINKRONISASI DENSITAS ABSOLUT)
-        // Matriks Densitas WAJIB dievaluasi ulang di awal loop agar selalu 
-        // 100% konsisten dengan C_current, baik saat normal maupun retry.
-        // ====================================================================
-        scf_.P_alpha = C_a_current_.leftCols(na_) * C_a_current_.leftCols(na_).transpose();
-        if (!is_restricted && nb_ > 0) {
-            scf_.P_beta = C_b_current_.leftCols(nb_) * C_b_current_.leftCols(nb_).transpose();
-        } else {
-            scf_.P_beta = scf_.P_alpha;
-        }
-
-        // 1. BANGUN FOCK DARI DENSITAS YANG SUDAH VALID
+        // 1. BANGUN FOCK DARI DENSITAS SAAT INI
         Eigen::MatrixXd F_ao_a, F_ao_b;
         build_fock_fast(scf_.P_alpha, scf_.P_beta, F_ao_a, F_ao_b);
 
+        // ====================================================================
         // 2. SEMI-CANONICALIZATION
+        // ====================================================================
         Eigen::MatrixXd F_mo_a = C_a_current_.transpose() * F_ao_a * C_a_current_;
         
         Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_occ_a(F_mo_a.topLeftCorner(na_, na_));
@@ -1877,7 +1867,7 @@ MP2Result OMP2::compute() {
         scf_.C_alpha = C_a_current_;
         scf_.C_beta  = C_b_current_;
         
-        // 3. JALANKAN MICRO ITERATIONS (Transformasi DF dengan MO Baru)
+        // 3. JALANKAN MICRO ITERATIONS
         execute_micro_iterations();
         
         // 4. HITUNG ENERGI
@@ -1888,30 +1878,9 @@ MP2Result OMP2::compute() {
         double e_mp2_corr = e_ss_ + e_os_;
         double e_tot = e_scf + e_mp2_corr;
 
-        // 5. STEP REJECTION (TRUST-REGION PENALTY)
-        if (macro_iter > 0 && e_tot > e_total_last + 1e-7) {
-            current_step *= 0.5; 
-            if (config_.opt_method != "soscf") lbfgs_engine.reset();
-            
-            // Kembalikan ke State Aman
-            C_a_current_ = C_a_last; 
-            C_b_current_ = C_b_last;
-            
-            // Terapkan rotasi yg lebih kecil
-            Eigen::VectorXd actual_step = last_kappa * current_step;
-            apply_orbital_rotation(actual_step);
-            
-            continue; 
-        }
-
-        // --- BORDER LINE SUKSES ---
-        current_step = std::min(1.0, current_step * 1.2); 
-        e_total_last = e_tot;
-        C_a_last = C_a_current_; 
-        C_b_last = C_b_current_;
-
         if (e_tot < e_total_best) { e_total_best = e_tot; e_corr_best = e_mp2_corr; }
 
+        // 5. EVALUASI GRADIEN
         execute_macro_iterations(diis_alpha, diis_beta, macro_iter);
         double grad_norm = orbital_gradient_.norm();
 
@@ -1922,11 +1891,16 @@ MP2Result OMP2::compute() {
                       << std::scientific << std::setprecision(2) << grad_norm << "\n";
         }
 
-        if (macro_iter > 0 && std::abs(e_total_last - e_tot) < conv_thresh_ && grad_norm < grad_thresh_) {
+        // 6. CEK KONVERGENSI (Menggunakan gradien absolut agar Apple-to-Apple dengan Psi4)
+        if (macro_iter > 0 && grad_norm < grad_thresh_ && std::abs(e_tot - e_total_last) < conv_thresh_) {
             is_converged = true; break;
         }
+        
+        e_total_last = e_tot;
+        C_a_last = C_a_current_; 
+        C_b_last = C_b_current_;
 
-        // 6. EXACT DIAGONAL PRECONDITIONER
+        // 7. PRECONDITIONER
         int n_params = orbital_gradient_.size();
         Eigen::VectorXd diag_H(n_params);
         int idx = 0;
@@ -1951,11 +1925,16 @@ MP2Result OMP2::compute() {
             }
         }
 
-        // 7. OPTIMIZER SWITCH (Trust-Region TCG vs L-BFGS)
+        // 8. OPTIMIZER SWITCH (Trust-Region SOSCF vs L-BFGS)
         Eigen::VectorXd actual_step;
 
         if (config_.opt_method == "soscf") {
             mshqc::gradient::TrustRegionConfig tr_conf;
+            
+            // KUNCI UTAMA (DINAMISASI THRESHOLD SOSCF)
+            // Memaksa mesin TCG memburu akar residual hingga 10x lebih kecil dari gradien makro
+            tr_conf.micro_thresh = std::min(1e-4, grad_norm * 0.1); 
+            
             mshqc::gradient::TrustRegionSOSCF soscf_engine(tr_conf);
 
             auto compute_hessian_vector = [&](const Eigen::VectorXd& p_vec) -> Eigen::VectorXd {
@@ -1965,64 +1944,52 @@ MP2Result OMP2::compute() {
                     int dim_a = va_ * na_;
                     int dim_b = (is_restricted) ? 0 : (vb_ * nb_);
                     
-                    Eigen::MatrixXd kappa_a = Eigen::MatrixXd::Zero(na_, va_);
-                    if (dim_a > 0) kappa_a = Eigen::Map<const Eigen::MatrixXd>(p_vec.data(), na_, va_);
+                    Eigen::VectorXd X_P_a;
                     
-                    Eigen::MatrixXd P1_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
                     if (dim_a > 0) {
-                        P1_a = C_a_current_.leftCols(na_) * kappa_a * C_a_current_.rightCols(va_).transpose();
-                        P1_a += P1_a.transpose(); 
+                        Eigen::VectorXd p_a = p_vec.head(dim_a);
+                        X_P_a = B_ia_P_alpha_.transpose() * p_a;
+                        Hp.head(dim_a) += 4.0 * (B_ia_P_alpha_ * X_P_a);
                     }
                     
-                    Eigen::MatrixXd kappa_b = Eigen::MatrixXd::Zero(nb_, vb_);
-                    Eigen::MatrixXd P1_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
                     if (!is_restricted && dim_b > 0) {
-                        kappa_b = Eigen::Map<const Eigen::MatrixXd>(p_vec.data() + dim_a, nb_, vb_);
-                        P1_b = C_b_current_.leftCols(nb_) * kappa_b * C_b_current_.rightCols(vb_).transpose();
-                        P1_b += P1_b.transpose();
-                    } else if (is_restricted) {
-                        P1_b = P1_a; 
-                    }
-
-                    Eigen::MatrixXd F1_a, F1_b;
-                    build_fock_fast(P1_a, P1_b, F1_a, F1_b);
-                    F1_a -= H_core_; F1_b -= H_core_;
-
-                    if (dim_a > 0) {
-                        Eigen::MatrixXd H_kappa_a = C_a_current_.leftCols(na_).transpose() * F1_a * C_a_current_.rightCols(va_);
-                        int idx_h = 0;
-                        for (int a = 0; a < va_; ++a) {
-                            for (int i = 0; i < na_; ++i) {
-                                Hp(idx_h++) += H_kappa_a(i, a);
-                            }
-                        }
-                    }
-                    if (!is_restricted && dim_b > 0) {
-                        Eigen::MatrixXd H_kappa_b = C_b_current_.leftCols(nb_).transpose() * F1_b * C_b_current_.rightCols(vb_);
-                        int idx_h = dim_a;
-                        for (int a = 0; a < vb_; ++a) {
-                            for (int i = 0; i < nb_; ++i) {
-                                Hp(idx_h++) += H_kappa_b(i, a);
-                            }
+                        Eigen::VectorXd p_b = p_vec.segment(dim_a, dim_b);
+                        Eigen::VectorXd X_P_b = B_ia_P_beta_.transpose() * p_b;
+                        
+                        Hp.segment(dim_a, dim_b) += 4.0 * (B_ia_P_beta_ * X_P_b);
+                        Hp.head(dim_a) += 2.0 * (B_ia_P_alpha_ * X_P_b);
+                        
+                        if (dim_a > 0) {
+                            Hp.segment(dim_a, dim_b) += 2.0 * (B_ia_P_beta_ * X_P_a);
                         }
                     }
                 }
                 return Hp;
             };
 
-            mshqc::gradient::TrustRegionResult step_info = soscf_engine.solve(orbital_gradient_, diag_H, current_step, compute_hessian_vector);
+            // Beri Trust Radius yang sangat lapang (0.50) agar Newton-Raphson bisa terbang
+            mshqc::gradient::TrustRegionResult step_info = soscf_engine.solve(orbital_gradient_, diag_H, 0.50, compute_hessian_vector);
             actual_step = step_info.step;
 
         } else {
+            // L-BFGS Murni (Tanpa Hukuman Step Rejection yang Merusak)
             Eigen::VectorXd kappa = lbfgs_engine.get_direction(orbital_gradient_, diag_H);
+            
+            // Limitasi maksimum rotasi yang logis
             double max_val = kappa.cwiseAbs().maxCoeff();
-            if (max_val > 0.35) kappa *= (0.35 / max_val);
-            actual_step = kappa * current_step;
+            if (max_val > 0.45) kappa *= (0.45 / max_val);
+            
+            actual_step = kappa;
             lbfgs_engine.s_prev = actual_step;
         }
 
-        last_kappa = actual_step; 
+        // 9. ROTASI ORBITAL & UPDATE DENSITAS UNTUK ITERASI BERIKUTNYA
         apply_orbital_rotation(actual_step);
+        
+        scf_.P_alpha = C_a_current_.leftCols(na_) * C_a_current_.leftCols(na_).transpose();
+        if (!is_restricted && nb_ > 0) scf_.P_beta = C_b_current_.leftCols(nb_) * C_b_current_.leftCols(nb_).transpose();
+        else scf_.P_beta = scf_.P_alpha;
+        
         macro_iter++;
     }
 
