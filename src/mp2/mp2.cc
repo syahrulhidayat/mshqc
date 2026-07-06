@@ -1930,25 +1930,24 @@ MP2Result OMP2::compute() {
                 // 1. Bagian Diagonal Eksak (H_0)
                 Eigen::VectorXd Hp = diag_H.cwiseProduct(p_vec); 
                 
-                // 2. Bagian Kopling Off-Diagonal Coulomb Eksak: 4 * (ia|jb) * p_jb
-                // Menggunakan resolusi identitas: (ia|jb) = sum_P B_{ia}^P * B_{jb}^P
-                // Operasi dieksekusi sebagai: B_ia * (B_jb^T * p_jb) -> Super Cepat!
+                // 2. Bagian Kopling Off-Diagonal Coulomb Eksak
                 if (config_.eri_method != "exact") {
-                    if (va_ > 0 && na_ > 0) {
-                        int dim_a = va_ * na_;
+                    int dim_a = va_ * na_;
+                    
+                    // KUNCI PERBAIKAN: Deklarasi X_P_a ditaruh di luar blok if!
+                    Eigen::VectorXd X_P_a; 
+                    
+                    if (dim_a > 0) {
                         Eigen::VectorXd p_a = p_vec.head(dim_a);
-                        
-                        // Proyeksi rotasi ke Auxiliary Basis (O(N^2 * N_aux))
-                        Eigen::VectorXd X_P_a = B_ia_P_alpha_.transpose() * p_a;
+                        // Proyeksi rotasi ke Auxiliary Basis
+                        X_P_a = B_ia_P_alpha_.transpose() * p_a; 
                         
                         // Tarik kembali ke Orbital Basis
                         Eigen::VectorXd J_coupling_a = B_ia_P_alpha_ * X_P_a;
-                        
                         Hp.head(dim_a) += 4.0 * J_coupling_a;
                     }
                     
                     if (!is_restricted && vb_ > 0 && nb_ > 0) {
-                        int dim_a = va_ * na_;
                         int dim_b = vb_ * nb_;
                         Eigen::VectorXd p_b = p_vec.segment(dim_a, dim_b);
                         
@@ -1958,12 +1957,14 @@ MP2Result OMP2::compute() {
                         Hp.segment(dim_a, dim_b) += 4.0 * J_coupling_b;
                         
                         // Kopling Silang Alpha-Beta (Spin-Opposite Coulomb)
-                        // (ia|jb_beta) * p_jb_beta
                         Eigen::VectorXd J_cross_ab = B_ia_P_alpha_ * X_P_b;
-                        Eigen::VectorXd J_cross_ba = B_ia_P_beta_ * X_P_a;
-                        
                         Hp.head(dim_a) += 2.0 * J_cross_ab;
-                        Hp.segment(dim_a, dim_b) += 2.0 * J_cross_ba;
+                        
+                        // Karena X_P_a di deklarasikan di luar, ia bisa dibaca di sini
+                        if (dim_a > 0) {
+                            Eigen::VectorXd J_cross_ba = B_ia_P_beta_ * X_P_a;
+                            Hp.segment(dim_a, dim_b) += 2.0 * J_cross_ba;
+                        }
                     }
                 }
                 
