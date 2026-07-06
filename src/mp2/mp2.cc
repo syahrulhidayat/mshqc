@@ -1828,29 +1828,35 @@ MP2Result OMP2::compute() {
 
     while (macro_iter < config_.max_iterations) {
         
-        // 1. BANGUN FOCK DARI DENSITAS SAAT INI (SEBELUM MP2 DIHITUNG)
+        // ====================================================================
+        // 0. KUNCI ANTI-INFINITE LOOP (SINKRONISASI DENSITAS ABSOLUT)
+        // Matriks Densitas WAJIB dievaluasi ulang di awal loop agar selalu 
+        // 100% konsisten dengan C_current, baik saat normal maupun retry.
+        // ====================================================================
+        scf_.P_alpha = C_a_current_.leftCols(na_) * C_a_current_.leftCols(na_).transpose();
+        if (!is_restricted && nb_ > 0) {
+            scf_.P_beta = C_b_current_.leftCols(nb_) * C_b_current_.leftCols(nb_).transpose();
+        } else {
+            scf_.P_beta = scf_.P_alpha;
+        }
+
+        // 1. BANGUN FOCK DARI DENSITAS YANG SUDAH VALID
         Eigen::MatrixXd F_ao_a, F_ao_b;
         build_fock_fast(scf_.P_alpha, scf_.P_beta, F_ao_a, F_ao_b);
 
-        // ====================================================================
-        // THE SECRET WEAPON: SEMI-CANONICALIZATION
-        // Memaksa blok Occupied dan Virtual menjadi Diagonal murni!
-        // ====================================================================
+        // 2. SEMI-CANONICALIZATION
         Eigen::MatrixXd F_mo_a = C_a_current_.transpose() * F_ao_a * C_a_current_;
         
-        // Diagonalisasi Blok Alpha Occupied
         Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_occ_a(F_mo_a.topLeftCorner(na_, na_));
         C_a_current_.leftCols(na_) = C_a_current_.leftCols(na_) * es_occ_a.eigenvectors();
         scf_.orbital_energies_alpha.head(na_) = es_occ_a.eigenvalues();
 
-        // Diagonalisasi Blok Alpha Virtual
         if (va_ > 0) {
             Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_vir_a(F_mo_a.bottomRightCorner(va_, va_));
             C_a_current_.rightCols(va_) = C_a_current_.rightCols(va_) * es_vir_a.eigenvectors();
             scf_.orbital_energies_alpha.tail(va_) = es_vir_a.eigenvalues();
         }
 
-        // Lakukan untuk Beta
         if (!is_restricted && nb_ > 0) {
             Eigen::MatrixXd F_mo_b = C_b_current_.transpose() * F_ao_b * C_b_current_;
             Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_occ_b(F_mo_b.topLeftCorner(nb_, nb_));
@@ -1867,43 +1873,42 @@ MP2Result OMP2::compute() {
             scf_.orbital_energies_beta = scf_.orbital_energies_alpha;
         }
 
-        // Sinkronisasi ulang SCF object dengan MO yang sudah di-Semi-Canonical
+        // Sinkronisasi ulang SCF object
         scf_.C_alpha = C_a_current_;
         scf_.C_beta  = C_b_current_;
-        scf_.P_alpha = C_a_current_.leftCols(na_) * C_a_current_.leftCols(na_).transpose();
-        if (!is_restricted && nb_ > 0)
-            scf_.P_beta = C_b_current_.leftCols(nb_) * C_b_current_.leftCols(nb_).transpose();
-        else
-            scf_.P_beta = scf_.P_alpha;
-
-        // 2. JALANKAN MICRO ITERATIONS (MEMBANGUN TENSOR DF B_ia MENGGUNAKAN MO BARU)
+        
+        // 3. JALANKAN MICRO ITERATIONS (Transformasi DF dengan MO Baru)
         execute_micro_iterations();
         
-        // 3. HITUNG ENERGI
+        // 4. HITUNG ENERGI
         double e_scf = 0.5 * (scf_.P_alpha.cwiseProduct(H_core_ + F_ao_a).sum() + 
                               scf_.P_beta.cwiseProduct(H_core_ + F_ao_b).sum()) 
                        + mol_.nuclear_repulsion_energy();
                        
         double e_mp2_corr = e_ss_ + e_os_;
         double e_tot = e_scf + e_mp2_corr;
-      
+
+        // 5. STEP REJECTION (TRUST-REGION PENALTY)
         if (macro_iter > 0 && e_tot > e_total_last + 1e-7) {
             current_step *= 0.5; 
-            lbfgs_engine.reset();
-            diis_alpha.clear(); diis_beta.clear();
+            if (config_.opt_method != "soscf") lbfgs_engine.reset();
             
-            C_a_current_ = C_a_last; C_b_current_ = C_b_last;
-            scf_.C_alpha = C_a_last; scf_.C_beta  = C_b_last;
+            // Kembalikan ke State Aman
+            C_a_current_ = C_a_last; 
+            C_b_current_ = C_b_last;
             
+            // Terapkan rotasi yg lebih kecil
             Eigen::VectorXd actual_step = last_kappa * current_step;
-            lbfgs_engine.s_prev = actual_step; 
             apply_orbital_rotation(actual_step);
+            
             continue; 
         }
 
+        // --- BORDER LINE SUKSES ---
         current_step = std::min(1.0, current_step * 1.2); 
         e_total_last = e_tot;
-        C_a_last = C_a_current_; C_b_last = C_b_current_;
+        C_a_last = C_a_current_; 
+        C_b_last = C_b_current_;
 
         if (e_tot < e_total_best) { e_total_best = e_tot; e_corr_best = e_mp2_corr; }
 
@@ -1921,154 +1926,102 @@ MP2Result OMP2::compute() {
             is_converged = true; break;
         }
 
-        // ====================================================================
-        // UPGRADE L-BFGS PRECONDITIONER: EXACT DIAGONAL HESSIAN
-        // ====================================================================
+        // 6. EXACT DIAGONAL PRECONDITIONER
         int n_params = orbital_gradient_.size();
         Eigen::VectorXd diag_H(n_params);
         int idx = 0;
-        
         double level_shift = (grad_norm > 0.1) ? 0.05 : 0.005;
-        bool is_restricted = (na_ == nb_ && va_ == vb_);
         
         for (int a = 0; a < va_; ++a) {
             for (int i = 0; i < na_; ++i) {
                 double eps_diff = scf_.orbital_energies_alpha(na_ + a) - scf_.orbital_energies_alpha(i);
-                
-                // Tambahkan elemen Coulomb diagonal eksak (ia|ia) dari tensor DF
                 double J_ia = 0.0;
-                if (config_.eri_method != "exact") {
-                    // J_ia = sum_P (B_{ia}^P)^2
-                    J_ia = B_ia_P_alpha_.row(i * va_ + a).squaredNorm(); 
-                }
-                
-                // Rumus Exact Diagonal Hessian untuk OMP2
+                if (config_.eri_method != "exact") J_ia = B_ia_P_alpha_.row(i * va_ + a).squaredNorm(); 
                 diag_H(idx++) = 4.0 * std::abs(eps_diff) + 8.0 * J_ia + level_shift; 
             }
         }
-        
         if (!is_restricted && nb_ > 0) {
             for (int a = 0; a < vb_; ++a) {
                 for (int i = 0; i < nb_; ++i) {
                     double eps_diff = scf_.orbital_energies_beta(nb_ + a) - scf_.orbital_energies_beta(i);
-                    
-                    double J_ia = 0.0;// FUNCTOR: HESSIAN
-                    if (config_.eri_method != "exact") {
-                        J_ia = B_ia_P_beta_.row(i * vb_ + a).squaredNorm(); 
-                    }
-                    
+                    double J_ia = 0.0;
+                    if (config_.eri_method != "exact") J_ia = B_ia_P_beta_.row(i * vb_ + a).squaredNorm();
                     diag_H(idx++) = 4.0 * std::abs(eps_diff) + 8.0 * J_ia + level_shift;
                 }
             }
         }
 
-        Eigen::VectorXd kappa;
-        // ====================================================================
-        // 2. DUAL-MODE OPTIMIZER SWITCH (L-BFGS vs SOSCF)
-        // ====================================================================
+        // 7. OPTIMIZER SWITCH (Trust-Region TCG vs L-BFGS)
+        Eigen::VectorXd actual_step;
+
         if (config_.opt_method == "soscf") {
-            // MODE A: Exact Newton-Raphson (Matrix-Free SOSCF)
-            mshqc::gradient::SOSCFConfig soscf_conf;
-            soscf_conf.print_level = config_.print_level;
-            mshqc::gradient::SOSCF soscf_engine(soscf_conf);
+            mshqc::gradient::TrustRegionConfig tr_conf;
+            mshqc::gradient::TrustRegionSOSCF soscf_engine(tr_conf);
 
-            // ================================================================
-            // FUNCTOR: TRUE EXACT SCF HESSIAN-VECTOR PRODUCT (AO-CPHF)
-            // Mengubah O(N^5) menjadi O(N^3) dengan Proyeksi Basis Atom
-            // ================================================================
             auto compute_hessian_vector = [&](const Eigen::VectorXd& p_vec) -> Eigen::VectorXd {
-                int dim_a = va_ * na_;
-                int dim_b = (is_restricted) ? 0 : (vb_ * nb_);
+                Eigen::VectorXd Hp = diag_H.cwiseProduct(p_vec);
                 
-                Eigen::VectorXd Hp = Eigen::VectorXd::Zero(p_vec.size());
-                
-                // 1. Unflatten Vektor PCG (kappa) menjadi Matriks
-                // Karena Eigen defaultnya Column-Major, format (na_, va_) sudah otomatis cocok 
-                // dengan loop flattened milik kita (outer loop a, inner loop i)
-                Eigen::MatrixXd kappa_a = Eigen::MatrixXd::Zero(na_, va_);
-                if (dim_a > 0) kappa_a = Eigen::Map<const Eigen::MatrixXd>(p_vec.data(), na_, va_);
-                
-                Eigen::MatrixXd kappa_b = Eigen::MatrixXd::Zero(nb_, vb_);
-                if (!is_restricted && dim_b > 0) kappa_b = Eigen::Map<const Eigen::MatrixXd>(p_vec.data() + dim_a, nb_, vb_);
-
-                // 2. Bangun Densitas Terganggu di Basis Atom (P^(1))
-                // Rumus: P^(1) = C_occ * kappa * C_vir^T + C_vir * kappa^T * C_occ^T
-                Eigen::MatrixXd P1_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
-                if (dim_a > 0) {
-                    P1_a = C_a_current_.leftCols(na_) * kappa_a * C_a_current_.rightCols(va_).transpose();
-                    P1_a += P1_a.transpose(); // Menjamin matriks simetris
-                }
-                
-                Eigen::MatrixXd P1_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
-                if (!is_restricted && dim_b > 0) {
-                    P1_b = C_b_current_.leftCols(nb_) * kappa_b * C_b_current_.rightCols(vb_).transpose();
-                    P1_b += P1_b.transpose();
-                } else if (is_restricted) {
-                    P1_b = P1_a; 
-                }
-
-                // 3. Masukkan ke Mesin DF untuk Mendapatkan Fock Terganggu (F^(1))
-                Eigen::MatrixXd F1_a, F1_b;
-                build_fock_fast(P1_a, P1_b, F1_a, F1_b);
-                
-                // KUNCI: Kurangi H_core karena respon CPHF HANYA datang dari interaksi 2-elektron (J dan K)
-                F1_a -= H_core_;
-                F1_b -= H_core_;
-
-                // 4. Proyeksikan Kembali ke Basis Orbital & Tambahkan Diagonal Hessian
-                if (dim_a > 0) {
-                    Eigen::MatrixXd H_kappa_a = C_a_current_.leftCols(na_).transpose() * F1_a * C_a_current_.rightCols(va_);
+                if (config_.eri_method != "exact") {
+                    int dim_a = va_ * na_;
+                    int dim_b = (is_restricted) ? 0 : (vb_ * nb_);
                     
-                    int idx = 0;
-                    for (int a = 0; a < va_; ++a) {
-                        for (int i = 0; i < na_; ++i) {
-                            // Bagian Diagonal (eps_a - eps_i)
-                            double eps_diff = scf_.orbital_energies_alpha(na_ + a) - scf_.orbital_energies_alpha(i);
-                            
-                            // Hessian Eksak Total = (eps_a - eps_i)*kappa + F^(1)
-                            Hp(idx++) = eps_diff * kappa_a(i, a) + H_kappa_a(i, a);
+                    Eigen::MatrixXd kappa_a = Eigen::MatrixXd::Zero(na_, va_);
+                    if (dim_a > 0) kappa_a = Eigen::Map<const Eigen::MatrixXd>(p_vec.data(), na_, va_);
+                    
+                    Eigen::MatrixXd P1_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
+                    if (dim_a > 0) {
+                        P1_a = C_a_current_.leftCols(na_) * kappa_a * C_a_current_.rightCols(va_).transpose();
+                        P1_a += P1_a.transpose(); 
+                    }
+                    
+                    Eigen::MatrixXd kappa_b = Eigen::MatrixXd::Zero(nb_, vb_);
+                    Eigen::MatrixXd P1_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
+                    if (!is_restricted && dim_b > 0) {
+                        kappa_b = Eigen::Map<const Eigen::MatrixXd>(p_vec.data() + dim_a, nb_, vb_);
+                        P1_b = C_b_current_.leftCols(nb_) * kappa_b * C_b_current_.rightCols(vb_).transpose();
+                        P1_b += P1_b.transpose();
+                    } else if (is_restricted) {
+                        P1_b = P1_a; 
+                    }
+
+                    Eigen::MatrixXd F1_a, F1_b;
+                    build_fock_fast(P1_a, P1_b, F1_a, F1_b);
+                    F1_a -= H_core_; F1_b -= H_core_;
+
+                    if (dim_a > 0) {
+                        Eigen::MatrixXd H_kappa_a = C_a_current_.leftCols(na_).transpose() * F1_a * C_a_current_.rightCols(va_);
+                        int idx_h = 0;
+                        for (int a = 0; a < va_; ++a) {
+                            for (int i = 0; i < na_; ++i) {
+                                Hp(idx_h++) += H_kappa_a(i, a);
+                            }
+                        }
+                    }
+                    if (!is_restricted && dim_b > 0) {
+                        Eigen::MatrixXd H_kappa_b = C_b_current_.leftCols(nb_).transpose() * F1_b * C_b_current_.rightCols(vb_);
+                        int idx_h = dim_a;
+                        for (int a = 0; a < vb_; ++a) {
+                            for (int i = 0; i < nb_; ++i) {
+                                Hp(idx_h++) += H_kappa_b(i, a);
+                            }
                         }
                     }
                 }
-                
-                if (!is_restricted && dim_b > 0) {
-                    Eigen::MatrixXd H_kappa_b = C_b_current_.leftCols(nb_).transpose() * F1_b * C_b_current_.rightCols(vb_);
-                    
-                    int idx = dim_a;
-                    for (int a = 0; a < vb_; ++a) {
-                        for (int i = 0; i < nb_; ++i) {
-                            double eps_diff = scf_.orbital_energies_beta(nb_ + a) - scf_.orbital_energies_beta(i);
-                            Hp(idx++) = eps_diff * kappa_b(i, a) + H_kappa_b(i, a);
-                        }
-                    }
-                }
-                
-                // Tambahkan Level Shift dari luar untuk menjaga matrik tetap Positif-Definit
-                Hp += (level_shift * p_vec);
-                
                 return Hp;
             };
 
-            kappa = soscf_engine.solve(orbital_gradient_, diag_H, compute_hessian_vector);
-        } else {
-            // MODE B: Quasi-Newton (Robust L-BFGS)
-            kappa = lbfgs_engine.get_direction(orbital_gradient_, diag_H);
-        }
+            mshqc::gradient::TrustRegionResult step_info = soscf_engine.solve(orbital_gradient_, diag_H, current_step, compute_hessian_vector);
+            actual_step = step_info.step;
 
-        // ====================================================================
-        // 3. TRUST-REGION & ORBITAL ROTATION
-        // ====================================================================
-        double max_val = kappa.cwiseAbs().maxCoeff();
-        if (max_val > 0.45) kappa *= (0.45 / max_val);
-        
-        Eigen::VectorXd actual_step = kappa * current_step;
-        
-        // Simpan riwayat memori L-BFGS (SOSCF tidak membutuhkan histori ini)
-        if (config_.opt_method != "soscf") {
+        } else {
+            Eigen::VectorXd kappa = lbfgs_engine.get_direction(orbital_gradient_, diag_H);
+            double max_val = kappa.cwiseAbs().maxCoeff();
+            if (max_val > 0.35) kappa *= (0.35 / max_val);
+            actual_step = kappa * current_step;
             lbfgs_engine.s_prev = actual_step;
         }
-        
-        last_kappa = kappa;
+
+        last_kappa = actual_step; 
         apply_orbital_rotation(actual_step);
         macro_iter++;
     }
