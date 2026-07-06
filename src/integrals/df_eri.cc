@@ -118,10 +118,9 @@ void DensityFittingERI::compute() {
     }
 
     // ========================================================================
-    // OPTIMASI TAHAP 1: LOOP INVERSION (Mencegah False Sharing)
-    // Paralelisasi diletakkan di loop 'R' (Auxiliary), BUKAN di 'i' (Primary).
-    // Karena V_mat adalah Column-Major, setiap thread menulis ke kolom yang
-    // sepenuhnya terpisah. 100% Bebas Tabrakan Memori (Cache-friendly)!
+    // OPTIMASI TAHAP 1: LOOP INVERSION & ADDRESS HOISTING
+    // Paralelisasi diletakkan di loop 'R'. Operasi indeks dikeluarkan dari 
+    // inner-loop agar tidak mencekik ALU (Arithmetic Logic Unit) kompilator.
     // ========================================================================
     #pragma omp parallel for schedule(dynamic, 1)
     for (int R = 0; R < n_shells_aux; ++R) {
@@ -141,18 +140,24 @@ void DensityFittingERI::compute() {
                 if (buffer.empty()) continue;
 
                 for (int r = 0; r < dim_R; ++r) {
+                    int col_idx = bf_R_start + r; // Tarik keluar dari inner loop
+                    
                     for (int p_j = 0; p_j < dim_j; ++p_j) {
+                        // Tarik base row address keluar dari inner loop terdalam!
+                        int base_r1 = bf_j_start + p_j;
+                        int base_r2 = (bf_j_start + p_j) * n_primary_;
+                        int buffer_offset = dim_i * (p_j + dim_j * r);
+                        
                         for (int p_i = 0; p_i < dim_i; ++p_i) {
-                            size_t idx = p_i + dim_i * (p_j + dim_j * r);
-                            double val = buffer[idx];
+                            double val = buffer[p_i + buffer_offset];
                             
-                            int row_idx_1 = (bf_i_start + p_i) * n_primary_ + (bf_j_start + p_j);
-                            int row_idx_2 = (bf_j_start + p_j) * n_primary_ + (bf_i_start + p_i);
+                            // Akses alamat kini hanya berupa 1 penjumlahan ringan
+                            int r1 = (bf_i_start + p_i) * n_primary_ + base_r1;
+                            int r2 = base_r2 + (bf_i_start + p_i);
                             
-                            // Operasi Write (Menulis) sekarang sangat aman dan super cepat!
-                            V_mat(row_idx_1, bf_R_start + r) = val;
-                            if (row_idx_1 != row_idx_2) {
-                                V_mat(row_idx_2, bf_R_start + r) = val;
+                            V_mat(r1, col_idx) = val;
+                            if (r1 != r2) {
+                                V_mat(r2, col_idx) = val;
                             }
                         }
                     }
