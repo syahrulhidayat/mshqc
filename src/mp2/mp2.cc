@@ -1667,8 +1667,8 @@ Eigen::VectorXd OMP2::compute_soscf_step() {
     int idx = 0;
     
     // Level Shift untuk menjamin Hessian selalu Definit Positif (Super Stabil)
-    double grad_norm = orbital_gradient_.norm();
-    double level_shift = 0.5 + (grad_norm > 0.05 ? grad_norm * 2.0 : 0.0); 
+    double level_shift = (grad_norm > 0.1) ? 0.02 : 1e-4; 
+    bool is_restricted = (na_ == nb_ && va_ == vb_);
     
     bool is_restricted = (na_ == nb_ && va_ == vb_);
     
@@ -1899,7 +1899,7 @@ MP2Result OMP2::compute() {
 
         Eigen::VectorXd kappa = lbfgs_engine.get_direction(orbital_gradient_, diag_H);
         double max_val = kappa.cwiseAbs().maxCoeff();
-        if (max_val > 0.35) kappa *= (0.35 / max_val);
+        if (max_val > 0.35) kappa *= (0.45 / max_val);
         Eigen::VectorXd actual_step = kappa * current_step;
         lbfgs_engine.s_prev = actual_step;
         last_kappa = kappa;
