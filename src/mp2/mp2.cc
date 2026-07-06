@@ -1879,7 +1879,7 @@ MP2Result OMP2::compute() {
         Eigen::VectorXd diag_H(n_params);
         int idx = 0;
         
-        double level_shift = (grad_norm > 0.1) ? 0.05 : 0.005;
+        double level_shift = (grad_norm > 0.1) ? 0.02 : 1e-4; 
         bool is_restricted = (na_ == nb_ && va_ == vb_);
         
         for (int a = 0; a < va_; ++a) {
@@ -1939,7 +1939,7 @@ MP2Result OMP2::compute() {
         // 3. TRUST-REGION & ORBITAL ROTATION
         // ====================================================================
         double max_val = kappa.cwiseAbs().maxCoeff();
-        if (max_val > 0.35) kappa *= (0.35 / max_val);
+        if (max_val > 0.45) kappa *= (0.45 / max_val);
         
         Eigen::VectorXd actual_step = kappa * current_step;
         
