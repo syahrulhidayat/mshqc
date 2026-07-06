@@ -333,35 +333,49 @@ private:
     void compute_statistics(const Eigen::VectorXd& vec, double& rms, double& max_val);
 };
 // ============================================================================
-// Matrix-Free Second-Order SCF (SOSCF) Optimizer untuk Orbital Elektronik
+// Matrix-Free Trust-Region Steihaug-Toint TCG untuk Rotasi Orbital
 // ============================================================================
 
-struct SOSCFConfig {
-    int max_micro_iter = 15;      // Maksimal iterasi Preconditioned Conjugate Gradient (PCG)
-    double micro_thresh = 1e-3;   // Toleransi konvergensi micro-step
-    double level_shift = 0.05;    // Shift dinamis untuk menjamin Hessian Positif Definit
+struct TrustRegionConfig {
+    int max_micro_iter = 30;      // Maksimal iterasi TCG
+    double micro_thresh = 1e-4;   // Toleransi residual
     int print_level = 0;
 };
 
-class SOSCF {
+struct TrustRegionResult {
+    Eigen::VectorXd step;               // Vektor langkah rotasi (kappa)
+    double predicted_energy_change;     // Prediksi ΔE dari model kuadratik
+    bool hit_boundary;                  // True jika langkah menabrak batas Trust Region
+};
+
+class TrustRegionSOSCF {
 public:
-    SOSCF(const SOSCFConfig& config = SOSCFConfig());
+    TrustRegionSOSCF(const TrustRegionConfig& config = TrustRegionConfig());
 
     /**
-     * @brief Matrix-Free Newton-Raphson Solver (PCG Algorithm)
-     * * @param gradient Vektor gradien orbital (g) dari OMP2/CASSCF
-     * @param diag_hessian Vektor diagonal Hessian (Preconditioner)
-     * @param compute_hessian_vector Fungsi CPHF (Hessian-Vector Product)
-     * @return Vektor rotasi orbital (kappa) optimal
+     * @brief Steihaug-Toint Truncated Conjugate Gradient Solver
+     * @param gradient Vektor gradien orbital (g)
+     * @param diag_hessian Vektor diagonal Hessian (Preconditioner) - TANPA SHIFT!
+     * @param trust_radius Jari-jari maksimum langkah rotasi saat ini
+     * @param compute_hessian_vector Fungsi CPHF (Hessian-Vector Product eksak/aproksimasi)
+     * @return Result berisi vektor step, prediksi energi, dan status boundary
      */
-    Eigen::VectorXd solve(
+    TrustRegionResult solve(
         const Eigen::VectorXd& gradient,
         const Eigen::VectorXd& diag_hessian,
+        double trust_radius,
         std::function<Eigen::VectorXd(const Eigen::VectorXd&)> compute_hessian_vector
     );
 
 private:
-    SOSCFConfig config_;
+    TrustRegionConfig config_;
+
+    // Mencari akar positif tau untuk memproyeksikan langkah ke batas Trust Region
+    double compute_boundary_intersection(const Eigen::VectorXd& z, const Eigen::VectorXd& p, double R);
+
+    // Prediksi penurunan energi dari model kuadratik Taylor orde 2
+    double compute_model_energy(const Eigen::VectorXd& g, const Eigen::VectorXd& step, 
+                                std::function<Eigen::VectorXd(const Eigen::VectorXd&)>& compute_H_vec);
 };
 
 // ============================================================================
