@@ -194,6 +194,7 @@ bool Molecule::read_xyz(const std::string& filename) {
         
         add_atom(Z, x, y, z);
     }
+    move_to_com();
     
     return true;
 }
