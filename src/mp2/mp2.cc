@@ -1973,49 +1973,78 @@ MP2Result OMP2::compute() {
             mshqc::gradient::SOSCF soscf_engine(soscf_conf);
 
             // ================================================================
-            // FUNCTOR: EXACT DENSITY-FITTING HESSIAN-VECTOR PRODUCT (CPHF)
+            // FUNCTOR: TRUE EXACT SCF HESSIAN-VECTOR PRODUCT (AO-CPHF)
+            // Mengubah O(N^5) menjadi O(N^3) dengan Proyeksi Basis Atom
             // ================================================================
             auto compute_hessian_vector = [&](const Eigen::VectorXd& p_vec) -> Eigen::VectorXd {
-                // 1. Bagian Diagonal Eksak (H_0)
-                Eigen::VectorXd Hp = diag_H.cwiseProduct(p_vec); 
+                int dim_a = va_ * na_;
+                int dim_b = (is_restricted) ? 0 : (vb_ * nb_);
                 
-                // 2. Bagian Kopling Off-Diagonal Coulomb Eksak
-                if (config_.eri_method != "exact") {
-                    int dim_a = va_ * na_;
+                Eigen::VectorXd Hp = Eigen::VectorXd::Zero(p_vec.size());
+                
+                // 1. Unflatten Vektor PCG (kappa) menjadi Matriks
+                // Karena Eigen defaultnya Column-Major, format (na_, va_) sudah otomatis cocok 
+                // dengan loop flattened milik kita (outer loop a, inner loop i)
+                Eigen::MatrixXd kappa_a = Eigen::MatrixXd::Zero(na_, va_);
+                if (dim_a > 0) kappa_a = Eigen::Map<const Eigen::MatrixXd>(p_vec.data(), na_, va_);
+                
+                Eigen::MatrixXd kappa_b = Eigen::MatrixXd::Zero(nb_, vb_);
+                if (!is_restricted && dim_b > 0) kappa_b = Eigen::Map<const Eigen::MatrixXd>(p_vec.data() + dim_a, nb_, vb_);
+
+                // 2. Bangun Densitas Terganggu di Basis Atom (P^(1))
+                // Rumus: P^(1) = C_occ * kappa * C_vir^T + C_vir * kappa^T * C_occ^T
+                Eigen::MatrixXd P1_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
+                if (dim_a > 0) {
+                    P1_a = C_a_current_.leftCols(na_) * kappa_a * C_a_current_.rightCols(va_).transpose();
+                    P1_a += P1_a.transpose(); // Menjamin matriks simetris
+                }
+                
+                Eigen::MatrixXd P1_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
+                if (!is_restricted && dim_b > 0) {
+                    P1_b = C_b_current_.leftCols(nb_) * kappa_b * C_b_current_.rightCols(vb_).transpose();
+                    P1_b += P1_b.transpose();
+                } else if (is_restricted) {
+                    P1_b = P1_a; 
+                }
+
+                // 3. Masukkan ke Mesin DF untuk Mendapatkan Fock Terganggu (F^(1))
+                Eigen::MatrixXd F1_a, F1_b;
+                build_fock_fast(P1_a, P1_b, F1_a, F1_b);
+                
+                // KUNCI: Kurangi H_core karena respon CPHF HANYA datang dari interaksi 2-elektron (J dan K)
+                F1_a -= H_core_;
+                F1_b -= H_core_;
+
+                // 4. Proyeksikan Kembali ke Basis Orbital & Tambahkan Diagonal Hessian
+                if (dim_a > 0) {
+                    Eigen::MatrixXd H_kappa_a = C_a_current_.leftCols(na_).transpose() * F1_a * C_a_current_.rightCols(va_);
                     
-                    // KUNCI PERBAIKAN: Deklarasi X_P_a ditaruh di luar blok if!
-                    Eigen::VectorXd X_P_a; 
-                    
-                    if (dim_a > 0) {
-                        Eigen::VectorXd p_a = p_vec.head(dim_a);
-                        // Proyeksi rotasi ke Auxiliary Basis
-                        X_P_a = B_ia_P_alpha_.transpose() * p_a; 
-                        
-                        // Tarik kembali ke Orbital Basis
-                        Eigen::VectorXd J_coupling_a = B_ia_P_alpha_ * X_P_a;
-                        Hp.head(dim_a) += 4.0 * J_coupling_a;
-                    }
-                    
-                    if (!is_restricted && vb_ > 0 && nb_ > 0) {
-                        int dim_b = vb_ * nb_;
-                        Eigen::VectorXd p_b = p_vec.segment(dim_a, dim_b);
-                        
-                        Eigen::VectorXd X_P_b = B_ia_P_beta_.transpose() * p_b;
-                        Eigen::VectorXd J_coupling_b = B_ia_P_beta_ * X_P_b;
-                        
-                        Hp.segment(dim_a, dim_b) += 4.0 * J_coupling_b;
-                        
-                        // Kopling Silang Alpha-Beta (Spin-Opposite Coulomb)
-                        Eigen::VectorXd J_cross_ab = B_ia_P_alpha_ * X_P_b;
-                        Hp.head(dim_a) += 2.0 * J_cross_ab;
-                        
-                        // Karena X_P_a di deklarasikan di luar, ia bisa dibaca di sini
-                        if (dim_a > 0) {
-                            Eigen::VectorXd J_cross_ba = B_ia_P_beta_ * X_P_a;
-                            Hp.segment(dim_a, dim_b) += 2.0 * J_cross_ba;
+                    int idx = 0;
+                    for (int a = 0; a < va_; ++a) {
+                        for (int i = 0; i < na_; ++i) {
+                            // Bagian Diagonal (eps_a - eps_i)
+                            double eps_diff = scf_.orbital_energies_alpha(na_ + a) - scf_.orbital_energies_alpha(i);
+                            
+                            // Hessian Eksak Total = (eps_a - eps_i)*kappa + F^(1)
+                            Hp(idx++) = eps_diff * kappa_a(i, a) + H_kappa_a(i, a);
                         }
                     }
                 }
+                
+                if (!is_restricted && dim_b > 0) {
+                    Eigen::MatrixXd H_kappa_b = C_b_current_.leftCols(nb_).transpose() * F1_b * C_b_current_.rightCols(vb_);
+                    
+                    int idx = dim_a;
+                    for (int a = 0; a < vb_; ++a) {
+                        for (int i = 0; i < nb_; ++i) {
+                            double eps_diff = scf_.orbital_energies_beta(nb_ + a) - scf_.orbital_energies_beta(i);
+                            Hp(idx++) = eps_diff * kappa_b(i, a) + H_kappa_b(i, a);
+                        }
+                    }
+                }
+                
+                // Tambahkan Level Shift dari luar untuk menjaga matrik tetap Positif-Definit
+                Hp += (level_shift * p_vec);
                 
                 return Hp;
             };
