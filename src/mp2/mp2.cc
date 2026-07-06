@@ -1670,7 +1670,7 @@ Eigen::VectorXd OMP2::compute_soscf_step() {
     double level_shift = (grad_norm > 0.1) ? 0.02 : 1e-4; 
     bool is_restricted = (na_ == nb_ && va_ == vb_);
     
-    bool is_restricted = (na_ == nb_ && va_ == vb_);
+
     
     // 1. EVALUASI DIAGONAL HESSIAN ORBITAL EKSAK (H_ia,ia)
     for (int a = 0; a < va_; ++a) {
