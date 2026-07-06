@@ -529,6 +529,66 @@ OptResult optimize_uhf(
     GeometryOptimizer optimizer(gradient_func, config);
     return optimizer.optimize(initial_geom);
 }
+// ============================================================================
+// Implementasi SOSCF (Matrix-Free Preconditioned Conjugate Gradient)
+// ============================================================================
+
+SOSCF::SOSCF(const SOSCFConfig& config) : config_(config) {}
+
+Eigen::VectorXd SOSCF::solve(
+    const Eigen::VectorXd& gradient,
+    const Eigen::VectorXd& diag_hessian,
+    std::function<Eigen::VectorXd(const Eigen::VectorXd&)> compute_hessian_vector)
+{
+    int n_params = gradient.size();
+    Eigen::VectorXd kappa = Eigen::VectorXd::Zero(n_params);
+    
+    // Residual awal: r_0 = H*kappa_0 + g = g (karena kappa_0 = 0)
+    Eigen::VectorXd r = gradient; 
+    
+    // Preconditioner (M^-1 = 1 / (Diag_H + shift)) dengan optimasi SIMD
+    Eigen::VectorXd M_inv = (diag_hessian.array() + config_.level_shift).cwiseInverse();
+    
+    Eigen::VectorXd z = M_inv.cwiseProduct(r);
+    Eigen::VectorXd p = -z; // Arah konjugat pertama
+    
+    double rz_old = r.dot(z);
+    
+    if (config_.print_level > 1) {
+        std::cout << "      [SOSCF] Micro-iterations started. |g_0| = " 
+                  << std::scientific << gradient.norm() << "\n";
+    }
+
+    for (int iter = 0; iter < config_.max_micro_iter; ++iter) {
+        // Panggil fungsi eksak CPHF tanpa pernah membuat matriks Hessian!
+        Eigen::VectorXd Hp = compute_hessian_vector(p);
+        
+        double p_Hp = p.dot(Hp);
+        
+        // Anti-Explosion: Jika kelengkungan negatif (saddle point), hentikan!
+        if (p_Hp < 1e-14) { 
+            if (iter == 0) return -M_inv.cwiseProduct(gradient); // Fallback ke Steepest Descent
+            break;
+        }
+        
+        double alpha = rz_old / p_Hp;
+        kappa += alpha * p;
+        r += alpha * Hp;
+        
+        double r_norm = r.norm();
+        if (r_norm < config_.micro_thresh) break; 
+        
+        z = M_inv.cwiseProduct(r);
+        double rz_new = r.dot(z);
+        
+        double beta = rz_new / rz_old; // Polak-Ribiere / Fletcher-Reeves
+        p = -z + beta * p;
+        
+        rz_old = rz_new;
+    }
+    
+    return kappa;
+}
 
 } // namespace gradient
 } // namespace mshqc
