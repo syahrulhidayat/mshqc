@@ -1826,18 +1826,66 @@ MP2Result OMP2::compute() {
     int macro_iter = 0;
 
     while (macro_iter < config_.max_iterations) {
-        execute_micro_iterations();
         
+        // 1. BANGUN FOCK DARI DENSITAS SAAT INI (SEBELUM MP2 DIHITUNG)
         Eigen::MatrixXd F_ao_a, F_ao_b;
         build_fock_fast(scf_.P_alpha, scf_.P_beta, F_ao_a, F_ao_b);
+
+        // ====================================================================
+        // THE SECRET WEAPON: SEMI-CANONICALIZATION
+        // Memaksa blok Occupied dan Virtual menjadi Diagonal murni!
+        // ====================================================================
+        Eigen::MatrixXd F_mo_a = C_a_current_.transpose() * F_ao_a * C_a_current_;
         
+        // Diagonalisasi Blok Alpha Occupied
+        Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_occ_a(F_mo_a.topLeftCorner(na_, na_));
+        C_a_current_.leftCols(na_) = C_a_current_.leftCols(na_) * es_occ_a.eigenvectors();
+        scf_.orbital_energies_alpha.head(na_) = es_occ_a.eigenvalues();
+
+        // Diagonalisasi Blok Alpha Virtual
+        if (va_ > 0) {
+            Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_vir_a(F_mo_a.bottomRightCorner(va_, va_));
+            C_a_current_.rightCols(va_) = C_a_current_.rightCols(va_) * es_vir_a.eigenvectors();
+            scf_.orbital_energies_alpha.tail(va_) = es_vir_a.eigenvalues();
+        }
+
+        // Lakukan untuk Beta
+        if (!is_restricted && nb_ > 0) {
+            Eigen::MatrixXd F_mo_b = C_b_current_.transpose() * F_ao_b * C_b_current_;
+            Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_occ_b(F_mo_b.topLeftCorner(nb_, nb_));
+            C_b_current_.leftCols(nb_) = C_b_current_.leftCols(nb_) * es_occ_b.eigenvectors();
+            scf_.orbital_energies_beta.head(nb_) = es_occ_b.eigenvalues();
+
+            if (vb_ > 0) {
+                Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_vir_b(F_mo_b.bottomRightCorner(vb_, vb_));
+                C_b_current_.rightCols(vb_) = C_b_current_.rightCols(vb_) * es_vir_b.eigenvectors();
+                scf_.orbital_energies_beta.tail(vb_) = es_vir_b.eigenvalues();
+            }
+        } else {
+            C_b_current_ = C_a_current_;
+            scf_.orbital_energies_beta = scf_.orbital_energies_alpha;
+        }
+
+        // Sinkronisasi ulang SCF object dengan MO yang sudah di-Semi-Canonical
+        scf_.C_alpha = C_a_current_;
+        scf_.C_beta  = C_b_current_;
+        scf_.P_alpha = C_a_current_.leftCols(na_) * C_a_current_.leftCols(na_).transpose();
+        if (!is_restricted && nb_ > 0)
+            scf_.P_beta = C_b_current_.leftCols(nb_) * C_b_current_.leftCols(nb_).transpose();
+        else
+            scf_.P_beta = scf_.P_alpha;
+
+        // 2. JALANKAN MICRO ITERATIONS (MEMBANGUN TENSOR DF B_ia MENGGUNAKAN MO BARU)
+        execute_micro_iterations();
+        
+        // 3. HITUNG ENERGI
         double e_scf = 0.5 * (scf_.P_alpha.cwiseProduct(H_core_ + F_ao_a).sum() + 
                               scf_.P_beta.cwiseProduct(H_core_ + F_ao_b).sum()) 
                        + mol_.nuclear_repulsion_energy();
                        
         double e_mp2_corr = e_ss_ + e_os_;
         double e_tot = e_scf + e_mp2_corr;
-
+      
         if (macro_iter > 0 && e_tot > e_total_last + 1e-7) {
             current_step *= 0.5; 
             lbfgs_engine.reset();
