@@ -20,9 +20,9 @@ extern "C" {
 namespace mshqc {
 using integrals::ERITransformer;
 
-// ============================================================================
-// 1. BASE MP2 (Mesin Induk & Transformasi 3-Pusat)
-// ============================================================================
+
+
+
 BaseMP2::BaseMP2(const Molecule& mol, const BasisSet& basis, 
                  std::shared_ptr<IntegralEngine> integrals, 
                  const SCFResult& scf_guess,
@@ -53,21 +53,21 @@ void BaseMP2::transform_3center_mo() {
     const Eigen::MatrixXd& Ca_occ = scf_.C_alpha.leftCols(nocc_a_);
     const Eigen::MatrixXd& Ca_vir = scf_.C_alpha.rightCols(nvir_a_);
     
-    // ====================================================================
-    // TAHAP 2 OPTIMASI: SUPER DGEMM HARVESTING
-    // Membunuh O(N^4) loop P menjadi operasi Matriks raksasa murni!
-    // ====================================================================
+    
+    
+    
+    
     Eigen::Map<const Eigen::MatrixXd> L_flat(scf_.L_mat.data(), nbf_, nbf_ * n_aux);
     
-    // 1. Giant DGEMM (Half-transformation)
+    
     Eigen::MatrixXd X_a = Ca_vir.transpose() * L_flat; 
     
-    // 2. Cache-blocked Second Half-Transformation
+    
     #pragma omp parallel for schedule(static)
     for (int P = 0; P < n_aux; ++P) {
         Eigen::Map<Eigen::MatrixXd> X_P(X_a.data() + P * nvir_a_ * nbf_, nvir_a_, nbf_);
         Eigen::MatrixXd B_MO_a = X_P * Ca_occ; 
-        // Zero-overhead memory copy berkat column-major Eigen
+        
         std::copy(B_MO_a.data(), B_MO_a.data() + nocc_a_ * nvir_a_, B_ia_P_alpha_.col(P).data());
     }
     
@@ -85,9 +85,9 @@ void BaseMP2::transform_3center_mo() {
     }
 }
 
-// ============================================================================
-// 2. RMP2 (Restricted MP2)
-// ============================================================================
+
+
+
 namespace foundation {
 
 void RMP2::transform_integrals() {
@@ -98,7 +98,7 @@ void RMP2::transform_integrals() {
         const Eigen::MatrixXd& C_virt = scf_.C_alpha.rightCols(nvir_a_);
         
         auto eri_chemist = integrals::ERITransformer::transform_ovov(eri_ao, C_occ, C_virt, nbf_, nocc_a_, nvir_a_);
-        Eigen::array<int, 4> shuffle_idxs = {0, 2, 1, 3}; // Chemist -> Physicist
+        Eigen::array<int, 4> shuffle_idxs = {0, 2, 1, 3}; 
         eri_mo_ = eri_chemist.shuffle(shuffle_idxs);
     } else {
         transform_3center_mo();
@@ -133,7 +133,7 @@ void RMP2::compute_amplitudes_and_energy() {
                         val_iajb = eri_mo_(i, j, a, b);
                         val_ibja = eri_mo_(i, j, b, a);
                     } else {
-                        // Dot Product Tensor DF/Cholesky (B_ia * B_jb) on the fly
+                        
                         int idx_ia = i * nvir_a_ + a;
                         int idx_jb = j * nvir_a_ + b;
                         int idx_ib = i * nvir_a_ + b;
@@ -178,11 +178,11 @@ MP2Result RMP2::compute() {
     return result;
 }
 
-} // namespace foundation
+} 
 
-// ============================================================================
-// 3. UMP2 (Unrestricted MP2)
-// ============================================================================
+
+
+
 void UMP2::transform_integrals() {
     if (config_.eri_method != "exact") {
         transform_3center_mo();
@@ -386,28 +386,28 @@ T2Amplitudes UMP2::get_t2_amplitudes() const {
     return amps;
 }
 
-// ============================================================================
-// 4. OMP2 (Orbital-Optimized MP2)
-// ============================================================================
 
 
 
-// Ganti deklarasi konstruktor menjadi seperti ini:
+
+
+
+
 OMP2::OMP2(const Molecule& mol, const BasisSet& basis, 
            std::shared_ptr<IntegralEngine> integrals, 
            const SCFResult& scf_guess,
            const MP2Config& config,         
            std::shared_ptr<PointGroup> pg,
-           std::shared_ptr<PetiteList> pl)  // <-- exact_2rdm dihapus
+           std::shared_ptr<PetiteList> pl)  
     : BaseMP2(mol, basis, integrals, scf_guess, config, pg, pl)
 {
     na_  = nocc_a_; 
     nb_  = nocc_b_;
     va_  = nvir_a_; 
     vb_  = nvir_b_;
-    n_frozen_ = 0; // Pastikan ini ada
+    n_frozen_ = 0; 
 
-    // Mencegah cetakan -inf di iterasi awal
+    
     e_ss_ = 0.0;
     e_os_ = 0.0;
     
@@ -424,9 +424,9 @@ OMP2::OMP2(const Molecule& mol, const BasisSet& basis,
     }
     init_fast_integrals();
 }
-// ============================================================================
-// ROBUST L-BFGS OPTIMIZER (Anti-Explosion & Strict Curvature)
-// ============================================================================
+
+
+
 struct OrbitalLBFGS {
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
     int m_max = 6;
@@ -447,7 +447,7 @@ struct OrbitalLBFGS {
         if (is_first) {
             g_prev = g_curr;
             is_first = false;
-            // Preconditioned Steepest Descent untuk tebakan awal
+            
             return -g_curr.cwiseQuotient(diag_H); 
         }
 
@@ -455,28 +455,34 @@ struct OrbitalLBFGS {
         Eigen::VectorXd s = s_prev; 
         double ys = y.dot(s);
         
-        // STRICT CURVATURE CONDITION (KUNCI ANTI MELEDAK!)
-        // L-BFGS hanya boleh mengingat langkah jika kelengkungannya positif tegas.
-        if (ys > 1e-8) { 
+        
+        
+        Eigen::VectorXd Bs = s.cwiseQuotient(diag_H); 
+        double sBs = s.dot(Bs);
+        
+        double theta = 1.0;
+        if (ys < 0.2 * sBs) {
+            theta = (0.8 * sBs) / (sBs - ys);
+        }
+        
+        Eigen::VectorXd y_mod = theta * y + (1.0 - theta) * Bs;
+        double ys_mod = y_mod.dot(s);
+        
+
+        if (ys_mod > 1e-12) { 
             if ((int)s_hist.size() >= m_max) {
                 s_hist.erase(s_hist.begin());
                 y_hist.erase(y_hist.begin());
                 rho_hist.erase(rho_hist.begin());
             }
             s_hist.push_back(s);
-            y_hist.push_back(y);
-            rho_hist.push_back(1.0 / ys);
-        } else {
-            // Jika masuk ke Saddle Point atau energi naik, BUANG MEMORI LAMA!
-            reset();
-            g_prev = g_curr;
-            is_first = false;
-            return -g_curr.cwiseQuotient(diag_H); // Fallback ke Steepest Descent yang aman
+            y_hist.push_back(y_mod); 
+            rho_hist.push_back(1.0 / ys_mod);
         }
 
         g_prev = g_curr;
 
-        // Two-loop recursion L-BFGS
+        
         Eigen::VectorXd q = g_curr;
         int k = s_hist.size();
         std::vector<double> alpha(k);
@@ -486,7 +492,7 @@ struct OrbitalLBFGS {
             q -= alpha[i] * y_hist[i];
         }
 
-        // Terapkan Preconditioner (Diagonal Hessian)
+        
         Eigen::VectorXd r = q.cwiseQuotient(diag_H);
 
         for (int i = 0; i < k; ++i) {
@@ -494,12 +500,12 @@ struct OrbitalLBFGS {
             r += s_hist[i] * (alpha[i] - beta);
         }
 
-        return -r; // Mengembalikan descent direction murni
+        return -r; 
     }
 };
-// ------------------------------------------------------------------
-// INIT: LINEARIZED MEMORY & SCHWARTZ SCREENING
-// ------------------------------------------------------------------
+
+
+
 void OMP2::init_fast_integrals() {
     S_ = integrals_->compute_overlap();
     H_core_ = integrals_->compute_core_hamiltonian();
@@ -531,7 +537,7 @@ void OMP2::init_fast_integrals() {
     }
 
     std::vector<std::pair<int, int>> shell_pairs;
-    // PENTING: Kita paksa dense di sini, jangan pakai pl_
+    
     for(int i=0; i<nshells; ++i) {
         for(int j=0; j<=i; ++j) {
             shell_pairs.push_back({i, j});
@@ -578,9 +584,9 @@ void OMP2::init_fast_integrals() {
         }
     }
 }
-// ------------------------------------------------------------------
-// FAST FOCK BUILD (Using Precomputed Sparse Integrals)
-// ------------------------------------------------------------------
+
+
+
 void OMP2::build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_b,
                            Eigen::MatrixXd& F_a, Eigen::MatrixXd& F_b)
 {
@@ -588,19 +594,19 @@ void OMP2::build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_
         Eigen::MatrixXd P_tot = P_a + P_b;
         int n_chol = scf_.L_mat.cols();
         
-        // =================================================================
-        // O(N^3) COULOMB (J) BUILDER VIA MATVEC (SUPER KILAT!)
-        // Mereduksi kerumitan komputasi dari O(N^4) menjadi O(N^3)
-        // =================================================================
+        
+        
+        
+        
         Eigen::Map<const Eigen::MatrixXd> L_flat_J(scf_.L_mat.data(), nbf_ * nbf_, n_chol);
         Eigen::Map<const Eigen::VectorXd> P_tot_flat(P_tot.data(), nbf_ * nbf_);
         Eigen::VectorXd X_J = L_flat_J.transpose() * P_tot_flat; 
         Eigen::VectorXd J_flat = L_flat_J * X_J;                 
         Eigen::Map<Eigen::MatrixXd> J_mat(J_flat.data(), nbf_, nbf_);
 
-        // =================================================================
-        // O(N^4) EXACT EXCHANGE (K) BUILDER
-        // =================================================================
+        
+        
+        
         Eigen::MatrixXd Ka_mat = Eigen::MatrixXd::Zero(nbf_, nbf_);
         Eigen::MatrixXd Kb_mat = Eigen::MatrixXd::Zero(nbf_, nbf_);
         
@@ -633,9 +639,9 @@ void OMP2::build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_
         return;
     }
 
-    // ========================================================================
-    // JALUR EXACT ROUTE (In-Core / Sparse) - BIARKAN SAMA SEPERTI SEBELUMNYA
-    // ========================================================================
+    
+    
+    
     Eigen::MatrixXd P_tot = P_a + P_b;
     double max_P = P_tot.cwiseAbs().maxCoeff(); 
     double threshold = 1e-9;
@@ -697,9 +703,9 @@ void OMP2::build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_
     F_a = H_core_ + G_a;
     F_b = H_core_ + G_b;
 }
-// ============================================================================
-// CORE MP2 LOGIC
-// ============================================================================
+
+
+
 
 void OMP2::transform_integrals() {
 
@@ -765,9 +771,9 @@ void OMP2::transform_integrals() {
             *(g_ab_.get_block(0, 0, 0, 0)) = dense_ab;
         }
     } else {
-        // ====================================================================
-        // JALUR KILAT DENSITY FITTING & CHOLESKY
-        // ====================================================================
+        
+        
+        
         scf_.C_alpha = C_a_current_;
         scf_.C_beta = C_b_current_;
         transform_3center_mo(); 
@@ -777,7 +783,7 @@ void OMP2::transform_integrals() {
         g_aa_.allocate_block(0, 0, 0, 0, na_, va_, na_, va_);
         auto* g_blk = g_aa_.get_block(0, 0, 0, 0);
         
-        // OPTIMASI TAHAP 3: PEMBANTAIAN NESTED LOOP DENGAN EIGEN MAP GEMM
+        
         if (g_blk) {
             Eigen::MatrixXd G_tmp_aa = B_ia_P_alpha_ * B_ia_P_alpha_.transpose();
             #pragma omp parallel for collapse(2)
@@ -844,7 +850,7 @@ void OMP2::pseudocanonicalize() {
         auto occ_spaces = get_irrep_spaces(irreps, 0, nocc);
         auto vir_spaces = get_irrep_spaces(irreps, nocc, nvir);
 
-        // Diagonalize Occupied blocks
+        
         for (const auto& space : occ_spaces) {
             Eigen::MatrixXd F_sub = F_mo.block(space.offset, space.offset, space.size, space.size);
             Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(F_sub);
@@ -852,7 +858,7 @@ void OMP2::pseudocanonicalize() {
             eps.segment(space.offset, space.size) = es.eigenvalues();
         }
         
-        // Diagonalize Virtual blocks
+        
         for (const auto& space : vir_spaces) {
             int off = nocc + space.offset;
             Eigen::MatrixXd F_sub = F_mo.block(off, off, space.size, space.size);
@@ -897,21 +903,21 @@ void OMP2::compute_t2_amplitudes() {
     auto occ_spaces_a = get_irrep_spaces(scf_.irreps_alpha, 0, na_);
     auto vir_spaces_a = get_irrep_spaces(scf_.irreps_alpha, na_, va_);
 
-    // 1. ALPHA-ALPHA (Hanya komputasi blok yang sah secara simetri & non-zero)
+    
     for (const auto& o1 : occ_spaces_a) {
-        if (o1.size == 0) continue; // <-- FILTER ZERO-SIZE
+        if (o1.size == 0) continue; 
         for (const auto& v1 : vir_spaces_a) {
-            if (v1.size == 0) continue; // <-- FILTER ZERO-SIZE
+            if (v1.size == 0) continue; 
             for (const auto& o2 : occ_spaces_a) {
-                if (o2.size == 0) continue; // <-- FILTER ZERO-SIZE
+                if (o2.size == 0) continue; 
                 for (const auto& v2 : vir_spaces_a) {
-                    if (v2.size == 0) continue; // <-- FILTER ZERO-SIZE
+                    if (v2.size == 0) continue; 
                     
                     if ((o1.id ^ v1.id ^ o2.id ^ v2.id) == 0) {
                         auto* g_blk = g_aa_.get_block(o1.id, v1.id, o2.id, v2.id);
                         auto* g_blk_ex = g_aa_.get_block(o1.id, v2.id, o2.id, v1.id);
                         
-                        // GUARD MUTLAK: Cegah Out-of-Bounds karena tabrakan dimensi
+                        
                         bool ex_valid = false;
                         if (g_blk_ex != nullptr) {
                             if (g_blk_ex->dimension(1) == (Eigen::Index)v2.size && 
@@ -925,14 +931,14 @@ void OMP2::compute_t2_amplitudes() {
                             auto* t_blk = t2_aa_.get_block(o1.id, v1.id, o2.id, v2.id);
                             
                             if (t_blk) {              
-                                t_blk->setZero(); // Wajib bersihkan sampah RAM
+                                t_blk->setZero(); 
                             
                                 for (int di = 0; di < o1.size; ++di) {
                                     int i_glb = o1.offset + di;
-                                    if (i_glb < nf) continue; // FROZEN CORE SKIP
+                                    if (i_glb < nf) continue; 
                                     for (int dj = 0; dj < o2.size; ++dj) {
                                         int j_glb = o2.offset + dj;
-                                        if (j_glb < nf) continue; // FROZEN CORE SKIP
+                                        if (j_glb < nf) continue; 
                                         
                                         double e_ij = scf_.orbital_energies_alpha(i_glb) + scf_.orbital_energies_alpha(j_glb);
                                         for (int da = 0; da < v1.size; ++da) {
@@ -953,11 +959,11 @@ void OMP2::compute_t2_amplitudes() {
         }
     }
 
-    // 2. BETA & MIXED (Open-Shell Dense Fallback)
+    
     if (nb_ > 0 && vb_ > 0) {
         auto* g_bb_blk = g_bb_.get_block(0,0,0,0);
         if (g_bb_blk) {
-            // KOREKSI FATAL: T2_bb harus (Occ, Occ, Virt, Virt)
+            
             t2_bb_.allocate_block(0,0,0,0, nb_, nb_, vb_, vb_);
             auto* t_bb_blk = t2_bb_.get_block(0,0,0,0);
            
@@ -1001,13 +1007,13 @@ double OMP2::compute_mp2_energy() {
     auto vir_spaces_a = get_irrep_spaces(scf_.irreps_alpha, na_, va_);
 
     for (const auto& o1 : occ_spaces_a) {
-        if (o1.size == 0) continue; // <-- FILTER ZERO-SIZE
+        if (o1.size == 0) continue; 
         for (const auto& v1 : vir_spaces_a) {
-            if (v1.size == 0) continue; // <-- FILTER ZERO-SIZE
+            if (v1.size == 0) continue; 
             for (const auto& o2 : occ_spaces_a) {
-                if (o2.size == 0) continue; // <-- FILTER ZERO-SIZE
+                if (o2.size == 0) continue; 
                 for (const auto& v2 : vir_spaces_a) {
-                    if (v2.size == 0) continue; // <-- FILTER ZERO-SIZE
+                    if (v2.size == 0) continue; 
                     
                     if ((o1.id ^ v1.id ^ o2.id ^ v2.id) != 0) continue;
 
@@ -1015,7 +1021,7 @@ double OMP2::compute_mp2_energy() {
                     auto* g_blk = g_aa_.get_block(o1.id, v1.id, o2.id, v2.id);
                     auto* g_blk_ex = g_aa_.get_block(o1.id, v2.id, o2.id, v1.id);
                     
-                    // GUARD DIMENSI EXCHANGE
+                    
                     bool ex_valid = false;
                     if (g_blk_ex != nullptr) {
                         if (g_blk_ex->dimension(1) == (Eigen::Index)v2.size && 
@@ -1085,7 +1091,7 @@ void OMP2::build_opdm_alpha() {
                         int rows = o1.size;
                         int cols = v1.size * o2.size * v2.size;
                         
-                        // KUNCI PERBAIKAN: Gunakan MatrixXd default (Column-Major)
+                        
                         Eigen::Map<Eigen::MatrixXd> T_mat(t_blk->data(), rows, cols);
                         G_oo_alpha_.block(o1.offset, o1.offset, o1.size, o1.size) -= 0.5 * (T_mat * T_mat.transpose());
                     }
@@ -1095,13 +1101,13 @@ void OMP2::build_opdm_alpha() {
     }
     
     for (const auto& v1 : vir_spaces_a) {
-        if (v1.size == 0) continue; // <-- FILTER ZERO-SIZE
+        if (v1.size == 0) continue; 
         for (const auto& v2 : vir_spaces_a) {
-            if (v2.size == 0) continue; // <-- FILTER ZERO-SIZE
+            if (v2.size == 0) continue; 
             for (const auto& o1 : occ_spaces_a) {
-                if (o1.size == 0) continue; // <-- FILTER ZERO-SIZE
+                if (o1.size == 0) continue; 
                 for (const auto& o2 : occ_spaces_a) {
-                    if (o2.size == 0) continue; // <-- FILTER ZERO-SIZE
+                    if (o2.size == 0) continue; 
                     auto* t_blk = t2_aa_.get_block(o1.id, v1.id, o2.id, v2.id);
                     if (t_blk) {
                         for (int da = 0; da < v1.size; ++da) {
@@ -1179,40 +1185,40 @@ void OMP2::build_opdm_beta() {
         }
     }
 }
-// ============================================================================
-// 1. ALAM MIKRO (Menghitung Energi & Matrix Gradien)
-// ============================================================================
+
+
+
 double OMP2::execute_micro_iterations() {
     double old_energy = e_ss_ + e_os_;
 
-    // Sinkronkan objek SCF dengan orbital terbaru hasil rotasi makro
+    
     scf_.C_alpha = C_a_current_;
     scf_.C_beta  = C_b_current_;
     scf_.P_alpha = scf_.C_alpha.leftCols(na_) * scf_.C_alpha.leftCols(na_).transpose();
     scf_.P_beta  = scf_.C_beta.leftCols(nb_)  * scf_.C_beta.leftCols(nb_).transpose();
 
-    // Canonicalize orbital pada blok occupied dan virtual untuk evaluasi MP2
+    
     pseudocanonicalize();
     
-    // Simpan kembali orbital yang sudah canonical ke state iterasi
+    
     C_a_current_ = scf_.C_alpha;
     C_b_current_ = scf_.C_beta;
 
-    // Transformasi integral & hitung T2
+    
     transform_integrals();
     compute_t2_amplitudes();
     
-    // Hitung energi korelasi MP2 (memperbarui e_ss_ dan e_os_)
+    
     compute_mp2_energy();
 
-    // Bangun matriks densitas korelasi (Relaxed 1-RDM)
+    
     build_opdm_alpha();
     if (nb_ > 0) build_opdm_beta();
 
     return (e_ss_ + e_os_) - old_energy;
 }
 void OMP2::build_generalized_fock() {
-    // 1. DENSITAS KORELASI PENUH (P_corr)
+    
     Eigen::MatrixXd G_full_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
     G_full_a.block(0, 0, na_, na_) = G_oo_alpha_; 
     G_full_a.block(na_, na_, va_, va_) = G_vv_alpha_;
@@ -1226,7 +1232,7 @@ void OMP2::build_generalized_fock() {
         P_corr_b = scf_.C_beta * G_full_b * scf_.C_beta.transpose();
     }
 
-    // 2. REFERENCE FOCK MATRIX (F_HF)
+    
     Eigen::MatrixXd F_HF_ao_a, F_HF_ao_b;
     build_fock_fast(scf_.P_alpha, scf_.P_beta, F_HF_ao_a, F_HF_ao_b);
     Eigen::MatrixXd F_HF_mo_a = scf_.C_alpha.transpose() * F_HF_ao_a * scf_.C_alpha;
@@ -1236,7 +1242,7 @@ void OMP2::build_generalized_fock() {
         F_HF_mo_b = scf_.C_beta.transpose() * F_HF_ao_b * scf_.C_beta;
     }
 
-    // 3. RESPONSE POTENTIAL G[gamma]
+    
     Eigen::MatrixXd G_gamma_ao_a, G_gamma_ao_b;
     build_fock_fast(P_corr_a, P_corr_b, G_gamma_ao_a, G_gamma_ao_b);
     G_gamma_ao_a -= H_core_;
@@ -1249,7 +1255,7 @@ void OMP2::build_generalized_fock() {
         G_gamma_mo_b = scf_.C_beta.transpose() * G_gamma_ao_b * scf_.C_beta;
     }
 
-    // 4. EXACT 2-RDM CONTRACTION (Z-Matrix)
+    
     Eigen::MatrixXd Z_mat_a = Eigen::MatrixXd::Zero(va_, na_);
     Eigen::MatrixXd Z_mat_b = Eigen::MatrixXd::Zero(vb_, nb_);
 
@@ -1278,9 +1284,9 @@ void OMP2::build_generalized_fock() {
         auto ovvv_blk = ERITransformer::transform_ovvv_blocked(eri_ao, Ca_o, Ca_v, occ_spaces_a, vir_spaces_a, nbf_);
         auto ooov_blk = ERITransformer::transform_ooov_blocked(eri_ao, Ca_o, Ca_v, occ_spaces_a, vir_spaces_a, nbf_);
 
-        // =========================================================================
-        // JALUR KHUSUS PURE R-OMP2: MENGHINDARI DENSE FALLBACK!
-        // =========================================================================
+        
+        
+        
         bool is_restricted = (na_ == nb_ && va_ == vb_);
         BlockedTensor4D T2_spatial;
         BlockedTensor4D* T2_ptr = &t2_aa_;
@@ -1336,14 +1342,14 @@ void OMP2::build_generalized_fock() {
                     if (v_a.size == 0) continue; 
                     if ((o_i.id ^ v_a.id) != 0) continue; 
 
-                    // KITA LANGSUNG LOOP j DAN b DI SINI! (Tanpa loop di dan da)
+                    
                     for (const auto& o_j : occ_spaces_a) {
                         if (o_j.size == 0) continue; 
                         
                         for (const auto& v_b : vir_spaces_a) {
                             if (v_b.size == 0) continue; 
                             
-                            // --- 1. KONTRAKSI OVVV (TRUE TBLIS C-API) ---
+                            
                             for (const auto& v_c : vir_spaces_a) {
                                 if (v_c.size == 0) continue; 
                                 
@@ -1356,23 +1362,23 @@ void OMP2::build_generalized_fock() {
                                         
                                         tblis::len_type ni = o_i.size, na = v_a.size, nb = v_b.size, nj = o_j.size, nc = v_c.size;
 
-                                        // Setup Tensor T (Dimensi: i, b, j, c) - POSISI DIPERBAIKI
+                                        
                                         tblis::len_type len_T[] = {ni, nb, nj, nc};
                                         tblis::stride_type str_T[] = {1, ni, ni*nb, ni*nb*nj};
                                         tblis::tblis_init_tensor_d(&t_T, 4, len_T, t_blk->data(), str_T);
 
-                                        // Setup Tensor V (Dimensi: j, c, a, b) - POSISI DIPERBAIKI
+                                        
                                         tblis::len_type len_V[] = {nj, nc, na, nb};
                                         tblis::stride_type str_V[] = {1, nj, nj*nc, nj*nc*na};
                                         tblis::tblis_init_tensor_d(&t_V, 4, len_V, blk->data(), str_V);
 
-                                        // Setup Tensor Output Z (Dimensi: i, a) - POSISI DIPERBAIKI
+                                        
                                         Eigen::MatrixXd Z_temp = Eigen::MatrixXd::Zero(ni, na);
                                         tblis::len_type len_Z[] = {ni, na};
                                         tblis::stride_type str_Z[] = {1, ni};
                                         tblis::tblis_init_tensor_d(&t_Z, 2, len_Z, Z_temp.data(), str_Z);
 
-                                        // MAGIC: Kalikan T(ibjc) * V(jcab) -> Z(ia) secara native
+                                        
                                         tblis::tblis_tensor_mult(nullptr, nullptr, &t_T, "ibjc", &t_V, "jcab", &t_Z, "ia");
 
                                         for(int di=0; di<ni; ++di) {
@@ -1384,7 +1390,7 @@ void OMP2::build_generalized_fock() {
                                 }
                             }
                             
-                            // --- 2. KONTRAKSI OOOV (TRUE TBLIS C-API) ---
+                            
                             for (const auto& o_k : occ_spaces_a) {
                                 if (o_k.size == 0) continue; 
                                 
@@ -1396,28 +1402,28 @@ void OMP2::build_generalized_fock() {
                                         tblis::tblis_tensor t_V, t_T, t_Z;
                                         tblis::len_type ni = o_i.size, na = v_a.size, nj = o_j.size, nk = o_k.size, nb = v_b.size;
 
-                                        // Setup Tensor V (Dimensi: j, i, k, b) - POSISI DIPERBAIKI
+                                        
                                         tblis::len_type len_V[] = {nj, ni, nk, nb};
                                         tblis::stride_type str_V[] = {1, nj, nj*ni, nj*ni*nk};
                                         tblis::tblis_init_tensor_d(&t_V, 4, len_V, blk->data(), str_V);
 
-                                        // Setup Tensor T (Dimensi: j, a, k, b) - POSISI DIPERBAIKI
+                                        
                                         tblis::len_type len_T[] = {nj, na, nk, nb};
                                         tblis::stride_type str_T[] = {1, nj, nj*na, nj*na*nk};
                                         tblis::tblis_init_tensor_d(&t_T, 4, len_T, t_blk->data(), str_T);
 
-                                        // Setup Tensor Output Z (Dimensi: i, a) - POSISI DIPERBAIKI
+                                        
                                         Eigen::MatrixXd Z_temp = Eigen::MatrixXd::Zero(ni, na);
                                         tblis::len_type len_Z[] = {ni, na};
                                         tblis::stride_type str_Z[] = {1, ni};
                                         tblis::tblis_init_tensor_d(&t_Z, 2, len_Z, Z_temp.data(), str_Z);
 
-                                        // MAGIC: Kalikan V(jikb) * T(jakb) -> Z(ia) secara native
+                                        
                                         tblis::tblis_tensor_mult(nullptr, nullptr, &t_V, "jikb", &t_T, "jakb", &t_Z, "ia");
 
                                         for(int di=0; di<ni; ++di) {
                                             for(int da=0; da<na; ++da) {
-                                                Z_local(v_a.offset + da, o_i.offset + di) -= Z_temp(di, da); // PENGURANGAN
+                                                Z_local(v_a.offset + da, o_i.offset + di) -= Z_temp(di, da); 
                                             }
                                         }
                                     }
@@ -1431,7 +1437,7 @@ void OMP2::build_generalized_fock() {
             Z_mat_a += Z_local;
         }
 
-        // --- DENSE FALLBACK HANYA UNTUK MOLEKUL OPEN-SHELL ---
+        
         if (!is_restricted && has_beta) {
             auto ovvv_bb = ERITransformer::transform_custom(eri_ao, Cb_o, Cb_v, Cb_v, Cb_v, nbf_, nb_, vb_, vb_, vb_);
             auto ooov_bb = ERITransformer::transform_custom(eri_ao, Cb_o, Cb_o, Cb_o, Cb_v, nbf_, nb_, nb_, nb_, vb_);
@@ -1498,7 +1504,7 @@ void OMP2::build_generalized_fock() {
                 }
             }
         } else if (is_restricted) {
-            Z_mat_b = Z_mat_a; // Copy langsung dari Alpha
+            Z_mat_b = Z_mat_a; 
         }
         
         if (config_.print_level > 0) std::cout << "  [DEBUG] Evaluasi Z-Vector Irrep-Blocked Selesai!" << std::endl;
@@ -1508,7 +1514,7 @@ void OMP2::build_generalized_fock() {
         bool is_restricted = (na_ == nb_ && va_ == vb_);
         int n_aux = scf_.L_mat.cols();
         
-        // 1. FLATTENING TENSOR T2 (Alpha-Alpha, Beta-Beta, Alpha-Beta)
+        
         Eigen::MatrixXd T2_aa = Eigen::MatrixXd::Zero(na_*va_, na_*va_);
         auto* t_aa_blk = t2_aa_.get_block(0,0,0,0);
         if (t_aa_blk) {
@@ -1538,14 +1544,14 @@ void OMP2::build_generalized_fock() {
             }
         }
 
-        // 2. BENTUK INTERMEDIET X (Matriks X_a dan X_b) O(N^4)
+        
         Eigen::MatrixXd X_a = T2_aa * B_ia_P_alpha_;
         if (nb_ > 0 && vb_ > 0) X_a += T2_ab * B_ia_P_beta_;
         
         Eigen::MatrixXd X_b = Eigen::MatrixXd::Zero(nb_*vb_, n_aux);
         if (nb_ > 0 && vb_ > 0) X_b = T2_bb * B_ia_P_beta_ + T2_ab.transpose() * B_ia_P_alpha_;
 
-        // 3. BANGUN TENSOR 3-PUSAT O-O dan V-V
+        
         Eigen::MatrixXd B_oo_a = Eigen::MatrixXd::Zero(na_*na_, n_aux);
         Eigen::MatrixXd B_vv_a = Eigen::MatrixXd::Zero(va_*va_, n_aux);
         Eigen::MatrixXd B_oo_b = Eigen::MatrixXd::Zero(nb_*nb_, n_aux);
@@ -1586,7 +1592,7 @@ void OMP2::build_generalized_fock() {
             }
         }
 
-        // 4. KONTRAKSI AKHIR Z-VECTOR
+        
         Z_mat_a.setZero();
         if (nb_ > 0) Z_mat_b.setZero();
         
@@ -1597,7 +1603,7 @@ void OMP2::build_generalized_fock() {
             
             #pragma omp for schedule(dynamic)
             for (int P = 0; P < n_aux; ++P) {
-                // Nol-copy Transpose berkat Column-Major Eigen
+                
                 Eigen::Map<const Eigen::MatrixXd> XT_a(X_a.col(P).data(), va_, na_);
                 Eigen::Map<const Eigen::MatrixXd> V_a(B_vv_a.col(P).data(), va_, va_);
                 Eigen::Map<const Eigen::MatrixXd> O_a(B_oo_a.col(P).data(), na_, na_);
@@ -1622,7 +1628,7 @@ void OMP2::build_generalized_fock() {
         if (is_restricted) Z_mat_b = Z_mat_a;
     }
 
-    // 5. ASSEMBLE GENERALIZED FOCK MATRIX
+    
     F_gen_a_ = F_HF_mo_a + G_gamma_mo_a;
     if (na_ > 0 && va_ > 0) {
         Eigen::MatrixXd F_vo_a = F_gen_a_.block(na_, 0, va_, na_);
@@ -1631,7 +1637,7 @@ void OMP2::build_generalized_fock() {
         F_gen_a_.block(na_, 0, va_, na_) += L_sep_a;
         F_gen_a_.block(0, na_, na_, va_) += L_sep_a.transpose();
         
-        // FIX: Langsung tambahkan Z_mat_a (2-RDM Mutlak)
+        
         F_gen_a_.block(na_, 0, va_, na_) += Z_mat_a;
         F_gen_a_.block(0, na_, na_, va_) += Z_mat_a.transpose();
     }
@@ -1644,16 +1650,16 @@ void OMP2::build_generalized_fock() {
         F_gen_b_.block(nb_, 0, vb_, nb_) += L_sep_b;
         F_gen_b_.block(0, nb_, nb_, vb_) += L_sep_b.transpose();
         
-        // FIX: Langsung tambahkan Z_mat_b (2-RDM Mutlak)
+        
         F_gen_b_.block(nb_, 0, vb_, nb_) += Z_mat_b;
         F_gen_b_.block(0, nb_, nb_, vb_) += Z_mat_b.transpose();
     }
 
 }
 
-// ============================================================================
-// DIAGONAL SOSCF / PRECONDITIONED NEWTON STEP
-// ============================================================================
+
+
+
 Eigen::VectorXd OMP2::compute_soscf_step() {
     int n_params = orbital_gradient_.size();
     if (n_params == 0) return Eigen::VectorXd::Zero(0);
@@ -1661,13 +1667,13 @@ Eigen::VectorXd OMP2::compute_soscf_step() {
     if (hessian_diag_.size() != n_params) hessian_diag_.resize(n_params);
     int idx = 0;
     double grad_norm = 0.0;
-    // Level Shift untuk menjamin Hessian selalu Definit Positif (Super Stabil)
+    
     double level_shift = (grad_norm > 0.1) ? 0.02 : 1e-4; 
     bool is_restricted = (na_ == nb_ && va_ == vb_);
     
 
     
-    // 1. EVALUASI DIAGONAL HESSIAN ORBITAL EKSAK (H_ia,ia)
+    
     for (int a = 0; a < va_; ++a) {
         for (int i = 0; i < na_; ++i) {
             double e_diff = scf_.orbital_energies_alpha(na_ + a) - scf_.orbital_energies_alpha(i);
@@ -1684,12 +1690,12 @@ Eigen::VectorXd OMP2::compute_soscf_step() {
         }
     }
 
-    // 2. NEWTON-RAPHSON STEP ( kappa = - H^-1 * g )
-    // Karena kita memakai aproksimasi Hessian diagonal, inversnya cukup dengan pembagian elemen-wise
+    
+    
     Eigen::VectorXd kappa = -orbital_gradient_.cwiseQuotient(hessian_diag_);
 
-    // 3. TRUST-REGION RADIUS (Batasi agar step tidak meledak)
-    double max_step = 0.15; // Jari-jari maksimum rotasi orbital
+    
+    double max_step = 0.15; 
     double max_val = kappa.cwiseAbs().maxCoeff();
     if (max_val > max_step) {
         kappa *= (max_step / max_val);
@@ -1697,12 +1703,12 @@ Eigen::VectorXd OMP2::compute_soscf_step() {
 
     return kappa;
 }
-// ============================================================================
-// 3. ALAM MAKRO (Ekstraksi Gradien Vektor dengan Akselerasi DIIS)
-// ============================================================================
-// ============================================================================
-// GANTI FUNGSI execute_macro_iterations SECARA UTUH
-// ============================================================================
+
+
+
+
+
+
 void OMP2::execute_macro_iterations(DIIS& diis_a, DIIS& diis_b, int macro_iter) {
     build_generalized_fock();
 
@@ -1751,9 +1757,9 @@ void OMP2::execute_macro_iterations(DIIS& diis_a, DIIS& diis_b, int macro_iter) 
     }
 }
 
-// ============================================================================
-// 4. ROTASI ORBITAL EKSPOENENSIAL
-// ============================================================================
+
+
+
 void OMP2::apply_orbital_rotation(const Eigen::VectorXd& kappa) {
     if (kappa.norm() < 1e-12) return;
 
@@ -1763,7 +1769,7 @@ void OMP2::apply_orbital_rotation(const Eigen::VectorXd& kappa) {
     int n_mo_a = na_ + va_;
     Eigen::MatrixXd K_a = Eigen::MatrixXd::Zero(n_mo_a, n_mo_a);
     
-    // Loop Unpack (HARUS SAMA: a di luar, i di dalam)
+    
     for (int a = 0; a < va_; ++a) {
         for (int i = 0; i < na_; ++i) {
             double val = kappa(idx++);
@@ -1785,7 +1791,7 @@ void OMP2::apply_orbital_rotation(const Eigen::VectorXd& kappa) {
             }
         }
     } else if (is_restricted && nb_ > 0) {
-        K_b = K_a; // Jika restricted, copy kembar persis dari Alpha
+        K_b = K_a; 
     }
 
     if (nb_ > 0) {
@@ -1810,7 +1816,7 @@ MP2Result OMP2::compute() {
     Eigen::MatrixXd C_b_last = scf_.C_beta;
     Eigen::VectorXd last_kappa = Eigen::VectorXd::Zero(nbf_ * nbf_); 
     
-    // Asumsi struct OrbitalLBFGS sudah Anda copy dari omp2.cc lama ke mp2.cc (lihat Langkah 4 di bawah)
+    
     OrbitalLBFGS lbfgs_engine;
     DIIS diis_alpha(6);
     DIIS diis_beta(6);
@@ -1828,13 +1834,13 @@ MP2Result OMP2::compute() {
 
     while (macro_iter < config_.max_iterations) {
         
-        // 1. BANGUN FOCK DARI DENSITAS SAAT INI
+        
         Eigen::MatrixXd F_ao_a, F_ao_b;
         build_fock_fast(scf_.P_alpha, scf_.P_beta, F_ao_a, F_ao_b);
 
-        // ====================================================================
-        // 2. SEMI-CANONICALIZATION
-        // ====================================================================
+        
+        
+        
         Eigen::MatrixXd F_mo_a = C_a_current_.transpose() * F_ao_a * C_a_current_;
         
         Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_occ_a(F_mo_a.topLeftCorner(na_, na_));
@@ -1863,24 +1869,47 @@ MP2Result OMP2::compute() {
             scf_.orbital_energies_beta = scf_.orbital_energies_alpha;
         }
 
-        // Sinkronisasi ulang SCF object
+        
         scf_.C_alpha = C_a_current_;
         scf_.C_beta  = C_b_current_;
         
-        // 3. JALANKAN MICRO ITERATIONS
+        
         execute_micro_iterations();
         
-        // 4. HITUNG ENERGI
+        
         double e_scf = 0.5 * (scf_.P_alpha.cwiseProduct(H_core_ + F_ao_a).sum() + 
                               scf_.P_beta.cwiseProduct(H_core_ + F_ao_b).sum()) 
                        + mol_.nuclear_repulsion_energy();
                        
         double e_mp2_corr = e_ss_ + e_os_;
         double e_tot = e_scf + e_mp2_corr;
+      
+        if (macro_iter > 0 && e_tot > e_total_last + 1e-7) {
+            
+            current_step *= 0.5; 
+            
+            C_a_current_ = C_a_last; 
+            C_b_current_ = C_b_last;
+            
+            
+            Eigen::VectorXd actual_step = last_kappa * current_step;
+            apply_orbital_rotation(actual_step);
+            
+            
+            scf_.P_alpha = C_a_current_.leftCols(na_) * C_a_current_.leftCols(na_).transpose();
+            if (!is_restricted && nb_ > 0) scf_.P_beta = C_b_current_.leftCols(nb_) * C_b_current_.leftCols(nb_).transpose();
+            else scf_.P_beta = scf_.P_alpha;
+            
+            continue; 
+        }
+        
+        
+        current_step = std::min(1.0, current_step * 1.2);
+        
 
         if (e_tot < e_total_best) { e_total_best = e_tot; e_corr_best = e_mp2_corr; }
 
-        // 5. EVALUASI GRADIEN
+        
         execute_macro_iterations(diis_alpha, diis_beta, macro_iter);
         double grad_norm = orbital_gradient_.norm();
 
@@ -1891,7 +1920,7 @@ MP2Result OMP2::compute() {
                       << std::scientific << std::setprecision(2) << grad_norm << "\n";
         }
 
-        // 6. CEK KONVERGENSI (Menggunakan gradien absolut agar Apple-to-Apple dengan Psi4)
+        
         if (macro_iter > 0 && grad_norm < grad_thresh_ && std::abs(e_tot - e_total_last) < conv_thresh_) {
             is_converged = true; break;
         }
@@ -1900,7 +1929,7 @@ MP2Result OMP2::compute() {
         C_a_last = C_a_current_; 
         C_b_last = C_b_current_;
 
-        // 7. PRECONDITIONER
+        
         int n_params = orbital_gradient_.size();
         Eigen::VectorXd diag_H(n_params);
         int idx = 0;
@@ -1925,14 +1954,14 @@ MP2Result OMP2::compute() {
             }
         }
 
-        // 8. OPTIMIZER SWITCH (Trust-Region SOSCF vs L-BFGS)
+        
         Eigen::VectorXd actual_step;
 
         if (config_.opt_method == "soscf") {
             mshqc::gradient::TrustRegionConfig tr_conf;
             
-            // KUNCI UTAMA (DINAMISASI THRESHOLD SOSCF)
-            // Memaksa mesin TCG memburu akar residual hingga 10x lebih kecil dari gradien makro
+            
+            
             tr_conf.micro_thresh = std::min(1e-4, grad_norm * 0.1); 
             
             mshqc::gradient::TrustRegionSOSCF soscf_engine(tr_conf);
@@ -1967,15 +1996,15 @@ MP2Result OMP2::compute() {
                 return Hp;
             };
 
-            // Beri Trust Radius yang sangat lapang (0.50) agar Newton-Raphson bisa terbang
+            
             mshqc::gradient::TrustRegionResult step_info = soscf_engine.solve(orbital_gradient_, diag_H, 0.50, compute_hessian_vector);
             actual_step = step_info.step;
 
         } else {
-            // L-BFGS Murni (Tanpa Hukuman Step Rejection yang Merusak)
+            
             Eigen::VectorXd kappa = lbfgs_engine.get_direction(orbital_gradient_, diag_H);
             
-            // Limitasi maksimum rotasi yang logis
+            
             double max_val = kappa.cwiseAbs().maxCoeff();
             if (max_val > 0.45) kappa *= (0.45 / max_val);
             
@@ -1983,7 +2012,7 @@ MP2Result OMP2::compute() {
             lbfgs_engine.s_prev = actual_step;
         }
 
-        // 9. ROTASI ORBITAL & UPDATE DENSITAS UNTUK ITERASI BERIKUTNYA
+        
         apply_orbital_rotation(actual_step);
         
         scf_.P_alpha = C_a_current_.leftCols(na_) * C_a_current_.leftCols(na_).transpose();
@@ -2009,9 +2038,9 @@ MP2Result OMP2::compute() {
     return res;
 }
 
-// Stubs for interface compatibility
+
 void OMP2::reset_diis() {}
 Eigen::MatrixXd OMP2::build_opdm() { return G_oo_alpha_ + G_oo_beta_; } 
 Eigen::MatrixXd OMP2::extrapolate_diis(std::vector<Eigen::MatrixXd>&, std::vector<Eigen::MatrixXd>&) { return Eigen::MatrixXd(); }
 
-} // namespace mshqc
+} 
