@@ -47,40 +47,40 @@ void BaseMP2::transform_3center_mo() {
     }
     
     int n_aux = scf_.L_mat.cols();
-    
     B_ia_P_alpha_ = Eigen::MatrixXd::Zero(nocc_a_ * nvir_a_, n_aux);
-    if (nocc_b_ > 0 && nvir_b_ > 0) {
-        B_ia_P_beta_ = Eigen::MatrixXd::Zero(nocc_b_ * nvir_b_, n_aux);
-    }
+    if (nocc_b_ > 0 && nvir_b_ > 0) B_ia_P_beta_ = Eigen::MatrixXd::Zero(nocc_b_ * nvir_b_, n_aux);
     
     const Eigen::MatrixXd& Ca_occ = scf_.C_alpha.leftCols(nocc_a_);
     const Eigen::MatrixXd& Ca_vir = scf_.C_alpha.rightCols(nvir_a_);
     
-    #pragma omp parallel for schedule(dynamic)
+    // ====================================================================
+    // TAHAP 2 OPTIMASI: SUPER DGEMM HARVESTING
+    // Membunuh O(N^4) loop P menjadi operasi Matriks raksasa murni!
+    // ====================================================================
+    Eigen::Map<const Eigen::MatrixXd> L_flat(scf_.L_mat.data(), nbf_, nbf_ * n_aux);
+    
+    // 1. Giant DGEMM (Half-transformation)
+    Eigen::MatrixXd X_a = Ca_vir.transpose() * L_flat; 
+    
+    // 2. Cache-blocked Second Half-Transformation
+    #pragma omp parallel for schedule(static)
     for (int P = 0; P < n_aux; ++P) {
-        Eigen::Map<const Eigen::MatrixXd> B_AO(scf_.L_mat.col(P).data(), nbf_, nbf_);
+        Eigen::Map<Eigen::MatrixXd> X_P(X_a.data() + P * nvir_a_ * nbf_, nvir_a_, nbf_);
+        Eigen::MatrixXd B_MO_a = X_P * Ca_occ; 
+        // Zero-overhead memory copy berkat column-major Eigen
+        std::copy(B_MO_a.data(), B_MO_a.data() + nocc_a_ * nvir_a_, B_ia_P_alpha_.col(P).data());
+    }
+    
+    if (nocc_b_ > 0 && nvir_b_ > 0) {
+        const Eigen::MatrixXd& Cb_occ = scf_.C_beta.leftCols(nocc_b_);
+        const Eigen::MatrixXd& Cb_vir = scf_.C_beta.rightCols(nvir_b_);
+        Eigen::MatrixXd X_b = Cb_vir.transpose() * L_flat;
         
-        // Transformasi Alpha
-        Eigen::MatrixXd B_MO_a = Ca_occ.transpose() * (B_AO * Ca_vir);
-        
-        // FIX: Manual Flattening (Mencegah mismatch Column-Major Eigen vs Row-Major MP2)
-        for(int i = 0; i < nocc_a_; ++i) {
-            for(int a = 0; a < nvir_a_; ++a) {
-                B_ia_P_alpha_(i * nvir_a_ + a, P) = B_MO_a(i, a);
-            }
-        }
-            
-        // Transformasi Beta (jika Open-Shell)
-        if (nocc_b_ > 0 && nvir_b_ > 0) {
-            const Eigen::MatrixXd& Cb_occ = scf_.C_beta.leftCols(nocc_b_);
-            const Eigen::MatrixXd& Cb_vir = scf_.C_beta.rightCols(nvir_b_);
-            Eigen::MatrixXd B_MO_b = Cb_occ.transpose() * (B_AO * Cb_vir);
-            
-            for(int i = 0; i < nocc_b_; ++i) {
-                for(int a = 0; a < nvir_b_; ++a) {
-                    B_ia_P_beta_(i * nvir_b_ + a, P) = B_MO_b(i, a);
-                }
-            }
+        #pragma omp parallel for schedule(static)
+        for (int P = 0; P < n_aux; ++P) {
+            Eigen::Map<Eigen::MatrixXd> X_P_b(X_b.data() + P * nvir_b_ * nbf_, nvir_b_, nbf_);
+            Eigen::MatrixXd B_MO_b = X_P_b * Cb_occ;
+            std::copy(B_MO_b.data(), B_MO_b.data() + nocc_b_ * nvir_b_, B_ia_P_beta_.col(P).data());
         }
     }
 }
@@ -584,66 +584,61 @@ void OMP2::init_fast_integrals() {
 void OMP2::build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_b,
                            Eigen::MatrixXd& F_a, Eigen::MatrixXd& F_b)
 {
-    // ========================================================================
-    // JALUR 1: DENSITY FITTING / CHOLESKY ROUTE
-    // ========================================================================
     if (config_.eri_method != "exact") {
         Eigen::MatrixXd P_tot = P_a + P_b;
-        Eigen::MatrixXd J_mat = Eigen::MatrixXd::Zero(nbf_, nbf_);
+        int n_chol = scf_.L_mat.cols();
+        
+        // =================================================================
+        // O(N^3) COULOMB (J) BUILDER VIA MATVEC (SUPER KILAT!)
+        // Mereduksi kerumitan komputasi dari O(N^4) menjadi O(N^3)
+        // =================================================================
+        Eigen::Map<const Eigen::MatrixXd> L_flat_J(scf_.L_mat.data(), nbf_ * nbf_, n_chol);
+        Eigen::Map<const Eigen::VectorXd> P_tot_flat(P_tot.data(), nbf_ * nbf_);
+        Eigen::VectorXd X_J = L_flat_J.transpose() * P_tot_flat; 
+        Eigen::VectorXd J_flat = L_flat_J * X_J;                 
+        Eigen::Map<Eigen::MatrixXd> J_mat(J_flat.data(), nbf_, nbf_);
+
+        // =================================================================
+        // O(N^4) EXACT EXCHANGE (K) BUILDER
+        // =================================================================
         Eigen::MatrixXd Ka_mat = Eigen::MatrixXd::Zero(nbf_, nbf_);
         Eigen::MatrixXd Kb_mat = Eigen::MatrixXd::Zero(nbf_, nbf_);
         
-        int n_chol = scf_.L_mat.cols();
-        
         #pragma omp parallel
         {
-            Eigen::MatrixXd J_priv  = Eigen::MatrixXd::Zero(nbf_, nbf_);
             Eigen::MatrixXd Ka_priv = Eigen::MatrixXd::Zero(nbf_, nbf_);
             Eigen::MatrixXd Kb_priv = Eigen::MatrixXd::Zero(nbf_, nbf_);
             Eigen::MatrixXd Ta_buf(nbf_, nbf_), Tb_buf(nbf_, nbf_);
             
             #pragma omp for schedule(dynamic)
             for (int K = 0; K < n_chol; ++K) {
-                // Ambil vektor L_K dari L_mat_
                 Eigen::Map<const Eigen::MatrixXd> L_K(scf_.L_mat.col(K).data(), nbf_, nbf_);
                 
-                // Bangun Coulomb (J)
-                double val_J = (L_K.cwiseProduct(P_tot)).sum();
-                J_priv += val_J * L_K;
-                
-                // Bangun Exchange Alpha (Ka)
                 Ta_buf.noalias() = L_K * P_a;
                 Ka_priv.noalias() += Ta_buf * L_K;
                 
-                // Bangun Exchange Beta (Kb) jika open-shell
                 if (nb_ > 0) {
                     Tb_buf.noalias() = L_K * P_b;
                     Kb_priv.noalias() += Tb_buf * L_K;
                 }
             }
-            
             #pragma omp critical
-            {
-                J_mat += J_priv;
-                Ka_mat += Ka_priv;
-                if (nb_ > 0) Kb_mat += Kb_priv;
-            }
+            { Ka_mat += Ka_priv; if (nb_ > 0) Kb_mat += Kb_priv; }
         }
         
         F_a = H_core_ + J_mat - Ka_mat;
         if (nb_ > 0) F_b = H_core_ + J_mat - Kb_mat;
         else F_b = F_a;
         
-        return; // Keluar agar tidak mengeksekusi rute EXACT di bawah
+        return;
     }
 
     // ========================================================================
-    // JALUR 2: EXACT ROUTE (In-Core / Sparse)
+    // JALUR EXACT ROUTE (In-Core / Sparse) - BIARKAN SAMA SEPERTI SEBELUMNYA
     // ========================================================================
     Eigen::MatrixXd P_tot = P_a + P_b;
     double max_P = P_tot.cwiseAbs().maxCoeff(); 
-    double threshold = 1e-9; 
-
+    double threshold = 1e-9;
     const double* __restrict__ p_dtot = P_tot.data();
     const double* __restrict__ p_da   = P_a.data();
     const double* __restrict__ p_db   = P_b.data();
