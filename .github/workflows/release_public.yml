@@ -65,8 +65,8 @@ jobs:
         ./configure --prefix=$HOME/tblis_install \
                     --enable-static --disable-shared \
                     --disable-config-knl --disable-config-skx1 --disable-config-skx2 \
-                    CXXFLAGS="-O3 -mavx2 -mfma -mno-avx512f -mno-avx512vl -fPIC" \
-                    CFLAGS="-O3 -mavx2 -mfma -fPIC"
+                    CXXFLAGS="-O3 -mavx2 -mfma -mno-avx512f -mno-avx512vl -fPIC"
+                    CFLAGS="-O3 -mavx2 -mfma -mno-avx512f -mno-avx512vl -fPIC"
         make -j 2
         make install
     # =========================================================================
