@@ -447,7 +447,6 @@ struct OrbitalLBFGS {
         if (is_first) {
             g_prev = g_curr;
             is_first = false;
-            
             return -g_curr.cwiseQuotient(diag_H); 
         }
 
@@ -456,8 +455,7 @@ struct OrbitalLBFGS {
         double ys = y.dot(s);
         
         
-        
-        Eigen::VectorXd Bs = s.cwiseQuotient(diag_H); 
+        Eigen::VectorXd Bs = s.cwiseProduct(diag_H); 
         double sBs = s.dot(Bs);
         
         double theta = 1.0;
@@ -468,7 +466,6 @@ struct OrbitalLBFGS {
         Eigen::VectorXd y_mod = theta * y + (1.0 - theta) * Bs;
         double ys_mod = y_mod.dot(s);
         
-
         if (ys_mod > 1e-12) { 
             if ((int)s_hist.size() >= m_max) {
                 s_hist.erase(s_hist.begin());
@@ -482,7 +479,6 @@ struct OrbitalLBFGS {
 
         g_prev = g_curr;
 
-        
         Eigen::VectorXd q = g_curr;
         int k = s_hist.size();
         std::vector<double> alpha(k);
@@ -492,7 +488,6 @@ struct OrbitalLBFGS {
             q -= alpha[i] * y_hist[i];
         }
 
-        
         Eigen::VectorXd r = q.cwiseQuotient(diag_H);
 
         for (int i = 0; i < k; ++i) {
@@ -1875,7 +1870,6 @@ void OMP2::apply_orbital_rotation(const Eigen::VectorXd& kappa) {
 }
 
 
-
 MP2Result OMP2::compute() {
     auto start_time = std::chrono::high_resolution_clock::now();
     
@@ -1889,8 +1883,10 @@ MP2Result OMP2::compute() {
     double current_step = 1.0;
     Eigen::MatrixXd C_a_last = scf_.C_alpha;
     Eigen::MatrixXd C_b_last = scf_.C_beta;
-    Eigen::VectorXd last_kappa = Eigen::VectorXd::Zero(nbf_ * nbf_); 
     
+    
+    
+    Eigen::VectorXd last_kappa; 
     
     OrbitalLBFGS lbfgs_engine;
     DIIS diis_alpha(6);
@@ -1915,11 +1911,9 @@ MP2Result OMP2::compute() {
         scf_.C_alpha = C_a_current_;
         scf_.C_beta  = C_b_current_;
         
-       
         execute_micro_iterations();
         Eigen::MatrixXd F_ao_a, F_ao_b;
         build_fock_fast(scf_.P_alpha, scf_.P_beta, F_ao_a, F_ao_b);
-        
         
         double e_scf = 0.5 * (scf_.P_alpha.cwiseProduct(H_core_ + F_ao_a).sum() + 
                               scf_.P_beta.cwiseProduct(H_core_ + F_ao_b).sum()) 
@@ -1928,17 +1922,18 @@ MP2Result OMP2::compute() {
         double e_mp2_corr = e_ss_ + e_os_;
         double e_tot = e_scf + e_mp2_corr;
       
+        
         if (macro_iter > 0 && e_tot > e_total_last + 1e-7) {
-            
             current_step *= 0.5; 
             
             C_a_current_ = C_a_last; 
             C_b_current_ = C_b_last;
             
             
+            if (config_.opt_method != "soscf") lbfgs_engine.reset();
+            
             Eigen::VectorXd actual_step = last_kappa * current_step;
             apply_orbital_rotation(actual_step);
-            
             
             scf_.P_alpha = C_a_current_.leftCols(na_) * C_a_current_.leftCols(na_).transpose();
             if (!is_restricted && nb_ > 0) scf_.P_beta = C_b_current_.leftCols(nb_) * C_b_current_.leftCols(nb_).transpose();
@@ -1947,13 +1942,10 @@ MP2Result OMP2::compute() {
             continue; 
         }
         
-        
         current_step = std::min(1.0, current_step * 1.2);
         
-
         if (e_tot < e_total_best) { e_total_best = e_tot; e_corr_best = e_mp2_corr; }
 
-        
         execute_macro_iterations(diis_alpha, diis_beta, macro_iter);
         double grad_norm = orbital_gradient_.norm();
 
@@ -1964,7 +1956,6 @@ MP2Result OMP2::compute() {
                       << std::scientific << std::setprecision(2) << grad_norm << "\n";
         }
 
-        
         if (macro_iter > 0 && grad_norm < grad_thresh_ && std::abs(e_tot - e_total_last) < conv_thresh_) {
             is_converged = true; break;
         }
@@ -1973,7 +1964,6 @@ MP2Result OMP2::compute() {
         C_a_last = C_a_current_; 
         C_b_last = C_b_current_;
 
-        
         int n_params = orbital_gradient_.size();
         Eigen::VectorXd diag_H(n_params);
         int idx = 0;
@@ -1998,89 +1988,79 @@ MP2Result OMP2::compute() {
             }
         }
 
-        
         Eigen::VectorXd actual_step;
 
         if (config_.opt_method == "soscf") {
             mshqc::gradient::TrustRegionConfig tr_conf;
-            
-            
-            
             tr_conf.micro_thresh = std::min(1e-4, grad_norm * 0.1); 
-            
             mshqc::gradient::TrustRegionSOSCF soscf_engine(tr_conf);
 
             auto compute_hessian_vector = [&](const Eigen::VectorXd& p_vec) -> Eigen::VectorXd {
-              
-              Eigen::VectorXd Hp = diag_H.cwiseProduct(p_vec);
-              
-              int dim_a = va_ * na_;
-              int dim_b = (is_restricted) ? 0 : (vb_ * nb_);
-              
-              
-              Eigen::MatrixXd kappa_a = Eigen::MatrixXd::Zero(na_, va_);
-              if (dim_a > 0) kappa_a = Eigen::Map<const Eigen::MatrixXd>(p_vec.data(), na_, va_);
-              
-              Eigen::MatrixXd kappa_b = Eigen::MatrixXd::Zero(nb_, vb_);
-              if (!is_restricted && dim_b > 0) kappa_b = Eigen::Map<const Eigen::MatrixXd>(p_vec.data() + dim_a, nb_, vb_);
-              
-              
-              Eigen::MatrixXd P1_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
-              if (dim_a > 0) {
-                  P1_a = C_a_current_.leftCols(na_) * kappa_a * C_a_current_.rightCols(va_).transpose();
-                  P1_a += P1_a.transpose(); 
-              }
-              
-              Eigen::MatrixXd P1_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
-              if (!is_restricted && dim_b > 0) {
-                  P1_b = C_b_current_.leftCols(nb_) * kappa_b * C_b_current_.rightCols(vb_).transpose();
-                  P1_b += P1_b.transpose();
-              } else if (is_restricted) {
-                  P1_b = P1_a; 
-              }
-          
-              
-              
-              
-              Eigen::MatrixXd F1_a, F1_b;
-              build_fock_fast(P1_a, P1_b, F1_a, F1_b);
-              F1_a -= H_core_; 
-              if (!is_restricted || nb_ > 0) F1_b -= H_core_;
-          
-              
-              double spin_factor = is_restricted ? 4.0 : 2.0;
-
-              if (dim_a > 0) {
-                  Eigen::MatrixXd H_kappa_a = C_a_current_.leftCols(na_).transpose() * F1_a * C_a_current_.rightCols(va_);
-                  int idx_h = 0;
-                  for (int a = 0; a < va_; ++a) {
-                      for (int i = 0; i < na_; ++i) {
-                          Hp(idx_h++) += spin_factor * H_kappa_a(i, a); 
-                      }
-                  }
-              }
-              
-              if (!is_restricted && dim_b > 0) {
-                  Eigen::MatrixXd H_kappa_b = C_b_current_.leftCols(nb_).transpose() * F1_b * C_b_current_.rightCols(vb_);
-                  int idx_h = dim_a;
-                  for (int a = 0; a < vb_; ++a) {
-                      for (int i = 0; i < nb_; ++i) {
-                          Hp(idx_h++) += spin_factor * H_kappa_b(i, a);
-                      }
-                  }
-              }
-              
-              return Hp;
-          };
-
+                Eigen::VectorXd Hp = diag_H.cwiseProduct(p_vec);
+                int dim_a = va_ * na_;
+                int dim_b = (is_restricted) ? 0 : (vb_ * nb_);
+                
+                Eigen::MatrixXd kappa_a = Eigen::MatrixXd::Zero(na_, va_);
+                if (dim_a > 0) kappa_a = Eigen::Map<const Eigen::MatrixXd>(p_vec.data(), na_, va_);
+                
+                Eigen::MatrixXd kappa_b = Eigen::MatrixXd::Zero(nb_, vb_);
+                if (!is_restricted && dim_b > 0) kappa_b = Eigen::Map<const Eigen::MatrixXd>(p_vec.data() + dim_a, nb_, vb_);
+                
+                Eigen::MatrixXd P1_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
+                if (dim_a > 0) {
+                    P1_a = C_a_current_.leftCols(na_) * kappa_a * C_a_current_.rightCols(va_).transpose();
+                    P1_a += P1_a.transpose(); 
+                }
+                
+                Eigen::MatrixXd P1_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
+                if (!is_restricted && dim_b > 0) {
+                    P1_b = C_b_current_.leftCols(nb_) * kappa_b * C_b_current_.rightCols(vb_).transpose();
+                    P1_b += P1_b.transpose();
+                } else if (is_restricted) {
+                    P1_b = P1_a; 
+                }
             
+                Eigen::MatrixXd F1_a, F1_b;
+                build_fock_fast(P1_a, P1_b, F1_a, F1_b);
+                F1_a -= H_core_; 
+                if (!is_restricted || nb_ > 0) F1_b -= H_core_;
+            
+                double spin_factor = is_restricted ? 4.0 : 2.0;
+
+                if (dim_a > 0) {
+                    Eigen::MatrixXd H_kappa_a = C_a_current_.leftCols(na_).transpose() * F1_a * C_a_current_.rightCols(va_);
+                    int idx_h = 0;
+                    for (int a = 0; a < va_; ++a) {
+                        for (int i = 0; i < na_; ++i) {
+                            Hp(idx_h++) += spin_factor * H_kappa_a(i, a); 
+                        }
+                    }
+                }
+                
+                if (!is_restricted && dim_b > 0) {
+                    Eigen::MatrixXd H_kappa_b = C_b_current_.leftCols(nb_).transpose() * F1_b * C_b_current_.rightCols(vb_);
+                    int idx_h = dim_a;
+                    for (int a = 0; a < vb_; ++a) {
+                        for (int i = 0; i < nb_; ++i) {
+                            Hp(idx_h++) += spin_factor * H_kappa_b(i, a);
+                        }
+                    }
+                }
+                return Hp;
+            };
+
             mshqc::gradient::TrustRegionResult step_info = soscf_engine.solve(orbital_gradient_, diag_H, 0.50, compute_hessian_vector);
             actual_step = step_info.step;
 
         } else {
-            
             Eigen::VectorXd kappa = lbfgs_engine.get_direction(orbital_gradient_, diag_H);
             
+            
+            
+            if (kappa.dot(orbital_gradient_) > 0.0) {
+                lbfgs_engine.reset();
+                kappa = -orbital_gradient_.cwiseQuotient(diag_H); 
+            }
             
             double max_val = kappa.cwiseAbs().maxCoeff();
             if (max_val > 0.45) kappa *= (0.45 / max_val);
@@ -2089,12 +2069,16 @@ MP2Result OMP2::compute() {
             lbfgs_engine.s_prev = actual_step;
         }
 
-        
         apply_orbital_rotation(actual_step);
         
         scf_.P_alpha = C_a_current_.leftCols(na_) * C_a_current_.leftCols(na_).transpose();
         if (!is_restricted && nb_ > 0) scf_.P_beta = C_b_current_.leftCols(nb_) * C_b_current_.leftCols(nb_).transpose();
         else scf_.P_beta = scf_.P_alpha;
+        
+        
+        
+        
+        last_kappa = actual_step;
         
         macro_iter++;
     }
