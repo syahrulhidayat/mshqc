@@ -61,6 +61,9 @@ jobs:
         sed -i '1i #include <limits>' src/external/marray/include/short_vector.hpp
         sed -i '1i #include <limits>' src/external/marray/include/range.hpp
         sed -i '1i #include <limits>' src/util/thread.h
+        
+        export CFLAGS="-O3 -mavx2 -mfma -mno-avx512f -mno-avx512dq -mno-avx512ifma -mno-avx512pf -mno-avx512er -mno-avx512cd -mno-avx512bw -mno-avx512vl -mno-avx512vbmi -fPIC"
+        export CXXFLAGS="$CFLAGS"
 
         ./configure --prefix=$HOME/tblis_install \
                     --enable-static --disable-shared \
@@ -68,7 +71,7 @@ jobs:
                     --without-hwloc \
                     CXXFLAGS="-O3 -mavx2 -mfma -mno-avx512f -mno-avx512vl -fPIC" \
                     CFLAGS="-O3 -mavx2 -mfma -mno-avx512f -mno-avx512vl -fPIC"
-        make -j 2
+        make -j 4
         make install
     # =========================================================================
     # 3. CCACHE & BUILD MSHQC WHEEL
