@@ -61,12 +61,12 @@ jobs:
         sed -i '1i #include <limits>' src/external/marray/include/short_vector.hpp
         sed -i '1i #include <limits>' src/external/marray/include/range.hpp
         sed -i '1i #include <limits>' src/util/thread.h
-        
-        # Wajib -fPIC agar libtblis.a bisa dimasukkan ke dalam .so Python
+
         ./configure --prefix=$HOME/tblis_install \
                     --enable-static --disable-shared \
+                    --disable-config-knl --disable-config-skx1 --disable-config-skx2 \
                     CXXFLAGS="-O3 -mavx2 -mfma -mno-avx512f -mno-avx512vl -fPIC" \
-                    CFLAGS="-O3 -mavx2 -mfma -mno-avx512f -mno-avx512vl -fPIC"
+                    CFLAGS="-O3 -mavx2 -mfma -fPIC"
         make -j 2
         make install
     # =========================================================================
