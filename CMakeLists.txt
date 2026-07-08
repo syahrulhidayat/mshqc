@@ -119,7 +119,6 @@ endif()
 # --- TBLIS & TCI ---
 find_library(TBLIS_LIBRARY NAMES libtblis.a tblis HINTS "$ENV{TBLIS_DIR}/lib" "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/lib")
 find_library(TCI_LIBRARY NAMES libtci.a tci HINTS "$ENV{TBLIS_DIR}/lib" "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/lib")
-find_library(HWLOC_LIBRARY NAMES hwloc HINTS "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/lib")
 
 if(TBLIS_LIBRARY AND TCI_LIBRARY)
     message(STATUS ">> Tensor Engine: TBLIS & TCI ditemukan!")
@@ -190,8 +189,7 @@ target_link_libraries(mshqc PUBLIC
     Eigen3::Eigen
     ${CINT_LIBRARY}
     ${TBLIS_LIBRARY}
-    ${TCI_LIBRARY}      
-    ${HWLOC_LIBRARY}    
+    ${TCI_LIBRARY}         
     ${HDF5_LIBRARIES} 
     ${BLAS_LIBRARIES}
     ${LAPACK_LIBRARIES}
