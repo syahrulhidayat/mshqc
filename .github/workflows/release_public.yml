@@ -41,7 +41,7 @@ jobs:
       uses: actions/cache@v3
       with:
         path: ~/tblis_install
-        key: tblis-v1.2.0-static-avx2-fpic-v3
+        key: tblis-v1.2.0-static-avx2-fpic-v4
 
     - name: Compile TBLIS (Static + Safe AVX2)
       if: steps.cache-tblis.outputs.cache-hit != 'true'
@@ -52,24 +52,23 @@ jobs:
         cd /tmp/tblis
         git submodule update --init --recursive
         
-        # ====================================================================
-        # [PATCH KOMPATIBILITAS GCC 14]: Menambal bug TBLIS lama secara instan
-        # ====================================================================
-        # 1. Ganti SIGSTKSZ dinamis menjadi ukuran statis
+        # [PATCH KOMPATIBILITAS GCC 14]
         sed -i 's/SIGSTKSZ/8192/g' src/external/catch/catch.hpp
-        # 2. Tambahkan header <limits> yang diwajibkan oleh compiler baru
         sed -i '1i #include <limits>' src/external/marray/include/short_vector.hpp
         sed -i '1i #include <limits>' src/external/marray/include/range.hpp
         sed -i '1i #include <limits>' src/util/thread.h
         
-        # Biarkan TBLIS menggunakan default intrinsics per kernel.
-        export CFLAGS="-O3 -fPIC"
-        export CXXFLAGS="-O3 -fPIC"
+        # --- PERUBAHAN KRUSIAL ---
+        # 1. Suntikkan flag blokir AVX-512 berlapis ke dalam TBLIS
+        export CFLAGS="-O3 -fPIC -mno-avx512f -mno-avx512vl -mno-avx512dq -mno-avx512bw -mno-avx512cd"
+        export CXXFLAGS="-O3 -fPIC -mno-avx512f -mno-avx512vl -mno-avx512dq -mno-avx512bw -mno-avx512cd"
 
-        # Menghapus flag yang tidak dikenali (--disable-config-knl, dsb)
+        # 2. Paksa TBLIS hanya membuat konfigurasi yang aman secara eksplisit 
+        # (Membuang skx1, skx2, dan knl yang berbasis AVX-512)
         ./configure --prefix=$HOME/tblis_install \
                     --enable-static --disable-shared \
                     --without-hwloc \
+                    --enable-config=haswell,zen,core2,sandybridge,bulldozer,piledriver,excavator,reference \
                     CXXFLAGS="$CXXFLAGS" \
                     CFLAGS="$CFLAGS"
                     
@@ -81,8 +80,7 @@ jobs:
     - name: Setup Compiler Cache (ccache)
       uses: hendrikmuhs/ccache-action@v1.2
       with:
-        # UBAH KEY INI JUGA: Agar file objek Eigen (.o) di-build ulang
-        key: ${{ runner.os }}-mshqc-ccache-v3
+        key: ${{ runner.os }}-mshqc-ccache-v4
         max-size: 500M
 
     - name: Build Python Wheel (.whl)
