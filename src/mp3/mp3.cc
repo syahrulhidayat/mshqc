@@ -118,7 +118,7 @@ MP3Result RMP3::compute() {
 
     MP3Result res;
     res.e_hf = scf_.energy_total;
-    res.e_mp2 = mp2_.e_corr_total;
+    res.e_mp2 = mp2_.energy_mp2_corr;
     res.e3_aa = E_AA; res.e3_ab = E_AB;
     res.e_mp3 = 2.0 * E_AA + E_AB;
     res.e_corr_total = res.e_mp2 + res.e_mp3;
@@ -251,7 +251,7 @@ MP3Result UMP3::compute() {
 
     MP3Result res;
     res.e_hf = scf_.energy_total;
-    res.e_mp2 = mp2_.e_corr_total;
+    res.e_mp2 = mp2_.energy_mp2_corr;
     res.e3_aa = e3_aa; res.e3_bb = e3_bb; res.e3_ab = e3_ab;
     res.e_mp3 = e3_aa + e3_bb + e3_ab;
     res.e_corr_total = res.e_mp2 + res.e_mp3;
