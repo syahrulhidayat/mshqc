@@ -11,6 +11,7 @@
 
 #include "mshqc/symmetry/blocked_tensor.h"
 #include <Eigen/Dense>
+#include "mshqc/integrals.h"
 #include <unsupported/Eigen/CXX11/Tensor>
 #ifdef I
 #undef I
@@ -268,11 +269,11 @@ public:
     );
    
     static Eigen::Tensor<double, 4> get_mo_tensor(
-        const std::string& method, bool use_df, int n_aux,
+        bool use_df, int n_aux,
         const Eigen::MatrixXd& C1, const Eigen::MatrixXd& C2,
         const Eigen::MatrixXd& C3, const Eigen::MatrixXd& C4,
-        int nbf, int dim1, int dim2, int dim3, int dim4,
-        std::shared_ptr<IntegralEngine> exact_integrals = nullptr);
+        std::shared_ptr<mshqc::IntegralEngine> ints
+    );
 
 };
 
