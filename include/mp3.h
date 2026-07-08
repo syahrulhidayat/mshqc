@@ -63,9 +63,31 @@ class OMP3 : public BaseMP3 {
 public:
     using BaseMP3::BaseMP3;
     MP3Result compute() override;
+
 private:
-    void solve_zvector(); // Akan kita isi di tahap selanjutnya
+    // Tensors khusus OMP3
+    Eigen::Tensor<double, 4> t2_3rd_aa_, t2_3rd_bb_, t2_3rd_ab_;
+    Eigen::Tensor<double, 4> L2_aa_, L2_bb_, L2_ab_;
+    Eigen::MatrixXd G_oo_alpha_, G_vv_alpha_, G_oo_beta_, G_vv_beta_;
+    
+    // Core Functions dari kode OMP3 asli Anda
+    void pseudocanonicalize();
+    void build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_b, Eigen::MatrixXd& F_a, Eigen::MatrixXd& F_b);
+    double compute_mp2_energy();
+    double compute_mp3_correction();
+    void solve_zvector();
+    void build_opdm_alpha();
+    void build_opdm_beta();
+    
+    // Matriks Integrals Sparse (Re-use dari desain Anda)
+    Eigen::MatrixXd H_core_, S_, schwarz_;
+    std::vector<std::pair<int, int>> row_map_;
+    std::vector<double> J_val_, K_val_;
+    std::vector<int> J_ind_, K_ind_;
+    std::vector<size_t> J_ptr_, K_ptr_;
+    void init_fast_integrals();
 };
 
 } // namespace mshqc
 #endif
+
