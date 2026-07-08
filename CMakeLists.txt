@@ -117,9 +117,10 @@ else()
 endif()
 
 # --- TBLIS ---
-find_library(TBLIS_LIBRARY NAMES libtblis.a tblis HINTS "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/lib")
+find_library(TBLIS_LIBRARY NAMES libtblis.a tblis HINTS "$ENV{TBLIS_DIR}/lib" "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/lib")
 if(TBLIS_LIBRARY)
-    message(STATUS ">> Tensor Engine: TBLIS ditemukan!")
+    message(STATUS ">> Tensor Engine: TBLIS ditemukan di ${TBLIS_LIBRARY}!")
+    include_directories("$ENV{TBLIS_DIR}/include") 
 else()
     message(FATAL_ERROR "CRITICAL: TBLIS tidak ditemukan!")
 endif()
