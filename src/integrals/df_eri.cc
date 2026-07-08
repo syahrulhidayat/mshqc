@@ -4,6 +4,7 @@
  */
 
 #include "mshqc/integrals/df_eri.h"
+#include "mshqc/utils/hdf5_io.h"
 #include <iostream>
 #include <vector>
 #include <omp.h>
@@ -29,7 +30,7 @@ Eigen::MatrixXd DensityFittingERI::compute_J_inv_half() {
     Eigen::MatrixXd J_mat = Eigen::MatrixXd::Zero(n_aux_, n_aux_);
     int n_shells_aux = aux_basis_->n_shells();
 
-    // Hitung offset manual untuk aux basis
+    
     std::vector<int> aux_starts(n_shells_aux), aux_sizes(n_shells_aux);
     int offset = 0;
     for(int i = 0; i < n_shells_aux; ++i) {
@@ -38,7 +39,7 @@ Eigen::MatrixXd DensityFittingERI::compute_J_inv_half() {
         offset += aux_sizes[i];
     }
 
-    // Hitung (P|Q)
+    
     #pragma omp parallel for schedule(dynamic)
     for (int P = 0; P < n_shells_aux; ++P) {
         int abs_P = primary_basis_->n_shells() + P; 
@@ -67,7 +68,7 @@ Eigen::MatrixXd DensityFittingERI::compute_J_inv_half() {
     }
 
     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> solver(J_mat);
-    // DETEKTOR KEGAGALAN EIGEN
+    
     if (solver.info() != Eigen::Success) {
         throw std::runtime_error("FATAL: Eigen gagal mendiagonalisasi J_mat. Matriks berisi nilai ilegal.");
     }
@@ -94,12 +95,12 @@ void DensityFittingERI::compute() {
     Eigen::MatrixXd J_inv_half = compute_J_inv_half();
 
     int n_pairs = n_primary_ * n_primary_;
-    Eigen::MatrixXd V_mat = Eigen::MatrixXd::Zero(n_pairs, n_aux_);
+    B_mat_ = Eigen::MatrixXd::Zero(n_pairs, n_aux_);
 
     int n_shells_prim = primary_basis_->n_shells();
     int n_shells_aux  = aux_basis_->n_shells();
 
-    // Hitung offset manual untuk primary basis
+    
     std::vector<int> prim_starts(n_shells_prim), prim_sizes(n_shells_prim);
     int offset_p = 0;
     for(int i = 0; i < n_shells_prim; ++i) {
@@ -108,7 +109,7 @@ void DensityFittingERI::compute() {
         offset_p += prim_sizes[i];
     }
 
-    // Hitung offset manual untuk aux basis
+    
     std::vector<int> aux_starts(n_shells_aux), aux_sizes(n_shells_aux);
     int offset_a = 0;
     for(int i = 0; i < n_shells_aux; ++i) {
@@ -117,61 +118,79 @@ void DensityFittingERI::compute() {
         offset_a += aux_sizes[i];
     }
 
-    // ========================================================================
-    // OPTIMASI TAHAP 1: LOOP INVERSION & ADDRESS HOISTING
-    // Paralelisasi diletakkan di loop 'R'. Operasi indeks dikeluarkan dari 
-    // inner-loop agar tidak mencekik ALU (Arithmetic Logic Unit) kompilator.
-    // ========================================================================
-    #pragma omp parallel for schedule(dynamic, 1)
-    for (int R = 0; R < n_shells_aux; ++R) {
-        int abs_R = n_shells_prim + R; 
-        int bf_R_start = aux_starts[R];
-        int dim_R = aux_sizes[R];
+    
+    
+    
+    int batch_size = 32; 
+    for (int R_start = 0; R_start < n_shells_aux; R_start += batch_size) {
+        int R_end = std::min(n_shells_aux, R_start + batch_size);
+        int aux_bf_start = aux_starts[R_start];
+        int aux_bf_end = (R_end < n_shells_aux) ? aux_starts[R_end] : n_aux_;
+        int aux_bf_size = aux_bf_end - aux_bf_start;
 
-        for (int i = 0; i < n_shells_prim; ++i) {
-            int bf_i_start = prim_starts[i];
-            int dim_i = prim_sizes[i];
+        
+        Eigen::MatrixXd V_batch = Eigen::MatrixXd::Zero(n_pairs, aux_bf_size);
 
-            for (int j = 0; j <= i; ++j) {
-                int bf_j_start = prim_starts[j];
-                int dim_j = prim_sizes[j];
+        #pragma omp parallel for schedule(dynamic, 1)
+        for (int R = R_start; R < R_end; ++R) {
+            int abs_R = n_shells_prim + R; 
+            int dim_R = aux_sizes[R];
+            int col_offset = aux_starts[R] - aux_bf_start;
 
-                auto buffer = integrals_->compute_3c2e_block(i, j, abs_R);
-                if (buffer.empty()) continue;
+            for (int i = 0; i < n_shells_prim; ++i) {
+                int bf_i_start = prim_starts[i];
+                int dim_i = prim_sizes[i];
 
-                for (int r = 0; r < dim_R; ++r) {
-                    int col_idx = bf_R_start + r; // Tarik keluar dari inner loop
-                    
-                    for (int p_j = 0; p_j < dim_j; ++p_j) {
-                        // Tarik base row address keluar dari inner loop terdalam!
-                        int base_r1 = bf_j_start + p_j;
-                        int base_r2 = (bf_j_start + p_j) * n_primary_;
-                        int buffer_offset = dim_i * (p_j + dim_j * r);
-                        
-                        for (int p_i = 0; p_i < dim_i; ++p_i) {
-                            double val = buffer[p_i + buffer_offset];
+                for (int j = 0; j <= i; ++j) {
+                    int bf_j_start = prim_starts[j];
+                    int dim_j = prim_sizes[j];
+
+                    auto buffer = integrals_->compute_3c2e_block(i, j, abs_R);
+                    if (buffer.empty()) continue;
+
+                    for (int r = 0; r < dim_R; ++r) {
+                        int col_idx = col_offset + r; 
+                        for (int p_j = 0; p_j < dim_j; ++p_j) {
+                            int base_r1 = bf_j_start + p_j;
+                            int base_r2 = (bf_j_start + p_j) * n_primary_;
+                            int buffer_offset = dim_i * (p_j + dim_j * r);
                             
-                            // Akses alamat kini hanya berupa 1 penjumlahan ringan
-                            int r1 = (bf_i_start + p_i) * n_primary_ + base_r1;
-                            int r2 = base_r2 + (bf_i_start + p_i);
-                            
-                            V_mat(r1, col_idx) = val;
-                            if (r1 != r2) {
-                                V_mat(r2, col_idx) = val;
+                            for (int p_i = 0; p_i < dim_i; ++p_i) {
+                                double val = buffer[p_i + buffer_offset];
+                                int r1 = (bf_i_start + p_i) * n_primary_ + base_r1;
+                                int r2 = base_r2 + (bf_i_start + p_i);
+                                
+                                V_batch(r1, col_idx) = val;
+                                if (r1 != r2) V_batch(r2, col_idx) = val;
                             }
                         }
                     }
                 }
             }
         }
+        std::cout << "  Computing V * J^{-1/2} for Shells " << R_start << " to " << R_end - 1 << " ...\n";
+        B_mat_ += V_batch * J_inv_half.middleRows(aux_bf_start, aux_bf_size);
     }
 
-    std::cout << "  Multiplying V * J^{-1/2} ...\n";
-    B_mat_ = V_mat * J_inv_half;
+    
+    
+    
+    std::cout << "  Writing Density Fitting Tensor to HDF5 (Out-of-Core)...\n";
+    utils::HDF5TensorIO io("df_tensor.h5", utils::HDF5TensorIO::Mode::WRITE_TRUNCATE);
+    std::array<long, 4> dims = {(long)n_aux_, (long)n_primary_, (long)n_primary_, 1};
+    std::array<long, 4> chunks = {1, (long)n_primary_, (long)n_primary_, 1};
+    io.create_dataset_4d("df_tensor", dims, chunks);
 
+    for (int P = 0; P < n_aux_; ++P) {
+        std::array<long, 4> offset = {P, 0, 0, 0};
+        io.write_slice_4d("df_tensor", offset, chunks, B_mat_.col(P).data());
+    }
+
+    
+    B_mat_.resize(0, 0); 
     is_computed_ = true;
     std::cout << "  Density Fitting Decomposition Complete.\n";
 }
 
-} // namespace integrals
-} // namespace mshqc
+} 
+} 
