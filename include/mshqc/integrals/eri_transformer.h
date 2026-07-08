@@ -259,13 +259,21 @@ public:
         const Eigen::MatrixXd& C3, 
         const Eigen::MatrixXd& C4,
         int nbf, int n1, int n2, int n3, int n4
-    );
+    );    
     
     static void print_transform_info(
         const char* name,
         int dim1, int dim2, int dim3, int dim4,
         double time_ms
     );
+   
+    static Eigen::Tensor<double, 4> get_mo_tensor(
+        const std::string& method, bool use_df, int n_aux,
+        const Eigen::MatrixXd& C1, const Eigen::MatrixXd& C2,
+        const Eigen::MatrixXd& C3, const Eigen::MatrixXd& C4,
+        int nbf, int dim1, int dim2, int dim3, int dim4,
+        std::shared_ptr<IntegralEngine> exact_integrals = nullptr);
+
 };
 
 } // namespace integrals
