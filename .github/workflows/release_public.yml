@@ -30,7 +30,7 @@ jobs:
       shell: bash -el {0}
       run: |
         # PERHATIAN: 'tblis' dihapus dari sini agar kita menggunakan versi kustom
-        conda install -y -c conda-forge cmake make compilers eigen pkg-config "hdf5=1.14.3" pip libcint liblapacke openblas psi4
+        conda install -y -c conda-forge cmake make compilers eigen pkg-config "hdf5=1.14.3" pip libcint liblapacke openblas hwloc
         python -m pip install build wheel nanobind
 
     # =========================================================================
