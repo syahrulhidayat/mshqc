@@ -2,7 +2,7 @@ name: Compile and Release Wheel to Public Repo
 
 on:
   push:
-    branches: [ "lembaran-baru" ]
+    branches: [ "..." ]
 
 jobs:
   build-and-deploy:
@@ -30,7 +30,7 @@ jobs:
       shell: bash -el {0}
       run: |
         # PERHATIAN: 'tblis' dihapus dari sini agar kita menggunakan versi kustom
-        conda install -y -c conda-forge cmake make compilers eigen pkg-config "hdf5=1.14.3" pip libcint liblapacke openblas hwloc
+        conda install -y -c conda-forge cmake make compilers eigen pkg-config "hdf5=1.14.3" pip libcint liblapacke openblas
         python -m pip install build wheel nanobind
 
     # =========================================================================
@@ -41,7 +41,7 @@ jobs:
       uses: actions/cache@v3
       with:
         path: ~/tblis_install
-        key: tblis-v1.2.0-static-avx2-fpic-v1
+        key: tblis-v1.2.0-static-avx2-fpic-v2
 
     - name: Compile TBLIS (Static + Safe AVX2)
       if: steps.cache-tblis.outputs.cache-hit != 'true'
@@ -65,6 +65,7 @@ jobs:
         ./configure --prefix=$HOME/tblis_install \
                     --enable-static --disable-shared \
                     --disable-config-knl --disable-config-skx1 --disable-config-skx2 \
+                    --without-hwloc \
                     CXXFLAGS="-O3 -mavx2 -mfma -mno-avx512f -mno-avx512vl -fPIC" \
                     CFLAGS="-O3 -mavx2 -mfma -mno-avx512f -mno-avx512vl -fPIC"
         make -j 2
