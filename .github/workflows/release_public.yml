@@ -41,7 +41,6 @@ jobs:
       uses: actions/cache@v3
       with:
         path: ~/tblis_install
-        # Ubah key ini misal jadi 'v2' jika kamu ingin memaksa TBLIS recompile ulang
         key: tblis-v1.2.0-static-avx2-fpic-v1
 
     - name: Compile TBLIS (Static + Safe AVX2)
@@ -53,6 +52,16 @@ jobs:
         cd /tmp/tblis
         git submodule update --init --recursive
         
+        # ====================================================================
+        # [PATCH KOMPATIBILITAS GCC 14]: Menambal bug TBLIS lama secara instan
+        # ====================================================================
+        # 1. Ganti SIGSTKSZ dinamis menjadi ukuran statis
+        sed -i 's/SIGSTKSZ/8192/g' src/external/catch/catch.hpp
+        # 2. Tambahkan header <limits> yang diwajibkan oleh compiler baru
+        sed -i '1i #include <limits>' src/external/marray/include/short_vector.hpp
+        sed -i '1i #include <limits>' src/external/marray/include/range.hpp
+        sed -i '1i #include <limits>' src/util/thread.h
+        
         # Wajib -fPIC agar libtblis.a bisa dimasukkan ke dalam .so Python
         ./configure --prefix=$HOME/tblis_install \
                     --enable-static --disable-shared \
@@ -60,7 +69,6 @@ jobs:
                     CFLAGS="-O3 -mavx2 -mfma -mno-avx512f -mno-avx512vl -fPIC"
         make -j 2
         make install
-
     # =========================================================================
     # 3. CCACHE & BUILD MSHQC WHEEL
     # =========================================================================
