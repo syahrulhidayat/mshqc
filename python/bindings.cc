@@ -6,6 +6,27 @@
 #include <nanobind/stl/array.h>
 #include <nanobind/eigen/dense.h>
 
+// ========================================================================
+// BINDING DEPENDENCIES FOR HPC AUTO-TUNING
+// ========================================================================
+#include <thread>
+#include <omp.h>
+#include <cstdlib>
+#include <algorithm>
+#include <iostream>
+
+#if defined(_WIN32)
+    #include <windows.h>
+    #include <vector>
+#elif defined(__APPLE__)
+    #include <sys/types.h>
+    #include <sys/sysctl.h>
+#elif defined(__linux__)
+    #include <fstream>
+    #include <string>
+    #include <unordered_set>
+#endif
+
 // Core headers
 #include "mshqc/molecule.h"
 #include "mshqc/basis.h"
@@ -51,7 +72,79 @@ using namespace mshqc;
 using namespace mshqc::mcscf;
 using namespace mshqc::integrals;
 
+// ========================================================================
+// HPC AUTO-TUNING LOGIC (SILENT HARDWARE CONTROL)
+// ========================================================================
+namespace mshqc_auto_tune {
+
+    void set_env_safe(const char* name, const char* value) {
+    #if defined(_WIN32)
+        _putenv_s(name, value);
+    #else
+        setenv(name, value, 1);
+    #endif
+    }
+
+    int get_physical_cores() {
+    #if defined(_WIN32)
+        DWORD length = 0;
+        GetLogicalProcessorInformation(nullptr, &length);
+        if (GetLastError() != ERROR_INSUFFICIENT_BUFFER) return std::max(1, static_cast<int>(std::thread::hardware_concurrency()) / 2);
+        std::vector<SYSTEM_LOGICAL_PROCESSOR_INFORMATION> buffer(length / sizeof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION));
+        if (!GetLogicalProcessorInformation(buffer.data(), &length)) return std::max(1, static_cast<int>(std::thread::hardware_concurrency()) / 2);
+        int physical_cores = 0;
+        for (const auto& info : buffer) { if (info.Relationship == RelationProcessorCore) physical_cores++; }
+        return physical_cores > 0 ? physical_cores : std::max(1, static_cast<int>(std::thread::hardware_concurrency()) / 2);
+    #elif defined(__APPLE__)
+        int count = 0;
+        size_t size = sizeof(count);
+        if (sysctlbyname("hw.physicalcpu", &count, &size, nullptr, 0) == 0) return count;
+        return std::max(1, static_cast<int>(std::thread::hardware_concurrency()) / 2);
+    #elif defined(__linux__)
+        std::ifstream cpuinfo("/proc/cpuinfo");
+        std::string line, current_phys_id = "0", current_core_id = "0";
+        std::unordered_set<std::string> unique_cores;
+        if (cpuinfo.is_open()) {
+            while (std::getline(cpuinfo, line)) {
+                if (line.find("physical id") == 0) current_phys_id = line.substr(line.find(":") + 1);
+                else if (line.find("core id") == 0) {
+                    current_core_id = line.substr(line.find(":") + 1);
+                    unique_cores.insert(current_phys_id + "_" + current_core_id);
+                }
+            }
+            if (!unique_cores.empty()) return unique_cores.size();
+        }
+        return std::max(1, static_cast<int>(std::thread::hardware_concurrency()) / 2);
+    #else
+        return std::max(1, static_cast<int>(std::thread::hardware_concurrency()) / 2);
+    #endif
+    }
+
+    void initialize_hpc_environment() {
+        // 1. Deteksi Core
+        int physical_cores = get_physical_cores();
+        
+        // 2. Kunci OpenMP secara internal C++
+        omp_set_dynamic(0);
+        omp_set_num_threads(physical_cores);
+        
+        // 3. Cekik semua library eksternal agar tidak bentrok dengan C++
+        set_env_safe("OPENBLAS_NUM_THREADS", "1");
+        set_env_safe("MKL_NUM_THREADS", "1");
+        set_env_safe("TBLIS_NUM_THREADS", "1");
+        set_env_safe("VECLIB_MAXIMUM_THREADS", "1");
+        set_env_safe("NUMEXPR_NUM_THREADS", "1");
+        set_env_safe("OMP_MAX_ACTIVE_LEVELS", "1"); // Anti paralel bersarang
+    }
+}
+
+// ========================================================================
+// NANOBIND MODULE
+// ========================================================================
 NB_MODULE(_mshqc, m) {
+    // EKSEKUSI PERTAMA: Amankan hardware sebelum modul selesai di-load!
+    mshqc_auto_tune::initialize_hpc_environment();
+
     m.doc() = "MSHQC: Modern Quantum Chemistry Library";
 
     using ERITensor = Eigen::Tensor<double, 4, 0, long>;
