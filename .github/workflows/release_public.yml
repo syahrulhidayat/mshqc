@@ -51,6 +51,7 @@ jobs:
         git clone -b v1.2.0 https://github.com/devinamatthews/tblis.git /tmp/tblis
         cd /tmp/tblis
         git submodule update --init --recursive
+        rm -rf src/configs/knl
         
         # ====================================================================
         # [PATCH KOMPATIBILITAS GCC 14]: Menambal bug TBLIS lama secara instan
