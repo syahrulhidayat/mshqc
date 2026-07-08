@@ -13,16 +13,17 @@ endif()
 # [OPTIMASI KOMPILER CERDAS: ULTRA PERFORMANCE]
 # ==============================================================================
 if(DEFINED ENV{GITHUB_ACTIONS})
-    # [PUBLIC RELEASE]: Biner Universal yang Sangat Cepat
-    message(STATUS ">> CI/CD Server Detected: Menggunakan optimasi Biner Universal (AVX2/FMA)")
-    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -funroll-loops -ftree-vectorize -mavx2 -mfma -mtune=generic -DNDEBUG -fno-math-errno")
+    # [PUBLIC RELEASE]: Biner Universal yang Aman (Portable)
+    message(STATUS ">> CI/CD Server Detected: Menggunakan optimasi Biner Universal (mtune=generic)")
+    # HAPUS -mavx2 dan -mfma di sini. Gunakan instruksi dasar x86_64 dengan optimasi O3.
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -funroll-loops -ftree-vectorize -mtune=generic -DNDEBUG -fno-math-errno")
 else()
-    # [PRIVATE/LOCAL]: Super Turbo (Zen 3 / Native)
+    # [PRIVATE/LOCAL]: Super Turbo (Deteksi CPU Otomatis)
     message(STATUS ">> Local Environment Detected: Mengaktifkan Super Turbo (-march=native)")
-    # Tambahan: -fno-math-errno dan -ffp-contract=fast mempercepat FMA tensor tanpa merusak presisi matriks Eigen
-    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -mavx2 -mfma -funroll-loops -ftree-vectorize -DNDEBUG")
+    # GANTI -mavx2 -mfma dengan -march=native. Ini akan mengompilasi kode 
+    # persis sesuai dengan kemampuan maksimum CPU di komputer yang sedang dipakai.
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -march=native -funroll-loops -ftree-vectorize -DNDEBUG -fno-math-errno")
 endif()
-
 # [CRITICAL FIX]: TBLIS mewajibkan C++20
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
