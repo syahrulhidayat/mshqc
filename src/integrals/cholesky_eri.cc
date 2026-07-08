@@ -182,23 +182,29 @@ void CholeskyERI::decompose_direct() {
     Eigen::VectorXd D(npair); D.setZero();
     std::vector<double> shell_max(nshells * nshells, 0.0);
 
-    // HAPUS OPENMP DI SINI (Serial agar aman dari tabrakan memori libcint)
+    // =========================================================
+    // FASE 1: PEMBENTUKAN DIAGONAL (OPENMP AKTIF)
+    // =========================================================
+    #pragma omp parallel for schedule(dynamic, 1)
     for (int s1 = 0; s1 < nshells; ++s1) {
         for (int s2 = 0; s2 <= s1; ++s2) {
+            // Buffer dibuat lokal per thread
             const auto& buf = integrals_ptr_->compute_shell_block(s1, s2, s1, s2);
             if (buf.empty()) continue;
+            
             int dim1 = basis.shell(s1).n_functions(); int dim2 = basis.shell(s2).n_functions();
             int st1 = shell_starts[s1]; int st2 = shell_starts[s2];
             double max_val_block = 0.0;
+            
             for(int i=0; i<dim1; ++i) {
                 for(int j=0; j<dim2; ++j) {
                     // [PERBAIKAN 1]: C-Order index untuk (s1, s2 | s1, s2)
-                    // Setara dengan [i][j][i][j]
                     size_t idx_buf = i + dim1 * (j + dim2 * (i + dim1 * j));
                     
                     if (idx_buf >= buf.size()) continue;
                     double val = buf[idx_buf];
                     int p = st1 + i; int q = st2 + j;
+                    
                     if (p * n_basis_ + q < npair) D(p * n_basis_ + q) = val;
                     if (q * n_basis_ + p < npair) D(q * n_basis_ + p) = val;
                     max_val_block = std::max(max_val_block, std::abs(val));
@@ -211,7 +217,6 @@ void CholeskyERI::decompose_direct() {
 
     int est_rank = std::min(npair, std::max(200, n_basis_ * 5));
     Eigen::MatrixXd L_store(npair, est_rank);
-    Eigen::VectorXd col_buf(npair); 
 
     int iter = 0;
     while (true) {
@@ -226,54 +231,69 @@ void CholeskyERI::decompose_direct() {
         int rel_p = p - shell_starts[sp]; int rel_q = q - shell_starts[sq];
         int pair_pq = sp * (sp + 1) / 2 + sq; double inv_sqrt = 1.0 / std::sqrt(D_max);
 
-        col_buf.setZero();
+        // =========================================================
+        // FASE 2: EVALUASI VEKTOR CHOLESKY (OPENMP AKTIF)
+        // =========================================================
+        // Kita gunakan matriks lokal agar setiap thread menulis di memorinya sendiri,
+        // mencegah data race condition.
+        Eigen::VectorXd col_buf = Eigen::VectorXd::Zero(npair);
         
-        // HAPUS OPENMP DI SINI
-        for (int s1 = 0; s1 < nshells; ++s1) {
-            for (int s2 = 0; s2 <= s1; ++s2) {
-                double bound = shell_max[s1 * nshells + s2] * shell_max[sp * nshells + sq];
-                if (bound < 1e-12) continue; 
+        #pragma omp parallel
+        {
+            // Vektor buffer khusus untuk thread ini
+            Eigen::VectorXd local_col_buf = Eigen::VectorXd::Zero(npair);
+            
+            #pragma omp for schedule(dynamic, 1)
+            for (int s1 = 0; s1 < nshells; ++s1) {
+                for (int s2 = 0; s2 <= s1; ++s2) {
+                    double bound = shell_max[s1 * nshells + s2] * shell_max[sp * nshells + sq];
+                    if (bound < 1e-12) continue; 
 
-                int pair_s = s1 * (s1 + 1) / 2 + s2;
-                bool swap_pairs = (pair_s < pair_pq);
-                
-                int u1 = swap_pairs ? sp : s1; int u2 = swap_pairs ? sq : s2;
-                int u3 = swap_pairs ? s1 : sp; int u4 = swap_pairs ? s2 : sq;
+                    int pair_s = s1 * (s1 + 1) / 2 + s2;
+                    bool swap_pairs = (pair_s < pair_pq);
+                    
+                    int u1 = swap_pairs ? sp : s1; int u2 = swap_pairs ? sq : s2;
+                    int u3 = swap_pairs ? s1 : sp; int u4 = swap_pairs ? s2 : sq;
 
-                const auto& buf = integrals_ptr_->compute_shell_block(u1, u2, u3, u4);
-                if (buf.empty()) continue;
+                    // Buffer ditarik ke sini sehingga 100% thread-safe
+                    const auto& buf = integrals_ptr_->compute_shell_block(u1, u2, u3, u4);
+                    if (buf.empty()) continue;
 
-                int dim1 = basis.shell(s1).n_functions(); int dim2 = basis.shell(s2).n_functions();
-                int dimP = basis.shell(sp).n_functions(); int dimQ = basis.shell(sq).n_functions();
-                int st1 = shell_starts[s1]; int st2 = shell_starts[s2];
+                    int dim1 = basis.shell(s1).n_functions(); int dim2 = basis.shell(s2).n_functions();
+                    int dimP = basis.shell(sp).n_functions(); int dimQ = basis.shell(sq).n_functions();
+                    int st1 = shell_starts[s1]; int st2 = shell_starts[s2];
 
-                for (int i = 0; i < dim1; ++i) {
-                    for (int j = 0; j < dim2; ++j) {
-                        size_t idx_buf;
-                        if (!swap_pairs) {
-                            // Buffer adalah (s1, s2 | sp, sq) -> u1=s1, u2=s2, u3=sp, u4=sq
-                            // Dims: dim1, dim2, dimP, dimQ
-                            // --- UBAH BAGIAN INI MENJADI FORTRAN-ORDER (i bergerak paling cepat) ---
-                            idx_buf = i + dim1 * (j + dim2 * (rel_p + dimP * rel_q));
-                        } else {
-                            // Buffer adalah (sp, sq | s1, s2) -> u1=sp, u2=sq, u3=s1, u4=s2
-                            // Dims: dimP, dimQ, dim1, dim2
-                            // --- UBAH BAGIAN INI MENJADI FORTRAN-ORDER (rel_p bergerak paling cepat) ---
-                            idx_buf = rel_p + dimP * (rel_q + dimQ * (i + dim1 * j));
+                    for (int i = 0; i < dim1; ++i) {
+                        for (int j = 0; j < dim2; ++j) {
+                            size_t idx_buf;
+                            if (!swap_pairs) {
+                                idx_buf = i + dim1 * (j + dim2 * (rel_p + dimP * rel_q));
+                            } else {
+                                idx_buf = rel_p + dimP * (rel_q + dimQ * (i + dim1 * j));
+                            }
+
+                            if (idx_buf >= buf.size()) continue;
+                            double val = buf[idx_buf];
+
+                            int global_i = st1 + i; int global_j = st2 + j;
+                            // Menulis ke lokal buffer
+                            local_col_buf(global_i * n_basis_ + global_j) = val;
+                            if (global_i != global_j) local_col_buf(global_j * n_basis_ + global_i) = val;
                         }
-
-                        if (idx_buf >= buf.size()) continue;
-                        double val = buf[idx_buf];
-
-                        int global_i = st1 + i; int global_j = st2 + j;
-                        col_buf(global_i * n_basis_ + global_j) = val;
-                        if (global_i != global_j) col_buf(global_j * n_basis_ + global_i) = val;
                     }
                 }
             }
-        }
+            
+            // Penggabungan (Reduction) memori thread dengan cepat
+            #pragma omp critical
+            {
+                col_buf += local_col_buf;
+            }
+        } // Akhir blok parallel
+
         if (iter > 0) col_buf -= L_store.leftCols(iter) * L_store.row(pivot_idx).head(iter).transpose();
-        L_store.col(iter) = col_buf * inv_sqrt; D.array() -= L_store.col(iter).array().square();
+        L_store.col(iter) = col_buf * inv_sqrt; 
+        D.array() -= L_store.col(iter).array().square();
         for(int k=0; k<npair; ++k) if (D(k) < 0.0) D(k) = 0.0;
         iter++;
     }
