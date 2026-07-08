@@ -83,9 +83,7 @@ jobs:
       run: |
         export CC="ccache $CONDA_PREFIX/bin/x86_64-conda-linux-gnu-cc"
         export CXX="ccache $CONDA_PREFIX/bin/x86_64-conda-linux-gnu-c++"
-        export CXXFLAGS="-std=c++17 -fopenmp -O3 -mavx2 -mfma -mtune=generic -DEIGEN_USE_BLAS -DEIGEN_USE_LAPACKE -DNDEBUG"
-        
-        # Beri tahu CMake lokasi TBLIS Kustom kita
+        export CXXFLAGS="-std=c++17 -fopenmp -O3 -mavx2 -mfma -mtune=generic -DEIGEN_USE_BLAS -DEIGEN_USE_LAPACKE -DNDEBUG -I$HOME/tblis_install/include"
         export CMAKE_PREFIX_PATH=$HOME/tblis_install:$CONDA_PREFIX
         export TBLIS_DIR=$HOME/tblis_install
         
