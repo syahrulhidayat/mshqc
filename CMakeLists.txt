@@ -10,32 +10,34 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 # ==============================================================================
-# [OPTIMASI KOMPILER CERDAS]
+# [OPTIMASI KOMPILER CERDAS: ULTRA PERFORMANCE]
 # ==============================================================================
 if(DEFINED ENV{GITHUB_ACTIONS})
     # [PUBLIC RELEASE]: Biner Universal yang Sangat Cepat
-    # Menggunakan -O3, LTO, dan memaksa instruksi AVX2/FMA agar matriks Eigen melesat cepat
-    # tanpa mengunci ke satu arsitektur spesifik (aman lintas Intel/AMD).
     message(STATUS ">> CI/CD Server Detected: Menggunakan optimasi Biner Universal (AVX2/FMA)")
-    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -funroll-loops -ftree-vectorize -mavx2 -mfma -mtune=generic -DNDEBUG")
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -funroll-loops -ftree-vectorize -mavx2 -mfma -mtune=generic -DNDEBUG -fno-math-errno")
 else()
-    # [PRIVATE/LOCAL]: Super Turbo
-    # Sepenuhnya terkalibrasi untuk silikon fisik mesin yang sedang mengompilasi.
+    # [PRIVATE/LOCAL]: Super Turbo (Zen 3 / Native)
     message(STATUS ">> Local Environment Detected: Mengaktifkan Super Turbo (-march=native)")
-    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -march=native -mtune=native -funroll-loops -ftree-vectorize -DNDEBUG")
+    # Tambahan: -fno-math-errno dan -ffp-contract=fast mempercepat FMA tensor tanpa merusak presisi matriks Eigen
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -mavx2 -mfma -funroll-loops -ftree-vectorize -DNDEBUG")
 endif()
 
-set(CMAKE_CXX_STANDARD 17)
+# [CRITICAL FIX]: TBLIS mewajibkan C++20
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+set(CMAKE_CXX_VISIBILITY_PRESET default)
+set(CMAKE_VISIBILITY_INLINES_HIDDEN 0)
 
 # Mengembalikan Interprocedural Optimization (IPO/LTO) yang terbukti aman!
 include(CheckIPOSupported)
 check_ipo_supported(RESULT ipo_supported OUTPUT error)
-if(ipo_supported)
-    message(STATUS ">> IPO / LTO Didukung dan Diaktifkan! (Super Turbo)")
-    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
-endif()
+#if(ipo_supported)
+    #message(STATUS ">> IPO / LTO Didukung dan Diaktifkan! (Super Turbo)")
+    #set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
+#endif()
 
 # ==============================================================================
 # 2. KONFIGURASI LINGKUNGAN CONDA & PYTHON (PORTABEL UNTUK CODESPACES)
@@ -97,18 +99,15 @@ if(EXISTS "${EIGEN_LOCAL_PATH}/Eigen/Dense")
     target_include_directories(Eigen3::Eigen INTERFACE "${EIGEN_LOCAL_PATH}")
 else()
     message(STATUS ">> Eigen lokal tidak ditemukan. Mencari versi terbaru di Conda/Sistem...")
-    
-    # [PERUBAHAN]: Menghapus '3.4.0 EXACT' agar CMake otomatis menerima versi tertinggi yang tersedia
     find_package(Eigen3 CONFIG HINTS "$ENV{CONDA_PREFIX}/share/eigen3/cmake" "/opt/conda/share/eigen3/cmake")
-    
     if(Eigen3_FOUND)
         message(STATUS ">> Linear Algebra: Eigen ${Eigen3_VERSION} ditemukan dari Conda!")
     else()
-        # Fallback juga dibuat fleksibel tanpa batasan versi
         find_package(Eigen3 REQUIRED NO_MODULE)
         message(STATUS ">> Linear Algebra: Eigen ${Eigen3_VERSION} ditemukan sebagai fallback.")
     endif()
 endif()
+
 # --- LIBCINT ---
 find_library(CINT_LIBRARY cint HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/local/lib" "/usr/lib")
 if(CINT_LIBRARY)
@@ -118,15 +117,14 @@ else()
 endif()
 
 # --- TBLIS ---
-find_library(TBLIS_LIBRARY tblis HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/local/lib" "/usr/lib")
+find_library(TBLIS_LIBRARY NAMES libtblis.a tblis HINTS "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/lib")
 if(TBLIS_LIBRARY)
     message(STATUS ">> Tensor Engine: TBLIS ditemukan!")
 else()
     message(FATAL_ERROR "CRITICAL: TBLIS tidak ditemukan!")
 endif()
 
-# --- [PERBAIKAN FINAL]: HDF5 DIKUNCI KE CONDA ---
-# Kita gunakan pencarian manual untuk menghindari CMake memuat pustaka dari Ubuntu
+# --- HDF5 ---
 find_path(HDF5_INCLUDE_DIRS "H5Cpp.h" HINTS "$ENV{CONDA_PREFIX}/include" NO_DEFAULT_PATH)
 find_library(HDF5_C_LIB hdf5 HINTS "$ENV{CONDA_PREFIX}/lib" NO_DEFAULT_PATH)
 find_library(HDF5_CXX_LIB hdf5_cpp HINTS "$ENV{CONDA_PREFIX}/lib" NO_DEFAULT_PATH)
@@ -136,11 +134,10 @@ if(HDF5_INCLUDE_DIRS AND HDF5_C_LIB AND HDF5_CXX_LIB)
     include_directories(${HDF5_INCLUDE_DIRS})
     set(HDF5_LIBRARIES ${HDF5_CXX_LIB} ${HDF5_C_LIB})
 else()
-    message(FATAL_ERROR "CRITICAL: HDF5 C++ tidak ditemukan di Conda psi4env!")
+    message(FATAL_ERROR "CRITICAL: HDF5 C++ tidak ditemukan di Conda mshqcenv!")
 endif()
 
 # --- JEMALLOC ---
-#find_library(JEMALLOC_LIB jemalloc HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/local/lib" "/usr/lib")
 if(JEMALLOC_LIB)
     message(STATUS ">> Memori Allocator: Jemalloc ditemukan!")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-builtin-malloc -fno-builtin-calloc -fno-builtin-realloc -fno-builtin-free")
@@ -174,6 +171,7 @@ set(ALL_SOURCES
 add_library(mshqc SHARED ${ALL_SOURCES})
 
 set_target_properties(mshqc PROPERTIES 
+    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/python/mshqc"
     INSTALL_RPATH "$ORIGIN:$ORIGIN/../../.."
     BUILD_WITH_INSTALL_RPATH TRUE
 )
@@ -185,7 +183,6 @@ target_compile_definitions(mshqc PUBLIC
     EIGEN_MPL2_ONLY
 )
 
-# [PENTING] HDF5_LIBRARIES ditambahkan di sini agar simbol C++ terhubung ke biner
 target_link_libraries(mshqc PUBLIC 
     Eigen3::Eigen
     ${CINT_LIBRARY}
@@ -220,8 +217,6 @@ endif()
 set_target_properties(_mshqc PROPERTIES 
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/python/mshqc"
     PREFIX "" 
-    CXX_VISIBILITY_PRESET "hidden"
-    VISIBILITY_INLINES_HIDDEN ON
     INSTALL_RPATH "$ORIGIN:$ORIGIN/../../.."
     BUILD_WITH_INSTALL_RPATH TRUE
 )
