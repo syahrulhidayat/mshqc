@@ -2,7 +2,7 @@ name: Compile and Release Wheel to Public Repo
 
 on:
   push:
-    branches: [ "lembaran-baru" ]
+    branches: [ "" ]
 
 jobs:
   build-and-deploy:
@@ -41,7 +41,7 @@ jobs:
       uses: actions/cache@v3
       with:
         path: ~/tblis_install
-        key: tblis-v1.2.0-static-avx2-fpic-v2
+        key: tblis-v1.2.0-static-avx2-fpic-v3
 
     - name: Compile TBLIS (Static + Safe AVX2)
       if: steps.cache-tblis.outputs.cache-hit != 'true'
@@ -81,7 +81,8 @@ jobs:
     - name: Setup Compiler Cache (ccache)
       uses: hendrikmuhs/ccache-action@v1.2
       with:
-        key: ${{ runner.os }}-mshqc-ccache
+        # UBAH KEY INI JUGA: Agar file objek Eigen (.o) di-build ulang
+        key: ${{ runner.os }}-mshqc-ccache-v3
         max-size: 500M
 
     - name: Build Python Wheel (.whl)
@@ -90,15 +91,14 @@ jobs:
         export CC="ccache $CONDA_PREFIX/bin/x86_64-conda-linux-gnu-cc"
         export CXX="ccache $CONDA_PREFIX/bin/x86_64-conda-linux-gnu-c++"
         
-        # Hapus -mavx2 -mfma. Sisakan -mtune=generic agar aman.
-        export CXXFLAGS="-std=c++17 -fopenmp -O3 -mtune=generic -DEIGEN_USE_BLAS -DEIGEN_USE_LAPACKE -DNDEBUG -I$HOME/tblis_install/include"
+        # Samakan flag dengan CMake: Pakai AVX2/FMA, blokir AVX-512
+        export CXXFLAGS="-std=c++17 -fopenmp -O3 -mavx2 -mfma -mno-avx512f -mtune=generic -DEIGEN_USE_BLAS -DEIGEN_USE_LAPACKE -DNDEBUG -I$HOME/tblis_install/include"
         
         export CMAKE_PREFIX_PATH=$HOME/tblis_install:$CONDA_PREFIX
         export TBLIS_DIR=$HOME/tblis_install
         
         python setup.py bdist_wheel
         ccache -s
-
     # =========================================================================
     # 4. COMMIT KEMBALI KE REPO PRIVAT
     # =========================================================================
