@@ -116,13 +116,16 @@ else()
     message(FATAL_ERROR "CRITICAL: libcint tidak ditemukan!")
 endif()
 
-# --- TBLIS ---
+# --- TBLIS & TCI ---
 find_library(TBLIS_LIBRARY NAMES libtblis.a tblis HINTS "$ENV{TBLIS_DIR}/lib" "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/lib")
-if(TBLIS_LIBRARY)
-    message(STATUS ">> Tensor Engine: TBLIS ditemukan di ${TBLIS_LIBRARY}!")
+find_library(TCI_LIBRARY NAMES libtci.a tci HINTS "$ENV{TBLIS_DIR}/lib" "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/lib")
+find_library(HWLOC_LIBRARY NAMES hwloc HINTS "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/lib")
+
+if(TBLIS_LIBRARY AND TCI_LIBRARY)
+    message(STATUS ">> Tensor Engine: TBLIS & TCI ditemukan!")
     include_directories("$ENV{TBLIS_DIR}/include") 
 else()
-    message(FATAL_ERROR "CRITICAL: TBLIS tidak ditemukan!")
+    message(FATAL_ERROR "CRITICAL: TBLIS atau TCI tidak ditemukan!")
 endif()
 
 # --- HDF5 ---
@@ -183,11 +186,12 @@ target_compile_definitions(mshqc PUBLIC
     EIGEN_NO_DEBUG 
     EIGEN_MPL2_ONLY
 )
-
 target_link_libraries(mshqc PUBLIC 
     Eigen3::Eigen
     ${CINT_LIBRARY}
     ${TBLIS_LIBRARY}
+    ${TCI_LIBRARY}      
+    ${HWLOC_LIBRARY}    
     ${HDF5_LIBRARIES} 
     ${BLAS_LIBRARIES}
     ${LAPACK_LIBRARIES}
