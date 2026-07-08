@@ -532,16 +532,22 @@ Eigen::Tensor<double, 4> ERITransformer::transform_oooo_parallel(
     return transform_oooo(e, o, n, no); 
 }
 Eigen::Tensor<double, 4> ERITransformer::get_mo_tensor(
-    const std::string& method, bool use_df, int n_aux,
+    bool use_df, int n_aux,
     const Eigen::MatrixXd& C1, const Eigen::MatrixXd& C2,
     const Eigen::MatrixXd& C3, const Eigen::MatrixXd& C4,
-    int nbf, int dim1, int dim2, int dim3, int dim4,
-    std::shared_ptr<IntegralEngine> exact_integrals) 
+    std::shared_ptr<IntegralEngine> ints) 
 {
+    // Ambil dimensi langsung dari matriks C
+    int nbf = C1.rows();
+    int dim1 = C1.cols();
+    int dim2 = C2.cols();
+    int dim3 = C3.cols();
+    int dim4 = C4.cols();
+
     // RUTE 1: EXACT ERI (Fallback Klasik)
-    if (!use_df && method == "exact") {
-        if (!exact_integrals) throw std::runtime_error("Exact integrals engine missing!");
-        return transform_oovv_mixed(exact_integrals->compute_eri(), C1, C2, C3, C4, nbf, dim1, dim2, dim3, dim4);
+    if (!use_df) {
+        if (!ints) throw std::runtime_error("Exact integrals engine missing!");
+        return transform_oovv_mixed(ints->compute_eri(), C1, C2, C3, C4, nbf, dim1, dim2, dim3, dim4);
     }
 
     // RUTE 2: DENSITY FITTING / CHOLESKY (OUT-OF-CORE HDF5)
@@ -549,7 +555,7 @@ Eigen::Tensor<double, 4> ERITransformer::get_mo_tensor(
     V_mo.setZero();
     if (n_aux <= 0) return V_mo;
 
-    utils::HDF5TensorIO io("df_tensor.h5", utils::HDF5TensorIO::Mode::READ_ONLY);
+    mshqc::utils::HDF5TensorIO io("df_tensor.h5", mshqc::utils::HDF5TensorIO::Mode::READ_ONLY);
     int chunk_size = std::min(128, n_aux); 
     
     // Alokasi memori sementara (Sangat kecil, aman dari OOM)
