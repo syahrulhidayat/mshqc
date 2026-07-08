@@ -165,6 +165,7 @@ MP2Result RMP2::compute() {
     result.energy_scf = scf_.energy_total;
     result.energy_mp2_corr = e_corr_;
     result.energy_total = scf_.energy_total + e_corr_;
+    result.t2_aa = t2_; 
     
     if (config_.print_level > 0) {
         std::cout << "\n=== RMP2 Results (" << config_.eri_method << ") ===\n";
@@ -174,7 +175,6 @@ MP2Result RMP2::compute() {
         std::cout << "Total RMP2:      " << std::setw(14) << result.energy_total << " Ha\n";
         std::cout << "Time:            " << std::chrono::duration<double>(t2-t1).count() << " s\n";
     }
-    
     return result;
 }
 
@@ -364,7 +364,9 @@ MP2Result UMP2::compute() {
     result.energy_mp2_os = e_os;
     result.energy_mp2_corr = e_corr;
     result.energy_total = scf_.energy_total + e_corr;
-    
+    result.t2_aa = t2_aa_;
+    result.t2_bb = t2_bb_;
+    result.t2_ab = t2_ab_;
     if(config_.print_level > 0) {
         std::cout << "\n=== UMP2 Results (" << config_.eri_method << ") ===\n";
         std::cout << std::fixed << std::setprecision(8);
