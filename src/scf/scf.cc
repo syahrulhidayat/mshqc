@@ -26,9 +26,9 @@
 
 namespace mshqc {
 
-
-
- ============================================================================
+// ============================================================================
+// PART 1: BASE SCF (Universal Engine & Algebra)
+// ============================================================================
 BaseSCF::BaseSCF(const Molecule& mol, const BasisSet& basis,
                  std::shared_ptr<IntegralEngine> integrals,
                  std::shared_ptr<PointGroup> pg,
