@@ -194,6 +194,7 @@ target_link_libraries(mshqc PUBLIC
     ${BLAS_LIBRARIES}
     ${LAPACK_LIBRARIES}
     OpenMP::OpenMP_CXX   
+    atomic
 )
 
 if(JEMALLOC_LIB)
@@ -212,9 +213,9 @@ target_include_directories(mshqc PUBLIC
 nanobind_add_module(_mshqc "python/bindings.cc")
 
 if(JEMALLOC_LIB)
-    target_link_libraries(_mshqc PRIVATE mshqc ${CINT_LIBRARY} ${TBLIS_LIBRARY} ${JEMALLOC_LIB})
+    target_link_libraries(_mshqc PRIVATE mshqc ${CINT_LIBRARY} ${TBLIS_LIBRARY} ${JEMALLOC_LIB} atomic) # 
 else()
-    target_link_libraries(_mshqc PRIVATE mshqc ${CINT_LIBRARY} ${TBLIS_LIBRARY})
+    target_link_libraries(_mshqc PRIVATE mshqc ${CINT_LIBRARY} ${TBLIS_LIBRARY} atomic)
 endif()
 
 set_target_properties(_mshqc PROPERTIES 
