@@ -883,7 +883,8 @@ void ROHF::build_fock_matrix() {
                     {
                         Eigen::MatrixXd Ka_priv = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
                         Eigen::MatrixXd Kb_priv = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-                        Eigen::MatrixXd Ta_buf(nbasis_, nbasis_), Tb_buf(nbasis_, nbasis_);
+                        Eigen::MatrixXd Ta_buf(nbasis_, nbasis_);
+                        Eigen::MatrixXd Tb_buf(nbasis_, nbasis_);
                         #pragma omp for schedule(dynamic)
                         for (int k = 0; k < k_size; ++k) {
                             int K_global = K_start + k;
