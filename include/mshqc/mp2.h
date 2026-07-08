@@ -57,11 +57,13 @@ struct MP2Result {
     Eigen::MatrixXd C_beta;
     Eigen::VectorXd orbital_energies_alpha;
     Eigen::VectorXd orbital_energies_beta;
+    Eigen::Tensor<double, 4> t2_aa;
+    Eigen::Tensor<double, 4> t2_bb;
+    Eigen::Tensor<double, 4> t2_ab;
     int n_occ_alpha = 0;
     int n_occ_beta = 0;
     int n_virt_alpha = 0;
     int n_virt_beta = 0;
-    
     bool converged = false;
     int iterations = 0;
 };
