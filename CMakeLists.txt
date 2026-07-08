@@ -169,7 +169,7 @@ set(ALL_SOURCES
 # ==============================================================================
 # 5. TARGET: LIBRARY C++ UTAMA (mshqc)
 # ==============================================================================
-add_library(mshqc SHARED ${ALL_SOURCES})
+add_library(mshqc STATIC ${ALL_SOURCES})
 
 set_target_properties(mshqc PROPERTIES 
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/python/mshqc"
