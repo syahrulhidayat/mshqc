@@ -2,7 +2,7 @@ name: Compile and Release Wheel to Public Repo
 
 on:
   push:
-    branches: [ "" ]
+    branches: [ "lembaran-baru" ]
 
 jobs:
   build-and-deploy:
