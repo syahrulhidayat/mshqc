@@ -22,9 +22,9 @@
 namespace mshqc {
 namespace integrals {
 
-// ============================================================================
-// CONSTRUCTORS
-// ============================================================================
+
+
+
 
 CholeskyERI::CholeskyERI(double threshold)
     : n_basis_(0), n_vectors_(0), decomposed_(false) 
@@ -41,7 +41,7 @@ CholeskyERI::CholeskyERI(const BasisSet& basis, std::shared_ptr<IntegralEngine> 
     config_.print_level = 1;
     threshold_ = 1e-6;
 
-    // Build bf2shell_ map
+    
     bf2shell_.resize(n_basis_);
     int current_func = 0;
     for(int s = 0; s < basis.n_shells(); ++s) {
@@ -55,9 +55,9 @@ CholeskyERI::CholeskyERI(const BasisSet& basis, std::shared_ptr<IntegralEngine> 
     }
 }
 
-// ============================================================================
-// MAIN METHODS
-// ============================================================================
+
+
+
 
 void CholeskyERI::compute() {
     if (!integrals_ptr_ || !basis_ptr_) {
@@ -67,9 +67,9 @@ void CholeskyERI::compute() {
     decompose_direct();
 }
 
-// [FIXED] Implementasi Benar: Memproses Tensor Input dengan Optimasi Code 1
+
 CholeskyDecompositionResult CholeskyERI::decompose(const Eigen::Tensor<double, 4>& eri_full) {
-    // 1. Setup dimensi
+    
     auto dims = eri_full.dimensions();
     n_basis_ = static_cast<int>(dims[0]);
     int n_pairs = n_basis_ * n_basis_;
@@ -83,10 +83,10 @@ CholeskyDecompositionResult CholeskyERI::decompose(const Eigen::Tensor<double, 4
 
     reset();
 
-    // 2. Extract Diagonal (pq|pq) from Tensor
+    
     Eigen::VectorXd D(n_pairs);
     
-    // Optimasi: Collapse loop untuk efisiensi cache
+    
     #pragma omp parallel for collapse(2)
     for (int i = 0; i < n_basis_; ++i) {
         for (int j = 0; j < n_basis_; ++j) {
@@ -98,19 +98,19 @@ CholeskyDecompositionResult CholeskyERI::decompose(const Eigen::Tensor<double, 4
     if (config_.print_level > 0) 
         std::cout << "  Max Diag: " << std::scientific << max_diag << " | Threshold: " << threshold_ << "\n";
 
-    // 3. Main Loop (Menggunakan MatrixXd Storage)
+    
     int est_rank = std::min(n_pairs, std::max(200, n_basis_ * 5));
     Eigen::MatrixXd L_store(n_pairs, est_rank);
     
     int iter = 0;
     while (true) {
-        // A. Find Pivot
+        
         int pivot_idx;
         double D_max = D.maxCoeff(&pivot_idx);
 
         if (D_max < threshold_ || iter >= n_pairs) break;
 
-        // Resize storage if needed
+        
         if (iter >= L_store.cols()) {
             L_store.conservativeResize(Eigen::NoChange, L_store.cols() * 2);
         }
@@ -119,8 +119,8 @@ CholeskyDecompositionResult CholeskyERI::decompose(const Eigen::Tensor<double, 4
         int pi = pivot_idx / n_basis_;
         int pj = pivot_idx % n_basis_;
 
-        // B. Compute New Column (Ambil dari Tensor)
-        // Optimasi: Hindari pembagian integer (/) dan modulus (%) di dalam loop
+        
+        
         #pragma omp parallel for collapse(2)
         for (int i = 0; i < n_basis_; ++i) {
             for (int j = 0; j < n_basis_; ++j) {
@@ -128,18 +128,18 @@ CholeskyDecompositionResult CholeskyERI::decompose(const Eigen::Tensor<double, 4
             }
         }
 
-        // C. Update Column (DGEMV - Highly Optimized by Eigen/BLAS)
+        
         if (iter > 0) {
-            // L_curr -= L_prev * L_prev_row(pivot)^T
+            
             L_store.col(iter) -= L_store.leftCols(iter) * L_store.row(pivot_idx).head(iter).transpose();
         }
 
-        // D. Scale & Update Diagonal
+        
         L_store.col(iter) *= inv_sqrt;
         D.array() -= L_store.col(iter).array().square();
 
-        // Pruning numerical noise
-        // #pragma omp parallel for (Opsional, array operation sudah kencang)
+        
+        
         for(int k=0; k<n_pairs; ++k) if (D(k) < 0.0) D(k) = 0.0;
 
         iter++;
@@ -162,9 +162,9 @@ CholeskyDecompositionResult CholeskyERI::decompose(const Eigen::Tensor<double, 4
     return res;
 }
 
-// ============================================================================
-// DIRECT DECOMPOSITION IMPLEMENTATION (OPTIMIZED SHELL-BASED)
-// ============================================================================
+
+
+
 
 void CholeskyERI::decompose_direct() {
     if (!integrals_ptr_ || !basis_ptr_) return;
@@ -182,13 +182,13 @@ void CholeskyERI::decompose_direct() {
     Eigen::VectorXd D(npair); D.setZero();
     std::vector<double> shell_max(nshells * nshells, 0.0);
 
-    // =========================================================
-    // FASE 1: PEMBENTUKAN DIAGONAL (OPENMP AKTIF)
-    // =========================================================
+    
+    
+    
     #pragma omp parallel for schedule(dynamic, 1)
     for (int s1 = 0; s1 < nshells; ++s1) {
         for (int s2 = 0; s2 <= s1; ++s2) {
-            // Buffer dibuat lokal per thread
+            
             const auto& buf = integrals_ptr_->compute_shell_block(s1, s2, s1, s2);
             if (buf.empty()) continue;
             
@@ -198,7 +198,7 @@ void CholeskyERI::decompose_direct() {
             
             for(int i=0; i<dim1; ++i) {
                 for(int j=0; j<dim2; ++j) {
-                    // [PERBAIKAN 1]: C-Order index untuk (s1, s2 | s1, s2)
+                    
                     size_t idx_buf = i + dim1 * (j + dim2 * (i + dim1 * j));
                     
                     if (idx_buf >= buf.size()) continue;
@@ -231,16 +231,16 @@ void CholeskyERI::decompose_direct() {
         int rel_p = p - shell_starts[sp]; int rel_q = q - shell_starts[sq];
         int pair_pq = sp * (sp + 1) / 2 + sq; double inv_sqrt = 1.0 / std::sqrt(D_max);
 
-        // =========================================================
-        // FASE 2: EVALUASI VEKTOR CHOLESKY (OPENMP AKTIF)
-        // =========================================================
-        // Kita gunakan matriks lokal agar setiap thread menulis di memorinya sendiri,
-        // mencegah data race condition.
+        
+        
+        
+        
+        
         Eigen::VectorXd col_buf = Eigen::VectorXd::Zero(npair);
         
         #pragma omp parallel
         {
-            // Vektor buffer khusus untuk thread ini
+            
             Eigen::VectorXd local_col_buf = Eigen::VectorXd::Zero(npair);
             
             #pragma omp for schedule(dynamic, 1)
@@ -255,7 +255,7 @@ void CholeskyERI::decompose_direct() {
                     int u1 = swap_pairs ? sp : s1; int u2 = swap_pairs ? sq : s2;
                     int u3 = swap_pairs ? s1 : sp; int u4 = swap_pairs ? s2 : sq;
 
-                    // Buffer ditarik ke sini sehingga 100% thread-safe
+                    
                     const auto& buf = integrals_ptr_->compute_shell_block(u1, u2, u3, u4);
                     if (buf.empty()) continue;
 
@@ -276,7 +276,7 @@ void CholeskyERI::decompose_direct() {
                             double val = buf[idx_buf];
 
                             int global_i = st1 + i; int global_j = st2 + j;
-                            // Menulis ke lokal buffer
+                            
                             local_col_buf(global_i * n_basis_ + global_j) = val;
                             if (global_i != global_j) local_col_buf(global_j * n_basis_ + global_i) = val;
                         }
@@ -284,12 +284,12 @@ void CholeskyERI::decompose_direct() {
                 }
             }
             
-            // Penggabungan (Reduction) memori thread dengan cepat
+            
             #pragma omp critical
             {
                 col_buf += local_col_buf;
             }
-        } // Akhir blok parallel
+        } 
 
         if (iter > 0) col_buf -= L_store.leftCols(iter) * L_store.row(pivot_idx).head(iter).transpose();
         L_store.col(iter) = col_buf * inv_sqrt; 
@@ -301,9 +301,9 @@ void CholeskyERI::decompose_direct() {
     n_vectors_ = iter; decomposed_ = true; L_mat_ = L_store.leftCols(n_vectors_);
 }
 
-// ============================================================================
-// UTILITIES
-// ============================================================================
+
+
+
 
 void CholeskyERI::reset() {
     L_mat_.resize(0, 0);
@@ -322,7 +322,7 @@ double CholeskyERI::reconstruct(int i, int j, int k, int l) const {
     if (!decomposed_) return 0.0;
     int ij = i * n_basis_ + j;
     int kl = k * n_basis_ + l;
-    return L_mat_.row(ij).dot(L_mat_.row(kl)); // Cepat dengan SIMD dot-product
+    return L_mat_.row(ij).dot(L_mat_.row(kl)); 
 }
 
 size_t CholeskyERI::storage_bytes() const {
@@ -340,7 +340,7 @@ void CholeskyERI::save_to_hdf5(const std::string& filename, const std::string& d
     for (long k = 0; k < n_vec; ++k) {
         std::array<long, 4> offset = {k, 0, 0, 0};
         std::array<long, 4> slice_dims = {1, n_basis_, n_basis_, 1};
-        // Menggunakan pointer memori L_mat_ kolom ke-k
+        
         io.write_slice_4d(dataset_name, offset, slice_dims, L_mat_.col(k).data());
     }
 }
@@ -356,24 +356,24 @@ void CholeskyERI::load_from_hdf5(const std::string& filename, const std::string&
     
     n_vectors_ = static_cast<int>(n_vec);
     
-    // Alokasi matriks utama sekaligus
+    
     L_mat_.resize(n_pairs, n_vectors_);
     
     for (int k = 0; k < n_vectors_; ++k) {
         std::array<long, 4> offset = {k, 0, 0, 0};
         std::array<long, 4> slice_dims = {1, n_basis_, n_basis_, 1};
-        // Tulis langsung ke memori matriks L_mat_
+        
         io.read_slice_4d(dataset_name, offset, slice_dims, L_mat_.col(k).data());
     }
     decomposed_ = true;
 }
 
-// Legacy Stubs
+
 Eigen::Tensor<double, 4> CholeskyERI::reconstruct_full() const { return Eigen::Tensor<double, 4>(); }
 std::pair<double, double> CholeskyERI::validate_reconstruction(const Eigen::Tensor<double, 4>&) { return {0.0, 0.0}; }
 void CholeskyERI::print_statistics(bool) const {}
 int CholeskyERI::find_pivot(const Eigen::VectorXd&) const { return 0; }
 Eigen::VectorXd CholeskyERI::compute_new_vector(const Eigen::Tensor<double, 4>&, const Eigen::VectorXd&, int) const { return Eigen::VectorXd(); }
 
-} // namespace integrals
-} // namespace mshqc
+} 
+} 
