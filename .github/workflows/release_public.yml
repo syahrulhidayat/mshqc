@@ -2,7 +2,7 @@ name: Compile and Release Wheel to Public Repo
 
 on:
   push:
-    branches: [ "lembaran-baru" ] # Memicu otomatisasi setiap kali push ke branch lembaran-baru
+    branches: [ "..." ]
 
 jobs:
   build-and-deploy:
@@ -12,31 +12,12 @@ jobs:
     - name: Checkout Private Source Code
       uses: actions/checkout@v3
       with:
-        # PERBAIKAN: Hapus tanda petik tunggal agar token dievaluasi dengan benar
         token: ${{ secrets.MY_GITHUB_TOKEN }} 
-        # Memastikan git mengambil histori penuh agar push tidak conflict
         fetch-depth: 0 
 
     # =========================================================================
-    # 1. CACHE CONDA & PIP
+    # 1. SETUP CONDA (Dilakukan awal agar kita bisa pakai compilernya)
     # =========================================================================
-    - name: Cache Conda Packages
-      uses: actions/cache@v3
-      with:
-        path: ~/conda_pkgs_dir
-        key: conda-pkgs-${{ runner.os }}-${{ hashFiles('**/CMakeLists.txt') }}
-        restore-keys: |
-          conda-pkgs-${{ runner.os }}-
-
-    # =========================================================================
-    # 2. CCACHE
-    # =========================================================================
-    - name: Setup Compiler Cache (ccache)
-      uses: hendrikmuhs/ccache-action@v1.2
-      with:
-        key: ${{ runner.os }}-mshqc-ccache
-        max-size: 500M
-
     - name: Setup Conda Environment (Python 3.12)
       uses: conda-incubator/setup-miniconda@v3
       with:
@@ -45,25 +26,66 @@ jobs:
         channels: conda-forge
         use-only-tar-bz2: true 
 
-    - name: Install Build Dependencies (Sync with Psi4)
+    - name: Install Build Dependencies
       shell: bash -el {0}
       run: |
-        conda install -y -c conda-forge cmake make compilers eigen pkg-config "hdf5=1.14.3" pip libcint tblis liblapacke openblas psi4
+        # PERHATIAN: 'tblis' dihapus dari sini agar kita menggunakan versi kustom
+        conda install -y -c conda-forge cmake make compilers eigen pkg-config "hdf5=1.14.3" pip libcint liblapacke openblas psi4
         python -m pip install build wheel nanobind
+
+    # =========================================================================
+    # 2. CACHE & COMPILE TBLIS (Hanya jika belum ada di Cache)
+    # =========================================================================
+    - name: Cache Custom TBLIS
+      id: cache-tblis
+      uses: actions/cache@v3
+      with:
+        path: ~/tblis_install
+        # Ubah key ini misal jadi 'v2' jika kamu ingin memaksa TBLIS recompile ulang
+        key: tblis-v1.2.0-static-avx2-fpic-v1
+
+    - name: Compile TBLIS (Static + Safe AVX2)
+      if: steps.cache-tblis.outputs.cache-hit != 'true'
+      shell: bash -el {0}
+      run: |
+        echo "Cache TBLIS tidak ditemukan. Mengompilasi dari Source..."
+        git clone -b v1.2.0 https://github.com/devinamatthews/tblis.git /tmp/tblis
+        cd /tmp/tblis
+        git submodule update --init --recursive
+        
+        # Wajib -fPIC agar libtblis.a bisa dimasukkan ke dalam .so Python
+        ./configure --prefix=$HOME/tblis_install \
+                    --enable-static --disable-shared \
+                    CXXFLAGS="-O3 -mavx2 -mfma -mno-avx512f -mno-avx512vl -fPIC" \
+                    CFLAGS="-O3 -mavx2 -mfma -mno-avx512f -mno-avx512vl -fPIC"
+        make -j 2
+        make install
+
+    # =========================================================================
+    # 3. CCACHE & BUILD MSHQC WHEEL
+    # =========================================================================
+    - name: Setup Compiler Cache (ccache)
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: ${{ runner.os }}-mshqc-ccache
+        max-size: 500M
 
     - name: Build Python Wheel (.whl)
       shell: bash -el {0}
       run: |
         export CC="ccache $CONDA_PREFIX/bin/x86_64-conda-linux-gnu-cc"
         export CXX="ccache $CONDA_PREFIX/bin/x86_64-conda-linux-gnu-c++"
-        
         export CXXFLAGS="-std=c++17 -fopenmp -O3 -mavx2 -mfma -mtune=generic -DEIGEN_USE_BLAS -DEIGEN_USE_LAPACKE -DNDEBUG"
+        
+        # Beri tahu CMake lokasi TBLIS Kustom kita
+        export CMAKE_PREFIX_PATH=$HOME/tblis_install:$CONDA_PREFIX
+        export TBLIS_DIR=$HOME/tblis_install
         
         python setup.py bdist_wheel
         ccache -s
 
     # =========================================================================
-    # 3. COMMIT KEMBALI KE REPO PRIVAT (Sesuai Branch yang Memicu)
+    # 4. COMMIT KEMBALI KE REPO PRIVAT
     # =========================================================================
     - name: Commit and Push Wheel to Private Repo
       shell: bash -el {0}
@@ -82,17 +104,15 @@ jobs:
           echo "Tidak ada perubahan biner baru untuk disimpan di repo privat."
         else
           git commit -m "CI-Bot: Update biner terkompilasi (.whl) [skip ci]"
-          # PERBAIKAN: Push balik ke branch "lembaran-baru", bukan "main"
           git push origin lembaran-baru
         fi
 
     # =========================================================================
-    # 4. DEPLOY KE REPO PUBLIK
+    # 5. DEPLOY KE REPO PUBLIK
     # =========================================================================
     - name: Deploy Wheel to Public Repository (Closed-Source Mode)
       shell: bash -el {0}
       env:
-        # PERBAIKAN: Hapus tanda petik tunggal di token
         API_TOKEN_GITHUB: ${{ secrets.MY_GITHUB_TOKEN }} 
       run: |
         git config --global user.name "MSHQC Automation"
