@@ -26,9 +26,9 @@
 
 namespace mshqc {
 
-// ============================================================================
-// PART 1: BASE SCF (Universal Engine & Algebra)
-// ============================================================================
+
+
+
 BaseSCF::BaseSCF(const Molecule& mol, const BasisSet& basis,
                  std::shared_ptr<IntegralEngine> integrals,
                  std::shared_ptr<PointGroup> pg,
@@ -372,7 +372,7 @@ void RHF::build_fock_matrix() {
             std::unique_ptr<utils::HDF5TensorIO> io = nullptr;
             if (is_ooc) io = std::make_unique<utils::HDF5TensorIO>("df_tensor.h5", utils::HDF5TensorIO::Mode::READ_ONLY);
             
-            int chunk_size = is_ooc ? 128 : n_chol; // Streaming 128 vektor sekaligus dari SSD
+            int chunk_size = is_ooc ? 128 : n_chol; 
             
             for (int K_start = 0; K_start < n_chol; K_start += chunk_size) {
                 int K_end = std::min(n_chol, K_start + chunk_size);
@@ -384,7 +384,7 @@ void RHF::build_fock_matrix() {
                     io->read_slice_4d("df_tensor", {K_start, 0, 0, 0}, {k_size, (long)nbasis_, (long)nbasis_, 1}, L_chunk.data());
                 }
                 
-                // 1. Evaluasi J Matrix (OpenMP Trace)
+                
                 #pragma omp parallel
                 {
                     Eigen::MatrixXd J_priv = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
@@ -399,7 +399,7 @@ void RHF::build_fock_matrix() {
                     { dJ_mat += J_priv; }
                 }
 
-                // 2. Evaluasi K Matrix (TBLIS-Powered MO Algorithm)
+                
                 if (use_mo_alg && n_alpha_ > 0) {
                     using tblis::len_type; using tblis::stride_type; using tblis::varray_view;
                     std::vector<len_type> len_L = { (len_type)nbasis_, (len_type)nbasis_, (len_type)k_size };
@@ -416,14 +416,14 @@ void RHF::build_fock_matrix() {
                     std::vector<stride_type> str_Ta = { 1, (stride_type)nbasis_, (stride_type)(nbasis_ * n_alpha_) };
                     varray_view<double> t_Ta(len_Ta, Ta_buf.data(), str_Ta);
 
-                    // T = L * C
+                    
                     tblis::mult<double>(1.0, t_L, "mnP", t_Ca, "ni", 0.0, t_Ta, "miP");
 
                     std::vector<len_type> len_K = { (len_type)nbasis_, (len_type)nbasis_ };
                     std::vector<stride_type> str_K = { 1, (stride_type)nbasis_ };
                     varray_view<double> t_K(len_K, dK_acc.data(), str_K);
 
-                    // dK_acc += T * T^T
+                    
                     tblis::mult<double>(1.0, t_Ta, "miP", t_Ta, "niP", 1.0, t_K, "mn");
                 } else if (!use_mo_alg) {
                     #pragma omp parallel
@@ -441,7 +441,7 @@ void RHF::build_fock_matrix() {
                         { dK_acc += K_priv; }
                     }
                 }
-            } // Akhir dari HDF5 Stream Chunking
+            } 
 
             if (use_mo_alg) {
                 G_J_accum_ += 2.0 * dJ_mat; F_alpha_ = H_ + G_J_accum_ - dK_acc;
@@ -665,7 +665,7 @@ void UHF::build_fock_matrix() {
                         { dKa_acc += Ka_priv; dKb_acc += Kb_priv; }
                     }
                 }
-            } // Akhir chunk loop
+            } 
             
             if (use_mo_alg) {
                 G_J_accum_a_ += dJ_mat; G_J_accum_b_ += dJ_mat;
@@ -677,7 +677,7 @@ void UHF::build_fock_matrix() {
             }
         }
     } else if (config_.scf_type == "incore") {
-        // [BLOCK IN-CORE ASLI ANDA PERTAHANKAN]
+        
         Eigen::MatrixXd dPa = (iter_scf_ == 1) ? P_alpha_ : (P_alpha_ - P_alpha_old_);
         Eigen::MatrixXd dPb = (iter_scf_ == 1) ? P_beta_ : (P_beta_ - P_beta_old_);
         Eigen::MatrixXd dP_tot = dPa + dPb; 
@@ -866,7 +866,7 @@ void ROHF::build_fock_matrix() {
                     }
 
                     if (n_beta_ > 0) {
-                        Eigen::MatrixXd Cb_occ = C_alpha_.leftCols(n_beta_); // KHUSUS ROHF
+                        Eigen::MatrixXd Cb_occ = C_alpha_.leftCols(n_beta_); 
                         std::vector<len_type> len_Cb = { (len_type)nbasis_, (len_type)n_beta_ };
                         std::vector<stride_type> str_Cb = { 1, (stride_type)nbasis_ };
                         varray_view<double> t_Cb(len_Cb, Cb_occ.data(), str_Cb);
@@ -913,7 +913,7 @@ void ROHF::build_fock_matrix() {
             }
         }
     } else if (config_.scf_type == "incore") {
-        // [BLOCK IN-CORE ASLI ANDA PERTAHANKAN]
+        
         Eigen::MatrixXd dPa = (iter_scf_ == 1) ? P_alpha_ : (P_alpha_ - P_alpha_old_);
         Eigen::MatrixXd dPb = (iter_scf_ == 1) ? P_beta_ : (P_beta_ - P_beta_old_);
         Eigen::MatrixXd dP_tot = dPa + dPb; 
@@ -1014,7 +1014,7 @@ SCFResult ROHF::compute() {
         if (dE < config_.energy_threshold && dP < config_.density_threshold) { converged = true; break; }
     }
     
-    // PENAMBAHAN WAJIB UNTUK MENGHINDARI OMP2 CRASH!
+    
     if (config_.use_df && L_mat_.rows() == 0) {
         if (config_.print_level > 0) std::cout << "\n  [SCF] Reloading df_tensor.h5 to RAM for MP2 compatibility...\n";
         int n_aux = L_mat_.cols();
@@ -1026,7 +1026,7 @@ SCFResult ROHF::compute() {
     SCFResult r; r.energy_total = energy(); r.iterations = iter_scf_; r.converged = converged;
     r.C_alpha = C_alpha_; r.C_beta = C_beta_; r.P_alpha = P_alpha_; r.P_beta = P_beta_; r.F_alpha = F_alpha_; r.F_beta = F_beta_;
     r.orbital_energies_alpha = eps_alpha_; r.orbital_energies_beta = eps_beta_; r.n_occ_alpha = n_alpha_; r.n_occ_beta = n_beta_; 
-    r.L_mat = L_mat_; // <--- INI JUGA WAJIB!
+    r.L_mat = L_mat_; 
     
     print_final(r); return r;
 }
