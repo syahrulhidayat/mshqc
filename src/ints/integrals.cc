@@ -3,7 +3,7 @@
  * @brief Integral Engine Implementation (LIBCINT TURBO BACKEND)
  */
 
-#include "mshqc/integrals.h"
+#include "mshqc/ints/integrals.h"
 
 // Wajib dibungkus extern "C" karena libcint murni ditulis dalam C
 extern "C" {

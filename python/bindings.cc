@@ -28,20 +28,20 @@
 #endif
 
 
-#include "mshqc/molecule.h"
+#include "mshqc/core/molecule.h"
 #include "mshqc/basis.h"
-#include "mshqc/integrals.h"
+#include "mshqc/ints/integrals.h"
 #include "mshqc/symmetry/point_group.h"
 #include "mshqc/symmetry/petite_list.h"
 #include "mshqc/symmetry/molecule_sym.h"
-#include "mshqc/scf.h"
-#include "mshqc/diis.h"
+#include "mshqc/scf/scf.h"
+#include "mshqc/scf/diis.h"
 #include "mshqc/integrals/screening.h"
 #include "mshqc/core/fock_builder.h"
 
 
-#include "mshqc/mp2.h"
-#include "mshqc/mp3.h"
+#include "mshqc/mp2/mp2.h"
+#include "mshqc/mp3/mp3.h"
 #include "mshqc/foundation/fcidump.h"
 #include "mshqc/foundation/wavefunction.h"
 

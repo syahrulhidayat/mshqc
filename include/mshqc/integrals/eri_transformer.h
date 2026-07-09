@@ -11,7 +11,7 @@
 
 #include "mshqc/symmetry/blocked_tensor.h"
 #include <Eigen/Dense>
-#include "mshqc/integrals.h"
+#include "mshqc/ints/integrals.h"
 #include <unsupported/Eigen/CXX11/Tensor>
 #ifdef I
 #undef I

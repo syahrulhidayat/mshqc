@@ -1,5 +1,5 @@
 /**
- * @file include/mshqc/mp2.h
+ * @file include/mshqc/mp2/mp2.h
  * @brief Unified MP2 Engine - Consolidated RMP2, UMP2, and OMP2
  * @details Supports Incore/Direct execution alongside Exact/DF/Cholesky integral methods.
  */
@@ -7,10 +7,10 @@
 #ifndef MSHQC_MP2_H
 #define MSHQC_MP2_H
 
-#include "mshqc/molecule.h"
+#include "mshqc/core/molecule.h"
 #include "mshqc/basis.h"
-#include "mshqc/scf.h"
-#include "mshqc/diis.h"
+#include "mshqc/scf/scf.h"
+#include "mshqc/scf/diis.h"
 #include "mshqc/symmetry/blocked_tensor.h"
 #include "mshqc/symmetry/point_group.h"
 #include "mshqc/symmetry/petite_list.h"

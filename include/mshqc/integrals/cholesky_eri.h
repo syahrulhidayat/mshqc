@@ -2,7 +2,7 @@
 #define MSHQC_INTEGRALS_CHOLESKY_ERI_H
 
 #include "mshqc/basis.h"
-#include "mshqc/integrals.h" 
+#include "mshqc/ints/integrals.h" 
 #include <vector>
 #include <utility>
 #include <memory>

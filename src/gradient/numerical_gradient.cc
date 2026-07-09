@@ -24,7 +24,7 @@
  */
 
 #include "mshqc/gradient/gradient.h"
-#include "mshqc/scf.h"
+#include "mshqc/scf/scf.h"
 #include <iostream>
 #include <iomanip>
 #include <cmath>

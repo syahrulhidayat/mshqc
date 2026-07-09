@@ -36,10 +36,10 @@
 #define MSHQC_FOUNDATION_RMP3_H
 
 #include "mshqc/foundation/rmp2.h"
-#include "mshqc/scf.h"
+#include "mshqc/scf/scf.h"
 #include "mshqc/basis.h"
-#include "mshqc/integrals.h"
-#include "mshqc/mp2.h"
+#include "mshqc/ints/integrals.h"
+#include "mshqc/mp2/mp2.h"
 #include <Eigen/Dense>
 #include <unsupported/Eigen/CXX11/Tensor>
 #include <memory>

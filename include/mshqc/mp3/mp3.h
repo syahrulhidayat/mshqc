@@ -1,13 +1,13 @@
 /**
- * @file include/mshqc/mp3.h
+ * @file include/mshqc/mp3/mp3.h
  * @brief Unified MP3 Engine (RMP3, UMP3, OMP3) - Pure TBLIS
  */
 
 #ifndef MSHQC_MP3_H
 #define MSHQC_MP3_H
 
-#include "mshqc/scf.h"
-#include "mshqc/mp2.h"
+#include "mshqc/scf/scf.h"
+#include "mshqc/mp2/mp2.h"
 #include <unsupported/Eigen/CXX11/Tensor>
 #include <memory>
 

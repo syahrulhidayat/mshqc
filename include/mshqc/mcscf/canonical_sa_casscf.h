@@ -4,10 +4,10 @@
 #include "mshqc/mcscf/active_space.h"
 #include "mshqc/mcscf/cholesky_sa_casscf.h" 
 
-#include "mshqc/molecule.h"
+#include "mshqc/core/molecule.h"
 #include "mshqc/basis.h"
-#include "mshqc/integrals.h"
-#include "mshqc/scf.h" 
+#include "mshqc/ints/integrals.h"
+#include "mshqc/scf/scf.h" 
 #include <vector>
 #include <memory>
 #include <Eigen/Dense>

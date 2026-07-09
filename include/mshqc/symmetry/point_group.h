@@ -4,7 +4,7 @@
 #include <vector>
 #include <string>
 #include <Eigen/Dense>
-#include "mshqc/molecule.h"
+#include "mshqc/core/molecule.h"
 #ifdef I
 #undef I
 #endif

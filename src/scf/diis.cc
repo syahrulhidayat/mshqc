@@ -7,7 +7,7 @@
  * - Removed density_history_ overhead.
  */
 
-#include "mshqc/diis.h"
+#include "mshqc/scf/diis.h"
 #include <iostream>
 #include <vector>
 #include <Eigen/SVD>

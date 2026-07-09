@@ -1,5 +1,5 @@
 /**
- * @file include/mshqc/ump3_memory.h
+ * @file include/mshqc/mp3/ump3_memory.h
  * @brief Memory Manager for UMP3 Tensors
  * @details Mengelola alokasi dan dealokasi dinamis tensor integral 
  * untuk mencegah penggunaan RAM berlebih.

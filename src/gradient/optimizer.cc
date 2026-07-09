@@ -11,8 +11,8 @@
 
 #include "mshqc/gradient/optimizer.h"
 #include "mshqc/basis.h"
-#include "mshqc/integrals.h"
-#include "mshqc/scf.h"
+#include "mshqc/ints/integrals.h"
+#include "mshqc/scf/scf.h"
 #include <iostream>
 #include <iomanip>
 #include <cmath>

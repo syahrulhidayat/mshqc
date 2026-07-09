@@ -5,7 +5,7 @@
  * Menggunakan Lambda helper untuk mengurangi duplikasi kode.
  */
 
-#include "mshqc/sad.h"
+#include "mshqc/scf/sad.h"
 #include <iostream>
 #include <vector>
 #include <cmath>

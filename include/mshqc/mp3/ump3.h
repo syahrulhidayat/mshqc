@@ -1,5 +1,5 @@
 /**
- * @file include/mshqc/ump3.h
+ * @file include/mshqc/mp3/ump3.h
  * @brief Unrestricted MP3 - High Performance Header
  * @details Matching header for BLAS Level 3 Optimized UMP3 implementation
  */
@@ -7,12 +7,12 @@
 #ifndef MSHQC_UMP3_H
 #define MSHQC_UMP3_H
 
-#include "mshqc/scf.h"
-#include "mshqc/ump2.h" 
-#include "mshqc/mp2.h"
-#include "mshqc/ump3_memory.h"
+#include "mshqc/scf/scf.h"
+#include "mshqc/mp2/ump2.h" 
+#include "mshqc/mp2/mp2.h"
+#include "mshqc/mp3/ump3_memory.h"
 #include "mshqc/basis.h"
-#include "mshqc/integrals.h"
+#include "mshqc/ints/integrals.h"
 #include "mshqc/symmetry/point_group.h" 
 
 

@@ -6,7 +6,7 @@
 #pragma once
 
 #include "mshqc/basis.h"
-#include "mshqc/integrals.h"
+#include "mshqc/ints/integrals.h"
 #include <Eigen/Dense>
 
 namespace mshqc {

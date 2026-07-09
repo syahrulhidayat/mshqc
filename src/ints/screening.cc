@@ -4,7 +4,7 @@
  */
 
 #include "mshqc/integrals/screening.h"
-#include "mshqc/integrals.h" 
+#include "mshqc/ints/integrals.h" 
 #include <cmath>
 #include <algorithm>
 #include <iostream>

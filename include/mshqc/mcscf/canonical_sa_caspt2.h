@@ -14,7 +14,7 @@
 #include "mshqc/mcscf/canonical_sa_casscf.h"
 #include "mshqc/mcscf/cholesky_sa_caspt2.h" 
 
-#include "mshqc/integrals.h"
+#include "mshqc/ints/integrals.h"
 #include <vector>
 #include <memory>
 #include <Eigen/Dense>

@@ -20,7 +20,7 @@
  *       XYZ reader converts Angstrom to Bohr automatically.
  */
 
-#include "mshqc/molecule.h"
+#include "mshqc/core/molecule.h"
 #include <cmath>
 #include <iostream>
 #include <iomanip>

@@ -1,5 +1,5 @@
 /**
- * @file include/mshqc/omp3.h
+ * @file include/mshqc/mp3/omp3.h
  * @brief Orbital-Optimized MP3 (OMP3) Header - Iterative 2-RDM
  * @author Muhamad Syahrul Hidayat
  * @license MIT License
@@ -8,11 +8,11 @@
 #ifndef MSHQC_OMP3_H
 #define MSHQC_OMP3_H
 
-#include "mshqc/molecule.h"
+#include "mshqc/core/molecule.h"
 #include "mshqc/basis.h"
-#include "mshqc/scf.h"
-#include "mshqc/integrals.h"
-#include "mshqc/mp2.h" 
+#include "mshqc/scf/scf.h"
+#include "mshqc/ints/integrals.h"
+#include "mshqc/mp2/mp2.h" 
 
 
 #include <Eigen/Dense>

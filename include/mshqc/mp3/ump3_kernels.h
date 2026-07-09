@@ -1,5 +1,5 @@
 /**
- * @file include/mshqc/ump3_kernels.h
+ * @file include/mshqc/mp3/ump3_kernels.h
  * @brief Optimized MP3 Contraction Kernels (BLAS/Eigen Backend)
  */
 

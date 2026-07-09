@@ -37,7 +37,7 @@
 #define MSHQC_OPTIMIZER_H
 
 #include "mshqc/gradient/gradient.h"
-#include "mshqc/molecule.h"
+#include "mshqc/core/molecule.h"
 #include <Eigen/Dense>
 #include <functional>
 #include <vector>

@@ -3,7 +3,7 @@
  * @brief Unified MP3 Implementation Powered by Native TBLIS
  */
 
-#include "mshqc/mp3.h"
+#include "mshqc/mp3/mp3.h"
 #include "mshqc/integrals/eri_transformer.h"
 #include "mshqc/gradient/optimizer.h"
 #include <unsupported/Eigen/MatrixFunctions>

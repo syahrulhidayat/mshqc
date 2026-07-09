@@ -4,9 +4,9 @@
  * @details Fully embeds Cholesky L_mat_ and SIMD In-Core for all methods.
  */
 
-#include "mshqc/scf.h"
-#include "mshqc/diis.h"
-#include "mshqc/sad.h"
+#include "mshqc/scf/scf.h"
+#include "mshqc/scf/diis.h"
+#include "mshqc/scf/sad.h"
 #include "mshqc/symmetry/salc_builder.h"
 #include "mshqc/integrals/df_eri.h"
 #include <iostream>

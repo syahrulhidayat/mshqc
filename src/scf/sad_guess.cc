@@ -6,7 +6,7 @@
  * - Mengambil blok densitas atomik dan menyusunnya ke matriks molekul.
  */
 
-#include "mshqc/sad.h"
+#include "mshqc/scf/sad.h"
 #include <iostream>
 #include <algorithm>
 #include <string>

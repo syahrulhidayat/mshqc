@@ -1,9 +1,9 @@
 #ifndef MSHQC_DFMP2_H
 #define MSHQC_DFMP2_H
 
-#include "mshqc/scf.h"
+#include "mshqc/scf/scf.h"
 #include "mshqc/basis.h"
-#include "mshqc/integrals.h"
+#include "mshqc/ints/integrals.h"
 #include <Eigen/Dense>
 #ifdef I
 #undef I

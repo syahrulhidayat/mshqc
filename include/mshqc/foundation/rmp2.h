@@ -7,9 +7,9 @@
 #ifndef MSHQC_FOUNDATION_RMP2_H
 #define MSHQC_FOUNDATION_RMP2_H
 
-#include "mshqc/scf.h"
+#include "mshqc/scf/scf.h"
 #include "mshqc/basis.h"
-#include "mshqc/integrals.h"
+#include "mshqc/ints/integrals.h"
 #include "mshqc/symmetry/point_group.h" 
 
 #include <Eigen/Dense>

@@ -1,5 +1,5 @@
 /**
- * @file include/mshqc/scf.h
+ * @file include/mshqc/scf/scf.h
  * @brief Header definitions for Self-Consistent Field (SCF) methods.
  * @details
  * Updated for High-Performance Computing (HPC):
@@ -19,9 +19,9 @@
 #include <Eigen/Dense>
 #include <Eigen/Eigenvalues>
 
-#include "mshqc/molecule.h"
+#include "mshqc/core/molecule.h"
 #include "mshqc/basis.h"
-#include "mshqc/integrals.h"
+#include "mshqc/ints/integrals.h"
 #include "mshqc/symmetry/point_group.h"
 #include "mshqc/symmetry/petite_list.h"
 #include "mshqc/symmetry/molecule_sym.h"

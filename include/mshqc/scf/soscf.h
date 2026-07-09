@@ -1,5 +1,5 @@
 /**
- * @file include/mshqc/soscf.h
+ * @file include/mshqc/scf/soscf.h
  * @brief Preconditioned Conjugate Gradient (PCG) & Trust-Region Solver
  */
 

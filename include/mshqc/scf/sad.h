@@ -1,7 +1,7 @@
 #ifndef MSHQC_SAD_H
 #define MSHQC_SAD_H
 
-#include "mshqc/molecule.h"
+#include "mshqc/core/molecule.h"
 #include "mshqc/basis.h"
 #include <Eigen/Dense>
 #include <string>

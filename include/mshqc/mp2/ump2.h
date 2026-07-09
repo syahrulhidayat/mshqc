@@ -1,9 +1,9 @@
 #ifndef MSHQC_UMP2_H
 #define MSHQC_UMP2_H
 
-#include "mshqc/scf.h"
+#include "mshqc/scf/scf.h"
 #include "mshqc/basis.h"
-#include "mshqc/integrals.h"
+#include "mshqc/ints/integrals.h"
 #include <Eigen/Dense>
 #include <unsupported/Eigen/CXX11/Tensor>
 #include <vector>

@@ -33,7 +33,7 @@
  *       Algorithm: diagonalize Fock blocks independently.
  */
 
-#include "mshqc/mp2.h"
+#include "mshqc/mp2/mp2.h"
 #include <iostream>
 #include <iomanip>
 #include <Eigen/Eigenvalues>

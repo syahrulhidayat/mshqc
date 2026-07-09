@@ -1,8 +1,8 @@
 #ifndef MSHQC_MCSCF_CANONICAL_UNO_H
 #define MSHQC_MCSCF_CANONICAL_UNO_H
 
-#include "mshqc/scf.h"
-#include "mshqc/integrals.h"
+#include "mshqc/scf/scf.h"
+#include "mshqc/ints/integrals.h"
 #include "mshqc/mcscf/uno_result.h" 
 
 

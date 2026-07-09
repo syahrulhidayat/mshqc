@@ -1,7 +1,7 @@
 #ifndef MSHQC_BASIS_H
 #define MSHQC_BASIS_H
 
-#include "mshqc/molecule.h"
+#include "mshqc/core/molecule.h"
 #include <vector>
 #include <string>
 #include <array>

@@ -9,9 +9,9 @@
 #define MSHQC_SPHERICAL_INTEGRATION_H
 
 #include "spherical_transformer.h"
-#include "mshqc/integrals.h"
+#include "mshqc/ints/integrals.h"
 #include "mshqc/basis.h"
-#include "mshqc/molecule.h" 
+#include "mshqc/core/molecule.h" 
 #include <memory>
 #include <unsupported/Eigen/CXX11/Tensor> 
 #include <iostream> 

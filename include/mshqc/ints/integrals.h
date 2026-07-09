@@ -1,7 +1,7 @@
 #ifndef MSHQC_INTEGRALS_H
 #define MSHQC_INTEGRALS_H
 
-#include "mshqc/molecule.h"
+#include "mshqc/core/molecule.h"
 #include "mshqc/basis.h"
 #include <Eigen/Dense>
 #include <unsupported/Eigen/CXX11/Tensor>

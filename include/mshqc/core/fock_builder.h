@@ -4,7 +4,7 @@
 #include <Eigen/Dense>
 #include <vector>
 #include <memory>
-#include "mshqc/integrals.h" 
+#include "mshqc/ints/integrals.h" 
 
 
 #include "mshqc/symmetry/petite_list.h"

@@ -7,7 +7,7 @@ extern "C" {
 }
 #include <tblis/tblis.h>
 #include "mshqc/symmetry/salc_builder.h"
-#include "mshqc/mp2.h"
+#include "mshqc/mp2/mp2.h"
 #include "mshqc/integrals/eri_transformer.h"
 #include "mshqc/gradient/optimizer.h"
 #include <unsupported/Eigen/MatrixFunctions>
