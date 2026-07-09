@@ -5,6 +5,7 @@
 
 #include "mshqc/mp3.h"
 #include "mshqc/integrals/eri_transformer.h"
+#include "mshqc/gradient/optimizer.h"
 #include <unsupported/Eigen/MatrixFunctions>
 #include <iostream>
 #include <iomanip>
