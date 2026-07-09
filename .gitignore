@@ -1,18 +1,39 @@
+# ====================================================================
+# MSHQC Custom .gitignore (C++ / Python Bindings / Quantum Chemistry)
+# ====================================================================
 
+# --- Environment & Virtual Environments ---
+venv/
+.venv/
+environment.yml.user
+
+# --- Editor & IDE Config ---
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# --- Build Artifacts & Compilations (C++ & Python) ---
 build/
-python test/
-hasil/
-.github/
-
-
+dist/
 *.so
 *.o
+*.a
 *.pyc
 __pycache__/
-.vscode/
-.txt
+*.egg-info/
 
-
-venv/
-
+# --- Python Wheel Packages ---
 *.whl
+
+# --- Quantum Chemistry Output & Temporary Logs ---
+psi.*.clean
+*.out
+*.log
+timer.dat
+*.h5
+hasil/
+
+# --- Text Files Exception ---
+*.txt
+!CMakeLists.txt
