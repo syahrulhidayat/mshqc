@@ -514,27 +514,170 @@ double OMP3::compute_mp2_energy() {
 
 double OMP3::compute_mp3_correction() {
     if (no_a_ == 0 || nv_a_ == 0) return 0.0;
+    
+    t2_3rd_aa_ = Eigen::Tensor<double, 4>(no_a_, no_a_, nv_a_, nv_a_); t2_3rd_aa_.setZero();
+    if (no_b_ > 0 && nv_b_ > 0) {
+        t2_3rd_bb_ = Eigen::Tensor<double, 4>(no_b_, no_b_, nv_b_, nv_b_); t2_3rd_bb_.setZero();
+        t2_3rd_ab_ = Eigen::Tensor<double, 4>(no_a_, no_b_, nv_a_, nv_b_); t2_3rd_ab_.setZero();
+    }
+
     const Eigen::MatrixXd& Cao = scf_.C_alpha.leftCols(no_a_); const Eigen::MatrixXd& Cav = scf_.C_alpha.rightCols(nv_a_);
     const auto& ea = scf_.orbital_energies_alpha;
-    double E3_aa = 0.0;
-    t2_3rd_aa_ = Eigen::Tensor<double, 4>(no_a_, no_a_, nv_a_, nv_a_); t2_3rd_aa_.setZero();
+    double e3_aa = 0.0, e3_bb = 0.0, e3_ab = 0.0;
+
+    TBLIS_VIEW_4D(t_Taa, t2_aa_, no_a_, no_a_, nv_a_, nv_a_);
+    Eigen::Tensor<double, 4> Waa(no_a_, no_a_, nv_a_, nv_a_); TBLIS_VIEW_4D(t_Waa, Waa, no_a_, no_a_, nv_a_, nv_a_);
 
     
-    auto ovov_aa = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cao, Cav, Cao, Cav, ints_);
-    auto oovv_aa = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cao, Cao, Cav, Cav, ints_);
     
     
-    int dim_aa = no_a_ * nv_a_;
-    Eigen::MatrixXd W_res_AA = Eigen::MatrixXd::Zero(dim_aa, dim_aa);
     {
         auto V_vvvv = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cav, Cav, Cav, Cav, ints_);
-        Eigen::MatrixXd W_ijab = 0.5 * (pack_t2_ij_ab(t2_aa_, no_a_, nv_a_) * pack_ladder_vvvv_as(V_vvvv, nv_a_));
-        
+        TBLIS_VIEW_4D(t_Vvvvv, V_vvvv, nv_a_, nv_a_, nv_a_, nv_a_);
+        Waa.setZero();
+        tblis::mult<double>(1.0, t_Taa, "ijef", t_Vvvvv, "eafb", 1.0, t_Waa, "ijab");
+        tblis::mult<double>(-1.0, t_Taa, "ijef", t_Vvvvv, "ebfa", 1.0, t_Waa, "ijab");
+
+        auto V_oooo = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cao, Cao, Cao, Cao, ints_);
+        TBLIS_VIEW_4D(t_Voooo, V_oooo, no_a_, no_a_, no_a_, no_a_);
+        tblis::mult<double>(1.0, t_Taa, "mnab", t_Voooo, "minj", 1.0, t_Waa, "ijab");
+        tblis::mult<double>(-1.0, t_Taa, "mnab", t_Voooo, "mjni", 1.0, t_Waa, "ijab");
+
+        auto V_ovov = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cao, Cav, Cao, Cav, ints_);
+        auto V_oovv = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cao, Cao, Cav, Cav, ints_);
+        TBLIS_VIEW_4D(t_Vovov, V_ovov, no_a_, nv_a_, no_a_, nv_a_);
+        TBLIS_VIEW_4D(t_Voovv, V_oovv, no_a_, no_a_, nv_a_, nv_a_);
+
+        tblis::mult<double>(1.0,  t_Vovov, "iakc", t_Taa, "kjcb", 1.0, t_Waa, "ijab");
+        tblis::mult<double>(-1.0, t_Vovov, "iakc", t_Taa, "kjbc", 1.0, t_Waa, "ijab");
+        tblis::mult<double>(-1.0, t_Voovv, "ikac", t_Taa, "kjcb", 1.0, t_Waa, "ijab");
+        tblis::mult<double>(1.0,  t_Voovv, "ikac", t_Taa, "kjbc", 1.0, t_Waa, "ijab");
+
+        if (no_b_ > 0 && nv_b_ > 0) {
+            auto V_ovov_ab = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cao, Cav, scf_.C_beta.leftCols(no_b_), scf_.C_beta.rightCols(nv_b_), ints_);
+            TBLIS_VIEW_4D(t_Vovov_ab, V_ovov_ab, no_a_, nv_a_, no_b_, nv_b_);
+            TBLIS_VIEW_4D(t_Tab, t2_ab_, no_a_, no_b_, nv_a_, nv_b_);
+            tblis::mult<double>(1.0, t_Vovov_ab, "iakc", t_Tab, "jkbc", 1.0, t_Waa, "ijab");
+        }
+
+        #pragma omp parallel for collapse(4) reduction(+:e3_aa)
+        for(int i=0; i<no_a_; ++i) for(int j=0; j<no_a_; ++j) for(int a=0; a<nv_a_; ++a) for(int b=0; b<nv_a_; ++b) {
+            double D = ea(i) + ea(j) - ea(no_a_+a) - ea(no_a_+b);
+            if (std::abs(D) > 1e-12) {
+                double val = Waa(i,j,a,b) / D;
+                t2_3rd_aa_(i,j,a,b) = val;
+                e3_aa += 0.125 * t2_aa_(i,j,a,b) * Waa(i,j,a,b);
+            }
+        }
     }
-    
-    
-    
-    return E3_aa;
+
+    if (no_b_ > 0 && nv_b_ > 0) {
+        const Eigen::MatrixXd& Cbo = scf_.C_beta.leftCols(no_b_); const Eigen::MatrixXd& Cbv = scf_.C_beta.rightCols(nv_b_);
+        const auto& eb = scf_.orbital_energies_beta;
+        
+        
+        
+        
+        TBLIS_VIEW_4D(t_Tbb, t2_bb_, no_b_, no_b_, nv_b_, nv_b_);
+        TBLIS_VIEW_4D(t_Tab, t2_ab_, no_a_, no_b_, nv_a_, nv_b_);
+
+        Eigen::Tensor<double, 4> Wbb(no_b_, no_b_, nv_b_, nv_b_); TBLIS_VIEW_4D(t_Wbb, Wbb, no_b_, no_b_, nv_b_, nv_b_);
+        
+        {
+            auto V_vvvv = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cbv, Cbv, Cbv, Cbv, ints_);
+            TBLIS_VIEW_4D(t_Vvvvv, V_vvvv, nv_b_, nv_b_, nv_b_, nv_b_);
+            Wbb.setZero();
+            tblis::mult<double>(1.0, t_Tbb, "ijef", t_Vvvvv, "eafb", 1.0, t_Wbb, "ijab");
+            tblis::mult<double>(-1.0, t_Tbb, "ijef", t_Vvvvv, "ebfa", 1.0, t_Wbb, "ijab");
+
+            auto V_oooo = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cbo, Cbo, Cbo, Cbo, ints_);
+            TBLIS_VIEW_4D(t_Voooo, V_oooo, no_b_, no_b_, no_b_, no_b_);
+            tblis::mult<double>(1.0, t_Tbb, "mnab", t_Voooo, "minj", 1.0, t_Wbb, "ijab");
+            tblis::mult<double>(-1.0, t_Tbb, "mnab", t_Voooo, "mjni", 1.0, t_Wbb, "ijab");
+
+            auto V_ovov = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cbo, Cbv, Cbo, Cbv, ints_);
+            auto V_oovv = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cbo, Cbo, Cbv, Cbv, ints_);
+            TBLIS_VIEW_4D(t_Vovov, V_ovov, no_b_, nv_b_, no_b_, nv_b_);
+            TBLIS_VIEW_4D(t_Voovv, V_oovv, no_b_, no_b_, nv_b_, nv_b_);
+
+            tblis::mult<double>(1.0,  t_Vovov, "iakc", t_Tbb, "kjcb", 1.0, t_Wbb, "ijab");
+            tblis::mult<double>(-1.0, t_Vovov, "iakc", t_Tbb, "kjbc", 1.0, t_Wbb, "ijab");
+            tblis::mult<double>(-1.0, t_Voovv, "ikac", t_Tbb, "kjcb", 1.0, t_Wbb, "ijab");
+            tblis::mult<double>(1.0,  t_Voovv, "ikac", t_Tbb, "kjbc", 1.0, t_Wbb, "ijab");
+
+            auto V_ovov_ab = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cao, Cav, Cbo, Cbv, ints_);
+            TBLIS_VIEW_4D(t_Vovov_ab, V_ovov_ab, no_a_, nv_a_, no_b_, nv_b_);
+            tblis::mult<double>(1.0, t_Vovov_ab, "kcia", t_Tab, "kjcb", 1.0, t_Wbb, "ijab");
+
+            #pragma omp parallel for collapse(4) reduction(+:e3_bb)
+            for(int i=0; i<no_b_; ++i) for(int j=0; j<no_b_; ++j) for(int a=0; a<nv_b_; ++a) for(int b=0; b<nv_b_; ++b) {
+                double D = eb(i) + eb(j) - eb(no_b_+a) - eb(no_b_+b);
+                if (std::abs(D) > 1e-12) {
+                    double val = Wbb(i,j,a,b) / D;
+                    t2_3rd_bb_(i,j,a,b) = val;
+                    e3_bb += 0.125 * t2_bb_(i,j,a,b) * Wbb(i,j,a,b);
+                }
+            }
+        }
+
+        
+        
+        
+        {
+            Eigen::Tensor<double, 4> Wab(no_a_, no_b_, nv_a_, nv_b_); TBLIS_VIEW_4D(t_Wab, Wab, no_a_, no_b_, nv_a_, nv_b_);
+            
+            auto V_vvvv_ab = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cav, Cav, Cbv, Cbv, ints_);
+            TBLIS_VIEW_4D(t_Vvvvv_ab, V_vvvv_ab, nv_a_, nv_a_, nv_b_, nv_b_);
+            Wab.setZero();
+            tblis::mult<double>(1.0, t_Tab, "ijef", t_Vvvvv_ab, "eafb", 1.0, t_Wab, "ijab");
+
+            auto V_oooo_ab = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cao, Cao, Cbo, Cbo, ints_);
+            TBLIS_VIEW_4D(t_Voooo_ab, V_oooo_ab, no_a_, no_a_, no_b_, no_b_);
+            tblis::mult<double>(1.0, t_Tab, "mnab", t_Voooo_ab, "minj", 1.0, t_Wab, "ijab");
+
+            auto V_ovov_aa = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cao, Cav, Cao, Cav, ints_);
+            auto V_oovv_aa = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cao, Cao, Cav, Cav, ints_);
+            TBLIS_VIEW_4D(t_Vovov_aa, V_ovov_aa, no_a_, nv_a_, no_a_, nv_a_);
+            TBLIS_VIEW_4D(t_Voovv_aa, V_oovv_aa, no_a_, no_a_, nv_a_, nv_a_);
+            
+            tblis::mult<double>(1.0,  t_Vovov_aa, "iakc", t_Tab, "kjcb", 1.0, t_Wab, "ijab");
+            tblis::mult<double>(-1.0, t_Voovv_aa, "ikac", t_Tab, "kjcb", 1.0, t_Wab, "ijab");
+
+            auto V_ovov_bb = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cbo, Cbv, Cbo, Cbv, ints_);
+            auto V_oovv_bb = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cbo, Cbo, Cbv, Cbv, ints_);
+            TBLIS_VIEW_4D(t_Vovov_bb, V_ovov_bb, no_b_, nv_b_, no_b_, nv_b_);
+            TBLIS_VIEW_4D(t_Voovv_bb, V_oovv_bb, no_b_, no_b_, nv_b_, nv_b_);
+
+            tblis::mult<double>(1.0,  t_Tab, "ikac", t_Vovov_bb, "kcjb", 1.0, t_Wab, "ijab"); 
+            tblis::mult<double>(-1.0, t_Tab, "ikac", t_Voovv_bb, "kjcb", 1.0, t_Wab, "ijab"); 
+
+            auto V_ovov_ab = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cao, Cav, Cbo, Cbv, ints_);
+            TBLIS_VIEW_4D(t_Vovov_ab, V_ovov_ab, no_a_, nv_a_, no_b_, nv_b_);
+
+            tblis::mult<double>(1.0,  t_Taa, "ikac", t_Vovov_ab, "kcjb", 1.0, t_Wab, "ijab");
+            tblis::mult<double>(-1.0, t_Taa, "ikac", t_Vovov_ab, "kjcb", 1.0, t_Wab, "ijab");
+            tblis::mult<double>(1.0,  t_Vovov_ab, "iakc", t_Tbb, "kjcb", 1.0, t_Wab, "ijab");
+
+            auto V_oovv_ab_ex = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cao, Cao, Cbv, Cbv, ints_);
+            auto V_oovv_ba_ex = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cbo, Cbo, Cav, Cav, ints_);
+            TBLIS_VIEW_4D(t_Voovv_ab_ex, V_oovv_ab_ex, no_a_, no_a_, nv_b_, nv_b_);
+            TBLIS_VIEW_4D(t_Voovv_ba_ex, V_oovv_ba_ex, no_b_, no_b_, nv_a_, nv_a_);
+
+            tblis::mult<double>(-1.0, t_Voovv_ab_ex, "ikbc", t_Tab, "kjac", 1.0, t_Wab, "ijab");
+            tblis::mult<double>(-1.0, t_Tab, "kibc", t_Voovv_ba_ex, "kjac", 1.0, t_Wab, "ijab");
+
+            #pragma omp parallel for collapse(4) reduction(+:e3_ab)
+            for(int i=0; i<no_a_; ++i) for(int j=0; j<no_b_; ++j) for(int a=0; a<nv_a_; ++a) for(int b=0; b<nv_b_; ++b) {
+                double D = ea(i) + eb(j) - ea(no_a_+a) - eb(no_b_+b);
+                if (std::abs(D) > 1e-12) {
+                    double val = Wab(i,j,a,b) / D;
+                    t2_3rd_ab_(i,j,a,b) = val;
+                    e3_ab += 1.0 * t2_ab_(i,j,a,b) * Wab(i,j,a,b);
+                }
+            }
+        }
+    }
+    return e3_aa + e3_bb + e3_ab;
 }
 
 
