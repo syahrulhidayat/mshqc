@@ -45,7 +45,7 @@ timer.dat
 hasil/
 
 # --- Text Files and Custom Script Exceptions ---
-*.txt
 !CMakeLists.txt
 !recaftor.py
 *.sh
+
