@@ -136,9 +136,9 @@ MP3Result RMP3::compute() {
 
 
 
-// ============================================================================
-// UNRESTRICTED MP3 (UMP3)
-// ============================================================================
+
+
+
 MP3Result UMP3::compute() {
     auto t_start = std::chrono::high_resolution_clock::now();
     if(omp_get_thread_num() == 0) std::cout << "\n=== UMP3 (Unified Native TBLIS) ===\n";
@@ -155,7 +155,7 @@ MP3Result UMP3::compute() {
     Eigen::Tensor<double, 4> Wbb(no_b_, no_b_, nv_b_, nv_b_); TBLIS_VIEW_4D(t_Wbb, Wbb, no_b_, no_b_, nv_b_, nv_b_);
     Eigen::Tensor<double, 4> Wab(no_a_, no_b_, nv_a_, nv_b_); TBLIS_VIEW_4D(t_Wab, Wab, no_a_, no_b_, nv_a_, nv_b_);
 
-    // 1. Ladder Terms (VVVV)
+    
     {
         auto Vaa = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cav, Cav, Cav, Cav, ints_);
         TBLIS_VIEW_4D(t_Vaa, Vaa, nv_a_, nv_a_, nv_a_, nv_a_);
@@ -178,7 +178,7 @@ MP3Result UMP3::compute() {
         e3_ab += 1.0 * tensor_dot(t2_ab_, Wab);
     }
 
-    // 2. Ladder Terms (OOOO)
+    
     {
         auto Vaa = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cao, Cao, Cao, Cao, ints_);
         TBLIS_VIEW_4D(t_Vaa, Vaa, no_a_, no_a_, no_a_, no_a_);
@@ -201,7 +201,7 @@ MP3Result UMP3::compute() {
         e3_ab += 1.0 * tensor_dot(t2_ab_, Wab);
     }
 
-    // 3. Ring Terms
+    
     {
         auto ovov_aa = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cao, Cav, Cao, Cav, ints_);
         auto oovv_aa = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cao, Cao, Cav, Cav, ints_);
@@ -220,7 +220,7 @@ MP3Result UMP3::compute() {
         TBLIS_VIEW_4D(t_oovv_ab_ex, oovv_ab_ex, no_a_, no_a_, nv_b_, nv_b_);
         TBLIS_VIEW_4D(t_oovv_ba_ex, oovv_ba_ex, no_b_, no_b_, nv_a_, nv_a_);
 
-        // Ring AA
+        
         Waa.setZero();
         tblis::mult<double>(1.0,  t_ovov_aa, "iakc", t_Taa, "kjcb", 1.0, t_Waa, "ijab");
         tblis::mult<double>(-1.0, t_ovov_aa, "iakc", t_Taa, "kjbc", 1.0, t_Waa, "ijab");
@@ -229,7 +229,7 @@ MP3Result UMP3::compute() {
         tblis::mult<double>(1.0,  t_ovov_ab, "iakc", t_Tab, "jkbc", 1.0, t_Waa, "ijab");
         e3_aa += 1.0 * tensor_dot(t2_aa_, Waa);
 
-        // Ring BB
+        
         Wbb.setZero();
         tblis::mult<double>(1.0,  t_ovov_bb, "iakc", t_Tbb, "kjcb", 1.0, t_Wbb, "ijab");
         tblis::mult<double>(-1.0, t_ovov_bb, "iakc", t_Tbb, "kjbc", 1.0, t_Wbb, "ijab");
@@ -238,7 +238,7 @@ MP3Result UMP3::compute() {
         tblis::mult<double>(1.0,  t_ovov_ab, "kcia", t_Tab, "kjcb", 1.0, t_Wbb, "ijab"); 
         e3_bb += 1.0 * tensor_dot(t2_bb_, Wbb);
 
-        // Ring AB
+        
         Wab.setZero();
         tblis::mult<double>(1.0,  t_ovov_aa, "iakc", t_Tab, "kjcb", 1.0, t_Wab, "ijab");
         tblis::mult<double>(-1.0, t_oovv_aa, "ikac", t_Tab, "kjcb", 1.0, t_Wab, "ijab");
@@ -304,7 +304,7 @@ struct ZDIIS_Tensor {
         return ext;
     }
 };
-// Tambahkan struct ini di luar kelas OMP3 (misal di bawah ZDIIS_Tensor)
+
 struct OrbitalLBFGS {
     EIGEN_MAKE_ALIGNED_OPERATOR_NEW
     int m_max = 6;
@@ -559,9 +559,9 @@ double OMP3::compute_mp3_correction() {
     TBLIS_VIEW_4D(t_Taa, t2_aa_, no_a_, no_a_, nv_a_, nv_a_);
     Eigen::Tensor<double, 4> Waa(no_a_, no_a_, nv_a_, nv_a_); TBLIS_VIEW_4D(t_Waa, Waa, no_a_, no_a_, nv_a_, nv_a_);
 
-    // ==========================================
-    // ALPHA-ALPHA CHANNEL
-    // ==========================================
+    
+    
+    
     {
         auto V_vvvv = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cav, Cav, Cav, Cav, ints_);
         TBLIS_VIEW_4D(t_Vvvvv, V_vvvv, nv_a_, nv_a_, nv_a_, nv_a_);
@@ -606,9 +606,9 @@ double OMP3::compute_mp3_correction() {
         const Eigen::MatrixXd& Cbo = scf_.C_beta.leftCols(no_b_); const Eigen::MatrixXd& Cbv = scf_.C_beta.rightCols(nv_b_);
         const auto& eb = scf_.orbital_energies_beta;
         
-        // ==========================================
-        // BETA-BETA CHANNEL
-        // ==========================================
+        
+        
+        
         TBLIS_VIEW_4D(t_Tbb, t2_bb_, no_b_, no_b_, nv_b_, nv_b_);
         TBLIS_VIEW_4D(t_Tab, t2_ab_, no_a_, no_b_, nv_a_, nv_b_);
 
@@ -651,9 +651,9 @@ double OMP3::compute_mp3_correction() {
             }
         }
 
-        // ==========================================
-        // ALPHA-BETA CHANNEL
-        // ==========================================
+        
+        
+        
         {
             Eigen::Tensor<double, 4> Wab(no_a_, no_b_, nv_a_, nv_b_); TBLIS_VIEW_4D(t_Wab, Wab, no_a_, no_b_, nv_a_, nv_b_);
             
@@ -844,9 +844,9 @@ MP3Result OMP3::compute() {
         double e_mp2 = compute_mp2_energy();
         double e_mp3 = compute_mp3_correction();
         
-        // ====================================================================
-        // KUNCI OMP3 EKSAK: L2 = 1.0 * T3 (Teff = T2 + T3) - TANPA ITERASI!
-        // ====================================================================
+        
+        
+        
         L2_aa_ = Eigen::Tensor<double, 4>(no_a_, no_a_, nv_a_, nv_a_);
         #pragma omp parallel for
         for (int i = 0; i < L2_aa_.size(); ++i) L2_aa_.data()[i] = t2_3rd_aa_.data()[i];
@@ -873,9 +873,9 @@ MP3Result OMP3::compute() {
         double e_mp3_corr = e_mp2 + e_mp3;
         double e_tot = e_scf + e_mp3_corr;
 
-        // ========================================================
-        // 1. TRUST-REGION STEP REJECTION (BACKTRACKING ALA OMP2)
-        // ========================================================
+        
+        
+        
         if (macro_iter > 0 && e_tot > e_total_last + 1e-7) {
             current_step *= 0.5; 
             C_a_current_ = C_a_last; 
@@ -904,9 +904,9 @@ MP3Result OMP3::compute() {
         current_step = std::min(1.0, current_step * 1.2);
         if (e_tot < e_total_best) { e_total_best = e_tot; e_corr_best = e_mp3_corr; }
 
-        // ========================================================
-        // 2. GENERALIZED FOCK
-        // ========================================================
+        
+        
+        
         Eigen::MatrixXd G_full_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
         G_full_a.block(0,0,no_a_,no_a_) = G_oo_alpha_; G_full_a.block(no_a_,no_a_,nv_a_,nv_a_) = G_vv_alpha_;
         Eigen::MatrixXd P_corr_a = scf_.C_alpha * G_full_a * scf_.C_alpha.transpose();
@@ -932,9 +932,9 @@ MP3Result OMP3::compute() {
         Eigen::MatrixXd F_gen_mo_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
         if (no_b_ > 0) F_gen_mo_b = F_HF_mo_b + scf_.C_beta.transpose() * G_gamma_b * scf_.C_beta;
 
-        // ========================================================
-        // 3. L_SEP (BUG FIX: HARUS DIAMBIL DARI F_GEN!)
-        // ========================================================
+        
+        
+        
         Eigen::MatrixXd F_vo_a = F_gen_mo_a.block(no_a_, 0, nv_a_, no_a_); 
         Eigen::MatrixXd L_sep_a = G_vv_alpha_ * F_vo_a - F_vo_a * G_oo_alpha_;
         F_gen_mo_a.block(no_a_, 0, nv_a_, no_a_) += L_sep_a;
@@ -947,9 +947,9 @@ MP3Result OMP3::compute() {
             F_gen_mo_b.block(0, no_b_, no_b_, nv_b_) += L_sep_b.transpose();
         }
 
-        // ========================================================
-        // 4. Z_MAT (NON-SEPARABLE) DF/Cholesky
-        // ========================================================
+        
+        
+        
         Eigen::MatrixXd B_ia_a = Eigen::MatrixXd::Zero(no_a_ * nv_a_, n_aux_);
         const Eigen::MatrixXd& Ca_o = C_a_current_.leftCols(no_a_);
         const Eigen::MatrixXd& Ca_v = C_a_current_.rightCols(nv_a_);
@@ -1058,9 +1058,9 @@ MP3Result OMP3::compute() {
             F_gen_mo_b.block(0, no_b_, no_b_, nv_b_) += Z_mat_b.transpose();
         }
 
-        // ========================================================
-        // 5. PACKING GRADIENT & EXECUTE SOSCF (ALA OMP2)
-        // ========================================================
+        
+        
+        
         int dim_a = nv_a_ * no_a_;
         int dim_b = (mode == "U" && no_b_ > 0) ? (nv_b_ * no_b_) : 0;
         int n_params = dim_a + dim_b;
@@ -1098,7 +1098,7 @@ MP3Result OMP3::compute() {
         for (int a = 0; a < nv_a_; ++a) {
             for (int i = 0; i < no_a_; ++i) {
                 double eps_diff = scf_.orbital_energies_alpha(no_a_ + a) - scf_.orbital_energies_alpha(i);
-                double J_ia = B_ia_a.row(i * nv_a_ + a).squaredNorm(); // BUG FIX: DIAG HESSIAN LEBIH STABIL
+                double J_ia = B_ia_a.row(i * nv_a_ + a).squaredNorm(); 
                 diag_H(idx++) = 4.0 * std::abs(eps_diff) + 8.0 * J_ia + level_shift; 
             }
         }
@@ -1150,7 +1150,7 @@ MP3Result OMP3::compute() {
             return Hp;
         };
 
-        // KUNCI: Gunakan 0.50 statis untuk SOSCF, perlindungan backtracking dilakukan oleh current_step!
+        
         mshqc::gradient::TrustRegionResult step_info = soscf_engine.solve(orbital_gradient_, diag_H, 0.50, compute_hessian_vector);
         Eigen::VectorXd actual_step = step_info.step;
 
