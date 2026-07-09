@@ -7,6 +7,7 @@ venv/
 .venv/
 environment.yml.user
 
+
 # --- Editor & IDE Config ---
 .vscode/
 .idea/
@@ -16,6 +17,7 @@ environment.yml.user
 # --- Build Artifacts & Compilations (C++ & Python) ---
 build/
 dist/
+tests/
 *.so
 *.o
 *.a
