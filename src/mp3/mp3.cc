@@ -136,7 +136,9 @@ MP3Result RMP3::compute() {
 
 
 
-
+// ============================================================================
+// UNRESTRICTED MP3 (UMP3)
+// ============================================================================
 MP3Result UMP3::compute() {
     auto t_start = std::chrono::high_resolution_clock::now();
     if(omp_get_thread_num() == 0) std::cout << "\n=== UMP3 (Unified Native TBLIS) ===\n";
@@ -153,7 +155,7 @@ MP3Result UMP3::compute() {
     Eigen::Tensor<double, 4> Wbb(no_b_, no_b_, nv_b_, nv_b_); TBLIS_VIEW_4D(t_Wbb, Wbb, no_b_, no_b_, nv_b_, nv_b_);
     Eigen::Tensor<double, 4> Wab(no_a_, no_b_, nv_a_, nv_b_); TBLIS_VIEW_4D(t_Wab, Wab, no_a_, no_b_, nv_a_, nv_b_);
 
-    
+    // 1. Ladder Terms (VVVV)
     {
         auto Vaa = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cav, Cav, Cav, Cav, ints_);
         TBLIS_VIEW_4D(t_Vaa, Vaa, nv_a_, nv_a_, nv_a_, nv_a_);
@@ -176,7 +178,7 @@ MP3Result UMP3::compute() {
         e3_ab += 1.0 * tensor_dot(t2_ab_, Wab);
     }
 
-    
+    // 2. Ladder Terms (OOOO)
     {
         auto Vaa = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cao, Cao, Cao, Cao, ints_);
         TBLIS_VIEW_4D(t_Vaa, Vaa, no_a_, no_a_, no_a_, no_a_);
@@ -199,7 +201,7 @@ MP3Result UMP3::compute() {
         e3_ab += 1.0 * tensor_dot(t2_ab_, Wab);
     }
 
-    
+    // 3. Ring Terms
     {
         auto ovov_aa = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cao, Cav, Cao, Cav, ints_);
         auto oovv_aa = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cao, Cao, Cav, Cav, ints_);
@@ -212,22 +214,22 @@ MP3Result UMP3::compute() {
         TBLIS_VIEW_4D(t_oovv_bb, oovv_bb, no_b_, no_b_, nv_b_, nv_b_);
 
         auto ovov_ab = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cao, Cav, Cbo, Cbv, ints_);
-        auto oovv_ab = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cao, Cao, Cbv, Cbv, ints_);
-        auto oovv_ba = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cbo, Cbo, Cav, Cav, ints_);
+        auto oovv_ab_ex = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cao, Cao, Cbv, Cbv, ints_);
+        auto oovv_ba_ex = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cbo, Cbo, Cav, Cav, ints_);
         TBLIS_VIEW_4D(t_ovov_ab, ovov_ab, no_a_, nv_a_, no_b_, nv_b_);
-        TBLIS_VIEW_4D(t_oovv_ab, oovv_ab, no_a_, no_a_, nv_b_, nv_b_);
-        TBLIS_VIEW_4D(t_oovv_ba, oovv_ba, no_b_, no_b_, nv_a_, nv_a_);
+        TBLIS_VIEW_4D(t_oovv_ab_ex, oovv_ab_ex, no_a_, no_a_, nv_b_, nv_b_);
+        TBLIS_VIEW_4D(t_oovv_ba_ex, oovv_ba_ex, no_b_, no_b_, nv_a_, nv_a_);
 
-        
+        // Ring AA
         Waa.setZero();
         tblis::mult<double>(1.0,  t_ovov_aa, "iakc", t_Taa, "kjcb", 1.0, t_Waa, "ijab");
         tblis::mult<double>(-1.0, t_ovov_aa, "iakc", t_Taa, "kjbc", 1.0, t_Waa, "ijab");
         tblis::mult<double>(-1.0, t_oovv_aa, "ikac", t_Taa, "kjcb", 1.0, t_Waa, "ijab");
         tblis::mult<double>(1.0,  t_oovv_aa, "ikac", t_Taa, "kjbc", 1.0, t_Waa, "ijab");
-        tblis::mult<double>(1.0,  t_ovov_ab, "iakc", t_Tab, "jkbc", 1.0, t_Waa, "ijab"); 
+        tblis::mult<double>(1.0,  t_ovov_ab, "iakc", t_Tab, "jkbc", 1.0, t_Waa, "ijab");
         e3_aa += 1.0 * tensor_dot(t2_aa_, Waa);
 
-        
+        // Ring BB
         Wbb.setZero();
         tblis::mult<double>(1.0,  t_ovov_bb, "iakc", t_Tbb, "kjcb", 1.0, t_Wbb, "ijab");
         tblis::mult<double>(-1.0, t_ovov_bb, "iakc", t_Tbb, "kjbc", 1.0, t_Wbb, "ijab");
@@ -236,25 +238,16 @@ MP3Result UMP3::compute() {
         tblis::mult<double>(1.0,  t_ovov_ab, "kcia", t_Tab, "kjcb", 1.0, t_Wbb, "ijab"); 
         e3_bb += 1.0 * tensor_dot(t2_bb_, Wbb);
 
-        
-        
-
+        // Ring AB
         Wab.setZero();
         tblis::mult<double>(1.0,  t_ovov_aa, "iakc", t_Tab, "kjcb", 1.0, t_Wab, "ijab");
         tblis::mult<double>(-1.0, t_oovv_aa, "ikac", t_Tab, "kjcb", 1.0, t_Wab, "ijab");
         tblis::mult<double>(1.0,  t_Tab, "ikac", t_ovov_bb, "kcjb", 1.0, t_Wab, "ijab");
         tblis::mult<double>(-1.0, t_Tab, "ikac", t_oovv_bb, "kjcb", 1.0, t_Wab, "ijab");
         tblis::mult<double>(1.0,  t_Taa, "ikac", t_ovov_ab, "kcjb", 1.0, t_Wab, "ijab");
-
-    
-        auto V_oovv_ab_ex = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cao, Cao, Cbv, Cbv, ints_);
-        auto V_oovv_ba_ex = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cbo, Cbo, Cav, Cav, ints_);
-        TBLIS_VIEW_4D(t_oovv_ab_ex, V_oovv_ab_ex, no_a_, no_a_, nv_b_, nv_b_);
-        TBLIS_VIEW_4D(t_oovv_ba_ex, V_oovv_ba_ex, no_b_, no_b_, nv_a_, nv_a_);
-
+        tblis::mult<double>(1.0,  t_ovov_ab, "iakc", t_Tbb, "kjcb", 1.0, t_Wab, "ijab");
         tblis::mult<double>(-1.0, t_oovv_ab_ex, "ikbc", t_Tab, "kjac", 1.0, t_Wab, "ijab");
         tblis::mult<double>(-1.0, t_Tab, "ikcb", t_oovv_ba_ex, "kjac", 1.0, t_Wab, "ijab");
-        
         e3_ab += 1.0 * tensor_dot(t2_ab_, Wab);
     }
 
@@ -553,26 +546,22 @@ double OMP3::compute_mp2_energy() {
 double OMP3::compute_mp3_correction() {
     if (no_a_ == 0 || nv_a_ == 0) return 0.0;
     
-    // Deteksi mode dari jumlah elektron alpha dan beta
-    std::string mode = (no_a_ == no_b_) ? "R" : "U";
-    
     t2_3rd_aa_ = Eigen::Tensor<double, 4>(no_a_, no_a_, nv_a_, nv_a_); t2_3rd_aa_.setZero();
     if (no_b_ > 0 && nv_b_ > 0) {
         t2_3rd_bb_ = Eigen::Tensor<double, 4>(no_b_, no_b_, nv_b_, nv_b_); t2_3rd_bb_.setZero();
         t2_3rd_ab_ = Eigen::Tensor<double, 4>(no_a_, no_b_, nv_a_, nv_b_); t2_3rd_ab_.setZero();
     }
 
-    const Eigen::MatrixXd& Cao = scf_.C_alpha.leftCols(no_a_); 
-    const Eigen::MatrixXd& Cav = scf_.C_alpha.rightCols(nv_a_);
+    const Eigen::MatrixXd& Cao = scf_.C_alpha.leftCols(no_a_); const Eigen::MatrixXd& Cav = scf_.C_alpha.rightCols(nv_a_);
     const auto& ea = scf_.orbital_energies_alpha;
     double e3_aa = 0.0, e3_bb = 0.0, e3_ab = 0.0;
 
-    // =====================================================================
-    // 1. KOMPUTASI ALPHA (Selalu Dieksekusi untuk R-OMP3 maupun U-OMP3)
-    // =====================================================================
     TBLIS_VIEW_4D(t_Taa, t2_aa_, no_a_, no_a_, nv_a_, nv_a_);
     Eigen::Tensor<double, 4> Waa(no_a_, no_a_, nv_a_, nv_a_); TBLIS_VIEW_4D(t_Waa, Waa, no_a_, no_a_, nv_a_, nv_a_);
 
+    // ==========================================
+    // ALPHA-ALPHA CHANNEL
+    // ==========================================
     {
         auto V_vvvv = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cav, Cav, Cav, Cav, ints_);
         TBLIS_VIEW_4D(t_Vvvvv, V_vvvv, nv_a_, nv_a_, nv_a_, nv_a_);
@@ -595,7 +584,7 @@ double OMP3::compute_mp3_correction() {
         tblis::mult<double>(-1.0, t_Voovv, "ikac", t_Taa, "kjcb", 1.0, t_Waa, "ijab");
         tblis::mult<double>(1.0,  t_Voovv, "ikac", t_Taa, "kjbc", 1.0, t_Waa, "ijab");
 
-        if (mode == "U" && no_b_ > 0 && nv_b_ > 0) {
+        if (no_b_ > 0 && nv_b_ > 0) {
             auto V_ovov_ab = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cao, Cav, scf_.C_beta.leftCols(no_b_), scf_.C_beta.rightCols(nv_b_), ints_);
             TBLIS_VIEW_4D(t_Vovov_ab, V_ovov_ab, no_a_, nv_a_, no_b_, nv_b_);
             TBLIS_VIEW_4D(t_Tab, t2_ab_, no_a_, no_b_, nv_a_, nv_b_);
@@ -613,35 +602,19 @@ double OMP3::compute_mp3_correction() {
         }
     }
 
-    // =====================================================================
-    // 2. HPC SHORT-CIRCUIT: Bypass untuk Sistem Restricted (R-OMP3)
-    // =====================================================================
-    if (mode == "R") {
-        // Alih-alih menghitung ulang, gandakan memori array t2_3rd_aa_ secara instan
-        std::copy(t2_3rd_aa_.data(), t2_3rd_aa_.data() + t2_3rd_aa_.size(), t2_3rd_bb_.data());
-        std::copy(t2_3rd_aa_.data(), t2_3rd_aa_.data() + t2_3rd_aa_.size(), t2_3rd_ab_.data());
-        
-        // Amplitudo identik, sehingga energi korelasi BB dan AB adalah rasio proporsional dari AA
-        e3_bb = e3_aa;
-        e3_ab = 2.0 * e3_aa; // Spin adaptasi: kontribusi campuran AB bernilai dua kali lipat
-
-    } 
-    // =====================================================================
-    // 3. KOMPUTASI BETA (HANYA Dieksekusi untuk Unrestricted U-OMP3)
-    // =====================================================================
-    else if (mode == "U" && no_b_ > 0 && nv_b_ > 0) {
-        
-        const Eigen::MatrixXd& Cbo = scf_.C_beta.leftCols(no_b_); 
-        const Eigen::MatrixXd& Cbv = scf_.C_beta.rightCols(nv_b_);
+    if (no_b_ > 0 && nv_b_ > 0) {
+        const Eigen::MatrixXd& Cbo = scf_.C_beta.leftCols(no_b_); const Eigen::MatrixXd& Cbv = scf_.C_beta.rightCols(nv_b_);
         const auto& eb = scf_.orbital_energies_beta;
         
+        // ==========================================
+        // BETA-BETA CHANNEL
+        // ==========================================
         TBLIS_VIEW_4D(t_Tbb, t2_bb_, no_b_, no_b_, nv_b_, nv_b_);
         TBLIS_VIEW_4D(t_Tab, t2_ab_, no_a_, no_b_, nv_a_, nv_b_);
 
-        Eigen::Tensor<double, 4> Wbb(no_b_, no_b_, nv_b_, nv_b_); 
-        TBLIS_VIEW_4D(t_Wbb, Wbb, no_b_, no_b_, nv_b_, nv_b_);
+        Eigen::Tensor<double, 4> Wbb(no_b_, no_b_, nv_b_, nv_b_); TBLIS_VIEW_4D(t_Wbb, Wbb, no_b_, no_b_, nv_b_, nv_b_);
         
-        { // Blok Wbb
+        {
             auto V_vvvv = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cbv, Cbv, Cbv, Cbv, ints_);
             TBLIS_VIEW_4D(t_Vvvvv, V_vvvv, nv_b_, nv_b_, nv_b_, nv_b_);
             Wbb.setZero();
@@ -678,9 +651,11 @@ double OMP3::compute_mp3_correction() {
             }
         }
 
-        { // Blok Wab
-            Eigen::Tensor<double, 4> Wab(no_a_, no_b_, nv_a_, nv_b_); 
-            TBLIS_VIEW_4D(t_Wab, Wab, no_a_, no_b_, nv_a_, nv_b_);
+        // ==========================================
+        // ALPHA-BETA CHANNEL
+        // ==========================================
+        {
+            Eigen::Tensor<double, 4> Wab(no_a_, no_b_, nv_a_, nv_b_); TBLIS_VIEW_4D(t_Wab, Wab, no_a_, no_b_, nv_a_, nv_b_);
             
             auto V_vvvv_ab = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cav, Cav, Cbv, Cbv, ints_);
             TBLIS_VIEW_4D(t_Vvvvv_ab, V_vvvv_ab, nv_a_, nv_a_, nv_b_, nv_b_);
@@ -732,7 +707,6 @@ double OMP3::compute_mp3_correction() {
             }
         }
     }
-
     return e3_aa + e3_bb + e3_ab;
 }
 
