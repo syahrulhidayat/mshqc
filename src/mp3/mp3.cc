@@ -430,14 +430,7 @@ void OMP3::build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_
     else F_b = F_a;
 }
 
-void OMP3::build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_b, Eigen::MatrixXd& F_a, Eigen::MatrixXd& F_b) {
-    
-    
-    Eigen::MatrixXd G_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
-    Eigen::MatrixXd G_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
-    
-    F_a = H_core_ + G_a; F_b = H_core_ + G_b;
-}
+
 
 void OMP3::pseudocanonicalize() {
     Eigen::MatrixXd F_alpha, F_beta;
