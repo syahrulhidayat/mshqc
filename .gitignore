@@ -33,8 +33,6 @@ CMakeFiles/
 Makefile
 cmake_install.cmake
 
-# --- Python Wheel Packages ---
-*.whl
 
 # --- Quantum Chemistry Output & Temporary Logs ---
 psi.*.clean
