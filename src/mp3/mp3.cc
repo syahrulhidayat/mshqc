@@ -237,15 +237,23 @@ MP3Result UMP3::compute() {
 
         
         
+
         Wab.setZero();
         tblis::mult<double>(1.0,  t_ovov_aa, "iakc", t_Tab, "kjcb", 1.0, t_Wab, "ijab");
         tblis::mult<double>(-1.0, t_oovv_aa, "ikac", t_Tab, "kjcb", 1.0, t_Wab, "ijab");
         tblis::mult<double>(1.0,  t_Tab, "ikac", t_ovov_bb, "kcjb", 1.0, t_Wab, "ijab");
         tblis::mult<double>(-1.0, t_Tab, "ikac", t_oovv_bb, "kjcb", 1.0, t_Wab, "ijab");
         tblis::mult<double>(1.0,  t_Taa, "ikac", t_ovov_ab, "kcjb", 1.0, t_Wab, "ijab");
-        tblis::mult<double>(1.0,  t_ovov_ab, "iakc", t_Tbb, "kjcb", 1.0, t_Wab, "ijab");
+
+    
+        auto V_oovv_ab_ex = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cao, Cao, Cbv, Cbv, ints_);
+        auto V_oovv_ba_ex = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cbo, Cbo, Cav, Cav, ints_);
+        TBLIS_VIEW_4D(t_oovv_ab_ex, V_oovv_ab_ex, no_a_, no_a_, nv_b_, nv_b_);
+        TBLIS_VIEW_4D(t_oovv_ba_ex, V_oovv_ba_ex, no_b_, no_b_, nv_a_, nv_a_);
+
         tblis::mult<double>(-1.0, t_oovv_ab_ex, "ikbc", t_Tab, "kjac", 1.0, t_Wab, "ijab");
         tblis::mult<double>(-1.0, t_Tab, "ikcb", t_oovv_ba_ex, "kjac", 1.0, t_Wab, "ijab");
+        
         e3_ab += 1.0 * tensor_dot(t2_ab_, Wab);
     }
 
