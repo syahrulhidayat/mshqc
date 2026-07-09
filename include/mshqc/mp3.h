@@ -74,7 +74,7 @@ private:
     void build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_b, Eigen::MatrixXd& F_a, Eigen::MatrixXd& F_b);
     double compute_mp2_energy();
     double compute_mp3_correction();
-    void solve_zvector();
+    void solve_zvector(double current_grad_norm = 0.0);
     void build_opdm_alpha();
     void build_opdm_beta();
     
