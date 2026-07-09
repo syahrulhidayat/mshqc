@@ -2,6 +2,7 @@
 build/
 python test/
 hasil/
+.github/
 
 # Mengabaikan file sementara Python dan C++
 *.so
