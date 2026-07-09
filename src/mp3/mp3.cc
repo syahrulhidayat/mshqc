@@ -1044,6 +1044,11 @@ void OMP3::build_opdm_beta() {
 MP3Result OMP3::compute() {
     init_fast_integrals();
     std::string mode = (no_a_ == no_b_) ? "R" : "U";
+    if (mode == "R" && scf_.C_beta.size() == 0) {
+        scf_.C_beta = scf_.C_alpha;
+        scf_.P_beta = scf_.P_alpha;
+        scf_.orbital_energies_beta = scf_.orbital_energies_alpha;
+    }
     if(omp_get_thread_num() == 0) {
         std::cout << "\n========================================\n";
         std::cout << "  Iterative 2-RDM MP3 (" << mode << "-OMP3)   \n";
