@@ -1124,6 +1124,13 @@ void OMP3::build_opdm_beta() {
 MP3Result OMP3::compute() {
     init_fast_integrals();
     std::string mode = (no_a_ == no_b_) ? "R" : "U";
+    
+    // Safety fallback untuk R-OMP3 agar manipulasi blok Beta tidak SegFault
+    if (mode == "R" && scf_.C_beta.size() == 0) {
+        scf_.C_beta = scf_.C_alpha;
+        scf_.P_beta = scf_.P_alpha;
+        scf_.orbital_energies_beta = scf_.orbital_energies_alpha;
+    }
 
     if(omp_get_thread_num() == 0) {
         std::cout << "\n========================================================\n";
@@ -1141,10 +1148,10 @@ MP3Result OMP3::compute() {
     int macro_iter = 0; bool is_converged = false;
     double grad_norm = 1.0;
     
-    // Parameter kendali Trust Region
-    double trust_radius = 0.50; 
+    // Jantung Stabilitas HPC: Trust Radius Awal
+    double trust_radius = 0.40; 
     Eigen::VectorXd orbital_gradient_;
-    Eigen::VectorXd last_kappa;
+    Eigen::VectorXd last_actual_step;
 
     while (macro_iter < config_.max_iterations) {
         scf_.C_alpha = C_a_current_; scf_.C_beta = C_b_current_;
@@ -1153,7 +1160,7 @@ MP3Result OMP3::compute() {
         double e_mp2 = compute_mp2_energy();
         double e_mp3 = compute_mp3_correction();
         
-        // Z-Vector dipandu oleh norma gradien makro (Dynamic Thresholding)
+        // Z-Vector Dynamic Thresholding
         solve_zvector(grad_norm);
         
         build_opdm_alpha(); 
@@ -1165,40 +1172,51 @@ MP3Result OMP3::compute() {
         double e_mp3_corr = e_mp2 + e_mp3;
         double e_tot = e_scf + e_mp3_corr;
 
-        // Trust-Region: Tolak step jika energi naik
+        // ========================================================
+        // 1. TRUST-REGION STEP REJECTION (HPC SAFETY NET)
+        // ========================================================
         if (macro_iter > 0 && e_tot > e_total_last + 1e-7) {
-            trust_radius *= 0.5; // Menyusutkan radius perlindungan
+            trust_radius *= 0.35; // Susutkan radius secara drastis
             C_a_current_ = C_a_last; 
             C_b_current_ = C_b_last;
             
-            // Re-evaluasi langkah dengan radius yang lebih kecil
-            Eigen::VectorXd actual_step = last_kappa * 0.5;
+            // Re-apply rotasi orbital dengan radius yang lebih aman
+            Eigen::VectorXd scaled_step = last_actual_step * 0.35;
             
-            Eigen::MatrixXd Ka = Eigen::Map<const Eigen::MatrixXd>(actual_step.data(), no_a_, nv_a_);
+            Eigen::MatrixXd Ka = Eigen::Map<const Eigen::MatrixXd>(scaled_step.data(), no_a_, nv_a_);
             Eigen::MatrixXd K_full = Eigen::MatrixXd::Zero(nbf_, nbf_);
             K_full.block(no_a_, 0, nv_a_, no_a_) = Ka.transpose(); K_full.block(0, no_a_, no_a_, nv_a_) = -Ka;
-            C_a_current_ = C_a_last * K_full.exp();
+            C_a_current_ = C_a_current_ * K_full.exp();
             
             if (mode == "U" && no_b_ > 0) {
-                Eigen::MatrixXd Kb = Eigen::Map<const Eigen::MatrixXd>(actual_step.data() + (no_a_*nv_a_), no_b_, nv_b_);
+                Eigen::MatrixXd Kb = Eigen::Map<const Eigen::MatrixXd>(scaled_step.data() + (no_a_ * nv_a_), no_b_, nv_b_);
                 Eigen::MatrixXd Kb_full = Eigen::MatrixXd::Zero(nbf_, nbf_);
                 Kb_full.block(no_b_, 0, nv_b_, no_b_) = Kb.transpose(); Kb_full.block(0, no_b_, no_b_, nv_b_) = -Kb;
-                C_b_current_ = C_b_last * Kb_full.exp();
+                C_b_current_ = C_b_current_ * Kb_full.exp();
+            } else {
+                C_b_current_ = C_a_current_;
             }
-            continue; 
+            
+            last_actual_step = scaled_step;
+            continue; // Ulangi perhitungan mikroskopis dengan orbital baru
         }
 
-        // Trust-Region: Ekspansi jika sukses dan stabil
-        trust_radius = std::min(1.0, trust_radius * 1.2);
+        // Ekspansi Radius jika langkah konvergen mulus
+        trust_radius = std::min(0.80, trust_radius * 1.25);
         if (e_tot < e_total_best) { e_total_best = e_tot; e_corr_best = e_mp3_corr; }
 
-        // --- GRADIENT EVALUATION ---
+        // ========================================================
+        // 2. GENERALIZED FOCK & GRADIENT EVALUATION
+        // ========================================================
         Eigen::MatrixXd G_full_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
         G_full_a.block(0,0,no_a_,no_a_) = G_oo_alpha_; G_full_a.block(no_a_,no_a_,nv_a_,nv_a_) = G_vv_alpha_;
         Eigen::MatrixXd P_corr_a = scf_.C_alpha * G_full_a * scf_.C_alpha.transpose();
         
         Eigen::MatrixXd G_full_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
-        if (no_b_ > 0) { G_full_b.block(0,0,no_b_,no_b_) = G_oo_beta_; G_full_b.block(no_b_,no_b_,nv_b_,nv_b_) = G_vv_beta_; }
+        if (no_b_ > 0) { 
+            G_full_b.block(0,0,no_b_,no_b_) = G_oo_beta_; 
+            G_full_b.block(no_b_,no_b_,nv_b_,nv_b_) = G_vv_beta_; 
+        }
         Eigen::MatrixXd P_corr_b = (mode == "U") ? scf_.C_beta * G_full_b * scf_.C_beta.transpose() : P_corr_a;
         
         Eigen::MatrixXd F_gen_a, F_gen_b;
@@ -1214,11 +1232,10 @@ MP3Result OMP3::compute() {
         Eigen::MatrixXd wa = 2.0 * F_mo_a.block(no_a_, 0, nv_a_, no_a_);
         Eigen::MatrixXd wb = 2.0 * F_mo_b.block(no_b_, 0, nv_b_, no_b_);
         int idx = 0;
+        
+        for (int a = 0; a < nv_a_; ++a) for (int i = 0; i < no_a_; ++i) orbital_gradient_(idx++) = wa(a, i);
         if (mode == "U") {
-            for (int a = 0; a < nv_a_; ++a) for (int i = 0; i < no_a_; ++i) orbital_gradient_(idx++) = wa(a, i);
             for (int b = 0; b < nv_b_; ++b) for (int i = 0; i < no_b_; ++i) orbital_gradient_(idx++) = wb(b, i);
-        } else {
-            for (int a = 0; a < nv_a_; ++a) for (int i = 0; i < no_a_; ++i) orbital_gradient_(idx++) = wa(a, i);
         }
         
         grad_norm = orbital_gradient_.norm();
@@ -1237,9 +1254,12 @@ MP3Result OMP3::compute() {
 
         e_total_last = e_tot; C_a_last = C_a_current_; C_b_last = C_b_current_;
 
-        // --- PRECONDITIONER & SOSCF KERNEL ---
+        // ========================================================
+        // 3. PRECONDITIONER & SOSCF KERNEL
+        // ========================================================
         Eigen::VectorXd diag_H(n_params);
         idx = 0; double level_shift = (grad_norm > 0.1) ? 0.05 : 0.005;
+        
         for (int a = 0; a < nv_a_; ++a) {
             for (int i = 0; i < no_a_; ++i) {
                 double eps_diff = scf_.orbital_energies_alpha(no_a_ + a) - scf_.orbital_energies_alpha(i);
@@ -1261,6 +1281,7 @@ MP3Result OMP3::compute() {
 
         auto compute_hessian_vector = [&](const Eigen::VectorXd& p_vec) -> Eigen::VectorXd {
             Eigen::VectorXd Hp = diag_H.cwiseProduct(p_vec);
+            
             Eigen::MatrixXd kappa_a = Eigen::Map<const Eigen::MatrixXd>(p_vec.data(), no_a_, nv_a_);
             Eigen::MatrixXd P1_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
             P1_a = C_a_current_.leftCols(no_a_) * kappa_a * C_a_current_.rightCols(nv_a_).transpose();
@@ -1281,6 +1302,7 @@ MP3Result OMP3::compute() {
         
             double spin_factor = (mode == "R") ? 4.0 : 2.0;
             Eigen::MatrixXd H_kappa_a = C_a_current_.leftCols(no_a_).transpose() * F1_a * C_a_current_.rightCols(nv_a_);
+            
             int idx_h = 0;
             for (int a = 0; a < nv_a_; ++a) for (int i = 0; i < no_a_; ++i) Hp(idx_h++) += spin_factor * H_kappa_a(i, a); 
             
@@ -1291,11 +1313,11 @@ MP3Result OMP3::compute() {
             return Hp;
         };
 
-        // Eksekusi Trust Region Steihaug-Toint
+        // Eksekusi Steihaug-Toint Truncated Conjugate Gradient
         mshqc::gradient::TrustRegionResult step_info = soscf_engine.solve(orbital_gradient_, diag_H, trust_radius, compute_hessian_vector);
         Eigen::VectorXd actual_step = step_info.step;
 
-        // Terapkan Rotasi (Update C_a_current_)
+        // Apply Rotations
         Eigen::MatrixXd Ka = Eigen::Map<const Eigen::MatrixXd>(actual_step.data(), no_a_, nv_a_);
         Eigen::MatrixXd K_full = Eigen::MatrixXd::Zero(nbf_, nbf_);
         K_full.block(no_a_, 0, nv_a_, no_a_) = Ka.transpose(); K_full.block(0, no_a_, no_a_, nv_a_) = -Ka;
@@ -1313,7 +1335,7 @@ MP3Result OMP3::compute() {
         scf_.P_alpha = C_a_current_.leftCols(no_a_) * C_a_current_.leftCols(no_a_).transpose();
         scf_.P_beta = (mode == "U") ? C_b_current_.leftCols(no_b_) * C_b_current_.leftCols(no_b_).transpose() : scf_.P_alpha;
         
-        last_kappa = actual_step;
+        last_actual_step = actual_step;
         macro_iter++;
     }
 
