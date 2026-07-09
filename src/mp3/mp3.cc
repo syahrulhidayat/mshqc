@@ -371,28 +371,30 @@ void OMP3::init_fast_integrals() {
     S_ = ints_->compute_overlap();
     H_core_ = ints_->compute_core_hamiltonian();
 }
-
 void OMP3::build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_b, Eigen::MatrixXd& F_a, Eigen::MatrixXd& F_b) {
-    Eigen::MatrixXd P_tot = P_a + P_b;
-    Eigen::MatrixXd J_mat = Eigen::MatrixXd::Zero(nbf_, nbf_);
-    Eigen::MatrixXd Ka_mat = Eigen::MatrixXd::Zero(nbf_, nbf_);
-    Eigen::MatrixXd Kb_mat = Eigen::MatrixXd::Zero(nbf_, nbf_);
-
     
+    int nbf = P_a.rows(); 
+    if (nbf == 0) return; 
+
+    Eigen::MatrixXd P_tot = P_a + P_b;
+    Eigen::MatrixXd J_mat = Eigen::MatrixXd::Zero(nbf, nbf);
+    Eigen::MatrixXd Ka_mat = Eigen::MatrixXd::Zero(nbf, nbf);
+    Eigen::MatrixXd Kb_mat = Eigen::MatrixXd::Zero(nbf, nbf);
+
     if (scf_.L_mat.size() > 0) {
         int n_chol = scf_.L_mat.cols();
         
         #pragma omp parallel
         {
-            Eigen::MatrixXd J_priv = Eigen::MatrixXd::Zero(nbf_, nbf_);
-            Eigen::MatrixXd Ka_priv = Eigen::MatrixXd::Zero(nbf_, nbf_);
-            Eigen::MatrixXd Kb_priv = Eigen::MatrixXd::Zero(nbf_, nbf_);
-            Eigen::MatrixXd Ta_buf(nbf_, nbf_);
-            Eigen::MatrixXd Tb_buf(nbf_, nbf_);
+            Eigen::MatrixXd J_priv = Eigen::MatrixXd::Zero(nbf, nbf);
+            Eigen::MatrixXd Ka_priv = Eigen::MatrixXd::Zero(nbf, nbf);
+            Eigen::MatrixXd Kb_priv = Eigen::MatrixXd::Zero(nbf, nbf);
+            Eigen::MatrixXd Ta_buf(nbf, nbf);
+            Eigen::MatrixXd Tb_buf(nbf, nbf);
 
             #pragma omp for schedule(dynamic)
             for (int K = 0; K < n_chol; ++K) {
-                Eigen::Map<const Eigen::MatrixXd> L_K(scf_.L_mat.col(K).data(), nbf_, nbf_);
+                Eigen::Map<const Eigen::MatrixXd> L_K(scf_.L_mat.col(K).data(), nbf, nbf);
                 double val_J = (L_K.cwiseProduct(P_tot)).sum();
                 J_priv += val_J * L_K;
 
@@ -409,12 +411,11 @@ void OMP3::build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_
             }
         }
     } else {
-        
         auto eri_ao = ints_->compute_eri();
-        for(int mu=0; mu<nbf_; ++mu) {
-            for(int nu=0; nu<nbf_; ++nu) {
-                for(int lam=0; lam<nbf_; ++lam) {
-                    for(int sig=0; sig<nbf_; ++sig) {
+        for(int mu=0; mu<nbf; ++mu) {
+            for(int nu=0; nu<nbf; ++nu) {
+                for(int lam=0; lam<nbf; ++lam) {
+                    for(int sig=0; sig<nbf; ++sig) {
                         J_mat(mu,nu) += eri_ao(mu,nu,lam,sig) * P_tot(lam,sig);
                         Ka_mat(mu,nu) += eri_ao(mu,lam,nu,sig) * P_a(lam,sig);
                         if (no_b_ > 0) Kb_mat(mu,nu) += eri_ao(mu,lam,nu,sig) * P_b(lam,sig);
@@ -424,7 +425,6 @@ void OMP3::build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_
         }
     }
 
-    
     F_a = H_core_ + J_mat - Ka_mat;
     if (no_b_ > 0) F_b = H_core_ + J_mat - Kb_mat;
     else F_b = F_a;
