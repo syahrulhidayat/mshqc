@@ -20,6 +20,7 @@ Thumbs.db
 # --- Build Artifacts & Compilations (C++ & Python) ---
 build/
 dist/
+tests/
 *.so
 *.o
 *.a
