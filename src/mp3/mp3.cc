@@ -712,319 +712,6 @@ double OMP3::compute_mp3_correction() {
 
 
 
-void OMP3::solve_zvector(double current_grad_norm) {
-    if (no_a_ == 0 || nv_a_ == 0) return;
-    std::string mode = (no_a_ == no_b_) ? "R" : "U";
-
-    // Dynamic Thresholding: Kendurkan Z-Vector di awal optimasi makro
-    double z_thresh = std::max(1e-7, std::min(1e-4, current_grad_norm * 0.1));
-    int max_z_iter = 50; double rms_error = 1.0; int iter = 0;
-    
-    if (omp_get_thread_num() == 0) {
-        std::cout << "  [Z-Vector] Relaxing orbital (Tol: " << std::scientific 
-                  << std::setprecision(1) << z_thresh << ")...\n";
-    }
-
-    L2_aa_ = Eigen::Tensor<double, 4>(no_a_, no_a_, nv_a_, nv_a_);
-    std::copy(t2_3rd_aa_.data(), t2_3rd_aa_.data() + t2_3rd_aa_.size(), L2_aa_.data());
-    
-    if (no_b_ > 0 && nv_b_ > 0) {
-        L2_bb_ = Eigen::Tensor<double, 4>(no_b_, no_b_, nv_b_, nv_b_);
-        L2_ab_ = Eigen::Tensor<double, 4>(no_a_, no_b_, nv_a_, nv_b_);
-        
-        if (mode == "R") {
-            std::copy(L2_aa_.data(), L2_aa_.data() + L2_aa_.size(), L2_bb_.data());
-            std::copy(L2_aa_.data(), L2_aa_.data() + L2_aa_.size(), L2_ab_.data());
-        } else {
-            std::copy(t2_3rd_bb_.data(), t2_3rd_bb_.data() + t2_3rd_bb_.size(), L2_bb_.data());
-            std::copy(t2_3rd_ab_.data(), t2_3rd_ab_.data() + t2_3rd_ab_.size(), L2_ab_.data());
-        }
-    }
-
-    const Eigen::MatrixXd& Cao = scf_.C_alpha.leftCols(no_a_); 
-    const Eigen::MatrixXd& Cav = scf_.C_alpha.rightCols(nv_a_);
-    const auto& ea = scf_.orbital_energies_alpha;
-
-    // =======================================================================
-    // PERSIAPAN INTEGRAL ALPHA (Selalu Dieksekusi)
-    // =======================================================================
-    auto V_VVVV_aa = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cav, Cav, Cav, Cav, ints_);
-    Eigen::MatrixXd packed_vvvv_aa = pack_ladder_vvvv_as(V_VVVV_aa, nv_a_);
-    
-    auto V_OOOO_aa = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cao, Cao, Cao, Cao, ints_);
-    Eigen::MatrixXd packed_oooo_aa = pack_ladder_oooo_as(V_OOOO_aa, no_a_);
-    
-    auto ovov_aa = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cao, Cav, Cao, Cav, ints_);
-    auto oovv_aa = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cao, Cao, Cav, Cav, ints_);
-    
-    Eigen::MatrixXd V_AA(no_a_*nv_a_, no_a_*nv_a_);
-    for(int ia=0; ia<no_a_*nv_a_; ++ia) for(int kc=0; kc<no_a_*nv_a_; ++kc) {
-        int i=ia/nv_a_; int a=ia%nv_a_; int k=kc/nv_a_; int c=kc%nv_a_;
-        V_AA(ia, kc) = ovov_aa(i,a,k,c) - oovv_aa(k,i,a,c);
-    }
-
-    // HPC Bypass Suku Cross-Term untuk R-OMP3
-    Eigen::MatrixXd V_cr_R;
-    if (mode == "R") {
-        V_cr_R = Eigen::MatrixXd::Zero(no_a_*nv_a_, no_a_*nv_a_);
-        for(int ia=0; ia<no_a_*nv_a_; ++ia) for(int kc=0; kc<no_a_*nv_a_; ++kc) {
-            int i=ia/nv_a_; int a=ia%nv_a_; int k=kc/nv_a_; int c=kc%nv_a_;
-            // Integral spasial (ia|kc) identik antara spin aa dan ab
-            V_cr_R(ia, kc) = ovov_aa(i,a,k,c); 
-        }
-    }
-
-    // =======================================================================
-    // PERSIAPAN INTEGRAL BETA (Hanya dieksekusi jika Unrestricted)
-    // =======================================================================
-    Eigen::MatrixXd packed_vvvv_bb, packed_oooo_bb, V_BB, V_cr_ab_aa, V_cr_ab_bb, V_AB_ring, V_AB_T4_ring, V_C1, V_C2;
-    Eigen::Tensor<double, 4> Vv_ab, Vo_ab, ovov_bb, oovv_bb, g_ovov_ab, g_oovv_ab_ex, g_oovv_ba_ex;
-    
-    if (mode == "U" && no_b_ > 0 && nv_b_ > 0) {
-        const Eigen::MatrixXd& Cbo = scf_.C_beta.leftCols(no_b_); 
-        const Eigen::MatrixXd& Cbv = scf_.C_beta.rightCols(nv_b_);
-        
-        auto V_VVVV_bb = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cbv, Cbv, Cbv, Cbv, ints_);
-        packed_vvvv_bb = pack_ladder_vvvv_as(V_VVVV_bb, nv_b_);
-        auto V_OOOO_bb = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cbo, Cbo, Cbo, Cbo, ints_);
-        packed_oooo_bb = pack_ladder_oooo_as(V_OOOO_bb, no_b_);
-
-        ovov_bb = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cbo, Cbv, Cbo, Cbv, ints_);
-        oovv_bb = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cbo, Cbo, Cbv, Cbv, ints_);
-        V_BB = Eigen::MatrixXd::Zero(no_b_*nv_b_, no_b_*nv_b_);
-        for(int ia=0; ia<no_b_*nv_b_; ++ia) for(int kc=0; kc<no_b_*nv_b_; ++kc) {
-            int i=ia/nv_b_; int a=ia%nv_b_; int k=kc/nv_b_; int c=kc%nv_b_;
-            V_BB(ia, kc) = ovov_bb(i,a,k,c) - oovv_bb(k,i,a,c);
-        }
-
-        g_ovov_ab = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cao, Cav, Cbo, Cbv, ints_);
-        V_cr_ab_aa = Eigen::MatrixXd::Zero(no_a_*nv_a_, no_b_*nv_b_);
-        for(int i=0; i<no_a_; ++i) for(int a=0; a<nv_a_; ++a) for(int k=0; k<no_b_; ++k) for(int c=0; c<nv_b_; ++c)
-            V_cr_ab_aa(i*nv_a_+a, k*nv_b_+c) = g_ovov_ab(i,a,k,c);
-            
-        V_cr_ab_bb = Eigen::MatrixXd::Zero(no_b_*nv_b_, no_a_*nv_a_);
-        for(int i=0; i<no_b_; ++i) for(int a=0; a<nv_b_; ++a) for(int k=0; k<no_a_; ++k) for(int c=0; c<nv_a_; ++c)
-            V_cr_ab_bb(i*nv_b_+a, k*nv_a_+c) = g_ovov_ab(k,c,i,a);
-
-        Vv_ab = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cav, Cav, Cbv, Cbv, ints_);
-        Vo_ab = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cao, Cao, Cbo, Cbo, ints_);
-
-        V_AB_ring = Eigen::MatrixXd::Zero(no_a_*nv_a_, no_b_*nv_b_);
-        for(int k=0; k<no_a_; ++k) for(int c=0; c<nv_a_; ++c) for(int j=0; j<no_b_; ++j) for(int b=0; b<nv_b_; ++b) 
-            V_AB_ring(k*nv_a_+c, j*nv_b_+b) = g_ovov_ab(k,c,j,b);
-            
-        V_AB_T4_ring = Eigen::MatrixXd::Zero(no_a_*nv_a_, no_b_*nv_b_);
-        for(int i=0; i<no_a_; ++i) for(int a=0; a<nv_a_; ++a) for(int k=0; k<no_b_; ++k) for(int c=0; c<nv_b_; ++c) 
-            V_AB_T4_ring(i*nv_a_+a, k*nv_b_+c) = g_ovov_ab(i,a,k,c);
-
-        g_oovv_ab_ex = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cao, Cao, Cbv, Cbv, ints_);
-        g_oovv_ba_ex = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cbo, Cbo, Cav, Cav, ints_);
-        
-        V_C1 = Eigen::MatrixXd::Zero(no_a_*nv_b_, no_a_*nv_b_);
-        for(int i=0; i<no_a_; ++i) for(int b=0; b<nv_b_; ++b) for(int k=0; k<no_a_; ++k) for(int c=0; c<nv_b_; ++c) 
-            V_C1(i*nv_b_+b, k*nv_b_+c) = g_oovv_ab_ex(i,k,b,c);
-            
-        V_C2 = Eigen::MatrixXd::Zero(no_b_*nv_a_, no_b_*nv_a_);
-        for(int j=0; j<no_b_; ++j) for(int a=0; a<nv_a_; ++a) for(int k=0; k<no_b_; ++k) for(int c=0; c<nv_a_; ++c) 
-            V_C2(j*nv_a_+a, k*nv_a_+c) = g_oovv_ba_ex(j,k,a,c);
-    }
-
-    // =======================================================================
-    // DIIS EXTRAPOLATION LOOP
-    // =======================================================================
-    ZDIIS_Tensor diis_aa, diis_bb, diis_ab;
-    auto unpack_ijab_to_iajb = [](const Eigen::MatrixXd& W_ijab, Eigen::MatrixXd& W_iajb, int no, int nv) {
-        #pragma omp parallel for collapse(2)
-        for(int i = 0; i < no; ++i) {
-            for(int j = 0; j < no; ++j) {
-                for(int a = 0; a < nv; ++a) {
-                    for(int b = 0; b < nv; ++b) W_iajb(i*nv + a, j*nv + b) += W_ijab(i*no + j, a*nv + b);
-                }
-            }
-        }
-    };
-
-    while (rms_error > z_thresh && iter < max_z_iter) {
-        rms_error = 0.0; 
-        int total_elements = no_a_*no_a_*nv_a_*nv_a_;
-        
-        Eigen::Tensor<double, 4> R_aa(no_a_, no_a_, nv_a_, nv_a_); R_aa.setZero();
-        Eigen::MatrixXd W_res_AA = Eigen::MatrixXd::Zero(no_a_*nv_a_, no_a_*nv_a_);
-        
-        Eigen::MatrixXd L2_mat_aa = pack_t2_ij_ab(L2_aa_, no_a_, nv_a_);
-        Eigen::MatrixXd W_ijab_aa = 0.5 * (L2_mat_aa * packed_vvvv_aa) + 0.5 * (packed_oooo_aa.transpose() * L2_mat_aa);
-        unpack_ijab_to_iajb(W_ijab_aa, W_res_AA, no_a_, nv_a_);
-
-        Eigen::MatrixXd L2_iajb_AA(no_a_*nv_a_, no_a_*nv_a_);
-        for(int ia=0; ia<no_a_*nv_a_; ++ia) for(int jb=0; jb<no_a_*nv_a_; ++jb) {
-            int i=ia/nv_a_; int a=ia%nv_a_; int j=jb/nv_a_; int b=jb%nv_a_;
-            L2_iajb_AA(ia, jb) = L2_aa_(i,j,a,b);
-        }
-        
-        Eigen::MatrixXd Z_Ring_raw_AA = V_AA * L2_iajb_AA;
-        
-        // --- Injeksi Suku Korelasi Silang Alpha-Beta ---
-        if (mode == "R") {
-            Z_Ring_raw_AA += V_cr_R * L2_iajb_AA;
-        } 
-        else if (mode == "U" && no_b_ > 0 && nv_b_ > 0) {
-            Eigen::MatrixXd L2_cr_ab(no_b_*nv_b_, no_a_*nv_a_);
-            for (int k=0; k<no_b_; ++k) for (int c=0; c<nv_b_; ++c) for (int j=0; j<no_a_; ++j) for (int b=0; b<nv_a_; ++b)
-                L2_cr_ab(k*nv_b_+c, j*nv_a_+b) = L2_ab_(j,k,b,c);
-            Z_Ring_raw_AA += V_cr_ab_aa * L2_cr_ab;
-        }
-
-        #pragma omp parallel for collapse(2)
-        for(int i=0; i<no_a_; ++i) {
-            for(int j=0; j<no_a_; ++j) {
-                for(int a=0; a<nv_a_; ++a) {
-                    for(int b=0; b<nv_a_; ++b) {
-                        W_res_AA(i*nv_a_+a, j*nv_a_+b) += Z_Ring_raw_AA(i*nv_a_+a, j*nv_a_+b) - Z_Ring_raw_AA(j*nv_a_+a, i*nv_a_+b) 
-                                                        - Z_Ring_raw_AA(i*nv_a_+b, j*nv_a_+a) + Z_Ring_raw_AA(j*nv_a_+b, i*nv_a_+a);
-                    }
-                }
-            }
-        }
-
-        Eigen::Tensor<double, 4> L2_next_aa(no_a_, no_a_, nv_a_, nv_a_);
-        for(int ia=0; ia<no_a_*nv_a_; ++ia) for(int jb=0; jb<no_a_*nv_a_; ++jb) {
-            int i=ia/nv_a_; int a=ia%nv_a_; int j=jb/nv_a_; int b=jb%nv_a_;
-            double D = ea(i) + ea(j) - ea(no_a_+a) - ea(no_a_+b);
-            double L2_new = 1.0 * t2_3rd_aa_(i,j,a,b);
-            if (std::abs(D) > 1e-12) L2_new -= W_res_AA(ia, jb) / D;
-            L2_next_aa(i,j,a,b) = L2_new;
-            
-            double err = L2_new - L2_aa_(i,j,a,b); 
-            R_aa(i,j,a,b) = err; 
-            rms_error += err * err;
-        }
-
-        Eigen::Tensor<double, 4> L2_next_bb, L2_next_ab;
-        Eigen::Tensor<double, 4> R_bb, R_ab;
-
-        if (mode == "U" && no_b_ > 0 && nv_b_ > 0) {
-            const auto& eb = scf_.orbital_energies_beta;
-            R_bb = Eigen::Tensor<double, 4>(no_b_, no_b_, nv_b_, nv_b_); R_bb.setZero();
-            R_ab = Eigen::Tensor<double, 4>(no_a_, no_b_, nv_a_, nv_b_); R_ab.setZero();
-            L2_next_bb = Eigen::Tensor<double, 4>(no_b_, no_b_, nv_b_, nv_b_);
-            L2_next_ab = Eigen::Tensor<double, 4>(no_a_, no_b_, nv_a_, nv_b_);
-            total_elements += (no_b_*no_b_*nv_b_*nv_b_) + (no_a_*no_b_*nv_a_*nv_b_);
-
-            Eigen::MatrixXd W_res_BB = Eigen::MatrixXd::Zero(no_b_*nv_b_, no_b_*nv_b_);
-            Eigen::MatrixXd L2_mat_bb = pack_t2_ij_ab(L2_bb_, no_b_, nv_b_);
-            Eigen::MatrixXd W_ijab_bb = 0.5 * (L2_mat_bb * packed_vvvv_bb) + 0.5 * (packed_oooo_bb.transpose() * L2_mat_bb);
-            unpack_ijab_to_iajb(W_ijab_bb, W_res_BB, no_b_, nv_b_);
-
-            Eigen::MatrixXd L2_iajb_BB(no_b_*nv_b_, no_b_*nv_b_);
-            for(int ia=0; ia<no_b_*nv_b_; ++ia) for(int jb=0; jb<no_b_*nv_b_; ++jb) {
-                int i=ia/nv_b_; int a=ia%nv_b_; int j=jb/nv_b_; int b=jb%nv_b_;
-                L2_iajb_BB(ia, jb) = L2_bb_(i,j,a,b);
-            }
-            Eigen::MatrixXd Z_Ring_raw_BB = V_BB * L2_iajb_BB;
-            
-            Eigen::MatrixXd L2_cr_ba(no_a_*nv_a_, no_b_*nv_b_);
-            for (int k=0; k<no_a_; ++k) for (int c=0; c<nv_a_; ++c) for (int j=0; j<no_b_; ++j) for (int b=0; b<nv_b_; ++b)
-                L2_cr_ba(k*nv_a_+c, j*nv_b_+b) = L2_ab_(k,j,c,b);
-            Z_Ring_raw_BB += V_cr_ab_bb * L2_cr_ba;
-
-            #pragma omp parallel for collapse(2)
-            for(int i=0; i<no_b_; ++i) {
-                for(int j=0; j<no_b_; ++j) {
-                    for(int a=0; a<nv_b_; ++a) {
-                        for(int b=0; b<nv_b_; ++b) {
-                            W_res_BB(i*nv_b_+a, j*nv_b_+b) += Z_Ring_raw_BB(i*nv_b_+a, j*nv_b_+b) - Z_Ring_raw_BB(j*nv_b_+a, i*nv_b_+b) 
-                                                            - Z_Ring_raw_BB(i*nv_b_+b, j*nv_b_+a) + Z_Ring_raw_BB(j*nv_b_+b, i*nv_b_+a);
-                        }
-                    }
-                }
-            }
-
-            for(int ia=0; ia<no_b_*nv_b_; ++ia) for(int jb=0; jb<no_b_*nv_b_; ++jb) {
-                int i=ia/nv_b_; int a=ia%nv_b_; int j=jb/nv_b_; int b=jb%nv_b_;
-                double D = eb(i) + eb(j) - eb(no_b_+a) - eb(no_b_+b);
-                double L2_new = 1.0 * t2_3rd_bb_(i,j,a,b);
-                if (std::abs(D) > 1e-12) L2_new -= W_res_BB(ia, jb) / D;
-                L2_next_bb(i,j,a,b) = L2_new;
-                
-                double err = L2_new - L2_bb_(i,j,a,b); R_bb(i,j,a,b) = err; rms_error += err * err;
-            }
-
-            Eigen::MatrixXd W_res_AB = Eigen::MatrixXd::Zero(no_a_*nv_a_, no_b_*nv_b_);
-            #pragma omp parallel for collapse(2)
-            for(int i=0; i<no_a_; ++i) for(int j=0; j<no_b_; ++j) {
-                for(int a=0; a<nv_a_; ++a) for(int b=0; b<nv_b_; ++b) {
-                    double sum = 0;
-                    for(int c=0; c<nv_a_; ++c) for(int d=0; d<nv_b_; ++d) sum += Vv_ab(a,c,b,d) * L2_ab_(i,j,c,d);
-                    for(int k=0; k<no_a_; ++k) for(int l=0; l<no_b_; ++l) sum += Vo_ab(k,i,l,j) * L2_ab_(k,l,a,b);
-                    W_res_AB(i*nv_a_+a, j*nv_b_+b) += sum;
-                }
-            }
-
-            Eigen::MatrixXd L2_iajb_AB(no_a_*nv_a_, no_b_*nv_b_);
-            for(int i=0; i<no_a_; ++i) for(int a=0; a<nv_a_; ++a) for(int j=0; j<no_b_; ++j) for(int b=0; b<nv_b_; ++b) 
-                L2_iajb_AB(i*nv_a_+a, j*nv_b_+b) = L2_ab_(i,j,a,b);
-            W_res_AB += V_AA * L2_iajb_AB;
-            
-            Eigen::MatrixXd L2_AB_ik(no_a_*nv_a_, no_b_*nv_b_);
-            for(int i=0; i<no_a_; ++i) for(int a=0; a<nv_a_; ++a) for(int k=0; k<no_b_; ++k) for(int c=0; c<nv_b_; ++c) 
-                L2_AB_ik(i*nv_a_+a, k*nv_b_+c) = L2_ab_(i,k,a,c);
-            W_res_AB += L2_AB_ik * V_BB;
-            
-            Eigen::MatrixXd L2_AA_mat(no_a_*nv_a_, no_a_*nv_a_);
-            for(int i=0; i<no_a_; ++i) for(int a=0; a<nv_a_; ++a) for(int k=0; k<no_a_; ++k) for(int c=0; c<nv_a_; ++c) 
-                L2_AA_mat(i*nv_a_+a, k*nv_a_+c) = L2_aa_(i,k,a,c);
-            W_res_AB += L2_AA_mat * V_AB_ring;
-
-            Eigen::MatrixXd L2_BB_mat(no_b_*nv_b_, no_b_*nv_b_);
-            for(int k=0; k<no_b_; ++k) for(int c=0; c<nv_b_; ++c) for(int j=0; j<no_b_; ++j) for(int b=0; b<nv_b_; ++b) 
-                L2_BB_mat(k*nv_b_+c, j*nv_b_+b) = L2_bb_(k,j,c,b);
-            W_res_AB += V_AB_T4_ring * L2_BB_mat;
-            
-            Eigen::MatrixXd L2_C1(no_a_*nv_b_, no_b_*nv_a_);
-            for(int k=0; k<no_a_; ++k) for(int c=0; c<nv_b_; ++c) for(int j=0; j<no_b_; ++j) for(int a=0; a<nv_a_; ++a) 
-                L2_C1(k*nv_b_+c, j*nv_a_+a) = L2_ab_(k,j,a,c);
-            Eigen::MatrixXd W_C1 = V_C1 * L2_C1;
-            for(int i=0; i<no_a_; ++i) for(int a=0; a<nv_a_; ++a) for(int j=0; j<no_b_; ++j) for(int b=0; b<nv_b_; ++b) 
-                W_res_AB(i*nv_a_+a, j*nv_b_+b) -= W_C1(i*nv_b_+b, j*nv_a_+a);
-
-            Eigen::MatrixXd L2_C2(no_b_*nv_a_, no_a_*nv_b_);
-            for(int k=0; k<no_b_; ++k) for(int c=0; c<nv_a_; ++c) for(int i=0; i<no_a_; ++i) for(int b=0; b<nv_b_; ++b) 
-                L2_C2(k*nv_a_+c, i*nv_b_+b) = L2_ab_(i,k,c,b);
-            Eigen::MatrixXd W_C2 = V_C2 * L2_C2;
-            for(int i=0; i<no_a_; ++i) for(int a=0; a<nv_a_; ++a) for(int j=0; j<no_b_; ++j) for(int b=0; b<nv_b_; ++b) 
-                W_res_AB(i*nv_a_+a, j*nv_b_+b) -= W_C2(j*nv_a_+a, i*nv_b_+b);
-
-            for(int ia=0; ia<no_a_*nv_a_; ++ia) for(int jb=0; jb<no_b_*nv_b_; ++jb) {
-                int i=ia/nv_a_; int a=ia%nv_a_; int j=jb/nv_b_; int b=jb%nv_b_;
-                double D = ea(i) + eb(j) - ea(no_a_+a) - eb(no_b_+b);
-                double L2_new = 1.0 * t2_3rd_ab_(i,j,a,b);
-                if (std::abs(D) > 1e-12) L2_new -= W_res_AB(ia, jb) / D;
-                L2_next_ab(i,j,a,b) = L2_new;
-                
-                double err = L2_new - L2_ab_(i,j,a,b); R_ab(i,j,a,b) = err; rms_error += err * err;
-            }
-        }
-
-        rms_error = std::sqrt(rms_error / total_elements);
-        if (rms_error < z_thresh) break;
-
-        // DIIS Extrapolation
-        diis_aa.push(L2_next_aa, R_aa); 
-        L2_aa_ = diis_aa.extrapolate(no_a_, no_a_, nv_a_, nv_a_);
-        
-        if (mode == "R" && no_b_ > 0 && nv_b_ > 0) {
-            // Memory bypass sinkronisasi ke beta
-            std::copy(L2_aa_.data(), L2_aa_.data() + L2_aa_.size(), L2_bb_.data());
-            std::copy(L2_aa_.data(), L2_aa_.data() + L2_aa_.size(), L2_ab_.data());
-        } 
-        else if (mode == "U" && no_b_ > 0 && nv_b_ > 0) {
-            diis_bb.push(L2_next_bb, R_bb); L2_bb_ = diis_bb.extrapolate(no_b_, no_b_, nv_b_, nv_b_);
-            diis_ab.push(L2_next_ab, R_ab); L2_ab_ = diis_ab.extrapolate(no_a_, no_b_, nv_a_, nv_b_);
-        }
-        
-        iter++;
-    }
-}
 
 
 
@@ -1135,7 +822,7 @@ MP3Result OMP3::compute() {
     if(omp_get_thread_num() == 0) {
         std::cout << "\n========================================================\n";
         std::cout << "      Orbital-Optimized MP3 (" << mode << "-OMP3)\n";
-        std::cout << "      Trust-Region SOSCF (Semi-Exact Hessian)\n";
+        std::cout << "      Trust-Region SOSCF (Exact Non-Iterative Z-Vector)\n";
         std::cout << "========================================================\n";
     }
 
@@ -1148,9 +835,10 @@ MP3Result OMP3::compute() {
     int macro_iter = 0; bool is_converged = false;
     double grad_norm = 1.0;
     
-    // Jantung Stabilitas HPC: Trust Radius Awal
+    // Trust Radius Awal untuk HPC
     double trust_radius = 0.40; 
     Eigen::VectorXd orbital_gradient_;
+    Eigen::VectorXd last_actual_step;
 
     while (macro_iter < config_.max_iterations) {
         scf_.C_alpha = C_a_current_; scf_.C_beta = C_b_current_;
@@ -1159,8 +847,22 @@ MP3Result OMP3::compute() {
         double e_mp2 = compute_mp2_energy();
         double e_mp3 = compute_mp3_correction();
         
-        // Z-Vector dengan Kendur Threshold Dinamis (Berdasarkan grad_norm makro)
-        solve_zvector(grad_norm);
+        // ====================================================================
+        // EXACT MP3 AMPLITUDE LAGRANGIAN (PENGGANTI SOLVE_ZVECTOR)
+        // L2 secara matematis eksak adalah 2.0 * T3. Tidak perlu iterasi DIIS!
+        // ====================================================================
+        L2_aa_ = Eigen::Tensor<double, 4>(no_a_, no_a_, nv_a_, nv_a_);
+        #pragma omp parallel for
+        for (int i = 0; i < L2_aa_.size(); ++i) L2_aa_.data()[i] = 2.0 * t2_3rd_aa_.data()[i];
+
+        if (mode == "U" && no_b_ > 0 && nv_b_ > 0) {
+            L2_bb_ = Eigen::Tensor<double, 4>(no_b_, no_b_, nv_b_, nv_b_);
+            L2_ab_ = Eigen::Tensor<double, 4>(no_a_, no_b_, nv_a_, nv_b_);
+            #pragma omp parallel for
+            for (int i = 0; i < L2_bb_.size(); ++i) L2_bb_.data()[i] = 2.0 * t2_3rd_bb_.data()[i];
+            #pragma omp parallel for
+            for (int i = 0; i < L2_ab_.size(); ++i) L2_ab_.data()[i] = 2.0 * t2_3rd_ab_.data()[i];
+        }
         
         build_opdm_alpha(); 
         if (no_b_ > 0) build_opdm_beta();
@@ -1175,28 +877,40 @@ MP3Result OMP3::compute() {
         // 1. TRUST-REGION STEP REJECTION (BACKTRACKING)
         // ========================================================
         if (macro_iter > 0 && e_tot > e_total_last + 1e-7) {
-            trust_radius *= 0.35; // Susutkan radius secara drastis
+            trust_radius *= 0.35; // Susutkan radius secara drastis jika permukaan energi memburuk
             C_a_current_ = C_a_last; 
             C_b_current_ = C_b_last;
-            continue; // Re-evaluasi Trust Region dengan radius aman (Hindari osilasi)
+            
+            Eigen::VectorXd scaled_step = last_actual_step * 0.35;
+            
+            Eigen::MatrixXd Ka = Eigen::Map<const Eigen::MatrixXd>(scaled_step.data(), no_a_, nv_a_);
+            Eigen::MatrixXd K_full = Eigen::MatrixXd::Zero(nbf_, nbf_);
+            K_full.block(no_a_, 0, nv_a_, no_a_) = Ka.transpose(); K_full.block(0, no_a_, no_a_, nv_a_) = -Ka;
+            C_a_current_ = C_a_current_ * K_full.exp();
+            
+            if (mode == "U" && no_b_ > 0) {
+                Eigen::MatrixXd Kb = Eigen::Map<const Eigen::MatrixXd>(scaled_step.data() + (no_a_ * nv_a_), no_b_, nv_b_);
+                Eigen::MatrixXd Kb_full = Eigen::MatrixXd::Zero(nbf_, nbf_);
+                Kb_full.block(no_b_, 0, nv_b_, no_b_) = Kb.transpose(); Kb_full.block(0, no_b_, no_b_, nv_b_) = -Kb;
+                C_b_current_ = C_b_current_ * Kb_full.exp();
+            } else { C_b_current_ = C_a_current_; }
+            
+            last_actual_step = scaled_step;
+            continue; 
         }
 
-        // Ekspansi Radius jika langkah konvergen mulus
         trust_radius = std::min(0.80, trust_radius * 1.25);
         if (e_tot < e_total_best) { e_total_best = e_tot; e_corr_best = e_mp3_corr; }
 
         // ========================================================
-        // 2. KOREKSI GRADIENT: GENERALIZED FOCK (1-RDM)
+        // 2. KOREKSI GRADIENT: GENERALIZED FOCK & L_sep
         // ========================================================
         Eigen::MatrixXd G_full_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
         G_full_a.block(0,0,no_a_,no_a_) = G_oo_alpha_; G_full_a.block(no_a_,no_a_,nv_a_,nv_a_) = G_vv_alpha_;
         Eigen::MatrixXd P_corr_a = scf_.C_alpha * G_full_a * scf_.C_alpha.transpose();
         
         Eigen::MatrixXd G_full_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
-        if (no_b_ > 0) { 
-            G_full_b.block(0,0,no_b_,no_b_) = G_oo_beta_; 
-            G_full_b.block(no_b_,no_b_,nv_b_,nv_b_) = G_vv_beta_; 
-        }
+        if (no_b_ > 0) { G_full_b.block(0,0,no_b_,no_b_) = G_oo_beta_; G_full_b.block(no_b_,no_b_,nv_b_,nv_b_) = G_vv_beta_; }
         Eigen::MatrixXd P_corr_b = (mode == "U") ? scf_.C_beta * G_full_b * scf_.C_beta.transpose() : P_corr_a;
 
         Eigen::MatrixXd F_HF_mo_a = scf_.C_alpha.transpose() * F_ao_a * scf_.C_alpha;
@@ -1209,9 +923,6 @@ MP3Result OMP3::compute() {
         Eigen::MatrixXd F_gen_mo_a = F_HF_mo_a + scf_.C_alpha.transpose() * G_gamma_a * scf_.C_alpha;
         Eigen::MatrixXd F_gen_mo_b = F_HF_mo_b + scf_.C_beta.transpose() * G_gamma_b * scf_.C_beta;
 
-        // ========================================================
-        // 3. KOREKSI GRADIENT: SEPARABLE LAGRANGIAN (L_sep)
-        // ========================================================
         Eigen::MatrixXd F_vo_a = F_HF_mo_a.block(no_a_, 0, nv_a_, no_a_);
         Eigen::MatrixXd L_sep_a = G_vv_alpha_ * F_vo_a - F_vo_a * G_oo_alpha_;
         F_gen_mo_a.block(no_a_, 0, nv_a_, no_a_) += L_sep_a;
@@ -1225,7 +936,7 @@ MP3Result OMP3::compute() {
         }
 
         // ========================================================
-        // 4. KOREKSI GRADIENT: NON-SEPARABLE LAGRANGIAN (Z_mat O(N^4))
+        // 3. KOREKSI GRADIENT: NON-SEPARABLE LAGRANGIAN (Z_mat O(N^4))
         // ========================================================
         Eigen::MatrixXd B_ia_a = Eigen::MatrixXd::Zero(no_a_ * nv_a_, n_aux_);
         const Eigen::MatrixXd& Ca_o = C_a_current_.leftCols(no_a_);
@@ -1275,7 +986,7 @@ MP3Result OMP3::compute() {
             }
         }
 
-        // T_eff = T2 + L2 (Kunci utama Non-Separable Lagrangian OMP3)
+        // T_eff = T2 + L2 
         Eigen::MatrixXd Teff_aa = Eigen::MatrixXd::Zero(no_a_*nv_a_, no_a_*nv_a_);
         #pragma omp parallel for collapse(2)
         for (int i = 0; i < no_a_; ++i) for (int a = 0; a < nv_a_; ++a)
@@ -1339,7 +1050,7 @@ MP3Result OMP3::compute() {
         }
 
         // ========================================================
-        // 5. PACKING GRADIENT & EXECUTE SOSCF 
+        // 4. PACKING GRADIENT & EXECUTE SOSCF 
         // ========================================================
         int dim_a = nv_a_ * no_a_;
         int dim_b = (mode == "U" && no_b_ > 0) ? (nv_b_ * no_b_) : 0;
@@ -1445,6 +1156,7 @@ MP3Result OMP3::compute() {
         scf_.P_alpha = C_a_current_.leftCols(no_a_) * C_a_current_.leftCols(no_a_).transpose();
         scf_.P_beta = (mode == "U") ? C_b_current_.leftCols(no_b_) * C_b_current_.leftCols(no_b_).transpose() : scf_.P_alpha;
         
+        last_actual_step = actual_step;
         macro_iter++;
     }
 
