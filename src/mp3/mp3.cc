@@ -824,6 +824,16 @@ MP3Result OMP3::compute() {
         std::cout << "========================================================\n";
     }
 
+    
+    
+    
+    
+    Eigen::MatrixXd F_ao_a_init, F_ao_b_init;
+    build_fock_fast(scf_.P_alpha, scf_.P_beta, F_ao_a_init, F_ao_b_init);
+    double e_elec_init = 0.5 * (scf_.P_alpha.cwiseProduct(H_core_ + F_ao_a_init).sum() + 
+                                scf_.P_beta.cwiseProduct(H_core_ + F_ao_b_init).sum());
+    double e_nuc = scf_.energy_total - e_elec_init;
+
     Eigen::MatrixXd C_a_current_ = scf_.C_alpha;
     Eigen::MatrixXd C_b_current_ = scf_.C_beta;
     Eigen::MatrixXd C_a_last = scf_.C_alpha; 
@@ -844,9 +854,6 @@ MP3Result OMP3::compute() {
         double e_mp2 = compute_mp2_energy();
         double e_mp3 = compute_mp3_correction();
         
-        
-        
-        
         L2_aa_ = Eigen::Tensor<double, 4>(no_a_, no_a_, nv_a_, nv_a_);
         #pragma omp parallel for
         for (int i = 0; i < L2_aa_.size(); ++i) L2_aa_.data()[i] = t2_3rd_aa_.data()[i];
@@ -866,16 +873,14 @@ MP3Result OMP3::compute() {
         Eigen::MatrixXd F_ao_a, F_ao_b;
         build_fock_fast(scf_.P_alpha, scf_.P_beta, F_ao_a, F_ao_b);
         
+        
         double e_scf = 0.5 * (scf_.P_alpha.cwiseProduct(H_core_ + F_ao_a).sum() + 
                               scf_.P_beta.cwiseProduct(H_core_ + F_ao_b).sum()) 
-                              + mol_.nuclear_repulsion_energy();
+                              + e_nuc; 
 
         double e_mp3_corr = e_mp2 + e_mp3;
         double e_tot = e_scf + e_mp3_corr;
 
-        
-        
-        
         if (macro_iter > 0 && e_tot > e_total_last + 1e-7) {
             current_step *= 0.5; 
             C_a_current_ = C_a_last; 
@@ -904,9 +909,6 @@ MP3Result OMP3::compute() {
         current_step = std::min(1.0, current_step * 1.2);
         if (e_tot < e_total_best) { e_total_best = e_tot; e_corr_best = e_mp3_corr; }
 
-        
-        
-        
         Eigen::MatrixXd G_full_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
         G_full_a.block(0,0,no_a_,no_a_) = G_oo_alpha_; G_full_a.block(no_a_,no_a_,nv_a_,nv_a_) = G_vv_alpha_;
         Eigen::MatrixXd P_corr_a = scf_.C_alpha * G_full_a * scf_.C_alpha.transpose();
@@ -932,9 +934,6 @@ MP3Result OMP3::compute() {
         Eigen::MatrixXd F_gen_mo_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
         if (no_b_ > 0) F_gen_mo_b = F_HF_mo_b + scf_.C_beta.transpose() * G_gamma_b * scf_.C_beta;
 
-        
-        
-        
         Eigen::MatrixXd F_vo_a = F_gen_mo_a.block(no_a_, 0, nv_a_, no_a_); 
         Eigen::MatrixXd L_sep_a = G_vv_alpha_ * F_vo_a - F_vo_a * G_oo_alpha_;
         F_gen_mo_a.block(no_a_, 0, nv_a_, no_a_) += L_sep_a;
@@ -947,9 +946,6 @@ MP3Result OMP3::compute() {
             F_gen_mo_b.block(0, no_b_, no_b_, nv_b_) += L_sep_b.transpose();
         }
 
-        
-        
-        
         Eigen::MatrixXd B_ia_a = Eigen::MatrixXd::Zero(no_a_ * nv_a_, n_aux_);
         const Eigen::MatrixXd& Ca_o = C_a_current_.leftCols(no_a_);
         const Eigen::MatrixXd& Ca_v = C_a_current_.rightCols(nv_a_);
@@ -1058,9 +1054,6 @@ MP3Result OMP3::compute() {
             F_gen_mo_b.block(0, no_b_, no_b_, nv_b_) += Z_mat_b.transpose();
         }
 
-        
-        
-        
         int dim_a = nv_a_ * no_a_;
         int dim_b = (mode == "U" && no_b_ > 0) ? (nv_b_ * no_b_) : 0;
         int n_params = dim_a + dim_b;
@@ -1098,7 +1091,7 @@ MP3Result OMP3::compute() {
         for (int a = 0; a < nv_a_; ++a) {
             for (int i = 0; i < no_a_; ++i) {
                 double eps_diff = scf_.orbital_energies_alpha(no_a_ + a) - scf_.orbital_energies_alpha(i);
-                double J_ia = B_ia_a.row(i * nv_a_ + a).squaredNorm(); 
+                double J_ia = B_ia_a.row(i * nv_a_ + a).squaredNorm();
                 diag_H(idx++) = 4.0 * std::abs(eps_diff) + 8.0 * J_ia + level_shift; 
             }
         }
@@ -1150,7 +1143,6 @@ MP3Result OMP3::compute() {
             return Hp;
         };
 
-        
         mshqc::gradient::TrustRegionResult step_info = soscf_engine.solve(orbital_gradient_, diag_H, 0.50, compute_hessian_vector);
         Eigen::VectorXd actual_step = step_info.step;
 
