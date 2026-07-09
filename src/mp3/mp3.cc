@@ -244,8 +244,8 @@ MP3Result UMP3::compute() {
         tblis::mult<double>(-1.0, t_Tab, "ikac", t_oovv_bb, "kjcb", 1.0, t_Wab, "ijab");
         tblis::mult<double>(1.0,  t_Taa, "ikac", t_ovov_ab, "kcjb", 1.0, t_Wab, "ijab");
         tblis::mult<double>(1.0,  t_ovov_ab, "iakc", t_Tbb, "kjcb", 1.0, t_Wab, "ijab");
-        tblis::mult<double>(-1.0, t_oovv_ab, "ikbc", t_Tab, "kjac", 1.0, t_Wab, "ijab");
-        tblis::mult<double>(-1.0, t_Tab, "ikcb", t_oovv_ba, "kjac", 1.0, t_Wab, "ijab"); 
+        tblis::mult<double>(-1.0, t_oovv_ab_ex, "ikbc", t_Tab, "kjac", 1.0, t_Wab, "ijab");
+        tblis::mult<double>(-1.0, t_Tab, "ikcb", t_oovv_ba_ex, "kjac", 1.0, t_Wab, "ijab");
         e3_ab += 1.0 * tensor_dot(t2_ab_, Wab);
     }
 
@@ -663,7 +663,7 @@ double OMP3::compute_mp3_correction() {
             TBLIS_VIEW_4D(t_Voovv_ba_ex, V_oovv_ba_ex, no_b_, no_b_, nv_a_, nv_a_);
 
             tblis::mult<double>(-1.0, t_Voovv_ab_ex, "ikbc", t_Tab, "kjac", 1.0, t_Wab, "ijab");
-            tblis::mult<double>(-1.0, t_Tab, "ikcb", t_Voovv_ba_ex, "kjac", 1.0, t_Wab, "ijab"); 
+            tblis::mult<double>(-1.0, t_Tab, "ikcb", t_Voovv_ba_ex, "kjac", 1.0, t_Wab, "ijab");
 
             #pragma omp parallel for collapse(4) reduction(+:e3_ab)
             for(int i=0; i<no_a_; ++i) for(int j=0; j<no_b_; ++j) for(int a=0; a<nv_a_; ++a) for(int b=0; b<nv_b_; ++b) {
