@@ -39,3 +39,5 @@ hasil/
 # --- Text Files Exception ---
 *.txt
 !CMakeLists.txt
+!push_github.sh
+!push_github2.shs
