@@ -807,11 +807,10 @@ void OMP3::build_opdm_beta() {
 }
 
 
-
 MP3Result OMP3::compute() {
     init_fast_integrals();
     std::string mode = (no_a_ == no_b_) ? "R" : "U";
-    
+
     if (mode == "R" && scf_.C_beta.size() == 0) {
         scf_.C_beta = scf_.C_alpha;
         scf_.P_beta = scf_.P_alpha;
@@ -834,7 +833,7 @@ MP3Result OMP3::compute() {
     int macro_iter = 0; bool is_converged = false;
     double grad_norm = 1.0;
     
-    double trust_radius = 0.40; 
+    double current_step = 1.0; 
     Eigen::VectorXd orbital_gradient_;
     Eigen::VectorXd last_actual_step;
 
@@ -846,19 +845,19 @@ MP3Result OMP3::compute() {
         double e_mp3 = compute_mp3_correction();
         
         // ====================================================================
-        // EXACT MP3 LAGRANGIAN (L2 = 2 * T3) - DIALOKASIKAN UNTUK SEMUA MODE
+        // KUNCI OMP3 EKSAK: L2 = 1.0 * T3 (Teff = T2 + T3) - TANPA ITERASI!
         // ====================================================================
         L2_aa_ = Eigen::Tensor<double, 4>(no_a_, no_a_, nv_a_, nv_a_);
         #pragma omp parallel for
-        for (int i = 0; i < L2_aa_.size(); ++i) L2_aa_.data()[i] = 2.0 * t2_3rd_aa_.data()[i];
+        for (int i = 0; i < L2_aa_.size(); ++i) L2_aa_.data()[i] = t2_3rd_aa_.data()[i];
 
-        if (no_b_ > 0 && nv_b_ > 0) { // KUNCI BUG FIX: Jangan gunakan mode == "U" di sini!
+        if (no_b_ > 0 && nv_b_ > 0) { 
             L2_bb_ = Eigen::Tensor<double, 4>(no_b_, no_b_, nv_b_, nv_b_);
             L2_ab_ = Eigen::Tensor<double, 4>(no_a_, no_b_, nv_a_, nv_b_);
             #pragma omp parallel for
-            for (int i = 0; i < L2_bb_.size(); ++i) L2_bb_.data()[i] = 2.0 * t2_3rd_bb_.data()[i];
+            for (int i = 0; i < L2_bb_.size(); ++i) L2_bb_.data()[i] = t2_3rd_bb_.data()[i];
             #pragma omp parallel for
-            for (int i = 0; i < L2_ab_.size(); ++i) L2_ab_.data()[i] = 2.0 * t2_3rd_ab_.data()[i];
+            for (int i = 0; i < L2_ab_.size(); ++i) L2_ab_.data()[i] = t2_3rd_ab_.data()[i];
         }
         
         build_opdm_alpha(); 
@@ -866,16 +865,23 @@ MP3Result OMP3::compute() {
 
         Eigen::MatrixXd F_ao_a, F_ao_b;
         build_fock_fast(scf_.P_alpha, scf_.P_beta, F_ao_a, F_ao_b);
-        double e_scf = scf_.energy_total; 
+        
+        double e_scf = 0.5 * (scf_.P_alpha.cwiseProduct(H_core_ + F_ao_a).sum() + 
+                              scf_.P_beta.cwiseProduct(H_core_ + F_ao_b).sum()) 
+                              + mol_.nuclear_repulsion_energy();
+
         double e_mp3_corr = e_mp2 + e_mp3;
         double e_tot = e_scf + e_mp3_corr;
 
+        // ========================================================
+        // 1. TRUST-REGION STEP REJECTION (BACKTRACKING ALA OMP2)
+        // ========================================================
         if (macro_iter > 0 && e_tot > e_total_last + 1e-7) {
-            trust_radius *= 0.35; 
+            current_step *= 0.5; 
             C_a_current_ = C_a_last; 
             C_b_current_ = C_b_last;
             
-            Eigen::VectorXd scaled_step = last_actual_step * 0.35;
+            Eigen::VectorXd scaled_step = last_actual_step * current_step;
             
             Eigen::MatrixXd Ka = Eigen::Map<const Eigen::MatrixXd>(scaled_step.data(), no_a_, nv_a_);
             Eigen::MatrixXd K_full = Eigen::MatrixXd::Zero(nbf_, nbf_);
@@ -889,13 +895,18 @@ MP3Result OMP3::compute() {
                 C_b_current_ = C_b_current_ * Kb_full.exp();
             } else { C_b_current_ = C_a_current_; }
             
-            last_actual_step = scaled_step;
+            scf_.P_alpha = C_a_current_.leftCols(no_a_) * C_a_current_.leftCols(no_a_).transpose();
+            scf_.P_beta = (mode == "U") ? C_b_current_.leftCols(no_b_) * C_b_current_.leftCols(no_b_).transpose() : scf_.P_alpha;
+            
             continue; 
         }
 
-        trust_radius = std::min(0.80, trust_radius * 1.25);
+        current_step = std::min(1.0, current_step * 1.2);
         if (e_tot < e_total_best) { e_total_best = e_tot; e_corr_best = e_mp3_corr; }
 
+        // ========================================================
+        // 2. GENERALIZED FOCK
+        // ========================================================
         Eigen::MatrixXd G_full_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
         G_full_a.block(0,0,no_a_,no_a_) = G_oo_alpha_; G_full_a.block(no_a_,no_a_,nv_a_,nv_a_) = G_vv_alpha_;
         Eigen::MatrixXd P_corr_a = scf_.C_alpha * G_full_a * scf_.C_alpha.transpose();
@@ -905,6 +916,8 @@ MP3Result OMP3::compute() {
             Eigen::MatrixXd G_full_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
             G_full_b.block(0,0,no_b_,no_b_) = G_oo_beta_; G_full_b.block(no_b_,no_b_,nv_b_,nv_b_) = G_vv_beta_; 
             P_corr_b = scf_.C_beta * G_full_b * scf_.C_beta.transpose();
+        } else if (mode == "R") {
+            P_corr_b = P_corr_a;
         }
 
         Eigen::MatrixXd F_HF_mo_a = scf_.C_alpha.transpose() * F_ao_a * scf_.C_alpha;
@@ -919,18 +932,24 @@ MP3Result OMP3::compute() {
         Eigen::MatrixXd F_gen_mo_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
         if (no_b_ > 0) F_gen_mo_b = F_HF_mo_b + scf_.C_beta.transpose() * G_gamma_b * scf_.C_beta;
 
-        Eigen::MatrixXd F_vo_a = F_HF_mo_a.block(no_a_, 0, nv_a_, no_a_);
+        // ========================================================
+        // 3. L_SEP (BUG FIX: HARUS DIAMBIL DARI F_GEN!)
+        // ========================================================
+        Eigen::MatrixXd F_vo_a = F_gen_mo_a.block(no_a_, 0, nv_a_, no_a_); 
         Eigen::MatrixXd L_sep_a = G_vv_alpha_ * F_vo_a - F_vo_a * G_oo_alpha_;
         F_gen_mo_a.block(no_a_, 0, nv_a_, no_a_) += L_sep_a;
         F_gen_mo_a.block(0, no_a_, no_a_, nv_a_) += L_sep_a.transpose();
 
         if (no_b_ > 0 && nv_b_ > 0) {
-            Eigen::MatrixXd F_vo_b = F_HF_mo_b.block(no_b_, 0, nv_b_, no_b_);
+            Eigen::MatrixXd F_vo_b = F_gen_mo_b.block(no_b_, 0, nv_b_, no_b_); 
             Eigen::MatrixXd L_sep_b = G_vv_beta_ * F_vo_b - F_vo_b * G_oo_beta_;
             F_gen_mo_b.block(no_b_, 0, nv_b_, no_b_) += L_sep_b;
             F_gen_mo_b.block(0, no_b_, no_b_, nv_b_) += L_sep_b.transpose();
         }
 
+        // ========================================================
+        // 4. Z_MAT (NON-SEPARABLE) DF/Cholesky
+        // ========================================================
         Eigen::MatrixXd B_ia_a = Eigen::MatrixXd::Zero(no_a_ * nv_a_, n_aux_);
         const Eigen::MatrixXd& Ca_o = C_a_current_.leftCols(no_a_);
         const Eigen::MatrixXd& Ca_v = C_a_current_.rightCols(nv_a_);
@@ -1040,7 +1059,7 @@ MP3Result OMP3::compute() {
         }
 
         // ========================================================
-        // 4. PACKING GRADIENT & EXECUTE SOSCF 
+        // 5. PACKING GRADIENT & EXECUTE SOSCF (ALA OMP2)
         // ========================================================
         int dim_a = nv_a_ * no_a_;
         int dim_b = (mode == "U" && no_b_ > 0) ? (nv_b_ * no_b_) : 0;
@@ -1055,7 +1074,6 @@ MP3Result OMP3::compute() {
             for (int a = 0; a < nv_a_; ++a) for (int i = 0; i < no_a_; ++i) orbital_gradient_(idx++) = wa(a, i);
             for (int b = 0; b < nv_b_; ++b) for (int i = 0; i < no_b_; ++i) orbital_gradient_(idx++) = wb(b, i);
         } else {
-            // Rata-rata komponen simetris untuk konvergensi RHF/RMP3 yang sempurna
             for (int a = 0; a < nv_a_; ++a) for (int i = 0; i < no_a_; ++i) orbital_gradient_(idx++) = 0.5 * (wa(a, i) + wb(a, i));
         }
         
@@ -1065,8 +1083,7 @@ MP3Result OMP3::compute() {
             std::cout << std::setw(4) << macro_iter << "    " 
                       << std::fixed << std::setprecision(8) << e_tot << "    "
                       << std::setprecision(8) << e_mp3_corr << "    " 
-                      << std::scientific << std::setprecision(2) << grad_norm << "    "
-                      << std::fixed << std::setprecision(4) << trust_radius << "\n";
+                      << std::scientific << std::setprecision(2) << grad_norm << "\n";
         }
 
         if (macro_iter > 0 && grad_norm < config_.gradient_threshold && std::abs(e_tot - e_total_last) < config_.energy_threshold) {
@@ -1081,14 +1098,16 @@ MP3Result OMP3::compute() {
         for (int a = 0; a < nv_a_; ++a) {
             for (int i = 0; i < no_a_; ++i) {
                 double eps_diff = scf_.orbital_energies_alpha(no_a_ + a) - scf_.orbital_energies_alpha(i);
-                diag_H(idx++) = 4.0 * std::abs(eps_diff) + level_shift; 
+                double J_ia = B_ia_a.row(i * nv_a_ + a).squaredNorm(); // BUG FIX: DIAG HESSIAN LEBIH STABIL
+                diag_H(idx++) = 4.0 * std::abs(eps_diff) + 8.0 * J_ia + level_shift; 
             }
         }
         if (mode == "U" && no_b_ > 0) {
             for (int a = 0; a < nv_b_; ++a) {
                 for (int i = 0; i < no_b_; ++i) {
                     double eps_diff = scf_.orbital_energies_beta(no_b_ + a) - scf_.orbital_energies_beta(i);
-                    diag_H(idx++) = 4.0 * std::abs(eps_diff) + level_shift;
+                    double J_ia = B_ia_b.row(i * nv_b_ + a).squaredNorm();
+                    diag_H(idx++) = 4.0 * std::abs(eps_diff) + 8.0 * J_ia + level_shift;
                 }
             }
         }
@@ -1116,7 +1135,7 @@ MP3Result OMP3::compute() {
             Eigen::MatrixXd F1_a, F1_b;
             build_fock_fast(P1_a, P1_b, F1_a, F1_b);
             F1_a -= H_core_; 
-            if (mode == "U") F1_b -= H_core_;
+            if (mode == "U" && no_b_ > 0) F1_b -= H_core_;
         
             double spin_factor = (mode == "R") ? 4.0 : 2.0;
             Eigen::MatrixXd H_kappa_a = C_a_current_.leftCols(no_a_).transpose() * F1_a * C_a_current_.rightCols(nv_a_);
@@ -1131,7 +1150,8 @@ MP3Result OMP3::compute() {
             return Hp;
         };
 
-        mshqc::gradient::TrustRegionResult step_info = soscf_engine.solve(orbital_gradient_, diag_H, trust_radius, compute_hessian_vector);
+        // KUNCI: Gunakan 0.50 statis untuk SOSCF, perlindungan backtracking dilakukan oleh current_step!
+        mshqc::gradient::TrustRegionResult step_info = soscf_engine.solve(orbital_gradient_, diag_H, 0.50, compute_hessian_vector);
         Eigen::VectorXd actual_step = step_info.step;
 
         Eigen::MatrixXd Ka = Eigen::Map<const Eigen::MatrixXd>(actual_step.data(), no_a_, nv_a_);
@@ -1159,4 +1179,5 @@ MP3Result OMP3::compute() {
     result.converged = is_converged;
     result.iterations = macro_iter;
     return result;
-}} 
+}
+} 
