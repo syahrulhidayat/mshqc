@@ -18,17 +18,24 @@
 namespace mshqc {
 
 struct SOSCF_Result {
-    Eigen::VectorXd step;       // Vektor rotasi orbital final
-    int micro_iterations;       // Jumlah langkah internal PCG
-    bool hit_trust_region;      // True jika langkah menabrak batas maksimal rotasi
-    bool negative_curvature;    // True jika menemukan jalur energi menurun tajam
+    Eigen::VectorXd step;       
+
+    int micro_iterations;       
+
+    bool hit_trust_region;      
+
+    bool negative_curvature;    
+
 };
 
 class PCGSolver {
 public:
-    int max_micro_iter = 15;         // Maksimal iterasi dalam mencari matriks rotasi
-    double tolerance = 1e-3;         // Batas konvergensi PCG
-    double trust_radius = 0.35;      // Maksimal radian putaran orbital (sangat aman)
+    int max_micro_iter = 15;         
+
+    double tolerance = 1e-3;         
+
+    double trust_radius = 0.35;      
+
     int print_level = 0;
 
     /**
@@ -43,14 +50,18 @@ public:
         std::function<Eigen::VectorXd(const Eigen::VectorXd&)> calc_Hv) 
     {
         int n = gradient.size();
-        Eigen::VectorXd x = Eigen::VectorXd::Zero(n);  // Tebakan rotasi awal (nol)
-        Eigen::VectorXd r = -gradient;                 // Residual awal
+        Eigen::VectorXd x = Eigen::VectorXd::Zero(n);  
+
+        Eigen::VectorXd r = -gradient;                 
+
         
-        // 1. Bangun Preconditioner dari Diagonal Hessian
+        
+
         Eigen::VectorXd M_inv = Eigen::VectorXd::Zero(n);
         for(int i = 0; i < n; ++i) {
             double val = diag_hessian(i);
-            // Level Shift: Cegah pembagian dengan nol jika kurvatur datar
+            
+
             if (val < 1e-3) val = 1e-3; 
             M_inv(i) = 1.0 / val;
         }
@@ -65,19 +76,23 @@ public:
         res.negative_curvature = false;
 
         double g_norm = gradient.norm();
-        // Dynamic Tolerance: Makin dekat ke konvergensi makro, makin teliti PCG-nya
+        
+
         double current_tol = std::min(tolerance, g_norm * 0.1); 
 
-        // 2. Micro-Iterations (PCG Loop)
+        
+
         for (int k = 0; k < max_micro_iter; ++k) {
             res.micro_iterations++;
             
-            // Panggil Fungsi Hessian-Vector (O(N^5) akan terjadi di dalam callback ini nanti)
+            
+
             Eigen::VectorXd Hp = calc_Hv(p);
             
             double p_Hp = p.dot(Hp);
             
-            // Cek Kurvatur Negatif
+            
+
             if (p_Hp <= 1e-14) {
                 res.negative_curvature = true;
                 if (k == 0) {
@@ -93,7 +108,8 @@ public:
             double alpha = r_z_old / p_Hp;
             Eigen::VectorXd x_next = x + alpha * p;
 
-            // 3. Trust-Region Boundary Check (Potong langkah jika melebihi radius)
+            
+
             if (x_next.norm() > trust_radius) {
                 double a = p.dot(p);
                 double b = 2.0 * x.dot(p);
@@ -127,5 +143,6 @@ public:
     }
 };
 
-} // namespace mshqc
+} 
+
 #endif

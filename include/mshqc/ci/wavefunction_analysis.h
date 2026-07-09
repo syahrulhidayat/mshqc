@@ -9,8 +9,12 @@
  * 
  * USAGE:
  *   WavefunctionAnalysis analysis(ci_result.determinants, ci_result.coefficients);
- *   analysis.print_dominant_determinants(10);  // Top 10
- *   analysis.print_excitation_composition();   // Singles/doubles breakdown
+ *   analysis.print_dominant_determinants(10);  
+
+
+ *   analysis.print_excitation_composition();   
+
+
  *   auto diag = analysis.compute_diagnostics(hf_det);
  * 
  * KEY FEATURES:
@@ -42,31 +46,65 @@ namespace ci {
  * Determinant contribution structure
  */
 struct DeterminantContribution {
-    int index;                    // Index in determinant list
-    Determinant det;              // The determinant
-    double coefficient;           // CI coefficient
-    double weight;                // |c_i|² (probability)
-    std::string excitation_type;  // "HF", "S", "D", "T", etc.
-    int excitation_level;         // 0=HF, 1=S, 2=D, 3=T, etc.
+    int index;                    
+
+
+    Determinant det;              
+
+
+    double coefficient;           
+
+
+    double weight;                
+
+
+    std::string excitation_type;  
+
+
+    int excitation_level;         
+
+
 };
 
 /**
  * Excitation composition (singles/doubles/triples breakdown)
  */
 struct ExcitationComposition {
-    int n_hf;           // Number of HF determinants
-    int n_singles;      // Single excitations
-    int n_doubles;      // Double excitations
-    int n_triples;      // Triple excitations (if present)
-    int n_higher;       // Higher excitations
+    int n_hf;           
+
+
+    int n_singles;      
+
+
+    int n_doubles;      
+
+
+    int n_triples;      
+
+
+    int n_higher;       
+
+
     
-    double weight_hf;       // HF weight (Σ|c_I|² for HF)
-    double weight_singles;  // Singles weight
-    double weight_doubles;  // Doubles weight
-    double weight_triples;  // Triples weight
-    double weight_higher;   // Higher weight
+    double weight_hf;       
+
+
+    double weight_singles;  
+
+
+    double weight_doubles;  
+
+
+    double weight_triples;  
+
+
+    double weight_higher;   
+
+
     
-    // Percentages
+    
+
+
     double percent_hf;
     double percent_singles;
     double percent_doubles;
@@ -79,14 +117,28 @@ struct ExcitationComposition {
  * Measures deviation from single-reference character
  */
 struct CIDiagnostics {
-    double hf_weight;           // |c_HF|² (should be dominant)
-    double t1_diagnostic;       // Singles amplitude (T1 diagnostic)
-    double d1_diagnostic;       // Doubles amplitude (D1 diagnostic)
-    double leading_det_weight;  // Largest |c_i|²
+    double hf_weight;           
+
+
+    double t1_diagnostic;       
+
+
+    double d1_diagnostic;       
+
+
+    double leading_det_weight;  
+
+
     
-    // Interpretation
-    bool single_reference_ok;   // true if HF weight > 0.9
-    std::string multireference_character;  // "single", "moderate", "strong"
+    
+
+
+    bool single_reference_ok;   
+
+
+    std::string multireference_character;  
+
+
 };
 
 /**
@@ -181,7 +233,13 @@ private:
     std::string excitation_type_string(int level) const;
 };
 
-} // namespace ci
-} // namespace mshqc
+} 
 
-#endif // MSHQC_CI_WAVEFUNCTION_ANALYSIS_H
+
+} 
+
+
+
+#endif 
+
+

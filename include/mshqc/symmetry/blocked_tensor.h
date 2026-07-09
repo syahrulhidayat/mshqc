@@ -26,12 +26,16 @@ inline void unpack_irreps(int packed, int& i, int& a, int& j, int& b) {
     i = (packed >> 9) & 7;
 }
 
-// ========================================================================
-// BLOCKED TENSOR 2D (Untuk Goo, Gvv, dan Matriks Fock Diagonal Block)
-// ========================================================================
+
+
+
+
+
+
 class BlockedTensor2D {
 public:
-    // Kunci Hash: Irrep ID (Karena 2D Abelian, Blok non-zero hanya terjadi jika Irrep_i == Irrep_j)
+    
+
     std::unordered_map<int, Eigen::MatrixXd> blocks;
 
     Eigen::MatrixXd* get_block(int irrep) {
@@ -49,9 +53,12 @@ public:
     }
 };
 
-// ========================================================================
-// BLOCKED TENSOR 4D (Untuk g_iajb, t_iajb, ovvv, ooov)
-// ========================================================================
+
+
+
+
+
+
 class BlockedTensor4D {
 public:
     std::unordered_map<int, Eigen::Tensor<double, 4>> blocks;
@@ -70,13 +77,15 @@ public:
         blocks[pack_irreps(i, a, j, b)] = Eigen::Tensor<double, 4>(d1, d2, d3, d4);
     }
 
-    // Fungsi utilitas untuk membersihkan memori secara eksplisit
+    
+
     void clear() {
         blocks.clear();
     }
 };
 
-// Fungsi utilitas untuk memotong array Irrep menjadi IrrepSpace
+
+
 inline std::vector<IrrepSpace> get_irrep_spaces(const std::vector<int>& sorted_irreps, int start_idx, int total_size) {
     std::vector<IrrepSpace> spaces;
     if (total_size == 0) return spaces;
@@ -100,5 +109,6 @@ inline std::vector<IrrepSpace> get_irrep_spaces(const std::vector<int>& sorted_i
     return spaces;
 }
 
-} // namespace mshqc
+} 
+
 #endif

@@ -58,31 +58,65 @@
 namespace mshqc {
 namespace mcscf {
 
-// ============================================================================
-// SA-CASSCF Configuration
-// ============================================================================
+
+
+
+
+
+
+
+
+
 
 /**
  * @brief Configuration for state-averaged CASSCF
  */
 struct SACASConfig1 {
-    // State averaging
-    int n_states = 2;                          ///< Number of states to average
-    std::vector<double> state_weights;         ///< Weights for each state (Σw_I=1)
     
-    // Active space (same as regular CASSCF)
-    int n_active_electrons = 0;                ///< Electrons in active space
-    int n_active_orbitals = 0;                 ///< Orbitals in active space
+
+
+    int n_states = 2;                          
+
+
+    std::vector<double> state_weights;         
+
+
     
-    // Convergence
-    double energy_thresh = 1e-8;               ///< Energy convergence (Ha)
-    double gradient_thresh = 1e-6;             ///< Orbital gradient threshold
-    int max_iterations = 100;                  ///< Maximum macro iterations
-    int max_ci_iterations = 50;                ///< Max CI iterations per state
     
-    // Output
-    int print_level = 1;                       ///< 0=silent, 1=normal, 2=verbose
-    bool print_ci_vectors = false;             ///< Print CI coefficients
+
+
+    int n_active_electrons = 0;                
+
+
+    int n_active_orbitals = 0;                 
+
+
+    
+    
+
+
+    double energy_thresh = 1e-8;               
+
+
+    double gradient_thresh = 1e-6;             
+
+
+    int max_iterations = 100;                  
+
+
+    int max_ci_iterations = 50;                
+
+
+    
+    
+
+
+    int print_level = 1;                       
+
+
+    bool print_ci_vectors = false;             
+
+
     
     /**
      * @brief Set equal weights for all states
@@ -111,44 +145,88 @@ struct SACASConfig1 {
     }
 };
 
-// ============================================================================
-// SA-CASSCF Result
-// ============================================================================
+
+
+
+
+
+
+
+
+
 
 /**
  * @brief Result from SA-CASSCF calculation
  */
 struct SACASResult1 {
-    bool converged = false;                    ///< Did calculation converge?
-    int n_iterations = 0;                      ///< Number of iterations
+    bool converged = false;                    
+
+
+    int n_iterations = 0;                      
+
+
     
-    // Energies
-    double energy_averaged = 0.0;              ///< State-averaged energy
-    std::vector<double> state_energies;        ///< Individual state energies
     
-    // Orbitals
-    Eigen::MatrixXd mo_coefficients;           ///< MO coefficients (optimized for avg)
-    Eigen::VectorXd orbital_energies;          ///< Orbital energies
+
+
+    double energy_averaged = 0.0;              
+
+
+    std::vector<double> state_energies;        
+
+
     
-    // CI for each state
-    std::vector<Eigen::VectorXd> ci_vectors;   ///< CI vectors for each state
-    std::vector<Eigen::MatrixXd> rdm1_states;  ///< 1-RDM for each state
-    std::vector<Eigen::MatrixXd> rdm2_states;  ///< 2-RDM for each state
     
-    // State-averaged quantities
-    Eigen::MatrixXd rdm1_averaged;             ///< State-averaged 1-RDM
-    Eigen::MatrixXd rdm2_averaged;             ///< State-averaged 2-RDM
+
+
+    Eigen::MatrixXd mo_coefficients;           
+
+
+    Eigen::VectorXd orbital_energies;          
+
+
     
-    // Configuration
+    
+
+
+    std::vector<Eigen::VectorXd> ci_vectors;   
+
+
+    std::vector<Eigen::MatrixXd> rdm1_states;  
+
+
+    std::vector<Eigen::MatrixXd> rdm2_states;  
+
+
+    
+    
+
+
+    Eigen::MatrixXd rdm1_averaged;             
+
+
+    Eigen::MatrixXd rdm2_averaged;             
+
+
+    
+    
+
+
     int n_states;
     std::vector<double> state_weights;
     int n_active_electrons;
     int n_active_orbitals;
 };
 
-// ============================================================================
-// Transition Properties
-// ============================================================================
+
+
+
+
+
+
+
+
+
 
 /**
  * @brief Transition properties between two states
@@ -156,20 +234,42 @@ struct SACASResult1 {
  * For spectroscopy and excited state analysis.
  */
 struct TransitionProperties {
-    int state_i;                               ///< Initial state index
-    int state_j;                               ///< Final state index
+    int state_i;                               
+
+
+    int state_j;                               
+
+
     
-    double energy_diff;                        ///< E_j - E_i (Ha)
-    double wavelength;                         ///< Transition wavelength (nm)
-    double frequency;                          ///< Transition frequency (cm⁻¹)
+    double energy_diff;                        
+
+
+    double wavelength;                         
+
+
+    double frequency;                          
+
+
     
-    Eigen::Vector3d transition_dipole;         ///< μ_ij = ⟨i|μ|j⟩ (au)
-    double dipole_strength;                    ///< |μ_ij|² (au²)
-    double oscillator_strength;                ///< f_ij (dimensionless)
+    Eigen::Vector3d transition_dipole;         
+
+
+    double dipole_strength;                    
+
+
+    double oscillator_strength;                
+
+
     
-    double einstein_A;                         ///< A_ji (spontaneous emission, s⁻¹)
-    double einstein_B_absorption;              ///< B_ij (absorption)
-    double einstein_B_emission;                ///< B_ji (stimulated emission)
+    double einstein_A;                         
+
+
+    double einstein_B_absorption;              
+
+
+    double einstein_B_emission;                
+
+
     
     /**
      * @brief Compute derived quantities from energy and dipole
@@ -181,21 +281,41 @@ struct TransitionProperties {
  * @brief State-specific properties (for one state)
  */
 struct StateProperties {
-    int state_index;                           ///< Which state
-    double energy;                             ///< State energy (Ha)
+    int state_index;                           
+
+
+    double energy;                             
+
+
     
-    Eigen::Vector3d dipole_moment;             ///< μ = ⟨ψ|μ|ψ⟩ (Debye)
-    Eigen::Matrix3d quadrupole_moment;         ///< Q (au)
+    Eigen::Vector3d dipole_moment;             
+
+
+    Eigen::Matrix3d quadrupole_moment;         
+
+
     
-    Eigen::MatrixXd natural_orbitals;          ///< Natural orbitals from 1-RDM
-    Eigen::VectorXd occupation_numbers;        ///< Occupation numbers
+    Eigen::MatrixXd natural_orbitals;          
+
+
+    Eigen::VectorXd occupation_numbers;        
+
+
     
-    double s_squared;                          ///< ⟨S²⟩ spin contamination
+    double s_squared;                          
+
+
 };
 
-// ============================================================================
-// SA-CASSCF Solver
-// ============================================================================
+
+
+
+
+
+
+
+
+
 
 /**
  * @brief State-Averaged Complete Active Space SCF
@@ -280,17 +400,27 @@ private:
     size_t nbasis_;
     int n_elec_;
     
-    // Current orbitals and integrals
-    Eigen::MatrixXd C_;                        ///< MO coefficients
-    Eigen::MatrixXd H_core_;                   ///< Core Hamiltonian
     
-    // Per-state quantities
+
+
+    Eigen::MatrixXd C_;                        
+
+
+    Eigen::MatrixXd H_core_;                   
+
+
+    
+    
+
+
     std::vector<double> state_energies_;
     std::vector<Eigen::VectorXd> ci_vectors_;
     std::vector<Eigen::MatrixXd> rdm1_states_;
     std::vector<Eigen::MatrixXd> rdm2_states_;
     
-    // State-averaged quantities
+    
+
+
     Eigen::MatrixXd rdm1_avg_;
     Eigen::MatrixXd rdm2_avg_;
     Eigen::MatrixXd fock_avg_;
@@ -336,9 +466,15 @@ private:
     void print_results(const SACASResult1& result);
 };
 
-// ============================================================================
-// Utility Functions
-// ============================================================================
+
+
+
+
+
+
+
+
+
 
 /**
  * @brief Compute transition dipole moment between two states
@@ -401,7 +537,13 @@ void print_spectrum(
     double intensity_threshold = 1e-4
 );
 
-} // namespace mcscf
-} // namespace mshqc
+} 
 
-#endif // MSHQC_SA_CASSCF_H
+
+} 
+
+
+
+#endif 
+
+

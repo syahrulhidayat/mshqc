@@ -48,13 +48,27 @@ namespace mcscf {
  * @brief Result for single CI state
  */
 struct CIState {
-    double energy;                          ///< State energy (Ha)
-    Eigen::VectorXd ci_vector;              ///< CI coefficients
-    std::vector<ci::Determinant> determinants; ///< Determinant basis
-    Eigen::MatrixXd rdm1;                   ///< 1-RDM in active space
-    Eigen::MatrixXd rdm2;                   ///< 2-RDM in active space (flattened)
-    bool converged;                         ///< Convergence flag
-    int iterations;                         ///< Davidson iterations
+    double energy;                          
+
+
+    Eigen::VectorXd ci_vector;              
+
+
+    std::vector<ci::Determinant> determinants; 
+
+
+    Eigen::MatrixXd rdm1;                   
+
+
+    Eigen::MatrixXd rdm2;                   
+
+
+    bool converged;                         
+
+
+    int iterations;                         
+
+
 };
 
 /**
@@ -70,7 +84,9 @@ struct CIState {
  * 
  * for (auto& state : states) {
  *     std::cout << "E = " << state.energy << "\n";
- *     // Use state.rdm1, state.rdm2 for SA-CASSCF
+ *     
+
+
  * }
  * ```
  */
@@ -127,12 +143,24 @@ public:
     size_t estimate_n_determinants() const;
     
 private:
-    int n_states_;        ///< Number of states to compute
-    int n_active_orb_;    ///< Active space orbitals
-    int n_active_elec_;   ///< Active space electrons
-    int multiplicity_;    ///< Spin multiplicity (2S+1)
-    int n_alpha_;         ///< Alpha electrons in active space
-    int n_beta_;          ///< Beta electrons in active space
+    int n_states_;        
+
+
+    int n_active_orb_;    
+
+
+    int n_active_elec_;   
+
+
+    int multiplicity_;    
+
+
+    int n_alpha_;         
+
+
+    int n_beta_;          
+
+
     
     /**
      * @brief Extract active space block from MO integrals
@@ -253,7 +281,13 @@ private:
     );
 };
 
-} // namespace mcscf
-} // namespace mshqc
+} 
 
-#endif // MSHQC_MCSCF_MULTI_ROOT_CI_H
+
+} 
+
+
+
+#endif 
+
+

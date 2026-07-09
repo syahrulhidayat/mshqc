@@ -54,18 +54,38 @@ namespace foundation {
  * @brief RMP3 calculation result
  */
 struct RMP3Result {
-    double e_rhf;         // RHF reference energy
-    double e_mp2;         // MP2 correlation energy (2nd order)
-    double e_mp3;         // MP3 correction energy (3rd order)
-    double e_corr_total;  // Total correlation (MP2 + MP3)
-    double e_total;       // Total energy (RHF + MP2 + MP3)
+    double e_rhf;         
+
+
+    double e_mp2;         
+
+
+    double e_mp3;         
+
+
+    double e_corr_total;  
+
+
+    double e_total;       
+
+
     
-    int n_occ;            // Number of occupied orbitals
-    int n_virt;           // Number of virtual orbitals
+    int n_occ;            
+
+
+    int n_virt;           
+
+
     
-    // T2 amplitudes at different orders
-    Eigen::Tensor<double, 4> t2_1;  // First-order (from RMP2)
-    Eigen::Tensor<double, 4> t2_2;  // Second-order correction
+    
+
+
+    Eigen::Tensor<double, 4> t2_1;  
+
+
+    Eigen::Tensor<double, 4> t2_2;  
+
+
 };
 
 /**
@@ -134,15 +154,31 @@ private:
     const BasisSet& basis_;
     std::shared_ptr<IntegralEngine> integrals_;
     
-    // Dimensions
-    int nbf_;      // # basis functions
-    int nocc_;     // # occupied orbitals
-    int nvirt_;    // # virtual orbitals
     
-    // MO quantities
-    Eigen::MatrixXd fock_mo_;              // Fock matrix in MO basis
-    Eigen::Tensor<double, 4> eri_mo_;      // <ij|ab> in MO basis
-    Eigen::Tensor<double, 4> t2_2_;        // T2^(2) amplitudes
+
+
+    int nbf_;      
+
+
+    int nocc_;     
+
+
+    int nvirt_;    
+
+
+    
+    
+
+
+    Eigen::MatrixXd fock_mo_;              
+
+
+    Eigen::Tensor<double, 4> eri_mo_;      
+
+
+    Eigen::Tensor<double, 4> t2_2_;        
+
+
     
     /**
      * @brief Build Fock matrix in MO basis
@@ -209,7 +245,13 @@ private:
 
 };
 
-} // namespace foundation
-} // namespace mshqc
+} 
 
-#endif // MSHQC_FOUNDATION_RMP3_H
+
+} 
+
+
+
+#endif 
+
+

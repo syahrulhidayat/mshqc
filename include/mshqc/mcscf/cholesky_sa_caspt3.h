@@ -45,7 +45,8 @@ private:
     
     int n_inact_, n_act_, n_virt_;
 
-    // [FIX] Helper function declaration
+    
+
     double compute_ladder_term(
         int dim1, int dim2, 
         int n_pairs,        
@@ -53,7 +54,9 @@ private:
         const std::vector<Eigen::MatrixXd>& L_vecs) const;
 };
 
-} // namespace mcscf
-} // namespace mshqc
+} 
 
-#endif // MSHQC_MCSCF_CHOLESKY_SA_CASPT3_H
+} 
+
+
+#endif 

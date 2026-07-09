@@ -112,9 +112,15 @@ public:
          const std::vector<ci::Determinant>& determinants,
          int n_orbitals);
     
-    // ========================================================================
-    // Accessors
-    // ========================================================================
+    
+
+
+    
+
+
+    
+
+
     
     /**
      * @brief Get α-spin density matrix
@@ -153,9 +159,15 @@ public:
      */
     int n_determinants() const { return n_determinants_; }
     
-    // ========================================================================
-    // Properties
-    // ========================================================================
+    
+
+
+    
+
+
+    
+
+
     
     /**
      * @brief Trace of density matrix
@@ -183,9 +195,15 @@ public:
      */
     bool is_n_representable(double tolerance = 1e-6) const;
     
-    // ========================================================================
-    // Natural Orbitals
-    // ========================================================================
+    
+
+
+    
+
+
+    
+
+
     
     /**
      * @brief Compute natural orbitals and occupation numbers
@@ -249,9 +267,15 @@ public:
      */
     double entropy(bool alpha) const;
     
-    // ========================================================================
-    // Expectation Values
-    // ========================================================================
+    
+
+
+    
+
+
+    
+
+
     
     /**
      * @brief Expectation value of one-electron operator
@@ -290,9 +314,15 @@ public:
      */
     double one_electron_energy(const Eigen::MatrixXd& h_core) const;
     
-    // ========================================================================
-    // Validation & Debugging
-    // ========================================================================
+    
+
+
+    
+
+
+    
+
+
     
     /**
      * @brief Print OPDM statistics
@@ -321,21 +351,45 @@ public:
     void print_natural_orbitals() const;
 
 private:
-    // Density matrices
-    Eigen::MatrixXd opdm_alpha_;  ///< γ^α_pq (n_orb × n_orb)
-    Eigen::MatrixXd opdm_beta_;   ///< γ^β_pq (n_orb × n_orb)
     
-    // Metadata
-    int n_orbitals_;              ///< Number of spatial orbitals
-    int n_determinants_;          ///< Number of CI determinants
+
+
+    Eigen::MatrixXd opdm_alpha_;  
+
+
+    Eigen::MatrixXd opdm_beta_;   
+
+
     
-    // Reference data (stored for potential recomputation)
-    std::vector<double> ci_coeffs_;           ///< CI coefficients c_I
-    std::vector<ci::Determinant> determinants_; ///< Slater determinants
     
-    // ========================================================================
-    // Internal computation methods
-    // ========================================================================
+
+
+    int n_orbitals_;              
+
+
+    int n_determinants_;          
+
+
+    
+    
+
+
+    std::vector<double> ci_coeffs_;           
+
+
+    std::vector<ci::Determinant> determinants_; 
+
+
+    
+    
+
+
+    
+
+
+    
+
+
     
     /**
      * @brief Main OPDM computation routine
@@ -411,7 +465,13 @@ private:
     void validate() const;
 };
 
-} // namespace foundation
-} // namespace mshqc
+} 
 
-#endif // MSHQC_FOUNDATION_OPDM_H
+
+} 
+
+
+
+#endif 
+
+

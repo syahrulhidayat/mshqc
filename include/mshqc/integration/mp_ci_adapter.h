@@ -47,11 +47,19 @@ namespace integration {
  * Formula: t_ijk^abc(2) = <ijk||abc> / D_ijk^abc
  */
 struct TripleExcitation {
-    int i, j, k;  // Occupied orbital indices
-    int a, b, c;  // Virtual orbital indices
-    bool same_spin;  // true for aaa or bbb, false for mixed
+    int i, j, k;  
+
+
+    int a, b, c;  
+
+
+    bool same_spin;  
+
+
     
-    // Constructor for convenience
+    
+
+
     TripleExcitation(int i_, int j_, int k_, int a_, int b_, int c_,
                      bool same_spin_ = true)
         : i(i_), j(j_), k(k_), a(a_), b(b_), c(c_), same_spin(same_spin_) {}
@@ -82,14 +90,22 @@ struct TripleExcitation {
  * 
  * Usage example (in UMP3::compute_t3_2nd_order):
  *   ```cpp
- *   // Build HF determinant
- *   std::vector<int> alpha_occ = {0, 1, 2};  // Occupied orbitals
+ *   
+
+
+ *   std::vector<int> alpha_occ = {0, 1, 2};  
+
+
  *   ci::Determinant hf_det(alpha_occ, beta_occ);
  *   
- *   // Generate all triples
+ *   
+
+
  *   generate_triples_alpha(hf_det, nocc_a_, nvir_a_,
  *       [&](const TripleExcitation& exc) {
- *           // Compute T3 amplitude
+ *           
+
+
  *           double D = ea(exc.i) + ea(exc.j) + ea(exc.k)
  *                    - ea(nocc_a_+exc.a) - ea(nocc_a_+exc.b) - ea(nocc_a_+exc.c);
  *           double numerator = compute_3body_integral(exc.i, exc.j, exc.k,
@@ -159,7 +175,13 @@ ci::Determinant build_hf_determinant(int n_occ_alpha, int n_occ_beta);
  */
 size_t count_triple_excitations(int n_occ, int n_virt);
 
-} // namespace integration
-} // namespace mshqc
+} 
 
-#endif // MSHQC_INTEGRATION_MP_CI_ADAPTER_H
+
+} 
+
+
+
+#endif 
+
+

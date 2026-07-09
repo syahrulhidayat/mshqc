@@ -17,11 +17,21 @@ namespace mshqc {
  * Digunakan untuk memaksimalkan efisiensi matriks multiplication (DGEMM).
  */
 struct ShellBlock {
-    int start_shell;     // Index shell pertama di basis set
-    int end_shell;       // Index shell terakhir (exclusive)
-    int start_basis;     // Index fungsi basis global pertama
-    int size_basis;      // Total fungsi basis dalam blok ini
-    double max_schwarz;  // Nilai screening maksimum dalam blok ini
+    int start_shell;     
+
+
+    int end_shell;       
+
+
+    int start_basis;     
+
+
+    int size_basis;      
+
+
+    double max_schwarz;  
+
+
 };
 
 /**
@@ -33,7 +43,9 @@ inline std::vector<ShellBlock> make_shell_blocks(const BasisSet& basis, int targ
     std::vector<ShellBlock> blocks;
     int nshells = basis.n_shells();
     
-    // Peta shell ke fungsi basis (offset)
+    
+
+
     auto shell2bf = basis.shell_to_basis_function_map();
 
     int current_start = 0;
@@ -43,25 +55,35 @@ inline std::vector<ShellBlock> make_shell_blocks(const BasisSet& basis, int targ
     for (int i = 0; i < nshells; ++i) {
         int shell_dim = basis.shell(i).n_functions();
         
-        // Jika blok kosong, inisialisasi
+        
+
+
         if (current_basis_count == 0) {
             basis_offset_start = shell2bf[i];
         }
 
         current_basis_count += shell_dim;
 
-        // Jika ukuran blok sudah cukup atau ini shell terakhir
+        
+
+
         if (current_basis_count >= target_size || i == nshells - 1) {
             ShellBlock block;
             block.start_shell = current_start;
-            block.end_shell   = i + 1; // Exclusive
+            block.end_shell   = i + 1; 
+
+
             block.start_basis = basis_offset_start;
             block.size_basis  = current_basis_count;
-            block.max_schwarz = 1.0; // Default, akan diisi oleh Screening Engine nanti
+            block.max_schwarz = 1.0; 
+
+
             
             blocks.push_back(block);
 
-            // Reset untuk blok berikutnya
+            
+
+
             current_start = i + 1;
             current_basis_count = 0;
         }
@@ -69,6 +91,8 @@ inline std::vector<ShellBlock> make_shell_blocks(const BasisSet& basis, int targ
     return blocks;
 }
 
-} // namespace mshqc
+} 
+
+
 
 #endif

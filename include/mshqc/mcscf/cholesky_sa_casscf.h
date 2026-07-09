@@ -39,7 +39,8 @@ struct SACASConfig {
     double cholesky_thresh = 1e-6;
     int print_level = 1; 
 
-    // Orbital Optimization Parameters
+    
+
     double rotation_damping = 0.5;
     double shift = 0.0;
 
@@ -57,27 +58,33 @@ struct SACASResult {
     
     Eigen::MatrixXd C_mo;
     
-    // Properties for analysis
+    
+
     std::vector<Eigen::VectorXd> ci_vectors; 
     std::vector<Eigen::MatrixXd> rdm1_states;
     std::vector<Eigen::MatrixXd> rdm2_states; 
     
-    // [NEW] Ab initio orbital energies from Fock diagonal
-    // REFERENCE: Szabo & Ostlund (1996), Eq. (3.154)
-    // epsilon_p = F_pp = <p|h|p> + sum_q D_qq * [(pq|pq) - 0.5*(pp|qq)]
+    
+
+    
+
+    
+
     std::vector<double> orbital_energies;
 };
 
 class CholeskySACASSCF {
 public:
-    // Constructor 1: Standard (Calculate Cholesky internally)
+    
+
     CholeskySACASSCF(const Molecule& mol,
                      const BasisSet& basis,
                      std::shared_ptr<IntegralEngine> integrals,
                      const ActiveSpace& active_space,
                      const SACASConfig& config);
 
-    // Constructor 2: Optimized (REUSE Cholesky Vectors form UHF)
+    
+
     CholeskySACASSCF(const Molecule& mol,
                      const BasisSet& basis,
                      std::shared_ptr<IntegralEngine> integrals,
@@ -91,7 +98,8 @@ public:
      */
     SACASResult compute(const Eigen::MatrixXd& initial_orbitals);
 
-    // Overload for convenience (extracts C from SCFResult)
+    
+
     SACASResult compute(const SCFResult& initial_guess);
 
 private:
@@ -104,7 +112,8 @@ private:
     std::vector<Eigen::VectorXd> L_ao_vectors_;
     bool vectors_provided_;
 
-    // --- Internal Logic ---
+    
+
     void ensure_cholesky_vectors();
     
     std::vector<Eigen::MatrixXd> transform_cholesky_to_mo(const Eigen::MatrixXd& C_mo) const;
@@ -123,7 +132,9 @@ private:
     Eigen::MatrixXd apply_rotation(const Eigen::MatrixXd& C, const Eigen::VectorXd& kappa) const;
 };
 
-} // namespace mcscf
-} // namespace mshqc
+} 
+
+} 
+
 
 #endif

@@ -8,7 +8,8 @@ import time
 import os
 from typing import Dict, Optional
 
-# Import langsung dari package mshqc
+
+
 import mshqc
 
 class MSHQCCalculator:
@@ -21,7 +22,8 @@ class MSHQCCalculator:
         self.molecule = molecule
         self.basis_name = basis_name
         
-        # Logika penentuan path basis
+        
+
         target_dir = basis_dir
         if target_dir is None:
             if 'MSHQC_DATA_DIR' in os.environ:
@@ -31,12 +33,14 @@ class MSHQCCalculator:
         
         self.basis_dir = target_dir
         
-        # Create basis and integrals using target_dir (dijamin string)
+        
+
         self.basis = mshqc.BasisSet(basis_name, molecule, target_dir)
         self.integrals = mshqc.IntegralEngine(molecule, self.basis)
         self.n_basis = self.basis.n_basis_functions()
         
-    # --- SCF Methods ---
+    
+
 
     def run_uhf(self, n_alpha=None, n_beta=None, config=None):
         """Run UHF calculation"""
@@ -68,7 +72,8 @@ class MSHQCCalculator:
         print(f"  Done ({time.time() - t0:.2f}s). E: {res.energy_total:.8f} Ha")
         return res
     
-    # --- Unrestricted MP Methods (UMP) ---
+    
+
 
     def run_ump2(self, scf_result):
         """Run UMP2 calculation"""
@@ -93,26 +98,32 @@ class MSHQCCalculator:
         print(f"  Running Cholesky-UMP2 (Threshold={threshold})...")
         t0 = time.time()
         
-        # 1. Setup Config
+        
+
         config = mshqc.CholeskyUMP2Config()
         config.cholesky_threshold = threshold
         config.print_level = 1
         
-        # 2. Decompose (atau reuse jika sudah ada di session)
-        # Di sini kita decompose baru untuk simplicitas
+        
+
+        
+
         print("    > Decomposing Integrals...")
         chol = mshqc.CholeskyERI(threshold)
         eri = self.integrals.compute_eri()
         chol.decompose(eri)
         
-        # 3. Run Compute
-        # Perhatikan: Konstruktor butuh objek CholeskyERI
+        
+
+        
+
         ump2 = mshqc.CholeskyUMP2(uhf_result, self.basis, self.integrals, config, chol)
         res = ump2.compute()
         
         print(f"  Done ({time.time() - t0:.2f}s). E_Corr: {res.e_corr_total:.8f}")
         return res
-    # --- Restricted MP Methods (RMP - NEW) ---
+    
+
 
     def run_rmp2(self, rhf_result):
         """Run RMP2 calculation (Closed Shell)"""
@@ -133,7 +144,8 @@ class MSHQCCalculator:
         print(f"  Done ({time.time() - t0:.2f}s). E_MP3: {res.e_mp3:.8f}")
         return res
 
-    # --- Orbital Optimized MP Methods (OMP - NEW) ---
+    
+
 
     def run_omp2(self, scf_result, max_iter=50):
         """Run Orbital-Optimized MP2"""
@@ -155,7 +167,8 @@ class MSHQCCalculator:
         print(f"  Done ({time.time() - t0:.2f}s). E_OMP3: {res.energy_total:.8f}")
         return res
     
-    # --- Cholesky Pipeline ---
+    
+
 
     def run_cholesky_pipeline(self, n_alpha=None, n_beta=None, threshold=1e-6):
         """Run complete Cholesky pipeline"""
@@ -201,47 +214,57 @@ class MSHQCCalculator:
             config (CholeskyROHFConfig): Konfigurasi SCF
             existing_cholesky (CholeskyERI): Objek Cholesky dari perhitungan sebelumnya (untuk reuse)
         """
-        # 1. Ambil total elektron dari molekul
+        
+
         n_total = self.molecule.n_electrons()
         
-        # 2. Jika n_alpha tidak diberikan, hitung berdasarkan multiplisitas
+        
+
         if n_alpha is None:
             mult = self.molecule.multiplicity()
             n_alpha = (n_total + mult - 1) // 2
             
-        # 3. Jika n_beta tidak diberikan (walaupun n_alpha ada), hitung sisanya
-        # [FIX] Ini mengatasi error Pylance dimana n_beta bisa tertinggal sebagai None
+        
+
+        
+
         if n_beta is None:
             n_beta = n_total - n_alpha
             
-        # 4. Inisialisasi config default jika kosong
+        
+
         if config is None:
             config = mshqc.CholeskyROHFConfig()
             
         print(f"\nRunning Cholesky-ROHF (Na={n_alpha}, Nb={n_beta})...")
         t0 = time.time()
         
-        # 5. Pilih konstruktor yang sesuai (Reuse vs Standard)
+        
+
         if existing_cholesky:
-            # Mode Reuse Vectors (Cepat)
+            
+
             scf = mshqc.CholeskyROHF(
                 self.molecule, self.basis, self.integrals,
                 n_alpha, n_beta, config, existing_cholesky
             )
         else:
-            # Mode Standard (Decompose from scratch)
+            
+
             scf = mshqc.CholeskyROHF(
                 self.molecule, self.basis, self.integrals,
                 n_alpha, n_beta, config
             )
             
-        # 6. Jalankan komputasi
+        
+
         result = scf.compute()
         print(f"Done in {time.time()-t0:.2f}s. E = {result.energy_total:.8f} Ha")
         return result
     
 
-    # Tambahkan di dalam class MSHQCCalculator
+    
+
 
     def run_cholesky_rhf(self, config=None, existing_cholesky=None):
         """
@@ -258,13 +281,15 @@ class MSHQCCalculator:
         t0 = time.time()
         
         if existing_cholesky:
-            # Mode Reuse Vectors
+            
+
             scf = mshqc.CholeskyRHF(
                 self.molecule, self.basis, self.integrals,
                 config, existing_cholesky
             )
         else:
-            # Mode Standard
+            
+
             scf = mshqc.CholeskyRHF(
                 self.molecule, self.basis, self.integrals,
                 config
@@ -290,13 +315,15 @@ class MSHQCCalculator:
         t0 = time.time()
         
         if existing_cholesky:
-            # Mode Reuse Vectors (Sangat Cepat)
+            
+
             omp2 = mshqc.CholeskyOMP2(
                 self.molecule, self.basis, self.integrals,
                 scf_result, config, existing_cholesky
             )
         else:
-            # Mode Standard (Decompose sendiri)
+            
+
             omp2 = mshqc.CholeskyOMP2(
                 self.molecule, self.basis, self.integrals,
                 scf_result, config
@@ -307,7 +334,8 @@ class MSHQCCalculator:
         print(f"  => E(SCF) : {result.energy_scf:.8f} Ha")
         print(f"  => E(OMP2): {result.energy_total:.8f} Ha")
         return result
-    # ... (Di dalam class MSHQCCalculator, setelah run_cholesky_omp2) ...
+    
+
 
     def run_cholesky_omp3(self, omp2_result, config=None, existing_cholesky=None):
         """
@@ -339,7 +367,8 @@ class MSHQCCalculator:
 
 
 
-# ... (di dalam class MSHQCCalculator, misal setelah run_rmp2) ...
+
+
 
     def run_cholesky_rmp2(self, rhf_result, config=None, existing_cholesky=None):
         """
@@ -357,13 +386,15 @@ class MSHQCCalculator:
         t0 = time.time()
         
         if existing_cholesky:
-            # Mode Reuse Vectors (Sangat Cepat)
+            
+
             mp2 = mshqc.CholeskyRMP2(
                 self.molecule, self.basis, self.integrals,
                 rhf_result, config, existing_cholesky
             )
         else:
-            # Mode Standard (Decompose sendiri)
+            
+
             mp2 = mshqc.CholeskyRMP2(
                 self.molecule, self.basis, self.integrals,
                 rhf_result, config
@@ -375,7 +406,8 @@ class MSHQCCalculator:
         print(f"  => E(Total): {result.e_total:.8f} Ha")
         return result
     
-    # Letakkan setelah run_cholesky_rmp2
+    
+
 
     def run_cholesky_rmp3(self, rhf_result, crmp2_result):
         """
@@ -389,7 +421,8 @@ class MSHQCCalculator:
         print(f"\nRunning Cholesky-RMP3 (Reuse Vectors)...")
         t0 = time.time()
         
-        # Inisialisasi solver
+        
+
         rmp3 = mshqc.CholeskyRMP3(rhf_result, crmp2_result, self.basis)
             
         result = rmp3.compute()
@@ -406,7 +439,8 @@ class MCSCFCalculator:
         """Initialize MCSCF calculator"""
         self.molecule = molecule
         
-        # Logika penentuan path basis
+        
+
         target_dir = basis_dir
         if target_dir is None:
             if 'MSHQC_DATA_DIR' in os.environ:
@@ -414,12 +448,14 @@ class MCSCFCalculator:
             else:
                 target_dir = "data/basis"
         
-        # Create basis using target_dir (dijamin string)
+        
+
         self.basis = mshqc.BasisSet(basis_name, molecule, target_dir)
         self.integrals = mshqc.IntegralEngine(molecule, self.basis)
         self.n_basis = self.basis.n_basis_functions()
 
-    # Tambahkan di dalam class MCSCFCalculator
+    
+
     
     def run_canonical_sa_casscf(self, n_states, n_active_elec, n_active_orb, 
                                 scf_guess=None, weights=None):
@@ -429,13 +465,15 @@ class MCSCFCalculator:
         """
         print(f"\nRunning Canonical SA-CASSCF ({n_states} states)...")
         
-        # 1. Setup Active Space
+        
+
         active_space = mshqc.ActiveSpace.CAS(
             n_active_elec, n_active_orb,
             self.n_basis, self.molecule.n_electrons()
         )
         
-        # 2. Setup Config
+        
+
         config = mshqc.SACASConfig()
         if weights:
             config.weights = weights
@@ -445,19 +483,22 @@ class MCSCFCalculator:
             
         config.print_level = 1
         
-        # 3. Setup Solver
+        
+
         solver = mshqc.CanonicalSACASSCF(
             self.molecule, self.basis, self.integrals,
             active_space, config
         )
         
-        # 4. Generate Guess jika belum ada
+        
+
         if scf_guess is None:
             print("  > Generating UHF Guess...")
             calc_scf = MSHQCCalculator(self.molecule, self.basis.name())
             scf_guess = calc_scf.run_uhf()
             
-        # 5. Compute
+        
+
         t0 = time.time()
         res = solver.compute(scf_guess)
         print(f"  Done ({time.time()-t0:.2f}s). E_avg: {res.e_avg:.8f} Ha")
@@ -477,16 +518,19 @@ class MCSCFCalculator:
         t0 = time.time()
         
         if method.lower() == "canonical":
-            # Menggunakan Canonical Orthogonalization (Lebih stabil untuk basis besar/diffuse)
+            
+
             uno_gen = mshqc.CanonicalUNO(uhf_result, self.integrals, self.n_basis)
         else:
-            # Menggunakan Cholesky (Lama)
+            
+
             uno_gen = mshqc.CholeskyUNO(uhf_result, self.integrals, self.n_basis)
             
         res = uno_gen.compute()
         print(f"  Done ({time.time() - t0:.2f}s). Entropy: {res.entropy:.6f}")
         
-        # Cetak report langsung
+        
+
         uno_gen.print_report(threshold)
         
         return res
@@ -501,7 +545,8 @@ class MCSCFCalculator:
         
         casscf = mshqc.CASSCF(self.molecule, self.basis,
                              self.integrals, active_space)
-        # Set default iterations
+        
+
         casscf.set_max_iterations(50)
         
         if scf_guess is not None:
@@ -515,13 +560,15 @@ class MCSCFCalculator:
         """Run Standard CASPT2 (Non-Cholesky)"""
         print("  Running Standard CASPT2...")
         t0 = time.time()
-        # Menggunakan class CASPT2 standar (bukan Cholesky)
+        
+
         caspt2 = mshqc.CASPT2(self.molecule, self.basis, self.integrals, casscf_result)
         res = caspt2.compute()
         print(f"  Done ({time.time() - t0:.2f}s). E_Total: {res.e_total:.8f}")
         return res
 
-    # Tambahkan di dalam class MCSCFCalculator
+    
+
     
     def run_canonical_sa_caspt2_pipeline(self, n_states, n_active_elec, n_active_orb, shift=0.2):
         """
@@ -534,14 +581,16 @@ class MCSCFCalculator:
         print(f"CANONICAL SA-CASPT2 PIPELINE (Reference)")
         print("="*70)
 
-        # 1. UHF & UNO
+        
+
         print("\n[1/4] UHF & UNO Guess...")
         scf_calc = MSHQCCalculator(self.molecule, self.basis.name())
         scf_res = scf_calc.run_uhf()
         uno_gen = mshqc.CanonicalUNO(scf_res, self.integrals, self.n_basis)
         uno_res = uno_gen.compute()
         
-        # 2. Canonical SA-CASSCF
+        
+
         print(f"\n[2/4] Canonical SA-CASSCF ({n_states} States)...")
         active_space = mshqc.ActiveSpace.CAS(
             n_active_elec, n_active_orb, self.n_basis, self.molecule.n_electrons()
@@ -552,7 +601,8 @@ class MCSCFCalculator:
         sa_config.max_iter = 100
         sa_config.print_level = 1
         
-        # Menggunakan CanonicalSACASSCF
+        
+
         sa_solver = mshqc.CanonicalSACASSCF(
             self.molecule, self.basis, self.integrals,
             active_space, sa_config
@@ -560,7 +610,8 @@ class MCSCFCalculator:
         sa_res = sa_solver.compute(uno_res.C_uno)
         results['sacas_result'] = sa_res
         
-        # 3. Canonical SA-CASPT2
+        
+
         print(f"\n[3/4] Canonical SA-CASPT2 (Shift={shift})...")
         t0 = time.time()
         pt2_config = mshqc.CASPT2Config()
@@ -575,13 +626,16 @@ class MCSCFCalculator:
         
         results['pt2_result'] = pt2_res
         
-        # Print Summary
+        
+
         print("\n" + "-"*50)
         print("Final Canonical Energies (Hartree)")
         print("-" * 50)
         for i in range(n_states):
-            # CASPT2Result structure might vary depending on binding
-            # Assuming it returns vectors like Cholesky version
+            
+
+            
+
             print(f"State {i}: {pt2_res.e_total[i]:.8f}")
             
         return results
@@ -595,7 +649,8 @@ class MCSCFCalculator:
         print(f"SA-CASPT3 Pipeline: {n_states} states")
         print("="*70)
         
-        # Cholesky
+        
+
         print("\n[1/6] Cholesky Decomposition...")
         t0 = time.time()
         chol = mshqc.CholeskyERI(threshold)
@@ -604,7 +659,8 @@ class MCSCFCalculator:
         L_vectors = chol.get_L_vectors()
         results['t_chol'] = time.time() - t0
         
-        # UHF
+        
+
         print("[2/6] Cholesky UHF...")
         t0 = time.time()
         n_alpha = (self.molecule.n_electrons() + 
@@ -621,14 +677,16 @@ class MCSCFCalculator:
         uhf_result = uhf.compute()
         results['t_uhf'] = time.time() - t0
         
-        # UNO
+        
+
         print("[3/6] UNO Generation...")
         t0 = time.time()
         uno_gen = mshqc.CholeskyUNO(uhf_result, self.integrals, self.n_basis)
         uno_result = uno_gen.compute()
         results['t_uno'] = time.time() - t0
         
-        # SA-CASSCF
+        
+
         print(f"[4/6] SA-CASSCF ({n_states} states)...")
         t0 = time.time()
         active_space = mshqc.ActiveSpace.CAS_Frozen(
@@ -647,7 +705,8 @@ class MCSCFCalculator:
         sa_result = sa_casscf.compute(uno_result.C_uno)
         results['t_casscf'] = time.time() - t0
         
-        # CASPT2
+        
+
         print("[5/6] SA-CASPT2...")
         t0 = time.time()
         pt2_config = mshqc.CASPT2Config()
@@ -660,7 +719,8 @@ class MCSCFCalculator:
         pt2_result = pt2_solver.compute()
         results['t_pt2'] = time.time() - t0
         
-        # CASPT3
+        
+
         print("[6/6] SA-CASPT3...")
         t0 = time.time()
         pt3_config = mshqc.CASPT3Config()
@@ -673,11 +733,13 @@ class MCSCFCalculator:
         pt3_result = pt3_solver.compute()
         results['t_pt3'] = time.time() - t0
         
-        # Final energies
+        
+
         results['final_energies'] = []
         
         for i in range(n_states):
-            # Binding e_pt2/e_pt3 mengembalikan List[float]
+            
+
             e_pt2_val = pt2_result.e_pt2[i]
             e_pt3_val = pt3_result.e_pt3[i]
             
@@ -685,7 +747,8 @@ class MCSCFCalculator:
             results['final_energies'].append(e_total)
         
         return results
-    # [TAMBAHKAN DI DALAM CLASS MCSCFCalculator]
+    
+
 
     def run_canonical_sa_caspt3_pipeline(self, n_states, n_active_elec, n_active_orb, shift=0.25):
         """
@@ -698,16 +761,19 @@ class MCSCFCalculator:
         print(f"CANONICAL SA-CASPT3 PIPELINE (Reference)")
         print("="*70)
 
-        # 1. UHF & UNO (Reuse logic)
+        
+
         print("\n[1/4] UHF & UNO Guess...")
-        # Fix: Gunakan MSHQCCalculator terpisah untuk run_uhf
+        
+
         scf_calc = MSHQCCalculator(self.molecule, self.basis.name())
         scf_res = scf_calc.run_uhf()
         
         uno_gen = mshqc.CanonicalUNO(scf_res, self.integrals, self.n_basis)
         uno_res = uno_gen.compute()
 
-        # 2. Canonical SA-CASSCF
+        
+
         print(f"\n[2/4] Canonical SA-CASSCF ({n_states} States)...")
         active_space = mshqc.ActiveSpace.CAS(
             n_active_elec, n_active_orb, self.n_basis, self.molecule.n_electrons()
@@ -724,7 +790,8 @@ class MCSCFCalculator:
         sa_res = sa_solver.compute(uno_res.C_uno)
         results['sacas_result'] = sa_res
 
-        # 3. Canonical SA-CASPT2
+        
+
         print(f"\n[3/4] Canonical SA-CASPT2 (Shift={shift})...")
         pt2_config = mshqc.CASPT2Config()
         pt2_config.shift = shift
@@ -735,7 +802,8 @@ class MCSCFCalculator:
         pt2_res = pt2_solver.compute()
         results['pt2_result'] = pt2_res
 
-        # 4. Canonical SA-CASPT3
+        
+
         print(f"\n[4/4] Canonical SA-CASPT3 (Shift={shift})...")
         pt3_config = mshqc.CASPT3Config()
         pt3_config.shift = shift
@@ -746,7 +814,8 @@ class MCSCFCalculator:
         pt3_res = pt3_solver.compute()
         results['pt3_result'] = pt3_res
 
-        # Summary
+        
+
         print("\n" + "-"*60)
         print("Final Canonical Energies (Hartree)")
         print("-" * 60)

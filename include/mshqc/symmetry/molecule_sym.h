@@ -17,13 +17,16 @@ class BasisSymmetrizer {
 public:
     BasisSymmetrizer(const BasisSet& basis, const PointGroup& pg, const PetiteList& pl);
 
-    // Fungsi Utama: Proyeksi Simetri Penuh untuk Matriks Fock
+    
+
     void symmetrize(Eigen::MatrixXd& F) const;
     
-    // Memproyeksikan matriks koefisien C ke operasi simetri untuk menebak Irrep-nya
+    
+
     std::vector<int> assign_mo_irreps(const Eigen::MatrixXd& C, double threshold = 1e-5) const;
 
-    // Akses publik ke matriks transformasi
+    
+
     const std::vector<Eigen::MatrixXd>& get_R_ao() const { return R_ao_; }
 
 private:
@@ -32,11 +35,13 @@ private:
     const PetiteList& pl_;
 
     std::vector<std::vector<int>> shell_map_;
-    std::vector<Eigen::MatrixXd> R_ao_; // Matriks Transformasi AO (N x N)
+    std::vector<Eigen::MatrixXd> R_ao_; 
+
 
     void build_map_and_matrices();
 };
 
-} // namespace mshqc
+} 
+
 
 #endif

@@ -3,7 +3,8 @@
 
 #include "mshqc/scf.h"
 #include "mshqc/integrals.h"
-#include "mshqc/mcscf/uno_result.h" // [NEW] Include shared struct
+#include "mshqc/mcscf/uno_result.h" 
+
 
 #include <memory>
 #include <vector>
@@ -15,7 +16,8 @@
 namespace mshqc {
 namespace mcscf {
 
-// [DELETED] struct UNOResult definition removed from here
+
+
 
 /**
  * @class CanonicalUNO
@@ -39,12 +41,15 @@ private:
     UNOResult result_;
     bool computed_ = false;
 
-    // Helper functions
+    
+
     double calculate_entropy(const Eigen::VectorXd& n) const;
     void analyze_active_space(double threshold);
 };
 
-} // namespace mcscf
-} // namespace mshqc
+} 
 
-#endif // MSHQC_MCSCF_CANONICAL_UNO_H
+} 
+
+
+#endif 

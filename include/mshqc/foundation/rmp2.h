@@ -27,13 +27,25 @@ namespace foundation {
  * @brief RMP2 calculation result structure
  */
 struct RMP2Result {
-    double e_rhf;         // RHF reference energy
-    double e_corr;        // MP2 correlation energy
-    double e_total;       // Total RHF + MP2 energy
-    int n_occ;            // Number of occupied orbitals
-    int n_virt;           // Number of virtual orbitals
+    double e_rhf;         
+
+
+    double e_corr;        
+
+
+    double e_total;       
+
+
+    int n_occ;            
+
+
+    int n_virt;           
+
+
     
-    // T2 amplitudes (occ, occ, vir, vir) - Physicist Notation <ij|ab>
+    
+
+
     Eigen::Tensor<double, 4> t2;  
 };
 
@@ -65,30 +77,49 @@ private:
     const SCFResult& rhf_;
     const BasisSet& basis_;
     std::shared_ptr<IntegralEngine> integrals_;
-    std::shared_ptr<PointGroup> pg_; // [NEW] Symmetry Object
+    std::shared_ptr<PointGroup> pg_; 
+
+
     
-    // Dimensions
+    
+
+
     int nbf_;      
     int nocc_;     
     int nvirt_;    
     
-    // Data Storage
-    Eigen::Tensor<double, 4> eri_mo_; // <ij|ab> Physicist Notation
+    
+
+
+    Eigen::Tensor<double, 4> eri_mo_; 
+
+
     Eigen::Tensor<double, 4> t2_;     
     
-    // [NEW] Symmetry Arrays & Energy Buffer
+    
+
+
     std::vector<int> irreps_occ_;
     std::vector<int> irreps_vir_;
     double e_corr_ = 0.0;
 
-    // Methods
+    
+
+
     void transform_integrals_ao_to_mo();
     
-    // [NEW] Fused Kernel (Menggantikan compute_t2 & compute_energy terpisah)
+    
+
+
     void compute_amplitudes_and_energy();
 };
 
-} // namespace foundation
-} // namespace mshqc
+} 
 
-#endif // MSHQC_FOUNDATION_RMP2_H
+
+} 
+
+
+
+#endif 
+

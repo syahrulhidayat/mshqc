@@ -36,24 +36,50 @@ namespace ci {
  * FCI result structure
  */
 struct FCIResult {
-    double e_fci;              // FCI ground state energy (EXACT in basis)
-    double e_hf;               // HF reference energy
-    double e_corr;             // Correlation energy (total)
-    int n_determinants;        // Total number of determinants
-    bool converged;            // Solver convergence
-    int iterations;            // Davidson iterations (if used)
+    double e_fci;              
+
+
+    double e_hf;               
+
+
+    double e_corr;             
+
+
+    int n_determinants;        
+
+
+    bool converged;            
+
+
+    int iterations;            
+
+
     
-    // Wavefunction data
+    
+
+
     std::vector<Determinant> determinants;
     Eigen::VectorXd coefficients;
     
-    // Analysis
-    double hf_weight;          // |c_0|^2 (HF contribution)
-    double singles_weight;     // Singles contribution
-    double doubles_weight;     // Doubles contribution
-    double higher_weight;      // Triples, quadruples, etc.
     
-    // Excited states (if requested)
+
+
+    double hf_weight;          
+
+
+    double singles_weight;     
+
+
+    double doubles_weight;     
+
+
+    double higher_weight;      
+
+
+    
+    
+
+
     std::vector<double> excited_energies;
     std::vector<Eigen::VectorXd> excited_states;
 };
@@ -209,7 +235,12 @@ size_t fci_determinant_count(int n_orbitals, int n_alpha, int n_beta);
 bool is_fci_feasible(int n_orbitals, int n_alpha, int n_beta, 
                      size_t max_dets = 1000000);
 
-} // namespace ci
-} // namespace mshqc
+} 
 
-#endif // MSHQC_CI_FCI_H
+
+} 
+
+
+
+#endif 
+

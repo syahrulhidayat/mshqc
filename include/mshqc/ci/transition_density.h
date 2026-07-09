@@ -1,46 +1,132 @@
-// Author: Muhamad Syahrul Hidayat
-// Date: 2025-11-16
-//
-// Transition density matrices for excited state properties in CI calculations
-//
-// Theory References:
-// - Hirata, S. (2004). "Tensor Contraction Engine: Abstraction and Automated 
-//   Parallel Implementation of Configuration-Interaction, Coupled-Cluster, 
-//   and Many-Body Perturbation Theories"
-//   J. Phys. Chem. A 107, 9887-9897.
-//   DOI: 10.1021/jp034596w
-//
-// - Head-Gordon, M., Rico, R. J., Oumi, M., & Lee, T. J. (1995). 
-//   "A doubles correction to electronic excited states from configuration interaction 
-//   in the space of single substitutions"
-//   Chem. Phys. Lett. 219, 21-29.
-//   DOI: 10.1016/0009-2614(94)00070-0
-//
-// - Lischka, H., Dallos, M., & Shepard, R. (2002). 
-//   "Analytic MRCI gradient for excited states: formalism and application 
-//   to the n-π* valence- and n-(3s,3p) Rydberg states of formaldehyde"
-//   Mol. Phys. 100, 1647-1658.
-//   DOI: 10.1080/00268970210155121
-//
-// Transition Density Matrix (1-TDM):
-//   γ_pq^IJ = <Ψ_I|a†_p a_q|Ψ_J>
-//
-// where:
-//   Ψ_I, Ψ_J = CI wavefunctions for states I and J
-//   a†_p, a_q = creation/annihilation operators for orbitals p, q
-//
-// For I=J: Regular 1-RDM (one-particle density matrix)
-// For I≠J: Transition density between states I and J
-//
-// Applications:
-//   - Transition dipole moments: μ_IJ = Tr(γ^IJ · μ)
-//   - Oscillator strengths: f_IJ = (2/3) * ΔE_IJ * |μ_IJ|²
-//   - Natural transition orbitals (NTOs)
-//   - Excited state gradients
-//
-// ============================================================================
-// ORIGINAL IMPLEMENTATION - NO CODE COPIED FROM PYSCF/PSI4
-// ============================================================================
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 #ifndef MSHQC_CI_TRANSITION_DENSITY_H
 #define MSHQC_CI_TRANSITION_DENSITY_H
@@ -214,11 +300,19 @@ public:
     );
 
 private:
-    // Speed of light in atomic units
+    
+
+
     static constexpr double SPEED_OF_LIGHT_AU = 137.035999084;
 };
 
-} // namespace ci
-} // namespace mshqc
+} 
 
-#endif // MSHQC_CI_TRANSITION_DENSITY_H
+
+} 
+
+
+
+#endif 
+
+

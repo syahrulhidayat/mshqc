@@ -20,31 +20,47 @@
 namespace mshqc {
 namespace mcscf {
 
-// ============================================================================
-// STRUCT DEFINITIONS (Updated for Full CASPT2)
-// ============================================================================
 
-// Placeholder jika MOIntegrals didefinisikan di tempat lain, 
-// tapi jika belum ada, kita definisikan dummy agar compile.
-// (Sebaiknya MOIntegrals didefinisikan lengkap jika digunakan TBLIS)
+
+
+
+
+
+
+
+
+
+
+
+
 struct MOIntegrals {
-    // Definisi tensor integral MO (kosongkan jika hanya pakai loop Cholesky)
-    // Implementasi TBLIS memerlukan ini terisi.
+    
+
+    
+
 };
 
-// [PERBAIKAN UTAMA] Update struct amplitudo dengan Semi-Internal vectors
+
+
 struct PT2Amplitudes {
-    // Standard Amplitudes
-    std::vector<double> t2_core;   // (i,j -> a,b)
-    std::vector<double> t2_active; // (t,u -> a,b)
     
-    // [NEW] Semi-Internal Amplitudes (Required for Full CASPT2)
-    std::vector<double> t2_semi1;  // Class C (i,t -> a,b)
-    std::vector<double> t2_semi2;  // Class D (i,j -> t,a)
+
+    std::vector<double> t2_core;   
+
+    std::vector<double> t2_active; 
+
+    
+    
+
+    std::vector<double> t2_semi1;  
+
+    std::vector<double> t2_semi2;  
+
 
     int n_in, n_act, n_vir;
 
-    // Resize function
+    
+
     void resize(int ni, int na, int nv) {
         n_in = ni; n_act = na; n_vir = nv;
         long n_virt_sq = (long)nv * nv;
@@ -53,12 +69,14 @@ struct PT2Amplitudes {
         t2_core.assign(n_in_sq * n_virt_sq, 0.0);
         t2_active.assign((long)na * na * n_virt_sq, 0.0);
         
-        // Resize Semi-Internal vectors [NEW]
+        
+
         t2_semi1.assign((long)ni * na * n_virt_sq, 0.0);
         t2_semi2.assign(n_in_sq * na * nv, 0.0);
     }
 
-    // Indexing Helpers
+    
+
     long idx_core(int i, int j, int a, int b) const {
         return ((i * n_in + j) * n_vir + a) * n_vir + b;
     }
@@ -67,7 +85,8 @@ struct PT2Amplitudes {
         return ((t * n_act + u) * n_vir + a) * n_vir + b;
     }
 
-    // [NEW] Helper for Semi-Internal 1 (i, t -> a, b)
+    
+
     long idx_semi1(int i, int t, int a, int b) const {
         return ((i * n_act + t) * n_vir + a) * n_vir + b;
     }
@@ -77,8 +96,10 @@ struct CASPT2Config {
     double shift = 0;
     double zero_thresh = 1e-8;
     int print_level = 1;
-    bool use_tblis = true;           // Enable TBLIS contractions
-    bool export_amplitudes = true;   // Store T2 for PT3
+    bool use_tblis = true;           
+
+    bool export_amplitudes = true;   
+
 };
 
 struct CASPT2Result {
@@ -86,16 +107,22 @@ struct CASPT2Result {
     std::vector<double> e_pt2;
     std::vector<double> e_total;
     
-    // Amplitude export for PT3
-    std::vector<PT2Amplitudes> amplitudes;  // Per-state amplitudes
     
-    // Shared MO integrals (compute once, use in PT3)
+
+    std::vector<PT2Amplitudes> amplitudes;  
+
+    
+    
+
     std::shared_ptr<MOIntegrals> mo_ints;
 };
 
-// ============================================================================
-// CLASS DECLARATION
-// ============================================================================
+
+
+
+
+
+
 
 class CholeskySACASPT2 {
 public:
@@ -120,7 +147,8 @@ private:
 
     int n_inact_, n_act_, n_virt_;
     
-    // === Core Functions ===
+    
+
     
     /**
      * @brief Transform Cholesky vectors to full MO integrals
@@ -144,7 +172,8 @@ private:
                                     const Eigen::VectorXd& eps,
                                     PT2Amplitudes* amps = nullptr);
     
-    // === TBLIS Helpers ===
+    
+
     
     double compute_core_term_tblis(const MOIntegrals& mo_ints,
                                     const Eigen::VectorXd& eps,
@@ -155,12 +184,15 @@ private:
                                       const Eigen::VectorXd& eps,
                                       PT2Amplitudes& amps);
     
-    // === Utility ===
+    
+
     std::vector<Eigen::MatrixXd> transform_cholesky_to_mo(const Eigen::MatrixXd& C_mo) const;
     
 };
 
-} // namespace mcscf
-} // namespace mshqc
+} 
+
+} 
+
 
 #endif

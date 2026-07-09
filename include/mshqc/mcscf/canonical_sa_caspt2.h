@@ -12,7 +12,8 @@
 #define MSHQC_CANONICAL_SA_CASPT2_H
 
 #include "mshqc/mcscf/canonical_sa_casscf.h"
-#include "mshqc/mcscf/cholesky_sa_caspt2.h" // Reuse Config & Result structs
+#include "mshqc/mcscf/cholesky_sa_caspt2.h" 
+
 #include "mshqc/integrals.h"
 #include <vector>
 #include <memory>
@@ -43,20 +44,28 @@ private:
     
     int n_inact_, n_act_, n_virt_, nbasis_;
 
-    // Helpers
-    // Transform full AO ERI tensor to MO basis (Chemists' Notation)
-    // Returns (pq|rs) tensor
+    
+
+    
+
+    
+
     Eigen::Tensor<double, 4> transform_integrals_to_mo() const;
 
-    // [FIX] Updated signature to match .cc implementation
-    // Added PT2Amplitudes* amps argument
+    
+
+    
+
     double compute_state_pt2(int state_idx, 
                              const Eigen::Tensor<double, 4>& mo_eri,
                              const Eigen::VectorXd& eps,
-                             PT2Amplitudes* amps = nullptr); // Default to nullptr if not needed
+                             PT2Amplitudes* amps = nullptr); 
+
 };
 
-} // namespace mcscf
-} // namespace mshqc
+} 
+
+} 
+
 
 #endif

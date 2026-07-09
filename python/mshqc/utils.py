@@ -28,11 +28,13 @@ def quick_calculation(element, basis="cc-pVTZ", method="ump3",
         >>> result = quick_calculation("Li", "cc-pVTZ", "ump3")
     """
 
-    # Import di dalam fungsi untuk menghindari circular import
+    
+
     import mshqc
     from .calculators import MSHQCCalculator, MCSCFCalculator
     
-    # Get basis directory
+    
+
     if basis_dir is None:
         if 'MSHQC_DATA_DIR' in os.environ:
             basis_dir = os.path.join(os.environ['MSHQC_DATA_DIR'], 'basis')
@@ -42,7 +44,8 @@ def quick_calculation(element, basis="cc-pVTZ", method="ump3",
     mol = mshqc.Molecule()
     
     if isinstance(element, str):
-        # Tabel Periodik Lengkap (Z=1 sampai Z=118)
+        
+
         symbol_to_z = {
             'H': 1, 'He': 2,
             'Li': 3, 'Be': 4, 'B': 5, 'C': 6, 'N': 7, 'O': 8, 'F': 9, 'Ne': 10,
@@ -55,7 +58,8 @@ def quick_calculation(element, basis="cc-pVTZ", method="ump3",
             'Rf': 104, 'Db': 105, 'Sg': 106, 'Bh': 107, 'Hs': 108, 'Mt': 109, 'Ds': 110, 'Rg': 111, 'Cn': 112, 'Nh': 113, 'Fl': 114, 'Mc': 115, 'Lv': 116, 'Ts': 117, 'Og': 118
         }
         
-        # Ubah default value: Jika tidak ditemukan, raise Error daripada return 3 (Lithium)
+        
+
         if element not in symbol_to_z:
             raise ValueError(f"Unknown element symbol: {element}")
         z = symbol_to_z[element]
@@ -75,26 +79,34 @@ def quick_calculation(element, basis="cc-pVTZ", method="ump3",
     
     method = method.lower()
     
-    # =========================================================================
-    #  Logic Khusus Cholesky Pipeline (OMP2 & OMP3)
-    # =========================================================================
+    
+
+    
+
+    
+
     if method in ["chomp2", "cholesky_omp2", "chomp3", "cholesky_omp3"]:
-        # Tentukan jika target akhirnya adalah OMP3
+        
+
         target_method = "omp3" if "3" in method else "omp2"
         print(f"\n--- Running Quick Cholesky-{target_method.upper()} for {element} ---")
         
-        # 1. Decompose ERI (Sekali di awal)
+        
+
         threshold = 1e-6
         print("1. Decomposing Integrals...")
-        # Import class Cholesky dari module mshqc
+        
+
         chol = mshqc.CholeskyERI(threshold)
         eri = calc.integrals.compute_eri()
         chol.decompose(eri)
         
-        # 2. Run Reference SCF (Menggunakan Vektor Cholesky yang sama)
+        
+
         print("2. Running Reference SCF (Vector Reuse)...")
         
-        # Hitung jumlah elektron manual untuk konfigurasi
+        
+
         n_total = mol.n_electrons()
         na = (n_total + multiplicity - 1) // 2
         nb = n_total - na
@@ -104,16 +116,19 @@ def quick_calculation(element, basis="cc-pVTZ", method="ump3",
             print("   > Using Cholesky-ROHF (Closed Shell)")
             rohf_conf = mshqc.CholeskyROHFConfig()
             rohf_conf.cholesky_threshold = threshold
-            rohf_conf.print_level = 0 # Silent
+            rohf_conf.print_level = 0 
+
             
             c_scf = mshqc.CholeskyROHF(mol, calc.basis, calc.integrals, 
                                        na, nb, rohf_conf, chol)
         else:
-            # Open-Shell: Gunakan Cholesky-UHF
+            
+
             print("   > Using Cholesky-UHF (Open Shell)")
             uhf_conf = mshqc.CholeskyUHFConfig()
             uhf_conf.cholesky_threshold = threshold
-            uhf_conf.print_level = 0 # Silent
+            uhf_conf.print_level = 0 
+
             
             c_scf = mshqc.CholeskyUHF(mol, calc.basis, calc.integrals, 
                                       na, nb, uhf_conf)
@@ -122,26 +137,32 @@ def quick_calculation(element, basis="cc-pVTZ", method="ump3",
         scf_res = c_scf.compute()
         print(f"   SCF Done. E = {scf_res.energy_total:.8f} Ha")
 
-        # 3. Run Cholesky-OMP2 (Reuse Vektor lagi!)
+        
+
         print("3. Running Orbital Optimization (OMP2)...")
-        # Panggil helper yang sudah kita buat di calculators.py
+        
+
         omp2_res = calc.run_cholesky_omp2(
             scf_res, 
-            existing_cholesky=chol  # <--- KUNCI: Pass objek chol yang sudah decompose
+            existing_cholesky=chol  
+
         )
         
-        # [BARU] 4. Run Cholesky-OMP3 jika diminta
+        
+
         if target_method == "omp3":
             print("4. Running Orbital Optimization (OMP3)...")
             omp3_res = calc.run_cholesky_omp3(
                 omp2_res, 
-                existing_cholesky=chol # Reuse vector lagi!
+                existing_cholesky=chol 
+
             )
             return omp3_res
             
         return omp2_res
 
-    # 1. Run SCF (Prioritas RHF jika Closed-Shell, kecuali user minta UHF)
+    
+
     scf_res = None
     if multiplicity == 1 and method not in ["uhf", "ump2", "ump3"]:
         scf_res = calc.run_rhf()
@@ -151,41 +172,52 @@ def quick_calculation(element, basis="cc-pVTZ", method="ump3",
     if method in ["scf", "rhf", "uhf"]:
         return scf_res
 
-    # 2. Run Post-SCF
+    
+
     if "mp2" in method:
-        if "omp" in method: # OMP2
+        if "omp" in method: 
+
             return calc.run_omp2(scf_res)
-        elif multiplicity == 1 and "u" not in method: # RMP2 (Default Singlet)
+        elif multiplicity == 1 and "u" not in method: 
+
             return calc.run_rmp2(scf_res)
-        else: # UMP2
+        else: 
+
             return calc.run_ump2(scf_res)
             
     if "mp3" in method:
-        # Run MP2 dulu sebagai prasyarat
-        if "omp" in method: # OMP3
+        
+
+        if "omp" in method: 
+
             mp2_res = calc.run_omp2(scf_res)
             return calc.run_omp3(mp2_res)
-        elif multiplicity == 1 and "u" not in method: # RMP3
+        elif multiplicity == 1 and "u" not in method: 
+
             rmp2_res = calc.run_rmp2(scf_res)
             return calc.run_rmp3(scf_res, rmp2_res)
-        else: # UMP3
+        else: 
+
             ump2_res = calc.run_ump2(scf_res)
             return calc.run_ump3(scf_res, ump2_res)
         
     if method in ["ch-rmp2", "cholesky_rmp2"]:
-        # Pastikan SCF-nya adalah RHF (Closed Shell)
+        
+
         if multiplicity != 1:
              raise ValueError("Cholesky-RMP2 requires closed-shell singlet (multiplicity=1)")
         
         print(f"\n--- Running Quick Cholesky-RMP2 for {element} ---")
         
-        # 1. Decompose
+        
+
         print("1. Decomposing Integrals...")
         chol = mshqc.CholeskyERI(1e-6)
         eri = calc.integrals.compute_eri()
         chol.decompose(eri)
         
-        # 2. RHF
+        
+
         print("2. Running Cholesky-RHF...")
         rhf_conf = mshqc.CholeskyRHFConfig()
         rhf_conf.print_level = 0
@@ -193,26 +225,31 @@ def quick_calculation(element, basis="cc-pVTZ", method="ump3",
         rhf_res = rhf_solver.compute()
         print(f"   RHF Done. E = {rhf_res.energy_total:.8f} Ha")
         
-        # 3. RMP2
+        
+
         print("3. Running Cholesky-RMP2...")
         return calc.run_cholesky_rmp2(rhf_res, existing_cholesky=chol)
     
-    # ... Di dalam fungsi quick_calculation ...
+    
+
 
     if method in ["ch-rmp3", "cholesky_rmp3"]:
-        # Pastikan Closed Shell
+        
+
         if multiplicity != 1:
              raise ValueError("Cholesky-RMP3 requires closed-shell singlet (multiplicity=1)")
         
         print(f"\n--- Running Quick Cholesky-RMP3 for {element} ---")
         
-        # 1. Decompose
+        
+
         print("1. Decomposing Integrals...")
         chol = mshqc.CholeskyERI(1e-6)
         eri = calc.integrals.compute_eri()
         chol.decompose(eri)
         
-        # 2. RHF (Reuse Vector)
+        
+
         print("2. Running Cholesky-RHF...")
         rhf_conf = mshqc.CholeskyRHFConfig()
         rhf_conf.print_level = 0
@@ -220,24 +257,29 @@ def quick_calculation(element, basis="cc-pVTZ", method="ump3",
         rhf_res = rhf_solver.compute()
         print(f"   RHF Done. E = {rhf_res.energy_total:.8f} Ha")
         
-        # 3. RMP2 (Reuse Vector) -> Return CholeskyRMP2Result
+        
+
         print("3. Running Cholesky-RMP2...")
         rmp2_conf = mshqc.CholeskyRMP2Config()
         rmp2_solver = mshqc.CholeskyRMP2(mol, calc.basis, calc.integrals, rhf_res, rmp2_conf, chol)
         crmp2_res = rmp2_solver.compute()
         print(f"   RMP2 Done. E_Corr = {crmp2_res.e_corr:.8f} Ha")
 
-        # 4. RMP3 (Reuse Vector dari crmp2_res)
+        
+
         print("4. Running Cholesky-RMP3...")
-        # Gunakan helper calculator atau langsung object
+        
+
         rmp3_res = calc.run_cholesky_rmp3(rhf_res, crmp2_res)
         
-        return rmp3_res# [TAMBAHKAN BLOK INI DI DALAM utils.py, quick_calculation function]
+        return rmp3_res
+
 
     if method in ["canonical_caspt3", "ref_caspt3"]:
         print(f"\n--- Running Reference Canonical SA-CASPT3 for {element} ---")
         
-        # Heuristik Active Space (Sama seperti PT2)
+        
+
         n_elec = mol.n_electrons()
         n_valence = n_elec - 2 
         n_act_orb = 4 
@@ -247,7 +289,8 @@ def quick_calculation(element, basis="cc-pVTZ", method="ump3",
             
         print(f"  > Auto-Active Space: CAS({n_act_elec}e, {n_act_orb}o)")
         
-        # Instance MCSCFCalculator
+        
+
         mcscf_calc = MCSCFCalculator(mol, basis, basis_dir=basis_dir)
         
         res = mcscf_calc.run_canonical_sa_caspt3_pipeline(
@@ -300,7 +343,8 @@ def benchmark_basis_sets(element, basis_list, method="ump3"):
                 'success': True
             }
             
-       # Get energy (Gunakan getattr agar Pylance tidak error)
+       
+
             if hasattr(result, 'e_total'):
                 energy = getattr(result, 'e_total')
             elif hasattr(result, 'energy_total'):
@@ -319,7 +363,8 @@ def benchmark_basis_sets(element, basis_list, method="ump3"):
                 'error': str(e)
             }
     
-    # Print summary table
+    
+
     print("\n" + "="*70)
     print("SUMMARY")
     print("="*70)

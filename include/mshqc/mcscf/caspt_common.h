@@ -23,10 +23,12 @@ namespace mcscf {
  * Access: V[p*N³ + q*N² + r*N + s]
  */
 struct MOIntegrals {
-    std::vector<double> V_pqrs;  // (N,N,N,N) tensor
+    std::vector<double> V_pqrs;  
+
     int nbasis = 0;
     
-    // Helper for indexing
+    
+
     inline size_t idx(int p, int q, int r, int s) const {
         return static_cast<size_t>(p) * nbasis * nbasis * nbasis +
                static_cast<size_t>(q) * nbasis * nbasis +
@@ -44,18 +46,24 @@ struct MOIntegrals {
  * Separated by space type for efficient contractions
  */
 struct PT2Amplitudes {
-    // Core-core excitations: t_ij^ab
-    std::vector<double> t2_core;   // (n_occ, n_occ, n_vir, n_vir)
     
-    // Active-active excitations: t_tu^ab (weighted by RDM)
-    std::vector<double> t2_active; // (n_act, n_act, n_vir, n_vir)
+
+    std::vector<double> t2_core;   
+
     
-    // Dimensions
+    
+
+    std::vector<double> t2_active; 
+
+    
+    
+
     int n_occ = 0;
     int n_act = 0;
     int n_vir = 0;
     
-    // Indexing helpers
+    
+
     inline size_t idx_core(int i, int j, int a, int b) const {
         return static_cast<size_t>(i) * n_occ * n_vir * n_vir +
                static_cast<size_t>(j) * n_vir * n_vir +
@@ -83,12 +91,17 @@ struct PT2Amplitudes {
  * @brief Configuration for integral pre-computation
  */
 struct IntegralConfig {
-    bool use_symmetry = true;     // Use 8-fold permutational symmetry
-    double threshold = 1e-12;      // Zero cutoff for storage
-    int max_memory_mb = 4096;      // Memory limit for full tensor
+    bool use_symmetry = true;     
+
+    double threshold = 1e-12;      
+
+    int max_memory_mb = 4096;      
+
 };
 
-} // namespace mcscf
-} // namespace mshqc
+} 
+
+} 
+
 
 #endif

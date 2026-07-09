@@ -16,17 +16,30 @@ namespace mshqc {
 namespace mcscf {
 
 struct UNOResult {
-    Eigen::MatrixXd C_uno;          // Koefisien UNO (AO basis)
-    Eigen::VectorXd occupations;    // Bilangan okupansi (0.0 - 2.0)
+    Eigen::MatrixXd C_uno;          
+
+
+    Eigen::VectorXd occupations;    
+
+
     
-    // Active Space Suggestions
+    
+
+
     std::vector<int> active_indices;
-    double entropy;                 // von Neumann entropy
+    double entropy;                 
+
+
     int suggested_n_active;
     int suggested_n_electrons;
 };
 
-} // namespace mcscf
-} // namespace mshqc
+} 
 
-#endif // MSHQC_MCSCF_UNO_RESULT_H
+
+} 
+
+
+
+#endif 
+

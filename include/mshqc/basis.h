@@ -6,7 +6,8 @@
 #include <string>
 #include <array>
 #include <memory>
-#include <fstream> // Tambahkan fstream karena dipakai di parse_atom_basis
+#include <fstream> 
+
 #ifdef I
 #undef I
 #endif
@@ -37,9 +38,12 @@ struct GaussianPrimitive {
     GaussianPrimitive(double exp, double coef) : exponent(exp), coefficient(coef) {}
 };
 
-// ============================================================================
-// Shell Class
-// ============================================================================
+
+
+
+
+
+
 class Shell {
 public:
     Shell(AngularMomentum am, int center, const std::array<double, 3>& center_pos);
@@ -75,9 +79,12 @@ private:
     bool spherical_;
 };
 
-// ============================================================================
-// BasisSet Class
-// ============================================================================
+
+
+
+
+
+
 class BasisSet {
 public:
     BasisSet();
@@ -85,16 +92,19 @@ public:
              const Molecule& mol,
              const std::string& basis_dir = "data/basis");
     
-    // Core Functions (Hanya satu deklarasi!)
+    
+
     bool read_gbs(const std::string& basis_file, const Molecule& mol);
     void add_shell(const Shell& shell);
     
-    // Accessors
+    
+
     size_t n_shells() const { return shells_.size(); }
     const Shell& shell(size_t i) const { return shells_[i]; }
     const std::vector<Shell>& shells() const { return shells_; }
     
-    // Total basis functions count
+    
+
     size_t n_basis_functions() const;
     
     const std::string& name() const { return name_; }
@@ -115,16 +125,20 @@ private:
     bool spherical_;
     size_t n_basis_ = 0;
 
-    // Helper function (private)
+    
+
     int parse_atom_basis(std::ifstream& file, 
                         const std::string& atom_symbol,
                         int atom_index,
                         const std::array<double, 3>& atom_pos);
 };
 
-// ============================================================================
-// Utility Functions
-// ============================================================================
+
+
+
+
+
+
 AngularMomentum char_to_am(char c);
 std::string am_to_string(AngularMomentum am);
 double gaussian_normalization_s(double alpha);
@@ -133,6 +147,7 @@ double primitive_overlap_s(double alpha_a, double alpha_b,
                           const std::array<double, 3>& Rb);
 std::string get_element_symbol(int Z);
 
-} // namespace mshqc
+} 
 
-#endif // MSHQC_BASIS_H
+
+#endif 

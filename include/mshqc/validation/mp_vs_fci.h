@@ -41,46 +41,79 @@ namespace validation {
  * Reference: J. A. Pople et al., Int. J. Quantum Chem. **14**, 545 (1978)
  */
 struct MPConvergenceReport {
-    // Reference energies
-    double e_hf;            ///< Hartree-Fock energy (zeroth-order)
-    double e_fci;           ///< Full CI energy (exact in basis)
     
-    // MP series energies
-    double e_mp2;           ///< MP2 total energy
-    double e_mp3;           ///< MP3 total energy
-    double e_mp4;           ///< MP4 total energy
-    double e_mp5;           ///< MP5 total energy
+
+    double e_hf;            
+
+    double e_fci;           
+
     
-    // Correlation energies (E^(n))
-    double ec_mp2;          ///< E^(2) correlation
-    double ec_mp3;          ///< E^(2) + E^(3)
-    double ec_mp4;          ///< E^(2) + E^(3) + E^(4)
-    double ec_mp5;          ///< E^(2) + ... + E^(5)
-    double ec_fci;          ///< Exact correlation (FCI)
     
-    // Errors vs FCI (in Hartree)
-    double error_mp2;       ///< |E_MP2 - E_FCI|
-    double error_mp3;       ///< |E_MP3 - E_FCI|
-    double error_mp4;       ///< |E_MP4 - E_FCI|
-    double error_mp5;       ///< |E_MP5 - E_FCI|
+
+    double e_mp2;           
+
+    double e_mp3;           
+
+    double e_mp4;           
+
+    double e_mp5;           
+
     
-    // Convergence ratios
-    double ratio_32;        ///< |E^(3)|/|E^(2)|
-    double ratio_43;        ///< |E^(4)|/|E^(3)|
-    double ratio_54;        ///< |E^(5)|/|E^(4)|
     
-    // Convergence diagnostics
-    bool is_converging;     ///< True if ratios decrease
-    bool mp5_converged;     ///< True if error_mp5 < threshold
-    double convergence_rate;///< Estimated convergence rate
+
+    double ec_mp2;          
+
+    double ec_mp3;          
+
+    double ec_mp4;          
+
+    double ec_mp5;          
+
+    double ec_fci;          
+
     
-    // Correlation recovery (percentage)
-    double corr_mp2_pct;    ///< % correlation recovered by MP2
-    double corr_mp3_pct;    ///< % correlation recovered by MP3
-    double corr_mp4_pct;    ///< % correlation recovered by MP4
-    double corr_mp5_pct;    ///< % correlation recovered by MP5
     
-    // System info
+
+    double error_mp2;       
+
+    double error_mp3;       
+
+    double error_mp4;       
+
+    double error_mp5;       
+
+    
+    
+
+    double ratio_32;        
+
+    double ratio_43;        
+
+    double ratio_54;        
+
+    
+    
+
+    bool is_converging;     
+
+    bool mp5_converged;     
+
+    double convergence_rate;
+
+    
+    
+
+    double corr_mp2_pct;    
+
+    double corr_mp3_pct;    
+
+    double corr_mp4_pct;    
+
+    double corr_mp5_pct;    
+
+    
+    
+
     std::string system_name;
     int n_electrons;
     int n_basis;
@@ -130,7 +163,8 @@ public:
         int n_electrons = 0,
         int n_basis = 0,
         const std::string& basis_name = "Unknown",
-        double threshold = 10.0e-6  // 10 microHartree
+        double threshold = 10.0e-6  
+
     );
     
     /**
@@ -200,13 +234,17 @@ public:
     static std::string to_json(const MPConvergenceReport& report);
     
 private:
-    // Helper functions
+    
+
     static double compute_correlation_energy(double e_total, double e_hf);
     static double compute_percentage(double partial, double total);
     static double safe_ratio(double numerator, double denominator);
 };
 
-} // namespace validation
-} // namespace mshqc
+} 
 
-#endif // MSHQC_VALIDATION_MP_VS_FCI_H
+} 
+
+
+#endif 
+

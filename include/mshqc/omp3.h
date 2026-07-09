@@ -29,13 +29,20 @@ namespace mshqc {
  * @brief Results from OMP3 calculation
  */
 struct OMP3Result {
-    double energy_total;        ///< Total OMP3 energy (HF + MP2 + MP3)
-    double energy_mp2_corr;     ///< MP2 correlation energy
-    double energy_mp3_corr;     ///< MP3 correlation energy
-    double energy_omp2;         ///< Converged OMP2 total energy
-    double energy_omp3;         ///< Converged OMP3 total energy
-    bool converged;             ///< Convergence status
-    int iterations;             ///< Number of iterations
+    double energy_total;        
+
+    double energy_mp2_corr;     
+
+    double energy_mp3_corr;     
+
+    double energy_omp2;         
+
+    double energy_omp3;         
+
+    bool converged;             
+
+    int iterations;             
+
     
     Eigen::VectorXd orbital_energies_alpha;
     Eigen::VectorXd orbital_energies_beta;
@@ -81,24 +88,30 @@ private:
     
     SCFResult scf_; 
     
-    // T2 Amplitudes (MP2)
+    
+
     Eigen::Tensor<double, 4> t2_aa_;
     Eigen::Tensor<double, 4> t2_bb_;
     Eigen::Tensor<double, 4> t2_ab_;
 
-    // T2 Amplitudes Orde ke-3 (MP3)
+    
+
     Eigen::Tensor<double, 4> t2_3rd_aa_;
     Eigen::Tensor<double, 4> t2_3rd_bb_;
     Eigen::Tensor<double, 4> t2_3rd_ab_;
 
-    // ==========================================
-    // Z-Vector (Lambda 2) Amplitudes
-    // ==========================================
+    
+
+    
+
+    
+
     Eigen::Tensor<double, 4> L2_aa_;
     Eigen::Tensor<double, 4> L2_bb_;
     Eigen::Tensor<double, 4> L2_ab_;
 
-    // OPDM Matrices untuk relaksasi orbital
+    
+
     Eigen::MatrixXd G_oo_alpha_, G_vv_alpha_;
     Eigen::MatrixXd G_oo_beta_, G_vv_beta_;
     
@@ -124,11 +137,15 @@ private:
 
 
 
-    // ==========================================
-    // OMP3 Specific Methods
-    // ==========================================
+    
 
-    // Jika Anda memisahkan perhitungan residual ke fungsi modular seperti sebelumnya:
+    
+
+    
+
+
+    
+
     Eigen::Tensor<double, 4> compute_z_residual_aa(const Eigen::Tensor<double, 4>& L2, 
                                                    const Eigen::Tensor<double, 4>& T2, 
                                                    const Eigen::MatrixXd& packed_vvvv, 
@@ -147,11 +164,15 @@ private:
                                                    const Eigen::MatrixXd& V_ring_aa, 
                                                    const Eigen::MatrixXd& V_ring_bb);
 
-    // ========================================================================
-    // HELPER METHODS
-    // ========================================================================
     
-    // --> FUNGSI INI YANG SEBELUMNYA HILANG <--
+
+    
+
+    
+
+    
+    
+
     void build_fock_ao(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_b, 
                        Eigen::MatrixXd& F_a, Eigen::MatrixXd& F_b);
 
@@ -168,7 +189,8 @@ private:
     void build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_b,
                          Eigen::MatrixXd& F_a, Eigen::MatrixXd& F_b);
     
-    // Unused Stubs (Untuk kompatibilitas)
+    
+
     void compute_t2_amplitudes(); 
     double compute_mp2_energy_from_t2(); 
     void build_mp3_density_contributions_alpha();
@@ -182,6 +204,7 @@ private:
     bool converged(const Eigen::MatrixXd& w_alpha, const Eigen::MatrixXd& w_beta, double e_new, double e_old);
 };
 
-} // namespace mshqc
+} 
 
-#endif // MSHQC_OMP3_H
+
+#endif 

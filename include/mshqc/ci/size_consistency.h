@@ -1,44 +1,126 @@
-// Author: Muhamad Syahrul Hidayat
-// Date: 2025-11-16
-//
-// Size-consistency corrections for truncated CI methods (Davidson +Q, etc.)
-//
-// Theory References:
-// - Davidson, E. R. (1974). "Size consistency in the dilute helium gas electronic structure"
-//   J. Chem. Phys. 62, 400.
-//   DOI: 10.1063/1.430484
-//
-// - Langhoff, S. R. & Davidson, E. R. (1974). "Configuration interaction calculations 
-//   on the nitrogen molecule"
-//   Int. J. Quantum Chem. 8, 61-72.
-//   DOI: 10.1002/qua.560080106
-//
-// - Pople, J. A., Head-Gordon, M., & Raghavachari, K. (1987). 
-//   "Quadratic configuration interaction - A general technique for determining 
-//   electron correlation energies"
-//   J. Chem. Phys. 87, 5968-5975.
-//   DOI: 10.1063/1.453520
-//
-// Davidson +Q Correction:
-//   E(CISD+Q) = E(CISD) + ΔE_Q
-//   
-//   ΔE_Q = (1 - c₀²) * ΔE_corr
-//   
-//   where:
-//     c₀ = coefficient of HF determinant in CISD wavefunction
-//     ΔE_corr = E(CISD) - E(HF)
-//
-// This correction approximately accounts for higher-order excitations (triples, quadruples)
-// and improves size-consistency of CISD for weakly interacting systems.
-//
-// Pople's Quadratic CI (QCI):
-//   More sophisticated approach using second-order perturbation theory with CISD as reference.
-//   E(QCI) = E(CISD) + <0|H|T>/ΔE
-//   where |T> are triple excitations, ΔE are energy denominators
-//
-// ============================================================================
-// ORIGINAL IMPLEMENTATION - NO CODE COPIED FROM PYSCF/PSI4
-// ============================================================================
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 #ifndef MSHQC_CI_SIZE_CONSISTENCY_H
 #define MSHQC_CI_SIZE_CONSISTENCY_H
@@ -173,7 +255,13 @@ public:
     static std::string get_diagnostic_message(double c0);
 };
 
-} // namespace ci
-} // namespace mshqc
+} 
 
-#endif // MSHQC_CI_SIZE_CONSISTENCY_H
+
+} 
+
+
+
+#endif 
+
+

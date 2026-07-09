@@ -12,22 +12,28 @@
 namespace mshqc {
 
 struct Irrep {
-    int id;               // ID (0 hingga 7) untuk operasi bitwise XOR
-    std::string name;     // Contoh: "A1", "B1", "Ag", "B1u"
+    int id;               
+
+    std::string name;     
+
 };
 
 class CharacterTable {
 public:
     std::string group_name;
     std::vector<Irrep> irreps;
-    Eigen::MatrixXd characters; // Baris = Irrep, Kolom = Operasi (Isinya +1 atau -1)
+    Eigen::MatrixXd characters; 
 
-    // FUNGSI AJAIB ABELIAN DIRECT PRODUCT (Sangat Cepat O(1))
+
+    
+
     int direct_product(int irrep1, int irrep2) const {
-        return irrep1 ^ irrep2; // Bitwise XOR
+        return irrep1 ^ irrep2; 
+
     }
 };
-// --------------------------
+
+
 
 enum class SymOpType { 
     Identity, Rotation, Reflection, Inversion, ImproperRotation 
@@ -45,10 +51,12 @@ public:
 
     void detect();
     CharacterTable get_character_table() const;
-    // Getters
+    
+
     const std::vector<SymmetryOperation>& get_operations() const { return operations_; }
     
-    // [FIX] Tambahkan alias 'symbol()' agar cocok dengan cholesky_omp2.cc
+    
+
     std::string symbol() const { return symbol_; }
     std::string get_symbol() const { return symbol_; }
     
@@ -71,6 +79,7 @@ private:
     void find_abelian_subgroup();
 };
 
-} // namespace mshqc
+} 
 
-#endif // MSHQC_SYMMETRY_POINT_GROUP_H
+
+#endif 

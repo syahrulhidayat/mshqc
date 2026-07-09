@@ -26,8 +26,10 @@ namespace mshqc
      */
     struct Atom
     {
-        int atomic_number; // Nuclear charge Z
-        double x, y, z;    // Cartesian coords (Bohr)
+        int atomic_number; 
+
+        double x, y, z;    
+
 
         Atom(int Z, double x_pos, double y_pos, double z_pos)
             : atomic_number(Z), x(x_pos), y(y_pos), z(z_pos) {}
@@ -46,9 +48,12 @@ namespace mshqc
         Molecule(int charge, int multiplicity)
             : atoms_(), charge_(charge), multiplicity_(multiplicity) {}
 
-        // ========================================================================
-        // Atom management
-        // ========================================================================
+        
+
+        
+
+        
+
 
         /**
          * @brief Add atom to molecule
@@ -65,40 +70,55 @@ namespace mshqc
          */
         void add_atom(const Atom &atom);
 
-        /// Get number of atoms
+        
+
         size_t n_atoms() const { return atoms_.size(); }
 
-        /// Get atom by index
+        
+
         const Atom &atom(size_t i) const { return atoms_[i]; }
 
-        /// Get all atoms
+        
+
         const std::vector<Atom> &atoms() const { return atoms_; }
 
-        // ========================================================================
-        // Electronic properties
-        // ========================================================================
+        
 
-        /// Get total nuclear charge
+        
+
+        
+
+
+        
+
         int total_nuclear_charge() const;
 
-        /// Get number of electrons (nuclear charge - molecular charge)
+        
+
         int n_electrons() const { return total_nuclear_charge() - charge_; }
 
-        /// Get molecular charge
+        
+
         int charge() const { return charge_; }
 
-        /// Set molecular charge
+        
+
         void set_charge(int q) { charge_ = q; }
 
-        /// Get spin multiplicity (2S+1)
+        
+
         int multiplicity() const { return multiplicity_; }
 
-        /// Set spin multiplicity
+        
+
         void set_multiplicity(int m) { multiplicity_ = m; }
 
-        // ========================================================================
-        // Nuclear properties
-        // ========================================================================
+        
+
+        
+
+        
+
 
         /**
          * @brief Nuclear repulsion energy
@@ -139,9 +159,12 @@ namespace mshqc
          */
         void move_to_com();
 
-        // ========================================================================
-        // I/O operations
-        // ========================================================================
+        
+
+        
+
+        
+
 
         /**
          * @brief Read molecule from XYZ file format
@@ -166,16 +189,20 @@ namespace mshqc
         void print() const;
 
     private:
-        std::vector<Atom> atoms_; ///< List of atoms in molecule
-        int charge_;              ///< Total molecular charge
-        int multiplicity_;        ///< Spin multiplicity (2S+1)
+        std::vector<Atom> atoms_; 
+
+        int charge_;              
+
+        int multiplicity_;        
+
 
         /**
          * @brief Get atomic mass from atomic number
          *
          * Uses standard atomic masses from NIST.
          * Data source: NIST Atomic Weights and Isotopic Compositions
-         * https://www.nist.gov/pml/atomic-weights-and-isotopic-compositions
+         * https:
+
          *
          * @param Z Atomic number
          * @return Atomic mass in amu (atomic mass units)
@@ -190,16 +217,23 @@ namespace mshqc
         std::string get_element_symbol(int Z) const;
     };
 
-    // ============================================================================
-    // Constants
-    // ============================================================================
+    
 
-    /// Conversion factor: Angstrom to Bohr
+    
+
+    
+
+
+    
+
     constexpr double ANGSTROM_TO_BOHR = 1.88972612457;
 
-    /// Conversion factor: Bohr to Angstrom
+    
+
     constexpr double BOHR_TO_ANGSTROM = 0.529177210903;
 
-} // namespace mshqc
+} 
 
-#endif // MSHQC_MOLECULE_H
+
+#endif 
+

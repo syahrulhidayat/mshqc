@@ -12,7 +12,8 @@
 #define MSHQC_CANONICAL_SA_CASPT3_H
 
 #include "mshqc/mcscf/canonical_sa_caspt2.h"
-#include "mshqc/mcscf/cholesky_sa_caspt3.h" // Reuse Config & Result structs
+#include "mshqc/mcscf/cholesky_sa_caspt3.h" 
+
 #include <vector>
 #include <memory>
 #include <Eigen/Dense>
@@ -42,18 +43,23 @@ private:
     
     int n_inact_, n_act_, n_virt_, nbasis_;
 
-    // --- Helpers ---
-    // Transform full AO -> MO integrals (pq|rs)
+    
+
+    
+
     Eigen::Tensor<double, 4> transform_integrals_to_mo() const;
 
-    // The O(N^6) Contractor (Exact Integrals)
+    
+
     double compute_state_pt3(int state_idx,
                              const PT2Amplitudes& amps,
                              const Eigen::Tensor<double, 4>& mo_eri,
                              const Eigen::VectorXd& eps) const;
 };
 
-} // namespace mcscf
-} // namespace mshqc
+} 
+
+} 
+
 
 #endif

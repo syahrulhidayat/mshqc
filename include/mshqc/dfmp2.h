@@ -33,10 +33,14 @@ namespace mshqc {
  * DF-MP2 result
  */
 struct DFMP2Result {
-    double e_ss;       // Same-spin correlation
-    double e_os;       // Opposite-spin correlation  
-    double e_corr;     // Total correlation
-    double e_total;    // ROHF + correlation
+    double e_ss;       
+
+    double e_os;       
+
+    double e_corr;     
+
+    double e_total;    
+
 };
 
 /**
@@ -72,16 +76,25 @@ private:
     const BasisSet& aux_basis_;
     std::shared_ptr<IntegralEngine> integrals_;
     
-    // Dimensions
-    int nbf_;      // primary basis
-    int naux_;     // auxiliary basis
-    int nocc_;     // occupied orbitals
-    int nvir_;     // virtual orbitals
     
-    // DF tensors
-    Eigen::MatrixXd B_ia_;  // 3-center (ia|P) in MO basis
-    Eigen::MatrixXd J_;     // Metric (P|Q)
-    Eigen::MatrixXd J_inv_; // Inverse metric [J^-1/2]_PQ
+
+    int nbf_;      
+
+    int naux_;     
+
+    int nocc_;     
+
+    int nvir_;     
+
+    
+    
+
+    Eigen::MatrixXd B_ia_;  
+
+    Eigen::MatrixXd J_;     
+
+    Eigen::MatrixXd J_inv_; 
+
     
     /**
      * Build auxiliary metric and invert
@@ -108,6 +121,8 @@ private:
     double compute_os_energy();
 };
 
-} // namespace mshqc
+} 
 
-#endif // MSHQC_DFMP2_H
+
+#endif 
+

@@ -39,9 +39,15 @@ namespace mcscf {
  * REFERENCE: Andersson et al. (1990), Eq. 10-12
  */
 enum class ExcitationType {
-    SEMI_INTERNAL,    ///< SI: active → virtual
-    SEMI_EXTERNAL,    ///< SE: core → active
-    DOUBLY_EXTERNAL   ///< DE: core → virtual
+    SEMI_INTERNAL,    
+
+
+    SEMI_EXTERNAL,    
+
+
+    DOUBLY_EXTERNAL   
+
+
 };
 
 /**
@@ -88,11 +94,21 @@ public:
      * @return Struct with counts by excitation type
      */
     struct ExternalSpaceStats {
-        int n_semi_internal;    ///< Count of SI excitations
-        int n_semi_external;    ///< Count of SE excitations
-        int n_doubly_external;  ///< Count of DE excitations
-        int n_total;            ///< Total (after duplicate removal)
-        int n_duplicates;       ///< Number of duplicates removed
+        int n_semi_internal;    
+
+
+        int n_semi_external;    
+
+
+        int n_doubly_external;  
+
+
+        int n_total;            
+
+
+        int n_duplicates;       
+
+
     };
     
     ExternalSpaceStats get_statistics(
@@ -165,7 +181,13 @@ private:
     std::vector<int> get_unoccupied_active(const ci::Determinant& det) const;
 };
 
-} // namespace mcscf
-} // namespace mshqc
+} 
 
-#endif // MSHQC_MCSCF_EXTERNAL_SPACE_H
+
+} 
+
+
+
+#endif 
+
+

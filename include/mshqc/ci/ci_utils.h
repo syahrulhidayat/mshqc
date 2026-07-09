@@ -25,9 +25,15 @@
 namespace mshqc {
 namespace ci {
 
-// ============================================================================
-// 1. CI Integrals Structure (YANG HILANG SEBELUMNYA)
-// ============================================================================
+
+
+
+
+
+
+
+
+
 
 /**
  * @brief Container for integrals transformed to active space
@@ -35,9 +41,15 @@ namespace ci {
  */
 
 
-// ============================================================================
-// 2. Determinant Hashing Utilities
-// ============================================================================
+
+
+
+
+
+
+
+
+
 
 /**
  * @brief Build determinant-to-index hash map for O(1) lookup
@@ -65,17 +77,29 @@ inline int find_determinant_index(
     if (it != det_map.end()) {
         return it->second;
     }
-    return -1;  // Not found
+    return -1;  
+
+
 }
 
-// ============================================================================
-// 3. Tensor Utilities (ERI Mapping)
-// ============================================================================
+
+
+
+
+
+
+
+
+
 
 using Tensor4 = Eigen::Tensor<double, 4>;
 
-// Build same-spin antisymmetrized tensor from chemist ERI (pq|rs):
-// out(p,q,r,s) = (pr|qs) - (ps|qr)
+
+
+
+
+
+
 inline void build_same_spin_antisym_from_chemist(const Tensor4& ERI_pqrs,
                                                  Tensor4& out) {
     const int n = static_cast<int>(ERI_pqrs.dimension(0));
@@ -87,7 +111,9 @@ inline void build_same_spin_antisym_from_chemist(const Tensor4& ERI_pqrs,
             out(p,q,r,s) = ERI_pqrs(p,r,q,s) - ERI_pqrs(p,s,q,r);
 }
 
-// Build mixed-spin αβ tensor from chemist ERI (no antisym): out = (pq|rs)
+
+
+
 inline void build_alpha_beta_from_chemist(const Tensor4& ERI_pqrs,
                                           Tensor4& out) {
     const int n = static_cast<int>(ERI_pqrs.dimension(0));
@@ -99,7 +125,12 @@ inline void build_alpha_beta_from_chemist(const Tensor4& ERI_pqrs,
             out(p,q,r,s) = ERI_pqrs(p,q,r,s);
 }
 
-} // namespace ci
-} // namespace mshqc
+} 
 
-#endif // MSHQC_CI_UTILS_H
+
+} 
+
+
+
+#endif 
+

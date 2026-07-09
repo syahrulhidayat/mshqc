@@ -1,6 +1,9 @@
-// spherical_transformer.h
-// Author: Muhamad Syahrul Hidayat
-// Modul untuk transformasi Cartesian ke Spherical harmonics
+
+
+
+
+
+
 
 #ifndef MSHQC_SPHERICAL_TRANSFORMER_H
 #define MSHQC_SPHERICAL_TRANSFORMER_H
@@ -26,7 +29,8 @@ public:
     SphericalTransformer();
     ~SphericalTransformer() = default;
 
-    // Transformasi matriks 1-elektron (overlap, kinetic, nuclear)
+    
+
     Eigen::MatrixXd transform_1e_matrix(
         const Eigen::MatrixXd& cart_matrix,
         const std::vector<int>& angular_momenta,
@@ -34,7 +38,8 @@ public:
         const std::vector<int>& shell_offsets_sph
     ) const;
 
-    // Transformasi integral 2-elektron (ERI)
+    
+
     std::vector<double> transform_2e_integrals(
         const std::vector<double>& cart_eris,
         const std::vector<int>& angular_momenta,
@@ -42,7 +47,8 @@ public:
         int nbf_sph
     );
 
-    // Transformasi koefisien orbital
+    
+
     Eigen::MatrixXd transform_mo_coefficients(
         const Eigen::MatrixXd& cart_coeff,
         const std::vector<int>& angular_momenta,
@@ -50,19 +56,23 @@ public:
         const std::vector<int>& shell_offsets_sph
     ) const;
 
-    // Mendapatkan matriks transformasi untuk angular momentum tertentu
+    
+
     Eigen::MatrixXd get_transformation_matrix(int l)const;
 
-    // Mendapatkan ukuran basis
+    
+
     int get_cartesian_size(int l) const;
     int get_spherical_size(int l) const;
 
-    // Utilitas
+    
+
     bool is_spherical_basis(const std::vector<int>& angular_momenta) const;
     int count_spherical_functions(const std::vector<int>& angular_momenta) const;
     int count_cartesian_functions(const std::vector<int>& angular_momenta) const;
 
-    // Helper untuk transformasi 2-elektron
+    
+
     void transform_eri_shell_quartet(
         const double* cart_eri,
         double* sph_eri,
@@ -76,21 +86,30 @@ public:
 
 
 private:
-    // Matriks transformasi untuk setiap angular momentum
+    
+
     std::map<int, Eigen::MatrixXd> transformation_matrices_;
 
-    // Inisialisasi matriks transformasi
+    
+
     void initialize_transformation_matrices();
     
-    // Matriks transformasi spesifik
-    Eigen::MatrixXd get_s_transform();  // l=0
-    Eigen::MatrixXd get_p_transform();  // l=1
-    Eigen::MatrixXd get_d_transform();  // l=2
-    Eigen::MatrixXd get_f_transform();  // l=3
-    Eigen::MatrixXd get_g_transform();  // l=4
+    
+
+    Eigen::MatrixXd get_s_transform();  
+
+    Eigen::MatrixXd get_p_transform();  
+
+    Eigen::MatrixXd get_d_transform();  
+
+    Eigen::MatrixXd get_f_transform();  
+
+    Eigen::MatrixXd get_g_transform();  
+
 
     
-    // Ordering functions
+    
+
     int cartesian_index(int l, int i, int j, int k) const;
     int spherical_index(int l, int m) const;
 };
@@ -107,8 +126,10 @@ public:
         int cart_size;
         int sph_size;
     };
-// ==================== Helper Functions (Deklarasi) ====================
-// Fungsi helper untuk menghitung offset shell
+
+
+
+
 std::vector<int> compute_shell_offsets_cartesian(
     const std::vector<int>& angular_momenta
 );
@@ -130,8 +151,10 @@ private:
     int total_sph_;
     bool needs_transform_;
 };
-// ==================== Helper Functions (Deklarasi) ====================
-// Fungsi helper untuk menghitung offset shell
+
+
+
+
 std::vector<int> compute_shell_offsets_cartesian(
     const std::vector<int>& angular_momenta
 );
@@ -140,6 +163,7 @@ std::vector<int> compute_shell_offsets_spherical(
     const std::vector<int>& angular_momenta
 );    
 
-} // namespace mshqc
+} 
 
-#endif // MSHQC_SPHERICAL_TRANSFORMER_H
+
+#endif 

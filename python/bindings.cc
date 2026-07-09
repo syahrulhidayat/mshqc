@@ -6,9 +6,9 @@
 #include <nanobind/stl/array.h>
 #include <nanobind/eigen/dense.h>
 
-// ========================================================================
-// BINDING DEPENDENCIES FOR HPC AUTO-TUNING
-// ========================================================================
+
+
+
 #include <thread>
 #include <omp.h>
 #include <cstdlib>
@@ -27,7 +27,7 @@
     #include <unordered_set>
 #endif
 
-// Core headers
+
 #include "mshqc/molecule.h"
 #include "mshqc/basis.h"
 #include "mshqc/integrals.h"
@@ -39,17 +39,17 @@
 #include "mshqc/integrals/screening.h"
 #include "mshqc/core/fock_builder.h"
 
-// MP headers
+
 #include "mshqc/mp2.h"
 #include "mshqc/mp3.h"
 #include "mshqc/foundation/fcidump.h"
 #include "mshqc/foundation/wavefunction.h"
 
-// CI headers
+
 #include "mshqc/ci/determinant.h"
 #include "mshqc/ci/fci.h"
 
-// MCSCF headers
+
 #include "mshqc/mcscf/active_space.h"
 #include "mshqc/mcscf/sa_casscf.h"
 #include "mshqc/mcscf/cholesky_sa_casscf.h"
@@ -60,11 +60,11 @@
 #include "mshqc/mcscf/canonical_sa_casscf.h"
 #include "mshqc/mcscf/canonical_sa_caspt2.h"
 
-// Gradient headers
+
 #include "mshqc/gradient/gradient.h"
 #include "mshqc/gradient/optimizer.h"
 
-// Integral headers
+
 #include "mshqc/integrals/cholesky_eri.h"
 #include "mshqc/integrals/eri_transformer.h"
 
@@ -73,9 +73,9 @@ using namespace mshqc;
 using namespace mshqc::mcscf;
 using namespace mshqc::integrals;
 
-// ========================================================================
-// HPC AUTO-TUNING LOGIC (SILENT HARDWARE CONTROL)
-// ========================================================================
+
+
+
 namespace mshqc_auto_tune {
 
     void set_env_safe(const char* name, const char* value) {
@@ -122,28 +122,28 @@ namespace mshqc_auto_tune {
     }
 
     void initialize_hpc_environment() {
-        // 1. Deteksi Core
+        
         int physical_cores = get_physical_cores();
         
-        // 2. Kunci OpenMP secara internal C++
+        
         omp_set_dynamic(0);
         omp_set_num_threads(physical_cores);
         
-        // 3. Cekik semua library eksternal agar tidak bentrok dengan C++
+        
         set_env_safe("OPENBLAS_NUM_THREADS", "1");
         set_env_safe("MKL_NUM_THREADS", "1");
         set_env_safe("TBLIS_NUM_THREADS", "1");
         set_env_safe("VECLIB_MAXIMUM_THREADS", "1");
         set_env_safe("NUMEXPR_NUM_THREADS", "1");
-        set_env_safe("OMP_MAX_ACTIVE_LEVELS", "1"); // Anti paralel bersarang
+        set_env_safe("OMP_MAX_ACTIVE_LEVELS", "1"); 
     }
 }
 
-// ========================================================================
-// NANOBIND MODULE
-// ========================================================================
+
+
+
 NB_MODULE(_mshqc, m) {
-    // EKSEKUSI PERTAMA: Amankan hardware sebelum modul selesai di-load!
+    
     mshqc_auto_tune::initialize_hpc_environment();
 
     m.doc() = "MSHQC: Modern Quantum Chemistry Library";
@@ -164,9 +164,9 @@ NB_MODULE(_mshqc, m) {
                    std::to_string(t.dimension(3)) + ")>";
         });
 
-    // ========================================================================
-    // Core Classes: Molecule, Basis, Integrals
-    // ========================================================================
+    
+    
+    
     nb::class_<Atom>(m, "Atom")
         .def(nb::init<int, double, double, double>(),
              nb::arg("atomic_number"), nb::arg("x"), nb::arg("y"), nb::arg("z"))
@@ -256,9 +256,9 @@ NB_MODULE(_mshqc, m) {
         .def("is_decomposed", &integrals::CholeskyERI::is_decomposed)
         .def("decomposed", &integrals::CholeskyERI::decomposed);
 
-    // ========================================================================
-    // Symmetry Structures & Classes
-    // ========================================================================
+    
+    
+    
     nb::enum_<SymOpType>(m, "SymOpType")
         .value("Identity", SymOpType::Identity)
         .value("Rotation", SymOpType::Rotation)
@@ -295,9 +295,9 @@ NB_MODULE(_mshqc, m) {
         .def(nb::init<const BasisSet&, const PointGroup&, const PetiteList&>())
         .def("symmetrize", &BasisSymmetrizer::symmetrize);
 
-    // ========================================================================
-    // INTEGRAL SCREENING & DIIS BINDINGS
-    // ========================================================================
+    
+    
+    
     nb::class_<DIIS>(m, "DIIS")
         .def(nb::init<int>(), nb::arg("max_vectors") = 8)
         .def("clear", &DIIS::clear)
@@ -329,9 +329,9 @@ NB_MODULE(_mshqc, m) {
         .def("get_schwarz_val", &mshqc::integrals::Screening::get_schwarz_val)
         .def("max_schwarz", &mshqc::integrals::Screening::max_schwarz);
 
-    // ========================================================================
-    // SCF: Configuration, Results, and Solvers
-    // ========================================================================
+    
+    
+    
     nb::class_<SCFConfig>(m, "SCFConfig")
         .def(nb::init<>())
         .def_rw("scf_type", &SCFConfig::scf_type) 
@@ -371,9 +371,9 @@ NB_MODULE(_mshqc, m) {
           nb::call_guard<nb::gil_scoped_release>(),
           "Export SCF and Integral results to standard FCIDUMP format");
 
-    // ========================================================================
-    // SCF Solvers (UHF, RHF, ROHF)
-    // ========================================================================
+    
+    
+    
     nb::class_<UHF>(m, "UHF")
         .def("__init__", [](UHF *t, const Molecule& mol, const BasisSet& basis, 
                             IntegralEngine* integrals, PointGroup* pg, PetiteList* pl, 
@@ -431,9 +431,9 @@ NB_MODULE(_mshqc, m) {
         .def("compute", &ROHF::compute, nb::call_guard<nb::gil_scoped_release>())
         .def("energy", &ROHF::energy);
 
-    // ========================================================================
-    // MP2 Subsystem
-    // ========================================================================
+    
+    
+    
     nb::class_<MP2Config>(m, "MP2Config")
         .def(nb::init<>())
         .def_rw("scf_type", &MP2Config::scf_type)
@@ -486,9 +486,9 @@ NB_MODULE(_mshqc, m) {
              nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
              nb::arg("config"), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
         .def("compute", &OMP2::compute, nb::call_guard<nb::gil_scoped_release>(), "Run OMP2 optimization");
-    // ========================================================================
-    // MP3 Subsystem (RMP3, UMP3, OMP3)
-    // ========================================================================
+    
+    
+    
     nb::class_<MP3Result>(m, "MP3Result")
         .def(nb::init<>())
         .def_rw("e_hf", &MP3Result::e_hf)
@@ -517,9 +517,9 @@ NB_MODULE(_mshqc, m) {
              nb::arg("scf_guess"), nb::arg("mp2_guess"), nb::arg("config"), nb::arg("integrals"))
         .def("compute", &OMP3::compute, nb::call_guard<nb::gil_scoped_release>());
 
-    // ========================================================================
-    // CI Methods
-    // ========================================================================
+    
+    
+    
     nb::class_<ci::Determinant>(m, "Determinant")
         .def(nb::init<>())
         .def(nb::init<const std::vector<int>&, const std::vector<int>&>(),
@@ -543,9 +543,9 @@ NB_MODULE(_mshqc, m) {
              nb::arg("n_alpha"), nb::arg("n_beta"), nb::arg("n_roots") = 1)
         .def("compute", &ci::FCI::compute, nb::call_guard<nb::gil_scoped_release>());
 
-    // ========================================================================
-    // MCSCF Methods
-    // ========================================================================
+    
+    
+    
     nb::class_<mcscf::ActiveSpace>(m, "ActiveSpace")
         .def(nb::init<>())
         .def(nb::init<int, int, int, int>(),
@@ -652,9 +652,9 @@ NB_MODULE(_mshqc, m) {
              nb::arg("sacas_result"), nb::arg("integrals"), nb::arg("basis"), nb::arg("active_space"), nb::arg("config"))
         .def("compute", &CanonicalSACASPT2::compute, nb::call_guard<nb::gil_scoped_release>());
 
-    // ========================================================================
-    // Gradient and Optimization
-    // ========================================================================
+    
+    
+    
     nb::class_<gradient::GradientResult>(m, "GradientResult")
         .def(nb::init<>())
         .def_rw("energy", &gradient::GradientResult::energy)
@@ -677,9 +677,9 @@ NB_MODULE(_mshqc, m) {
         .def_rw("t2_semi1", &PT2Amplitudes::t2_semi1)
         .def_rw("t2_semi2", &PT2Amplitudes::t2_semi2);
 
-    // ========================================================================
-    // Utility Functions
-    // ========================================================================
+    
+    
+    
     m.def("bohr_to_angstrom", [](double bohr) { return bohr * 0.529177210903; }, "Convert Bohr to Angstrom");
     m.def("angstrom_to_bohr", [](double angstrom) { return angstrom / 0.529177210903; }, "Convert Angstrom to Bohr");
     m.def("hartree_to_ev", [](double hartree) { return hartree * 27.211386245988; }, "Convert Hartree to eV");

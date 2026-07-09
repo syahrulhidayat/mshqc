@@ -37,7 +37,8 @@ namespace mcscf {
  */
 class ActiveSpace {
 public:
-    // Constructors
+    
+
     ActiveSpace() : n_inact_(0), n_act_(0), n_virt_(0), n_elec_act_(0) {}
     
     /**
@@ -74,7 +75,8 @@ public:
     static ActiveSpace CAS_Frozen(int n_frozen_orb, int n_active_orb,
                                   int n_total_orb, int n_total_elec);
     
-    // Accessors
+    
+
     int n_inactive() const { return n_inact_; }
     int n_active() const { return n_act_; }
     int n_virtual() const { return n_virt_; }
@@ -110,19 +112,26 @@ public:
      */
     bool is_valid() const;
     
-    // Manual selection (for advanced users)
+    
+
     void set_active_indices(const std::vector<int>& indices, int n_elec);
     
 private:
-    int n_inact_;      // Inactive (core) orbitals
-    int n_act_;        // Active orbitals
-    int n_virt_;       // Virtual orbitals
-    int n_elec_act_;   // Electrons in active space
+    int n_inact_;      
+
+    int n_act_;        
+
+    int n_virt_;       
+
+    int n_elec_act_;   
+
     
     void validate() const;
 };
 
-} // namespace mcscf
-} // namespace mshqc
+} 
 
-#endif // MSHQC_MCSCF_ACTIVE_SPACE_H
+} 
+
+
+#endif 

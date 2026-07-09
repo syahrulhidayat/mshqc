@@ -13,13 +13,15 @@
 
 namespace mshqc {
 
-// --- [FIX] DEFINISI ENUM DITAMBAHKAN DI SINI ---
+
+
 enum class SadBasisType { 
     MINIMAL, 
     DOUBLE_ZETA, 
     UNKNOWN 
 };
-// -----------------------------------------------
+
+
 
 class SADGuess {
 public:
@@ -36,10 +38,12 @@ private:
      * @param btype Tipe basis set (enum).
      * @param n_basis_functions Jumlah fungsi basis pada atom ini (untuk validasi).
      */
-    // Sekarang compiler mengenali tipe SadBasisType
+    
+
     static Eigen::MatrixXd get_atomic_density(int Z, SadBasisType btype, int n_bf);
 };
 
-} // namespace mshqc
+} 
+
 
 #endif

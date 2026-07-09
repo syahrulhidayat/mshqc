@@ -1,18 +1,18 @@
-# Mengabaikan folder kompilasi dan hasil pengujian
+
 build/
 python test/
 hasil/
 .github/
 
-# Mengabaikan file sementara Python dan C++
+
 *.so
 *.o
 *.pyc
 __pycache__/
 .vscode/
 .txt
-# Mengabaikan data basis set (opsional, jika Anda tidak ingin mengunggah file teks data basis)
-# data/basis/venv/
+
+
 venv/
-# Mengabaikan wheel lokal
+
 *.whl

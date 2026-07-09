@@ -14,7 +14,8 @@
 #include <Eigen/Dense>
 #include <unsupported/Eigen/CXX11/Tensor>
 
-// Include HDF5 C++ API
+
+
 #include <H5Cpp.h>
 
 namespace mshqc {
@@ -30,8 +31,10 @@ public:
      */
     enum class Mode {
         READ_ONLY,
-        WRITE_TRUNCATE, // Buat file baru atau timpa jika sudah ada
-        READ_WRITE      // Buka file yang sudah ada untuk dimodifikasi
+        WRITE_TRUNCATE, 
+
+        READ_WRITE      
+
     };
 
     /**
@@ -100,9 +103,11 @@ private:
     std::string filename_;
     std::unique_ptr<H5::H5File> file_;
 
-    // Helper untuk mengonversi array ke format hsize_t bawaan HDF5
+    
+
     std::vector<hsize_t> to_hsize(const std::array<long, 4>& dims) const;
 };
 
-} // namespace utils
-} // namespace mshqc
+} 
+
+} 

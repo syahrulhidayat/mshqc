@@ -68,22 +68,42 @@ namespace ci {
  * Davidson convergence criteria
  */
 struct DavidsonOptions {
-    int max_iter = 50;           // Max iterations
-    int max_subspace = 20;       // Max subspace size
-    double conv_tol = 1e-8;      // Energy convergence
-    double residual_tol = 1e-6;  // Residual norm threshold
-    bool verbose = true;         // Print progress
+    int max_iter = 50;           
+
+
+    int max_subspace = 20;       
+
+
+    double conv_tol = 1e-8;      
+
+
+    double residual_tol = 1e-6;  
+
+
+    bool verbose = true;         
+
+
 };
 
 /**
  * Davidson solver result
  */
 struct DavidsonResult {
-    double energy;               // Converged eigenvalue
-    Eigen::VectorXd eigenvector; // Converged eigenvector
-    int iterations;              // # iterations
-    bool converged;              // Convergence flag
-    double residual_norm;        // Final residual norm
+    double energy;               
+
+
+    Eigen::VectorXd eigenvector; 
+
+
+    int iterations;              
+
+
+    bool converged;              
+
+
+    double residual_norm;        
+
+
 };
 
 /**
@@ -175,11 +195,15 @@ public:
 private:
     DavidsonOptions opts_;
     
-    // On-the-fly mode configuration
+    
+
+
     bool use_onthefly_ = false;
     int n_orb_ = 0;
     const std::unordered_map<Determinant, int>* det_map_ = nullptr;
-    bool owns_det_map_ = false;  // Track if we created det_map
+    bool owns_det_map_ = false;  
+
+
     
     /**
      * Expand subspace with new vector
@@ -261,7 +285,13 @@ std::vector<Eigen::VectorXd> generate_multiple_guesses(
     const CIIntegrals& ints,
     int nroots);
 
-} // namespace ci
-} // namespace mshqc
+} 
 
-#endif // MSHQC_CI_DAVIDSON_H
+
+} 
+
+
+
+#endif 
+
+

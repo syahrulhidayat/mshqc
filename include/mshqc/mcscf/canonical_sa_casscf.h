@@ -2,7 +2,8 @@
 #define MSHQC_MCSCF_CANONICAL_SA_CASSCF_H
 
 #include "mshqc/mcscf/active_space.h"
-#include "mshqc/mcscf/cholesky_sa_casscf.h" // Reuse Config & Result structs
+#include "mshqc/mcscf/cholesky_sa_casscf.h" 
+
 #include "mshqc/molecule.h"
 #include "mshqc/basis.h"
 #include "mshqc/integrals.h"
@@ -41,7 +42,8 @@ private:
     ActiveSpace active_space_;
     SACASConfig config_;
 
-    // Cache for AO Integrals
+    
+
     Eigen::MatrixXd schwarz_;
     double max_schwarz_ = 0.0;
     inline size_t idx2(size_t i, size_t j) const {
@@ -50,12 +52,16 @@ private:
 
     
 
-    // [OPTIMIZED] Stepwise Transformation (O(N^5)) AO -> Active MO
-    // Replaces the slow O(N^8) direct transformation
+    
+
+    
+
     Eigen::Tensor<double, 4> transform_integrals_stepwise(const Eigen::MatrixXd& C_mo);
 
-    // [OPTIMIZED] Build Generalized Fock Matrix using standard J/K engine
-    // Uses OpenMP and 8-fold Symmetry (O(N^4))
+    
+
+    
+
     Eigen::MatrixXd compute_generalized_fock_optimized(
         const Eigen::MatrixXd& P_avg_mo, 
         const Eigen::MatrixXd& C_mo
@@ -69,7 +75,9 @@ private:
     Eigen::MatrixXd apply_rotation(const Eigen::MatrixXd& C, const Eigen::VectorXd& kappa) const;
 };
 
-} // namespace mcscf
-} // namespace mshqc
+} 
+
+} 
+
 
 #endif

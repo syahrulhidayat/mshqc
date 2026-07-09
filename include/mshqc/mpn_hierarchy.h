@@ -39,125 +39,217 @@ namespace mshqc {
  * exact Møller-Plesset perturbation theory.
  */
 struct MPnHierarchyResult {
-    // ========================================================================
-    // ENERGY HIERARCHY (Exact from Perturbation Theory)
-    // ========================================================================
     
-    /// E^(0): Hartree-Fock reference energy
+
+    
+
+    
+
+    
+    
+
     double e0_hf;
     
-    /// E^(1): First-order energy = 0 (Brillouin's theorem)
-    double e1;  // Always 0 for canonical HF
     
-    /// E^(2): Second-order MP2 correlation energy (EXACT)
+
+    double e1;  
+
+    
+    
+
     double e2_mp2;
-    double e2_aa;     ///< α-α spin contribution
-    double e2_bb;     ///< β-β spin contribution  
-    double e2_ab;     ///< α-β spin contribution
+    double e2_aa;     
+
+    double e2_bb;     
+
+    double e2_ab;     
+
     
-    /// E^(3): Third-order MP3 correlation energy (EXACT)
+    
+
     double e3_mp3;
-    double e3_aa;     ///< α-α contribution
-    double e3_bb;     ///< β-β contribution
-    double e3_ab;     ///< α-β contribution
+    double e3_aa;     
+
+    double e3_bb;     
+
+    double e3_ab;     
+
     
-    /// E^(4): Fourth-order MP4 correlation energy (EXACT)
+    
+
     double e4_mp4;
-    double e4_s;      ///< Singles contribution
-    double e4_d;      ///< Doubles contribution
-    double e4_t;      ///< Triples contribution
-    double e4_q;      ///< Quadruples contribution
+    double e4_s;      
+
+    double e4_d;      
+
+    double e4_t;      
+
+    double e4_q;      
+
     
-    /// E^(5): Fifth-order MP5 correlation energy (EXACT)
+    
+
     double e5_mp5;
-    double e5_t;      ///< Triples from t^(2)
-    double e5_q;      ///< Quadruples mixed
-    double e5_p;      ///< Pentuples
+    double e5_t;      
+
+    double e5_q;      
+
+    double e5_p;      
+
     
-    // ========================================================================
-    // CUMULATIVE ENERGIES
-    // ========================================================================
     
-    /// Total energy at each order
-    double e_total_mp0;  ///< = E^(0)
-    double e_total_mp1;  ///< = E^(0) + E^(1) = E^(0)
-    double e_total_mp2;  ///< = E^(0) + E^(2)
-    double e_total_mp3;  ///< = E^(0) + E^(2) + E^(3)
-    double e_total_mp4;  ///< = E^(0) + E^(2) + E^(3) + E^(4)
-    double e_total_mp5;  ///< = E^(0) + E^(2) + ... + E^(5)
+
     
-    // ========================================================================
-    // WAVEFUNCTION HIERARCHY (Exact Amplitudes)
-    // ========================================================================
+
     
-    /// Ψ^(0): HF determinant (reference)
-    /// Represented implicitly by MO coefficients
+
     
-    /// Ψ^(1): First-order wavefunction
-    /// |Ψ^(1)⟩ = Σ t_ij^ab(1) |Ψ_ij^ab⟩
-    Eigen::Tensor<double, 4> t2_aa_1;  ///< t^(1) α-α doubles
-    Eigen::Tensor<double, 4> t2_bb_1;  ///< t^(1) β-β doubles
-    Eigen::Tensor<double, 4> t2_ab_1;  ///< t^(1) α-β doubles
     
-    /// Ψ^(2): Second-order wavefunction (NOT NEEDED FOR ENERGY)
-    /// Intermediate, not stored
+
+    double e_total_mp0;  
+
+    double e_total_mp1;  
+
+    double e_total_mp2;  
+
+    double e_total_mp3;  
+
+    double e_total_mp4;  
+
+    double e_total_mp5;  
+
     
-    /// Ψ^(3): Third-order wavefunction
-    /// |Ψ^(3)⟩ = Σ t_i^a(2) |Ψ_i^a⟩ + Σ t_ij^ab(2) |Ψ_ij^ab⟩
-    Eigen::Tensor<double, 2> t1_a_2;   ///< t^(2) α singles
-    Eigen::Tensor<double, 2> t1_b_2;   ///< t^(2) β singles
-    Eigen::Tensor<double, 4> t2_aa_2;  ///< t^(2) α-α doubles
-    Eigen::Tensor<double, 4> t2_bb_2;  ///< t^(2) β-β doubles
-    Eigen::Tensor<double, 4> t2_ab_2;  ///< t^(2) α-β doubles
     
-    /// Ψ^(4): Fourth-order wavefunction
-    /// |Ψ^(4)⟩ = Σ t_i^a(3) |Ψ_i^a⟩ + Σ t_ij^ab(3) |Ψ_ij^ab⟩ + Σ t_ijk^abc(2) |Ψ_ijk^abc⟩
-    Eigen::Tensor<double, 2> t1_a_3;   ///< t^(3) α singles
-    Eigen::Tensor<double, 2> t1_b_3;   ///< t^(3) β singles
-    Eigen::Tensor<double, 4> t2_aa_3;  ///< t^(3) α-α doubles
-    Eigen::Tensor<double, 4> t2_bb_3;  ///< t^(3) β-β doubles
-    Eigen::Tensor<double, 4> t2_ab_3;  ///< t^(3) α-β doubles
-    Eigen::Tensor<double, 6> t3_aaa_2; ///< t^(2) α-α-α triples
-    Eigen::Tensor<double, 6> t3_bbb_2; ///< t^(2) β-β-β triples
-    Eigen::Tensor<double, 6> t3_aab_2; ///< t^(2) α-α-β triples
-    Eigen::Tensor<double, 6> t3_abb_2; ///< t^(2) α-β-β triples
+
     
-    // ========================================================================
-    // ORBITAL INFORMATION
-    // ========================================================================
+
     
-    int n_occ_alpha;   ///< Number of occupied α orbitals
-    int n_occ_beta;    ///< Number of occupied β orbitals
-    int n_virt_alpha;  ///< Number of virtual α orbitals
-    int n_virt_beta;   ///< Number of virtual β orbitals
-    int n_basis;       ///< Total basis functions
+
     
-    // ========================================================================
-    // WAVEFUNCTION NORMS (Diagnostics)
-    // ========================================================================
     
-    double norm_t2_1;   ///< ||T2^(1)|| (first-order doubles)
-    double norm_t1_2;   ///< ||T1^(2)|| (second-order singles)
-    double norm_t2_2;   ///< ||T2^(2)|| (second-order doubles)
-    double norm_t3_2;   ///< ||T3^(2)|| (second-order triples)
-    double norm_t1_3;   ///< ||T1^(3)|| (third-order singles)
-    double norm_t2_3;   ///< ||T2^(3)|| (third-order doubles)
+
     
-    // ========================================================================
-    // METADATA
-    // ========================================================================
+
     
-    bool mp2_computed;  ///< E^(2) available?
-    bool mp3_computed;  ///< E^(3) available?
-    bool mp4_computed;  ///< E^(4) available?
-    bool mp5_computed;  ///< E^(5) available?
     
-    bool psi1_computed; ///< Ψ^(1) available?
-    bool psi3_computed; ///< Ψ^(3) available?
-    bool psi4_computed; ///< Ψ^(4) available?
+
     
-    std::string basis_name;  ///< Basis set used
-    std::string molecule;    ///< Molecular formula
+
+    Eigen::Tensor<double, 4> t2_aa_1;  
+
+    Eigen::Tensor<double, 4> t2_bb_1;  
+
+    Eigen::Tensor<double, 4> t2_ab_1;  
+
+    
+    
+
+    
+
+    
+    
+
+    
+
+    Eigen::Tensor<double, 2> t1_a_2;   
+
+    Eigen::Tensor<double, 2> t1_b_2;   
+
+    Eigen::Tensor<double, 4> t2_aa_2;  
+
+    Eigen::Tensor<double, 4> t2_bb_2;  
+
+    Eigen::Tensor<double, 4> t2_ab_2;  
+
+    
+    
+
+    
+
+    Eigen::Tensor<double, 2> t1_a_3;   
+
+    Eigen::Tensor<double, 2> t1_b_3;   
+
+    Eigen::Tensor<double, 4> t2_aa_3;  
+
+    Eigen::Tensor<double, 4> t2_bb_3;  
+
+    Eigen::Tensor<double, 4> t2_ab_3;  
+
+    Eigen::Tensor<double, 6> t3_aaa_2; 
+
+    Eigen::Tensor<double, 6> t3_bbb_2; 
+
+    Eigen::Tensor<double, 6> t3_aab_2; 
+
+    Eigen::Tensor<double, 6> t3_abb_2; 
+
+    
+    
+
+    
+
+    
+
+    
+    int n_occ_alpha;   
+
+    int n_occ_beta;    
+
+    int n_virt_alpha;  
+
+    int n_virt_beta;   
+
+    int n_basis;       
+
+    
+    
+
+    
+
+    
+
+    
+    double norm_t2_1;   
+
+    double norm_t1_2;   
+
+    double norm_t2_2;   
+
+    double norm_t3_2;   
+
+    double norm_t1_3;   
+
+    double norm_t2_3;   
+
+    
+    
+
+    
+
+    
+
+    
+    bool mp2_computed;  
+
+    bool mp3_computed;  
+
+    bool mp4_computed;  
+
+    bool mp5_computed;  
+
+    
+    bool psi1_computed; 
+
+    bool psi3_computed; 
+
+    bool psi4_computed; 
+
+    
+    std::string basis_name;  
+
+    std::string molecule;    
+
     
     /**
      * @brief Print complete energy hierarchy table
@@ -206,10 +298,14 @@ MPnHierarchyResult build_mpn_hierarchy(
     const struct SCFResult& uhf_result,
     const struct UMP2Result& ump2_result,
     const struct UMP3Result* ump3_result = nullptr,
-    const void* ump4_result = nullptr,  // UMP4Result when implemented
-    const void* ump5_result = nullptr   // UMP5Result when implemented
+    const void* ump4_result = nullptr,  
+
+    const void* ump5_result = nullptr   
+
 );
 
-} // namespace mshqc
+} 
 
-#endif // MSHQC_MPN_HIERARCHY_H
+
+#endif 
+

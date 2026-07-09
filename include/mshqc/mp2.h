@@ -24,8 +24,10 @@
 
 namespace mshqc {
 
-// ============================================================================
-// 1. STRUKTUR KONFIGURASI DAN HASIL UNIVERSAL
+
+
+
+
 struct MP2Config {
     std::string scf_type = "incore";     
     std::string eri_method = "exact";    
@@ -34,7 +36,8 @@ struct MP2Config {
     std::string aux_basis_name = "";
     double df_threshold = 1e-9;
     double cholesky_threshold = 1e-9;
-    std::string opt_method = "lbfgs"; // Pilihan: "lbfgs" atau "soscf"
+    std::string opt_method = "lbfgs"; 
+
 
     int max_iterations = 50;
     double energy_threshold = 1e-9;
@@ -52,7 +55,8 @@ struct MP2Result {
     double energy_mp2_os = 0.0;
     double energy_total = 0.0;
     
-    // Matriks Orbital hasil optimasi (Khusus OMP2)
+    
+
     Eigen::MatrixXd C_alpha;
     Eigen::MatrixXd C_beta;
     Eigen::VectorXd orbital_energies_alpha;
@@ -74,9 +78,12 @@ struct T2Amplitudes {
     Eigen::Tensor<double, 4> t2_ab;
 };
 
-// ============================================================================
-// 2. BASE CLASS MP2 (Arsitektur Induk Bersama)
-// ============================================================================
+
+
+
+
+
+
 class BaseMP2 {
 protected:
     const Molecule& mol_;
@@ -88,13 +95,15 @@ protected:
     std::shared_ptr<PointGroup> pg_;
     std::shared_ptr<PetiteList> pl_;
 
-    // Dimensi Universal hasil ekstraksi otomatis dari SCF
+    
+
     int nbf_;
     int nocc_a_, nocc_b_;
     int nvir_a_, nvir_b_;
     int n_frozen_ = 0; 
 
-    // Tensor 3-Pusat MO (DF / Cholesky) hasil transformasi bersama
+    
+
     Eigen::MatrixXd B_ia_P_alpha_;
     Eigen::MatrixXd B_ia_P_beta_;
 
@@ -108,22 +117,28 @@ public:
 
     virtual ~BaseMP2() = default;
 
-    // Polimorfisme murni yang wajib diwujudkan di berkas .cc
+    
+
     virtual MP2Result compute() = 0;
     virtual void transform_integrals() = 0;
 
-    // Mesin transformasi 3-pusat MO bersama (AO -> MO half-transformation)
+    
+
     void transform_3center_mo();
     void set_frozen_core(int n_frozen) { n_frozen_ = n_frozen; }
 };
 
-// ============================================================================
-// 3. RESTRICTED MP2 (RMP2)
-// ============================================================================
+
+
+
+
+
+
 namespace foundation {
 class RMP2 : public BaseMP2 {
 public:
-    using BaseMP2::BaseMP2; // Warisi konstruktor induk secara otomatis
+    using BaseMP2::BaseMP2; 
+
     
     MP2Result compute() override;
     void transform_integrals() override;
@@ -131,18 +146,23 @@ public:
     const Eigen::Tensor<double, 4>& get_t2_amplitudes() const { return t2_; }
     
 private:
-    Eigen::Tensor<double, 4> eri_mo_; // <ij|ab> Physicist Notation
+    Eigen::Tensor<double, 4> eri_mo_; 
+
     Eigen::Tensor<double, 4> t2_;    
     double e_corr_ = 0.0; 
     
     std::vector<int> irreps_mo_;
     void compute_amplitudes_and_energy();
 };
-} // namespace foundation
+} 
 
-// ============================================================================
-// 4. UNRESTRICTED MP2 (UMP2)
-// ============================================================================
+
+
+
+
+
+
+
 class UMP2 : public BaseMP2 {
 public:
     using BaseMP2::BaseMP2;
@@ -166,9 +186,12 @@ private:
     double compute_os();
 };
 
-// ============================================================================
-// 5. ORBITAL-OPTIMIZED MP2 (OMP2) - PERFORMA EKSAK & TBLIS
-// ============================================================================
+
+
+
+
+
+
 class OMP2 : public BaseMP2 {
 public:
     OMP2(const Molecule& mol, const BasisSet& basis, 
@@ -182,7 +205,8 @@ public:
     MP2Result compute() override;
     void transform_integrals() override;
     
-    // Interface Stubs bawaan tetap dijaga demi kompatibilitas
+    
+
     void reset_diis();
     Eigen::MatrixXd build_opdm();
     Eigen::MatrixXd extrapolate_diis(std::vector<Eigen::MatrixXd>&, std::vector<Eigen::MatrixXd>&);
@@ -191,7 +215,8 @@ private:
     std::unique_ptr<BasisSymmetrizer> symmetrizer_;
     int na_, nb_, va_, vb_;         
     bool exact_2rdm_;
-    // Seluruh variabel OMP2 asli Anda dipertahankan penuh
+    
+
     int max_iter_;
     double conv_thresh_;
     double grad_thresh_;
@@ -199,37 +224,43 @@ private:
     Eigen::MatrixXd S_;
     Eigen::MatrixXd H_core_;
 
-    // Variabel list sparse untuk Fast Fock Build
+    
+
     std::vector<double> J_val_, K_val_;
     std::vector<int> J_ind_, K_ind_;
     std::vector<size_t> J_ptr_, K_ptr_;
     std::vector<std::pair<int, int>> row_map_;
     Eigen::MatrixXd schwarz_;
     
-    // Blok penyimpanan Tensor MO
+    
+
     BlockedTensor4D g_aa_, g_bb_, g_ab_;
     BlockedTensor4D t2_aa_, t2_bb_, t2_ab_;
     
-    // Matriks densitas korelasi (Relaxed OPDM)
+    
+
     Eigen::MatrixXd G_oo_alpha_;
     Eigen::MatrixXd G_vv_alpha_;
     Eigen::MatrixXd G_oo_beta_; 
     Eigen::MatrixXd G_vv_beta_; 
 
-    // State Iterasi Makro/Mikro
+    
+
     Eigen::MatrixXd C_a_current_; 
     Eigen::MatrixXd C_b_current_;
     Eigen::MatrixXd F_gen_a_;
     Eigen::MatrixXd F_gen_b_;
 
-    // Komponen Solver SOSCF & L-BFGS
+    
+
     Eigen::VectorXd orbital_gradient_;
     Eigen::VectorXd hessian_diag_;
 
     double e_ss_ = 0.0;
     double e_os_ = 0.0;
 
-    // Alur fungsi internal OMP2 Anda
+    
+
     double execute_micro_iterations();
     void execute_macro_iterations();
     void execute_macro_iterations(DIIS& diis_a, DIIS& diis_b, int macro_iter);
@@ -246,6 +277,8 @@ private:
                          Eigen::MatrixXd& F_a, Eigen::MatrixXd& F_b);
 };
 
-} // namespace mshqc
+} 
 
-#endif // MSHQC_MP2_H
+
+#endif 
+

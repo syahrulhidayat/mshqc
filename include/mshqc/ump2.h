@@ -7,7 +7,8 @@
 #include <Eigen/Dense>
 #include <unsupported/Eigen/CXX11/Tensor>
 #include <vector>
-#include <memory> // [Wajib] Untuk std::shared_ptr
+#include <memory> 
+
 #ifdef I
 #undef I
 #endif
@@ -19,28 +20,38 @@
 
 namespace mshqc {
 
-// [Wajib] Forward declaration agar UMP2 mengenali tipe PointGroup
-// tanpa harus include full header di sini (menghemat waktu kompilasi)
+
+
+
+
 class PointGroup;
 
 /**
  * UMP2 result structure
  */
 struct UMP2Result {
-    double e_corr_ss_aa;  // Same-spin αα
-    double e_corr_ss_bb;  // Same-spin ββ
-    double e_corr_os;     // Opposite-spin αβ
-    double e_corr_total;  // Total correlation
-    double e_total;       // UHF + correlation
+    double e_corr_ss_aa;  
+
+    double e_corr_ss_bb;  
+
+    double e_corr_os;     
+
+    double e_corr_total;  
+
+    double e_total;       
+
 };
 
 /**
  * T2 amplitude tensors for wavefunction analysis
  */
 struct T2Amplitudes {
-    Eigen::Tensor<double, 4> t2_aa;  // αα amplitudes
-    Eigen::Tensor<double, 4> t2_bb;  // ββ amplitudes
-    Eigen::Tensor<double, 4> t2_ab;  // αβ amplitudes
+    Eigen::Tensor<double, 4> t2_aa;  
+
+    Eigen::Tensor<double, 4> t2_bb;  
+
+    Eigen::Tensor<double, 4> t2_ab;  
+
 };
 
 /**
@@ -58,7 +69,8 @@ public:
     UMP2(const SCFResult& uhf_result,
          const BasisSet& basis,
          std::shared_ptr<IntegralEngine> integrals,
-         std::shared_ptr<PointGroup> pg = nullptr); // [Update] Tambah parameter PG
+         std::shared_ptr<PointGroup> pg = nullptr); 
+
     
     /**
      * Compute UMP2 energy
@@ -75,26 +87,42 @@ private:
     const SCFResult& uhf_;
     const BasisSet& basis_;
     std::shared_ptr<IntegralEngine> integrals_;
-    std::shared_ptr<PointGroup> pg_; // [Update] Tambah member PG
-    
-    // Dimensions
-    int nbf_;       // # basis functions
-    int nocc_a_;    // # α occupied
-    int nocc_b_;    // # β occupied  
-    int nvir_a_;    // # α virtual
-    int nvir_b_;    // # β virtual
-    
-    // MO integrals (ijab notation: i,j=occ, a,b=virt)
-    Eigen::Tensor<double, 4> eri_aaaa_;  // <ij|ab>^αα (antisym)
-    Eigen::Tensor<double, 4> eri_bbbb_;  // <IJ|AB>^ββ (antisym)
-    Eigen::Tensor<double, 4> eri_aabb_;  // <iJ|aB>^αβ (no antisym)
-    
-    // T2 amplitudes (stored after compute())
-    Eigen::Tensor<double, 4> t2_aa_;  // t_ij^ab (αα)
-    Eigen::Tensor<double, 4> t2_bb_;  // t_IJ^AB (ββ)
-    Eigen::Tensor<double, 4> t2_ab_;  // t_iJ^aB (αβ)
+    std::shared_ptr<PointGroup> pg_; 
 
-    // Symmetry Irreps (Added for optimization)
+    
+    
+
+    int nbf_;       
+
+    int nocc_a_;    
+
+    int nocc_b_;    
+
+    int nvir_a_;    
+
+    int nvir_b_;    
+
+    
+    
+
+    Eigen::Tensor<double, 4> eri_aaaa_;  
+
+    Eigen::Tensor<double, 4> eri_bbbb_;  
+
+    Eigen::Tensor<double, 4> eri_aabb_;  
+
+    
+    
+
+    Eigen::Tensor<double, 4> t2_aa_;  
+
+    Eigen::Tensor<double, 4> t2_bb_;  
+
+    Eigen::Tensor<double, 4> t2_ab_;  
+
+
+    
+
     std::vector<int> irreps_occ_a_;
     std::vector<int> irreps_vir_a_;
     std::vector<int> irreps_occ_b_;
@@ -106,6 +134,7 @@ private:
     double compute_os();
 };
 
-} // namespace mshqc
+} 
 
-#endif // MSHQC_UMP2_H
+
+#endif 

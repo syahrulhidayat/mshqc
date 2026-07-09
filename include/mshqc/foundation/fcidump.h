@@ -28,4 +28,5 @@ void export_fcidump(const std::string& filename,
                     std::shared_ptr<IntegralEngine> integrals,
                     double tol = 1e-10);
 
-} // namespace mshqc
+} 
+

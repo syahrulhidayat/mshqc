@@ -85,7 +85,9 @@ public:
         int n_core,
         int n_active,
         int n_virtual,
-        int max_excit = 2  // 2=SD (CASPT2), 4=SDTQ (CASPT3+)
+        int max_excit = 2  
+
+
     );
     
     /**
@@ -210,16 +212,24 @@ public:
     );
 
 private:
-    // Helper: Check if orbital is in core region
+    
+
+
     static bool is_core(int orb, int n_core);
     
-    // Helper: Check if orbital is in active region
+    
+
+
     static bool is_active(int orb, int n_core, int n_active);
     
-    // Helper: Check if orbital is in virtual region
+    
+
+
     static bool is_virtual(int orb, int n_core, int n_active);
     
-    // Helper: Generate single excitation (i → a) from determinant
+    
+
+
     static Determinant single_excitation(
         const Determinant& det,
         int from_orb,
@@ -227,7 +237,9 @@ private:
         bool alpha
     );
     
-    // Helper: Generate double excitation (i,j → a,b) from determinant
+    
+
+
     static Determinant double_excitation(
         const Determinant& det,
         int from_i, int from_j,
@@ -240,23 +252,39 @@ private:
  * Usage Example (for Agent 3):
  * 
  * ```cpp
- * // After CASSCF convergence
+ * 
+
+
  * auto cas_dets = casscf_result.ci_determinants;
  * 
- * // Define orbital spaces
- * int n_core = 5;      // First 5 orbitals (frozen)
- * int n_active = 4;    // CAS(8,4) - 4 active orbitals
- * int n_virtual = 10;  // Virtual orbitals
  * 
- * // Generate external space for CASPT2
+
+
+ * int n_core = 5;      
+
+
+ * int n_active = 4;    
+
+
+ * int n_virtual = 10;  
+
+
+ * 
+ * 
+
+
  * auto external_dets = ExternalSpace::generate_external(
- *     cas_dets, n_core, n_active, n_virtual, 2  // max_excit=2 for SD
+ *     cas_dets, n_core, n_active, n_virtual, 2  
+
+
  * );
  * 
  * std::cout << "CAS refs: " << cas_dets.size() << std::endl;
  * std::cout << "External: " << external_dets.size() << std::endl;
  * 
- * // Compute CASPT2 energy
+ * 
+
+
  * double e2 = 0.0;
  * for (const auto& ext_det : external_dets) {
  *     double matrix_elem = caspt_matrix_element(cas_dets, ext_det, integrals);
@@ -268,7 +296,13 @@ private:
  * ```
  */
 
-} // namespace ci
-} // namespace mshqc
+} 
 
-#endif // MSHQC_CI_EXTERNAL_SPACE_H
+
+} 
+
+
+
+#endif 
+
+

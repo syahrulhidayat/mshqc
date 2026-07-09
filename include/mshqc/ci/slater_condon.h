@@ -70,19 +70,39 @@ namespace ci {
  * Stores one- and two-electron integrals in MO basis
  */
 /*struct CIIntegrals {
-    Eigen::MatrixXd h_alpha;  // One-electron α (i,a) - can be bare H or Fock
-    Eigen::MatrixXd h_beta;   // One-electron β - can be bare H or Fock
+    Eigen::MatrixXd h_alpha;  
+
+
+    Eigen::MatrixXd h_beta;   
+
+
     
-    // Two-electron integrals (antisymmetrized physicist notation)
-    // <ij||ab> = <ij|ab> - <ij|ba>
-    Eigen::Tensor<double, 4> eri_aaaa;  // α-α
-    Eigen::Tensor<double, 4> eri_bbbb;  // β-β
-    Eigen::Tensor<double, 4> eri_aabb;  // α-β (no antisym)
     
-    double e_nuc;  // Nuclear repulsion
+
+
     
-    // Flag: if true, h_alpha/h_beta are Fock matrices (include mean-field effects)
-    // If false (default), h_alpha/h_beta are bare Hamiltonian (T + V only)
+
+
+    Eigen::Tensor<double, 4> eri_aaaa;  
+
+
+    Eigen::Tensor<double, 4> eri_bbbb;  
+
+
+    Eigen::Tensor<double, 4> eri_aabb;  
+
+
+    
+    double e_nuc;  
+
+
+    
+    
+
+
+    
+
+
     bool use_fock = false;
 };*/
 
@@ -91,19 +111,35 @@ namespace ci {
  * [FIX] UNCOMMENTED THIS STRUCT - IT IS REQUIRED
  */
 struct CIIntegrals {
-    Eigen::MatrixXd h_alpha;  // One-electron α
-    Eigen::MatrixXd h_beta;   // One-electron β
+    Eigen::MatrixXd h_alpha;  
+
+
+    Eigen::MatrixXd h_beta;   
+
+
     
-    // Two-electron integrals <ij||ab>
-    Eigen::Tensor<double, 4> eri_aaaa;  // α-α
-    Eigen::Tensor<double, 4> eri_bbbb;  // β-β
-    Eigen::Tensor<double, 4> eri_aabb;  // α-β
     
-    double e_nuc = 0.0;  // Nuclear repulsion
+
+
+    Eigen::Tensor<double, 4> eri_aaaa;  
+
+
+    Eigen::Tensor<double, 4> eri_bbbb;  
+
+
+    Eigen::Tensor<double, 4> eri_aabb;  
+
+
+    
+    double e_nuc = 0.0;  
+
+
     bool use_fock = false;
 };
 
-// ... (Fungsi-fungsi lama Anda tetap ada) ...
+
+
+
 
 double hamiltonian_element(const Determinant& bra, 
                            const Determinant& ket,
@@ -120,7 +156,9 @@ double double_excitation_element(const Determinant& bra,
                                   bool spin1, bool spin2,
                                   const CIIntegrals& ints);
 
-// [FIX] Ini fungsi yang dicari oleh ci_utils.cc
+
+
+
 double evaluate_matrix_element(const Determinant& det_i, 
                                const Determinant& det_j, 
                                const CIIntegrals& integrals);
@@ -135,6 +173,11 @@ Eigen::VectorXd sigma_vector(const std::vector<Determinant>& dets,
                               const Eigen::VectorXd& c,
                               const CIIntegrals& ints);
 
-} // namespace ci
-} // namespace mshqc
-#endif // MSHQC_CI_SLATER_CONDON_H
+} 
+
+
+} 
+
+
+#endif 
+

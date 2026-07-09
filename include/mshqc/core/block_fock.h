@@ -42,6 +42,8 @@ public:
                                           const double* buffer);
 };
 
-} // namespace mshqc
+} 
+
+
 
 #endif

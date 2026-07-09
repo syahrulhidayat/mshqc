@@ -31,7 +31,9 @@ public:
     const std::vector<Index>& col_ind() const { return col_ind_; }
     const std::vector<Scalar>& values() const { return values_; }
 
-    // Set CSR data by moving from provided vectors
+    
+
+
     void set(Index n_rows, Index n_cols,
              std::vector<Index>&& rp,
              std::vector<Index>&& ci,
@@ -46,7 +48,9 @@ public:
             throw std::runtime_error("SparseCSR: col/val size mismatch");
     }
 
-    // y = A x
+    
+
+
     template <typename VecX, typename VecY>
     void matvec(const VecX& x, VecY& y) const {
         if (static_cast<Index>(x.size()) != n_cols_)
@@ -71,7 +75,13 @@ private:
     std::vector<Scalar> values_;
 };
 
-} // namespace ci
-} // namespace mshqc
+} 
 
-#endif // MSHQC_CI_SPARSE_CSR_H
+
+} 
+
+
+
+#endif 
+
+

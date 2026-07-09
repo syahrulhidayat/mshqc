@@ -25,13 +25,15 @@
 
 namespace mshqc {
 
-// Results Structure
+
+
 struct UMP3Result {
     double e_uhf = 0.0;
     double e_mp2 = 0.0;
     double e_mp3 = 0.0;
     
-    // Components
+    
+
     double e3_aa = 0.0; 
     double e3_bb = 0.0; 
     double e3_ab = 0.0; 
@@ -65,7 +67,8 @@ public:
          const UMP2Result& ump2,
          const BasisSet& basis, 
          std::shared_ptr<IntegralEngine> integrals,
-         std::shared_ptr<PointGroup> pg = nullptr); // Default nullptr jika C1
+         std::shared_ptr<PointGroup> pg = nullptr); 
+
 
     /**
      * @brief Compute UMP3 energy
@@ -74,12 +77,14 @@ public:
 
 private:
     UMP3Workspace workspace_;
-    // --- Setup & Transform ---
+    
+
     void transform_integrals();
     void compute_mp2_amplitudes(); 
     void compute_mp3_energy(UMP3Result& r);
 
-    // --- Energy Contraction Helpers (BLAS L3) ---
+    
+
     double calc_pp_aa();
     double calc_pp_bb();
     double calc_hh_aa();
@@ -89,43 +94,51 @@ private:
 
     double calc_pp_ab();
     double calc_hh_ab();
-    double calc_ph_ab(); // The optimized GEMM version
+    double calc_ph_ab(); 
 
-    // Helper stubs
+
+    
+
     double tensor_norm(const Eigen::Tensor<double, 4>& t);
     Eigen::Tensor<double, 4> manual_transform_chem(
         const Eigen::Tensor<double, 4>&, const Eigen::MatrixXd&, int, 
         const Eigen::MatrixXd&, int, const Eigen::MatrixXd&, int, 
         const Eigen::MatrixXd&, int, int);
 
-    // --- Data Members ---
+    
+
     SCFResult uhf_;
     UMP2Result ump2_;
     BasisSet basis_;
     std::shared_ptr<IntegralEngine> integrals_;
     
-    // [FIX] Member baru untuk optimasi simetri
+    
+
     std::shared_ptr<PointGroup> pg_;
     std::vector<int> irreps_occ_a_;
     std::vector<int> irreps_vir_a_;
     std::vector<int> irreps_occ_b_;
     std::vector<int> irreps_vir_b_;
 
-    // Dimensions
+    
+
     int nbf_;
     int nbf;
     int nocc_a_, nocc_b_; 
     int nvir_a_, nvir_b_;
 
-    // Integral Tensors
+    
+
     Eigen::Tensor<double, 4> g_oooo_aa_, g_oooo_bb_, g_oooo_ab_;
     Eigen::Tensor<double, 4> g_vvvv_aa_, g_vvvv_bb_, g_vvvv_ab_;
     Eigen::Tensor<double, 4> g_ovov_aa_, g_ovov_bb_, g_ovov_ab_;
     Eigen::Tensor<double, 4> g_oovv_ab_;
-    // T2 Amplitudes
+    
+
     Eigen::Tensor<double, 4> t2_aa_, t2_bb_, t2_ab_;
 };
 
-} // namespace mshqc
+} 
 
-#endif // MSHQC_UMP3_H
+
+#endif 

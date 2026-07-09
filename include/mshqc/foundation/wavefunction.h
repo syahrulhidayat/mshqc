@@ -46,17 +46,29 @@ namespace foundation {
  * where i,j = occupied, a,b = virtual, spin = αα, ββ, or αβ
  */
 struct Excitation {
-    int i, j;           // Occupied orbital indices
-    int a, b;           // Virtual orbital indices
-    double amplitude;   // t_ij^ab coefficient
-    std::string spin;   // "aa", "bb", or "ab"
+    int i, j;           
+
+
+    int a, b;           
+
+
+    double amplitude;   
+
+
+    std::string spin;   
+
+
     
-    // Sort by absolute amplitude (largest first)
+    
+
+
     bool operator<(const Excitation& other) const {
         return std::abs(amplitude) > std::abs(other.amplitude);
     }
     
-    // For printing
+    
+
+
     std::string to_string() const;
 };
 
@@ -170,15 +182,31 @@ public:
     int nvirt_beta() const { return nvirt_b_; }
     
 private:
-    // Orbital dimensions
-    int nocc_a_, nocc_b_;    // Occupied α, β
-    int nvirt_a_, nvirt_b_;  // Virtual α, β
     
-    // T2 amplitudes by order (0 = empty)
-    // Order 1: MP2, Order 2: MP3, Order 3: MP4
-    Eigen::Tensor<double, 4> t2_1_aa_, t2_1_bb_, t2_1_ab_;  // First-order
-    Eigen::Tensor<double, 4> t2_2_aa_, t2_2_bb_, t2_2_ab_;  // Second-order
-    Eigen::Tensor<double, 4> t2_3_aa_, t2_3_bb_, t2_3_ab_;  // Third-order
+
+
+    int nocc_a_, nocc_b_;    
+
+
+    int nvirt_a_, nvirt_b_;  
+
+
+    
+    
+
+
+    
+
+
+    Eigen::Tensor<double, 4> t2_1_aa_, t2_1_bb_, t2_1_ab_;  
+
+
+    Eigen::Tensor<double, 4> t2_2_aa_, t2_2_bb_, t2_2_ab_;  
+
+
+    Eigen::Tensor<double, 4> t2_3_aa_, t2_3_bb_, t2_3_ab_;  
+
+
     
     /**
      * @brief Extract excitations from a single T2 tensor
@@ -222,7 +250,13 @@ Eigen::MatrixXd compute_opdm(const Wavefunction& wfn);
 std::pair<Eigen::MatrixXd, Eigen::VectorXd> 
 compute_natural_orbitals(const Wavefunction& wfn);
 
-} // namespace foundation
-} // namespace mshqc
+} 
 
-#endif // MSHQC_FOUNDATION_WAVEFUNCTION_H
+
+} 
+
+
+
+#endif 
+
+

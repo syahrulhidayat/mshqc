@@ -65,12 +65,16 @@ struct SCFResult {
     Eigen::MatrixXd L_mat;
 };
 
-// ============================================================================
-// BASE SCF CLASS (Pusat Komando)
-// ============================================================================
+
+
+
+
+
+
 class BaseSCF {
 protected:
-    // --- Variabel Lingkungan & Objek Utama ---
+    
+
     Molecule mol_;
     BasisSet basis_;
     std::shared_ptr<IntegralEngine> integrals_;
@@ -79,7 +83,8 @@ protected:
     std::unique_ptr<BasisSymmetrizer> symmetrizer_;
     SCFConfig config_;
 
-    // --- Dimensi & Parameter Fisik ---
+    
+
     int nbasis_;
     int n_alpha_;
     int n_beta_;
@@ -87,7 +92,8 @@ protected:
     double energy_old_ = 0.0;
     int iter_scf_ = 0;
 
-    // --- Matriks Inti ---
+    
+
     Eigen::MatrixXd S_, H_, X_, schwarz_;
     Eigen::MatrixXd C_alpha_, C_beta_;
     Eigen::MatrixXd P_alpha_, P_beta_;
@@ -96,7 +102,8 @@ protected:
     Eigen::VectorXd occ_numbers_alpha_, occ_numbers_beta_;
     std::vector<int> salc_irreps_;
 
-    // --- Buffer In-Core Integrals ---
+    
+
     std::vector<int> shell_starts_, shell_sizes_;
     std::vector<std::pair<int, int>> row_map_;
     std::vector<double> J_val_, K_val_;
@@ -104,17 +111,22 @@ protected:
     std::vector<size_t> J_ptr_, K_ptr_;
     Eigen::MatrixXd schwarz_basis_;
 
-    // --- Mesin Cholesky ---
+    
+
     std::unique_ptr<integrals::CholeskyERI> internal_cholesky_;
     std::vector<Eigen::MatrixXd> L_vecs_; 
     Eigen::MatrixXd L_mat_;
 
-    // --- Mesin Direct ---
+    
+
     std::unique_ptr<FockBuilder> fock_engine_;
 
-    // ==========================================
-    // FUNGSI UMUM (Diimplementasikan di base_scf.cc)
-    // ==========================================
+    
+
+    
+
+    
+
     void init_integrals();
     void init_integrals_incore();
     void init_integrals_cholesky();
@@ -123,9 +135,12 @@ protected:
     void solve_fock(const Eigen::MatrixXd& F, Eigen::MatrixXd& C, Eigen::VectorXd& eps);
     void print_final(const SCFResult& r);
 
-    // ==========================================
-    // FUNGSI VIRTUAL (Wajib diisi spesifik oleh RHF/UHF/ROHF)
-    // ==========================================
+    
+
+    
+
+    
+
     virtual void initial_guess() = 0;
     virtual void update_densities() = 0;
     virtual void build_fock_matrix() = 0; 
@@ -141,19 +156,24 @@ public:
             
     virtual ~BaseSCF() = default;
 
-    // THE ONE LOOP TO RULE THEM ALL
+    
+
     virtual SCFResult compute(); 
 
-    // Getter Umum
+    
+
     double energy() const { return energy_ + mol_.nuclear_repulsion_energy(); }
     const Molecule& molecule() const { return mol_; }
     const BasisSet& basis() const { return basis_; }
     std::shared_ptr<PetiteList> get_petite_list() const { return pl_; }
 };
 
-// ============================================================================
-// RHF: Restricted Hartree-Fock 
-// ============================================================================
+
+
+
+
+
+
 class RHF : public BaseSCF {
 public:
     RHF(const Molecule& mol, const BasisSet& basis, 
@@ -176,13 +196,17 @@ protected:
 private:
     Eigen::MatrixXd G_J_accum_;
     Eigen::MatrixXd G_accum_;
-    Eigen::MatrixXd P_old_; // Untuk density screening Cholesky
+    Eigen::MatrixXd P_old_; 
+
     
 };
 
-// ============================================================================
-// ROHF: Restricted Open-Shell Hartree-Fock
-// ============================================================================
+
+
+
+
+
+
 class ROHF : public BaseSCF {
 public:
     ROHF(const Molecule& mol, const BasisSet& basis,
@@ -197,7 +221,8 @@ public:
          : ROHF(mol, basis, integrals, nullptr, nullptr, n_alpha, n_beta, config) {}
 
     SCFResult compute() override; 
-    SCFResult run() { return compute(); } // Alias untuk kompatibilitas ke luar
+    SCFResult run() { return compute(); } 
+
 
 protected:
     void initial_guess() override;
@@ -213,9 +238,12 @@ private:
     Eigen::MatrixXd C_;
 };
 
-// ============================================================================
-// UHF: Unrestricted Hartree-Fock
-// ============================================================================
+
+
+
+
+
+
 class UHF : public BaseSCF {
 public:
     UHF(const Molecule& mol, const BasisSet& basis,
@@ -244,6 +272,7 @@ private:
     double compute_s2(const Eigen::MatrixXd& Ca, const Eigen::MatrixXd& Cb, const Eigen::MatrixXd& S);
 };
 
-} // namespace mshqc
+} 
 
-#endif // MSHQC_SCF_H
+
+#endif 

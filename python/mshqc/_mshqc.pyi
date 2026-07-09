@@ -1,10 +1,14 @@
-# File: /home/syahrul/mshqc/python/mshqc/_mshqc.pyi
+
+
 import numpy as np
 from typing import List, Optional, Tuple, overload, Any, Union
 
-# ==========================================
-# Core Classes
-# ==========================================
+
+
+
+
+
+
 
 class ERITensor:
     def size(self) -> int: ...
@@ -19,13 +23,15 @@ class Atom:
     def position(self) -> List[float]: ...
 
 class Molecule:
-    # Perbaikan Overload di sini
+    
+
     @overload
     def __init__(self) -> None: ...
     @overload
     def __init__(self, charge: int, multiplicity: int) -> None: ...
     
-    def __init__(self, *args, **kwargs) -> None: ... # Catch-all implementation for type checker
+    def __init__(self, *args, **kwargs) -> None: ... 
+
     
     @overload
     def add_atom(self, Z: int, x: float, y: float, z: float) -> None: ...
@@ -104,9 +110,12 @@ class CholeskyERI:
     def n_vectors(self) -> int: ...
     def threshold(self) -> float: ...
 
-# ==========================================
-# SCF / UHF
-# ==========================================
+
+
+
+
+
+
 
 class CholeskyUHFConfig:
     cholesky_threshold: float
@@ -132,7 +141,8 @@ class SCFConfig:
     def __init__(self) -> None: ...
     def set_convergence(self, energy: float, density: float) -> None: ...
 
-# Update SCFResult agar lengkap
+
+
 class SCFResult:
     energy_electronic: float
     energy_nuclear: float
@@ -171,7 +181,8 @@ class ROHF:
     def run(self) -> SCFResult: ...
 
 
-# File: /home/syahrul/mshqc/python/mshqc/_mshqc.pyi
+
+
 
 class CholeskyROHFConfig(SCFConfig):
     cholesky_threshold: float
@@ -179,13 +190,15 @@ class CholeskyROHFConfig(SCFConfig):
     def __init__(self) -> None: ...
 
 class CholeskyROHF:
-    # Constructor 1: Standard
+    
+
     @overload
     def __init__(self, molecule: Molecule, basis: BasisSet, 
                  integrals: IntegralEngine, n_alpha: int, n_beta: int,
                  config: CholeskyROHFConfig = ...) -> None: ...
     
-    # Constructor 2: Reuse Vectors
+    
+
     @overload
     def __init__(self, molecule: Molecule, basis: BasisSet, 
                  integrals: IntegralEngine, n_alpha: int, n_beta: int,
@@ -200,13 +213,15 @@ class CholeskyRHFConfig(SCFConfig):
     def __init__(self) -> None: ...
 
 class CholeskyRHF:
-    # Constructor 1: Standard
+    
+
     @overload
     def __init__(self, molecule: Molecule, basis: BasisSet, 
                  integrals: IntegralEngine,
                  config: CholeskyRHFConfig = ...) -> None: ...
     
-    # Constructor 2: Reuse Vectors
+    
+
     @overload
     def __init__(self, molecule: Molecule, basis: BasisSet, 
                  integrals: IntegralEngine,
@@ -227,13 +242,15 @@ class CholeskyOMP2Config:
     def __init__(self) -> None: ...
 
 class CholeskyOMP2:
-    # Constructor 1: Standard
+    
+
     @overload
     def __init__(self, molecule: Molecule, basis: BasisSet, 
                  integrals: IntegralEngine, scf_guess: SCFResult,
                  config: CholeskyOMP2Config = ...) -> None: ...
     
-    # Constructor 2: Reuse Vectors
+    
+
     @overload
     def __init__(self, molecule: Molecule, basis: BasisSet, 
                  integrals: IntegralEngine, scf_guess: SCFResult,
@@ -241,7 +258,8 @@ class CholeskyOMP2:
                  existing_cholesky: CholeskyERI) -> None: ...
 
     def compute(self) -> OMP2Result: ...
-# ... (Di bagian bawah file, dekat definisi OMP/MP lainnya) ...
+
+
 
 class CholeskyOMP3Config:
     max_iterations: int
@@ -272,14 +290,16 @@ class CholeskyOMP3:
                  cholesky_vectors: CholeskyERI) -> None: ...
     def compute(self) -> CholeskyOMP3Result: ...
 
-# ... (kode sebelumnya: CholeskyOMP3, dll) ...
+
+
 
 class CholeskyRMP2Config:
     cholesky_threshold: float
     print_level: int
     def __init__(self) -> None: ...
 
-# [PERBAIKAN 1]: Definisi Class CholeskyRMP2Result DITAMBAHKAN DI SINI
+
+
 class CholeskyRMP2Result:
     e_rhf: float
     e_corr: float
@@ -288,13 +308,15 @@ class CholeskyRMP2Result:
     def __init__(self) -> None: ...
 
 class CholeskyRMP2:
-    # Constructor 1: Standard
+    
+
     @overload
     def __init__(self, molecule: Molecule, basis: BasisSet, 
                  integrals: IntegralEngine, rhf_result: SCFResult,
                  config: CholeskyRMP2Config = ...) -> None: ...
     
-    # Constructor 2: Reuse Vectors
+    
+
     @overload
     def __init__(self, molecule: Molecule, basis: BasisSet, 
                  integrals: IntegralEngine, rhf_result: SCFResult,
@@ -303,26 +325,34 @@ class CholeskyRMP2:
     
     def __init__(self, *args, **kwargs) -> None: ...
 
-    # [PERBAIKAN 2]: Hapus duplikasi compute. Gunakan satu saja yang benar.
-    # def compute(self) -> RMP2Result: ...  <-- HAPUS INI (Salah Tipe)
+    
+
+    
+
     def compute(self) -> CholeskyRMP2Result: ... 
 
-# [PERBAIKAN 3]: Pastikan CholeskyRMP3 menggunakan CholeskyRMP2Result yang sudah didefinisikan di atas
+
+
 class CholeskyRMP3:
     def __init__(self, rhf_result: SCFResult, 
                  crmp2_result: CholeskyRMP2Result, 
                  basis: BasisSet) -> None: ...
     def compute(self) -> RMP3Result: ...
 
-# ... (sisa kode MCSCF dll) ...
-# ==========================================
-# MCSCF / CASSCF
-# ==========================================
+
+
+
+
+
+
+
+
 
 class ActiveSpace:
     def __init__(self) -> None: ...
     
-    # Fungsi ini yang kamu panggil di python, tapi belum ada di binding C++ (lihat langkah 2)
+    
+
     @staticmethod
     def CAS_Frozen(n_frozen: int, n_active_orb: int, n_basis: int, n_electrons: int) -> ActiveSpace: ...
     
@@ -390,7 +420,8 @@ class CholeskySACASSCF:
     def compute(self, initial_guess: np.ndarray) -> SACASResult: ...
 
 
-# ...
+
+
 
 class CanonicalSACASSCF:
     def __init__(self, mol: Molecule, basis: BasisSet, integrals: IntegralEngine, 
@@ -430,10 +461,12 @@ class CASResult:
 class CASSCF:
     def __init__(self, mol: Molecule, basis: BasisSet, integrals: IntegralEngine, active_space: ActiveSpace) -> None: ...
     
-    # Update metode compute untuk menerima SCFResult atau numpy array
+    
+
     def compute(self, initial_guess: Union[SCFResult, np.ndarray]) -> CASResult: ...
     
-    # Tambahkan metode setter ini
+    
+
     def set_max_iterations(self, n: int) -> None: ...
     def set_energy_threshold(self, t: float) -> None: ...
     def set_gradient_threshold(self, t: float) -> None: ...
@@ -458,9 +491,12 @@ class CholeskyCASSCF:
     def __init__(self, mol: Molecule, basis: BasisSet, integrals: IntegralEngine, active_space: ActiveSpace, vectors: List[np.ndarray]) -> None: ...
     def compute(self) -> CASResult: ...
 
-# ==========================================
-# PT2 / PT3
-# ==========================================
+
+
+
+
+
+
 
 class CASPT2Config:
     shift: float
@@ -473,12 +509,14 @@ class CASPT2Result:
     def __init__(self) -> None: ...
     e_total: List[float]
 
-# [UPDATE DALAM class CholeskySACASPT2]
+
+
 
 class CholeskySACASPT2:
     def __init__(self, result: SACASResult, L_vectors: List[np.ndarray], n_basis: int, active_space: ActiveSpace, config: CASPT2Config) -> None: ...
     
-    # Hapus argumen opsional jika ada, jadikan tanpa argumen
+    
+
     def compute(self) -> CASPT2Result: ...
 
 class CASPT3Config:
@@ -498,7 +536,8 @@ class CholeskySACASPT3:
     def __init__(self, sacas_res: SACASResult, L_vectors: List[np.ndarray], 
                  n_basis: int, active_space: ActiveSpace, config: CASPT3Config) -> None: ...
     def compute(self) -> CASPT3Result: ...
-# ... (Di bagian PT2 / PT3) ...
+
+
 
 class CanonicalSACASPT3:
     def __init__(self, sacas_result: SACASResult, 
@@ -508,7 +547,8 @@ class CanonicalSACASPT3:
                  config: CASPT3Config) -> None: ...
     
     def compute(self) -> CASPT3Result: ...
-# --- MP2 / MP3 ---
+
+
 class OMP2:
     def __init__(self, mol: Molecule, basis: BasisSet, integrals: IntegralEngine, scf_guess: SCFResult) -> None: ...
     def compute(self) -> OMP2Result: ...
@@ -568,7 +608,8 @@ class UMP3:
     def __init__(self, uhf_result: SCFResult, ump2_result: UMP2Result, basis: BasisSet, integrals: IntegralEngine) -> None: ...
     def compute(self) -> UMP3Result: ...
 
-# --- Cholesky MP2 / MP3 ---
+
+
 
 class CholeskyUMP2Config:
     cholesky_threshold: float
@@ -624,7 +665,8 @@ class CholeskyUMP3:
     def initialize_cholesky(self) -> None: ...
     def transform_cholesky_vectors(self) -> None: ...
     
-# --- Missing RMP Classes from bindings.cc  ---
+
+
 
 class RMP2Result:
     e_corr: float
@@ -646,7 +688,8 @@ class RMP3:
     def __init__(self, rhf_result: SCFResult, rmp2_result: RMP2Result, basis: BasisSet, integrals: IntegralEngine) -> None: ...
     def compute(self) -> RMP3Result: ...
 
-    # --- Gradient & Optimization ---
+    
+
 
 class GradientResult:
     energy: float
@@ -663,7 +706,8 @@ class OptResult:
     final_energy: float
     def __init__(self) -> None: ...
 
-# --- Utility Functions ---
+
+
 
 def bohr_to_angstrom(bohr: float) -> float: ...
 def angstrom_to_bohr(angstrom: float) -> float: ...

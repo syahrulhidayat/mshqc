@@ -34,11 +34,21 @@ namespace ci {
  * Excitation descriptor for generated determinants
  */
 struct GeneratedExcitation {
-    Determinant det;      // Excited determinant
-    int exc_level;        // 1 = single, 2 = double
-    int i, j;             // Occupied orbitals (j=-1 for singles)
-    int a, b;             // Virtual orbitals (b=-1 for singles)
-    bool spin_i, spin_j;  // Spins (false = alpha, true = beta)
+    Determinant det;      
+
+
+    int exc_level;        
+
+
+    int i, j;             
+
+
+    int a, b;             
+
+
+    bool spin_i, spin_j;  
+
+
 };
 
 /**
@@ -55,7 +65,9 @@ struct GeneratedExcitation {
  * 
  * Example usage:
  *   generate_singles(det, n_orb, [](const GeneratedExcitation& exc) {
- *       // Process excitation
+ *       
+
+
  *   });
  */
 void generate_singles(const Determinant& det, 
@@ -106,7 +118,13 @@ void generate_connected_excitations(const Determinant& det,
  */
 int count_connected_excitations(const Determinant& det, int n_orb);
 
-} // namespace ci
-} // namespace mshqc
+} 
 
-#endif // MSHQC_CI_EXCITATION_GENERATOR_H
+
+} 
+
+
+
+#endif 
+
+

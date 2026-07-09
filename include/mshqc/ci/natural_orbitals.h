@@ -11,11 +11,15 @@
  * They provide the most compact representation of a many-electron wavefunction.
  * 
  * USAGE:
- *   // After CI computation
+ *   
+
+
  *   NaturalOrbitalAnalysis no_analysis(ci_result.determinants, ci_result.coefficients);
  *   auto no_result = no_analysis.compute(n_orbitals);
  *   
- *   // Print occupations
+ *   
+
+
  *   no_result.print_occupations();
  * 
  * KEY CONCEPTS:
@@ -46,23 +50,45 @@ namespace ci {
  * Natural orbital result structure
  */
 struct NaturalOrbitalResult {
-    // Eigenvalues of 1-RDM (natural occupations, 0 ≤ n_i ≤ 2)
+    
+
+
     Eigen::VectorXd occupations_alpha;
     Eigen::VectorXd occupations_beta;
     
-    // Eigenvectors of 1-RDM (natural orbitals in MO basis)
-    Eigen::MatrixXd orbitals_alpha;  // (n_orb × n_orb)
+    
+
+
+    Eigen::MatrixXd orbitals_alpha;  
+
+
     Eigen::MatrixXd orbitals_beta;
     
-    // Diagnostics
-    double total_occupation_alpha;   // Should = N_alpha
-    double total_occupation_beta;    // Should = N_beta
-    double correlation_measure;      // Deviation from HF (integer occupations)
-    int n_strongly_occupied;         // Occupations > 1.95
-    int n_weakly_occupied;           // Occupations < 0.05
-    int n_fractional;                // 0.05 < occ < 1.95 (correlation)
     
-    // Print summary
+
+
+    double total_occupation_alpha;   
+
+
+    double total_occupation_beta;    
+
+
+    double correlation_measure;      
+
+
+    int n_strongly_occupied;         
+
+
+    int n_weakly_occupied;           
+
+
+    int n_fractional;                
+
+
+    
+    
+
+
     void print_summary() const;
     void print_occupations(int n_print = 10) const;
 };
@@ -155,7 +181,13 @@ private:
     double compute_correlation_measure(const Eigen::VectorXd& occupations);
 };
 
-} // namespace ci
-} // namespace mshqc
+} 
 
-#endif // MSHQC_CI_NATURAL_ORBITALS_H
+
+} 
+
+
+
+#endif 
+
+

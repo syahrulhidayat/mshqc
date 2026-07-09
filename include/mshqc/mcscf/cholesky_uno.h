@@ -20,7 +20,8 @@
 #include "mshqc/scf.h"
 #include "mshqc/integrals.h"
 #include "mshqc/molecule.h"
-#include "mshqc/mcscf/uno_result.h" // [NEW] Include shared struct
+#include "mshqc/mcscf/uno_result.h" 
+
 
 #include <vector>
 #include <memory>
@@ -32,7 +33,8 @@
 namespace mshqc {
 namespace mcscf {
 
-// [DELETED] struct UNOResult definition removed from here
+
+
 
 /**
  * @brief Cholesky-UNO Generator
@@ -85,7 +87,9 @@ private:
     void analyze_active_space(double threshold);
 };
 
-} // namespace mcscf
-} // namespace mshqc
+} 
 
-#endif // MSHQC_MCSSC_CHOLESKY_UNO_H
+} 
+
+
+#endif 
