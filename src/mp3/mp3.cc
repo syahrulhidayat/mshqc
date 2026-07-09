@@ -19,18 +19,18 @@ using tblis::len_type;
 using tblis::stride_type;
 using tblis::varray_view;
 
-// ============================================================================
-// BASE MP3
-// ============================================================================
+
+
+
 BaseMP3::BaseMP3(const SCFResult& scf, const MP2Result& mp2, const MP2Config& config, std::shared_ptr<IntegralEngine> ints)
     : scf_(scf), mp2_(mp2), config_(config), ints_(ints) 
 {
     nbf_ = scf_.C_alpha.rows();
     no_a_ = scf_.n_occ_alpha; no_b_ = scf_.n_occ_beta;
     nv_a_ = nbf_ - no_a_;     nv_b_ = nbf_ - no_b_;
-    n_aux_ = scf_.L_mat.cols(); // Mendeteksi apakah kita pakai HDF5
+    n_aux_ = scf_.L_mat.cols(); 
     
-    // Copy amplitudes dari MP2
+    
     if (mp2_.t2_aa.size() > 0) t2_aa_ = mp2_.t2_aa;
     if (mp2_.t2_bb.size() > 0) t2_bb_ = mp2_.t2_bb;
     if (mp2_.t2_ab.size() > 0) t2_ab_ = mp2_.t2_ab;
@@ -42,14 +42,14 @@ double BaseMP3::tensor_dot(const Eigen::Tensor<double, 4>& A, const Eigen::Tenso
     return vecA.dot(vecB);
 }
 
-// Macro Pembungkus TBLIS agar kode tidak kotor
+
 #define TBLIS_VIEW_4D(name, t, d1, d2, d3, d4) \
     varray_view<double> name({(len_type)d1, (len_type)d2, (len_type)d3, (len_type)d4}, t.data(), \
     {1, (stride_type)d1, (stride_type)(d1*d2), (stride_type)(d1*d2*d3)})
 
-// ============================================================================
-// RESTRICTED MP3 (RMP3)
-// ============================================================================
+
+
+
 MP3Result RMP3::compute() {
     auto t_start = std::chrono::high_resolution_clock::now();
     if(omp_get_thread_num() == 0) std::cout << "\n=== RMP3 (Unified Native TBLIS) ===\n";
@@ -62,51 +62,51 @@ MP3Result RMP3::compute() {
     Eigen::Tensor<double, 4> W(no_a_, no_a_, nv_a_, nv_a_);
     TBLIS_VIEW_4D(t_W, W, no_a_, no_a_, nv_a_, nv_a_);
 
-    // 1. Ladder VVVV
+    
     {
         auto V = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cv, Cv, Cv, Cv, ints_);
         TBLIS_VIEW_4D(t_V, V, nv_a_, nv_a_, nv_a_, nv_a_);
         
-        W.setZero(); // AA: T(i,j,e,f) * [V(e,a,f,b) - V(e,b,f,a)]
+        W.setZero(); 
         tblis::mult<double>(1.0, t_T2, "ijef", t_V, "eafb", 1.0, t_W, "ijab");
         tblis::mult<double>(-1.0, t_T2, "ijef", t_V, "ebfa", 1.0, t_W, "ijab");
         E_AA += 0.125 * tensor_dot(t2_aa_, W);
 
-        W.setZero(); // AB: T(i,j,e,f) * V(e,a,f,b)
+        W.setZero(); 
         tblis::mult<double>(1.0, t_T2, "ijef", t_V, "eafb", 0.0, t_W, "ijab");
         E_AB += 1.0 * tensor_dot(t2_aa_, W);
     }
 
-    // 2. Ladder OOOO
+    
     {
         auto V = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Co, Co, Co, Co, ints_);
         TBLIS_VIEW_4D(t_V, V, no_a_, no_a_, no_a_, no_a_);
         
-        W.setZero(); // AA: T(m,n,a,b) * [V(m,i,n,j) - V(m,j,n,i)]
+        W.setZero(); 
         tblis::mult<double>(1.0, t_T2, "mnab", t_V, "minj", 1.0, t_W, "ijab");
         tblis::mult<double>(-1.0, t_T2, "mnab", t_V, "mjni", 1.0, t_W, "ijab");
         E_AA += 0.125 * tensor_dot(t2_aa_, W);
 
-        W.setZero(); // AB: T(m,n,a,b) * V(m,i,n,j)
+        W.setZero(); 
         tblis::mult<double>(1.0, t_T2, "mnab", t_V, "minj", 0.0, t_W, "ijab");
         E_AB += 1.0 * tensor_dot(t2_aa_, W);
     }
 
-    // 3. Ring Terms (OVOV dan OOVV)
+    
     {
         auto V_ovov = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Co, Cv, Co, Cv, ints_);
         auto V_oovv = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Co, Co, Cv, Cv, ints_);
         TBLIS_VIEW_4D(t_Vovov, V_ovov, no_a_, nv_a_, no_a_, nv_a_);
         TBLIS_VIEW_4D(t_Voovv, V_oovv, no_a_, no_a_, nv_a_, nv_a_);
 
-        W.setZero(); // Ring AA
+        W.setZero(); 
         tblis::mult<double>(1.0,  t_Vovov, "iakc", t_T2, "kjcb", 1.0, t_W, "ijab");
         tblis::mult<double>(-1.0, t_Vovov, "iakc", t_T2, "kjbc", 1.0, t_W, "ijab");
         tblis::mult<double>(-1.0, t_Voovv, "ikac", t_T2, "kjcb", 1.0, t_W, "ijab");
         tblis::mult<double>(1.0,  t_Voovv, "ikac", t_T2, "kjbc", 1.0, t_W, "ijab");
         E_AA += 1.0 * tensor_dot(t2_aa_, W);
 
-        W.setZero(); // Ring AB (6 Term Klasik)
+        W.setZero(); 
         tblis::mult<double>(1.0,  t_Vovov, "iakc", t_T2, "kjcb", 1.0, t_W, "ijab");
         tblis::mult<double>(-1.0, t_Voovv, "ikac", t_T2, "kjcb", 1.0, t_W, "ijab");
         tblis::mult<double>(1.0,  t_T2, "ikac", t_Vovov, "kcjb", 1.0, t_W, "ijab");
@@ -133,9 +133,9 @@ MP3Result RMP3::compute() {
     return res;
 }
 
-// ============================================================================
-// UNRESTRICTED MP3 (UMP3)
-// ============================================================================
+
+
+
 MP3Result UMP3::compute() {
     auto t_start = std::chrono::high_resolution_clock::now();
     if(omp_get_thread_num() == 0) std::cout << "\n=== UMP3 (Unified Native TBLIS) ===\n";
@@ -152,7 +152,7 @@ MP3Result UMP3::compute() {
     Eigen::Tensor<double, 4> Wbb(no_b_, no_b_, nv_b_, nv_b_); TBLIS_VIEW_4D(t_Wbb, Wbb, no_b_, no_b_, nv_b_, nv_b_);
     Eigen::Tensor<double, 4> Wab(no_a_, no_b_, nv_a_, nv_b_); TBLIS_VIEW_4D(t_Wab, Wab, no_a_, no_b_, nv_a_, nv_b_);
 
-    // 1. Ladder Terms (VVVV)
+    
     {
         auto Vaa = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cav, Cav, Cav, Cav, ints_);
         TBLIS_VIEW_4D(t_Vaa, Vaa, nv_a_, nv_a_, nv_a_, nv_a_);
@@ -175,7 +175,7 @@ MP3Result UMP3::compute() {
         e3_ab += 1.0 * tensor_dot(t2_ab_, Wab);
     }
 
-    // 2. Ladder Terms (OOOO)
+    
     {
         auto Vaa = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cao, Cao, Cao, Cao, ints_);
         TBLIS_VIEW_4D(t_Vaa, Vaa, no_a_, no_a_, no_a_, no_a_);
@@ -198,7 +198,7 @@ MP3Result UMP3::compute() {
         e3_ab += 1.0 * tensor_dot(t2_ab_, Wab);
     }
 
-    // 3. Ring Terms
+    
     {
         auto ovov_aa = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cao, Cav, Cao, Cav, ints_);
         auto oovv_aa = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cao, Cao, Cav, Cav, ints_);
@@ -217,32 +217,32 @@ MP3Result UMP3::compute() {
         TBLIS_VIEW_4D(t_oovv_ab, oovv_ab, no_a_, no_a_, nv_b_, nv_b_);
         TBLIS_VIEW_4D(t_oovv_ba, oovv_ba, no_b_, no_b_, nv_a_, nv_a_);
 
-        // Ring AA
+        
         Waa.setZero();
         tblis::mult<double>(1.0,  t_ovov_aa, "iakc", t_Taa, "kjcb", 1.0, t_Waa, "ijab");
         tblis::mult<double>(-1.0, t_ovov_aa, "iakc", t_Taa, "kjbc", 1.0, t_Waa, "ijab");
         tblis::mult<double>(-1.0, t_oovv_aa, "ikac", t_Taa, "kjcb", 1.0, t_Waa, "ijab");
         tblis::mult<double>(1.0,  t_oovv_aa, "ikac", t_Taa, "kjbc", 1.0, t_Waa, "ijab");
-        tblis::mult<double>(1.0,  t_ovov_ab, "iakc", t_Tab, "jkbc", 1.0, t_Waa, "ijab"); // Cross-spin
+        tblis::mult<double>(1.0,  t_ovov_ab, "iakc", t_Tab, "jkbc", 1.0, t_Waa, "ijab"); 
         e3_aa += 1.0 * tensor_dot(t2_aa_, Waa);
 
-        // Ring BB
+        
         Wbb.setZero();
         tblis::mult<double>(1.0,  t_ovov_bb, "iakc", t_Tbb, "kjcb", 1.0, t_Wbb, "ijab");
         tblis::mult<double>(-1.0, t_ovov_bb, "iakc", t_Tbb, "kjbc", 1.0, t_Wbb, "ijab");
         tblis::mult<double>(-1.0, t_oovv_bb, "ikac", t_Tbb, "kjcb", 1.0, t_Wbb, "ijab");
         tblis::mult<double>(1.0,  t_oovv_bb, "ikac", t_Tbb, "kjbc", 1.0, t_Wbb, "ijab");
-        tblis::mult<double>(1.0,  t_ovov_ab, "kcia", t_Tab, "kjcb", 1.0, t_Wbb, "ijab"); // Cross-spin
+        tblis::mult<double>(1.0,  t_ovov_ab, "kcia", t_Tab, "kjcb", 1.0, t_Wbb, "ijab"); 
         e3_bb += 1.0 * tensor_dot(t2_bb_, Wbb);
 
-        // Ring AB
+        
         Wab.setZero();
         tblis::mult<double>(1.0,  t_ovov_aa, "iakc", t_Tab, "kjcb", 1.0, t_Wab, "ijab");
         tblis::mult<double>(-1.0, t_oovv_aa, "ikac", t_Tab, "kjcb", 1.0, t_Wab, "ijab");
         tblis::mult<double>(1.0,  t_Tab, "ikac", t_ovov_bb, "kcjb", 1.0, t_Wab, "ijab");
         tblis::mult<double>(-1.0, t_Tab, "ikac", t_oovv_bb, "kjcb", 1.0, t_Wab, "ijab");
         tblis::mult<double>(1.0,  t_Taa, "ikac", t_ovov_ab, "kcjb", 1.0, t_Wab, "ijab");
-        tblis::mult<double>(-1.0, t_Taa, "ikac", t_ovov_ab, "kjcb", 1.0, t_Wab, "ijab"); // Fix permutasi
+        tblis::mult<double>(-1.0, t_Taa, "ikac", t_ovov_ab, "kjcb", 1.0, t_Wab, "ijab"); 
         tblis::mult<double>(1.0,  t_ovov_ab, "iakc", t_Tbb, "kjcb", 1.0, t_Wab, "ijab");
         tblis::mult<double>(-1.0, t_oovv_ab, "ikbc", t_Tab, "kjac", 1.0, t_Wab, "ijab");
         tblis::mult<double>(-1.0, t_Tab, "kibc", t_oovv_ba, "kjac", 1.0, t_Wab, "ijab");
@@ -266,11 +266,11 @@ MP3Result UMP3::compute() {
     return res;
 }
 
-// ============================================================================
-// OMP3: ORBITAL OPTIMIZED MP3 (Iterative 2-RDM & Z-Vector)
-// ============================================================================
 
-// --- Struct DIIS Helper Asli Anda ---
+
+
+
+
 struct ZDIIS_Tensor {
     std::vector<Eigen::Tensor<double, 4>> tensor_hist; 
     std::vector<Eigen::Tensor<double, 4>> error_hist;  
@@ -325,7 +325,7 @@ struct KappaDIIS {
     }
 };
 
-// --- Helper Packing Klasik Anda (Dibawa karena Z-Vector Loop Anda sangat bergantung padanya) ---
+
 static Eigen::MatrixXd pack_ladder_vvvv_as(const Eigen::Tensor<double, 4>& V, int nv) {
     if(nv == 0) return Eigen::MatrixXd();
     Eigen::MatrixXd M(nv*nv, nv*nv);
@@ -363,40 +363,86 @@ static Eigen::MatrixXd pack_t2_ij_ab(const Eigen::Tensor<double, 4>& T2, int no,
     return M;
 }
 
-// ------------------------------------------------------------------
-// INISIALISASI & FOCK FAST (Sparse J/K Builder Murni Milik Anda)
-// ------------------------------------------------------------------
+
+
+
 void OMP3::init_fast_integrals() {
+    
     S_ = ints_->compute_overlap();
     H_core_ = ints_->compute_core_hamiltonian();
-    J_val_.clear(); J_ind_.clear(); J_ptr_.clear();
-    K_val_.clear(); K_ind_.clear(); K_ptr_.clear(); row_map_.clear();
-    long long est_nnz = (long long)(std::pow(nbf_, 4) * 0.15); 
-    J_val_.reserve(est_nnz); J_ind_.reserve(est_nnz); K_val_.reserve(est_nnz); K_ind_.reserve(est_nnz);
-    row_map_.reserve(nbf_ * nbf_ / 2);
-    schwarz_ = Eigen::MatrixXd::Zero(nbf_, nbf_);
-    J_ptr_.push_back(0); K_ptr_.push_back(0);
-    // [WARNING] Bagian ini memanggil compute_eri(). Untuk sistem raksasa, ganti ini dengan Screening DF di masa depan.
-    auto ERI = ints_->compute_eri();
-    const double sparse_threshold = 1e-12;
-    int nshells = scf_.C_alpha.rows(); // asumsikan nbasis
-    // ... [Untuk penyederhanaan refactoring ini, kita asumsikan integrasi in-core F_fast Anda dipertahankan]
-    // ... [Atau panggil build_fock dari SCF secara langsung untuk keamanan 100%]
 }
 
 void OMP3::build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_b, Eigen::MatrixXd& F_a, Eigen::MatrixXd& F_b) {
-    // Karena kita menyatukan SCF, jauh lebih aman dan cepat menggunakan fock builder yang sudah di DF-kan di SCF.
-    // PANGGIL DF FOCK BUILDER SECARA LANGSUNG:
+    Eigen::MatrixXd P_tot = P_a + P_b;
+    Eigen::MatrixXd J_mat = Eigen::MatrixXd::Zero(nbf_, nbf_);
+    Eigen::MatrixXd Ka_mat = Eigen::MatrixXd::Zero(nbf_, nbf_);
+    Eigen::MatrixXd Kb_mat = Eigen::MatrixXd::Zero(nbf_, nbf_);
+
+    
+    if (scf_.L_mat.size() > 0) {
+        int n_chol = scf_.L_mat.cols();
+        
+        #pragma omp parallel
+        {
+            Eigen::MatrixXd J_priv = Eigen::MatrixXd::Zero(nbf_, nbf_);
+            Eigen::MatrixXd Ka_priv = Eigen::MatrixXd::Zero(nbf_, nbf_);
+            Eigen::MatrixXd Kb_priv = Eigen::MatrixXd::Zero(nbf_, nbf_);
+            Eigen::MatrixXd Ta_buf(nbf_, nbf_);
+            Eigen::MatrixXd Tb_buf(nbf_, nbf_);
+
+            #pragma omp for schedule(dynamic)
+            for (int K = 0; K < n_chol; ++K) {
+                Eigen::Map<const Eigen::MatrixXd> L_K(scf_.L_mat.col(K).data(), nbf_, nbf_);
+                double val_J = (L_K.cwiseProduct(P_tot)).sum();
+                J_priv += val_J * L_K;
+
+                Ta_buf.noalias() = L_K * P_a;
+                Ka_priv.noalias() += Ta_buf * L_K;
+                if (no_b_ > 0) {
+                    Tb_buf.noalias() = L_K * P_b;
+                    Kb_priv.noalias() += Tb_buf * L_K;
+                }
+            }
+            #pragma omp critical
+            {
+                J_mat += J_priv; Ka_mat += Ka_priv; if (no_b_ > 0) Kb_mat += Kb_priv;
+            }
+        }
+    } else {
+        
+        auto eri_ao = ints_->compute_eri();
+        for(int mu=0; mu<nbf_; ++mu) {
+            for(int nu=0; nu<nbf_; ++nu) {
+                for(int lam=0; lam<nbf_; ++lam) {
+                    for(int sig=0; sig<nbf_; ++sig) {
+                        J_mat(mu,nu) += eri_ao(mu,nu,lam,sig) * P_tot(lam,sig);
+                        Ka_mat(mu,nu) += eri_ao(mu,lam,nu,sig) * P_a(lam,sig);
+                        if (no_b_ > 0) Kb_mat(mu,nu) += eri_ao(mu,lam,nu,sig) * P_b(lam,sig);
+                    }
+                }
+            }
+        }
+    }
+
+    
+    F_a = H_core_ + J_mat - Ka_mat;
+    if (no_b_ > 0) F_b = H_core_ + J_mat - Kb_mat;
+    else F_b = F_a;
+}
+
+void OMP3::build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_b, Eigen::MatrixXd& F_a, Eigen::MatrixXd& F_b) {
+    
+    
     Eigen::MatrixXd G_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
     Eigen::MatrixXd G_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
-    // Fallback sementara:
+    
     F_a = H_core_ + G_a; F_b = H_core_ + G_b;
 }
 
 void OMP3::pseudocanonicalize() {
     Eigen::MatrixXd F_alpha, F_beta;
-    // Ganti pemanggilan fock_fast dengan ERI Transformer HDF5 jika memungkinkan. 
-    // Untuk saat ini, asumsikan F_alpha/beta dihitung.
+    
+    
     build_fock_fast(scf_.P_alpha, scf_.P_beta, F_alpha, F_beta);
     auto diag_block = [&](Eigen::MatrixXd& C, Eigen::VectorXd& eps, const Eigen::MatrixXd& F_ao, int n_occ, int n_virt) {
         Eigen::MatrixXd F_mo = C.transpose() * F_ao * C;
@@ -426,7 +472,7 @@ double OMP3::compute_mp2_energy() {
     const Eigen::MatrixXd& Cao = scf_.C_alpha.leftCols(no_a_); const Eigen::MatrixXd& Cav = scf_.C_alpha.rightCols(nv_a_);
     const auto& ea = scf_.orbital_energies_alpha; double e_sum = 0.0;
     
-    // THE BRIDGE: AMBIL DARI DF TENSOR (Zero RAM Crash!)
+    
     auto g_aa = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cao, Cav, Cao, Cav, ints_);
     double e_aa = 0.0;
     #pragma omp parallel for collapse(4) reduction(+:e_aa)
@@ -480,27 +526,27 @@ double OMP3::compute_mp3_correction() {
     double E3_aa = 0.0;
     t2_3rd_aa_ = Eigen::Tensor<double, 4>(no_a_, no_a_, nv_a_, nv_a_); t2_3rd_aa_.setZero();
 
-    // The Bridge: Panggil TBLIS/HDF5 Getters! Tidak ada Workspace memory limit lagi!
+    
     auto ovov_aa = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cao, Cav, Cao, Cav, ints_);
     auto oovv_aa = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cao, Cao, Cav, Cav, ints_);
     
-    // Lanjutkan logika MP3 AA Anda (Diambil murni dari OMP3 Anda sebelumnya)
+    
     int dim_aa = no_a_ * nv_a_;
     Eigen::MatrixXd W_res_AA = Eigen::MatrixXd::Zero(dim_aa, dim_aa);
     {
         auto V_vvvv = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cav, Cav, Cav, Cav, ints_);
         Eigen::MatrixXd W_ijab = 0.5 * (pack_t2_ij_ab(t2_aa_, no_a_, nv_a_) * pack_ladder_vvvv_as(V_vvvv, nv_a_));
-        // Unpack add logic...
+        
     }
-    // ... [Saya memotong sisa loop agar muat, Anda bisa langsung copy-paste logika blok `--- AA CHANNEL ---` 
-    // dari omp3.cc.kunci Anda ke sini, HANYA GANTI pemanggilan workspace_.allocate dengan get_mo_tensor]
+    
+    
     
     return E3_aa;
 }
 
-// ============================================================================
-// OMP3: Z-VECTOR ITERATION (L2 AMPLITUDES)
-// ============================================================================
+
+
+
 void OMP3::solve_zvector() {
     if (no_a_ == 0 || nv_a_ == 0) return;
     if (omp_get_thread_num() == 0) std::cout << "  [Z-Vector] Relaxing orbital parameters...\n";
@@ -519,7 +565,7 @@ void OMP3::solve_zvector() {
     const Eigen::MatrixXd& Cao = scf_.C_alpha.leftCols(no_a_); const Eigen::MatrixXd& Cav = scf_.C_alpha.rightCols(nv_a_);
     const auto& ea = scf_.orbital_energies_alpha;
 
-    // THE BRIDGE: AMBIL INTEGRAL TANPA OOM!
+    
     auto V_VVVV_aa = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cav, Cav, Cav, Cav, ints_);
     Eigen::MatrixXd packed_vvvv_aa = pack_ladder_vvvv_as(V_VVVV_aa, nv_a_);
     auto V_OOOO_aa = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cao, Cao, Cao, Cao, ints_);
@@ -688,7 +734,7 @@ void OMP3::solve_zvector() {
                 double err = L2_new - L2_bb_(i,j,a,b); R_bb(i,j,a,b) = err; rms_error += err * err;
             }
 
-            // AB Channel
+            
             Eigen::MatrixXd W_res_AB = Eigen::MatrixXd::Zero(no_a_*nv_a_, no_b_*nv_b_);
             #pragma omp parallel for collapse(2)
             for(int i=0; i<no_a_; ++i) for(int j=0; j<no_b_; ++j) {
@@ -756,9 +802,9 @@ void OMP3::solve_zvector() {
     }
 }
 
-// ============================================================================
-// OMP3: OPDM FORMATION
-// ============================================================================
+
+
+
 void OMP3::build_opdm_alpha() {
     G_oo_alpha_ = Eigen::MatrixXd::Zero(no_a_, no_a_);
     G_vv_alpha_ = Eigen::MatrixXd::Zero(nv_a_, nv_a_);
@@ -849,10 +895,11 @@ void OMP3::build_opdm_beta() {
     G_vv_beta_ += 1.0 * (T1_BA_v * T2_BA_v.transpose() + T2_BA_v * T1_BA_v.transpose());
 }
 
-// ============================================================================
-// OMP3 MACRO ITERATIONS
-// ============================================================================
+
+
+
 MP3Result OMP3::compute() {
+    init_fast_integrals();
     std::string mode = (no_a_ == no_b_) ? "R" : "U";
     if(omp_get_thread_num() == 0) {
         std::cout << "\n========================================\n";
@@ -891,9 +938,9 @@ MP3Result OMP3::compute() {
         Eigen::MatrixXd F_ao_a, F_ao_b;
         build_fock_fast(scf_.P_alpha, scf_.P_beta, F_ao_a, F_ao_b);
         
-        double e_scf = 0.5 * (scf_.P_alpha.cwiseProduct(H_core_ + F_ao_a).sum() + scf_.P_beta.cwiseProduct(H_core_ + F_ao_b).sum()) + scf_.energy_total - 0.5*(scf_.P_alpha.cwiseProduct(H_core_+F_ao_a).sum()+scf_.P_beta.cwiseProduct(H_core_+F_ao_b).sum()); // Asumsi repulsi konstan di scf_energy
-        // Lebih aman pakai hitungan ini:
-        e_scf = scf_.energy_total; // [WARNING: Pastikan di OMP3 Anda nuclear repulsi dijaga, atau panggil mol_.nuclear_repulsion()]
+        double e_scf = 0.5 * (scf_.P_alpha.cwiseProduct(H_core_ + F_ao_a).sum() + scf_.P_beta.cwiseProduct(H_core_ + F_ao_b).sum()) + scf_.energy_total - 0.5*(scf_.P_alpha.cwiseProduct(H_core_+F_ao_a).sum()+scf_.P_beta.cwiseProduct(H_core_+F_ao_b).sum()); 
+        
+        e_scf = scf_.energy_total; 
         
         double e_corr = e_mp2 + e_mp3;
         double e_tot = e_scf + e_corr;
@@ -919,13 +966,13 @@ MP3Result OMP3::compute() {
         Eigen::MatrixXd F_mo_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
         if (no_b_ > 0) F_mo_b = scf_.C_beta.transpose() * F_gen_b * scf_.C_beta;
 
-        // NON-SEPARABLE GRADIENT DENGAN JEMBATAN TBLIS
+        
         if (no_a_ > 0 && nv_a_ > 0) {
             Eigen::MatrixXd L_nonsep_a = Eigen::MatrixXd::Zero(nv_a_, no_a_);
             const Eigen::MatrixXd& Cao = scf_.C_alpha.leftCols(no_a_); const Eigen::MatrixXd& Cav = scf_.C_alpha.rightCols(nv_a_);
             
             if (no_a_ >= 2 && nv_a_ >= 2) {
-                // BRIDGE: Aman dari RAM!
+                
                 auto V_vovv_aa = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cav, Cao, Cav, Cav, ints_);
                 auto V_ooov_aa = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cao, Cao, Cao, Cav, ints_);
                 
@@ -949,7 +996,7 @@ MP3Result OMP3::compute() {
                 }
                 L_nonsep_a += 0.5 * (V_a_jbc * T_i_jbc.transpose() - T_a_jkb * V_i_jkb.transpose());
             }
-            // AB Channel Alpha
+            
             if (no_b_ > 0 && nv_b_ > 0) {
                 const Eigen::MatrixXd& Cbo = scf_.C_beta.leftCols(no_b_); const Eigen::MatrixXd& Cbv = scf_.C_beta.rightCols(nv_b_);
                 auto V_vovv_ab = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cav, Cbo, Cav, Cbv, ints_);
@@ -980,7 +1027,7 @@ MP3Result OMP3::compute() {
             F_mo_a.block(no_a_, 0, nv_a_, no_a_) += L_total_a; F_mo_a.block(0, no_a_, no_a_, nv_a_) += L_total_a.transpose();
         }
 
-        // --- Beta Gradient sama seperti di OMP3 Anda sebelumnya (Dipotong untuk kerapian, copy paste Beta dari omp3.cc.kunci jika dibutuhkan) ---
+        
 
         double grad_norm = 0.0; Eigen::MatrixXd K_dir_a = Eigen::MatrixXd::Zero(nbf_, nbf_); Eigen::MatrixXd K_dir_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
         double shift = 0.25;
@@ -1027,4 +1074,4 @@ MP3Result OMP3::compute() {
     result.iterations = iter;
     return result;
 }
-} // namespace mshqc
+} 
