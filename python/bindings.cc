@@ -41,6 +41,7 @@
 
 // MP headers
 #include "mshqc/mp2.h"
+#include "mshqc/mp3.h"
 #include "mshqc/foundation/fcidump.h"
 #include "mshqc/foundation/wavefunction.h"
 
@@ -485,6 +486,36 @@ NB_MODULE(_mshqc, m) {
              nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
              nb::arg("config"), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
         .def("compute", &OMP2::compute, nb::call_guard<nb::gil_scoped_release>(), "Run OMP2 optimization");
+    // ========================================================================
+    // MP3 Subsystem (RMP3, UMP3, OMP3)
+    // ========================================================================
+    nb::class_<MP3Result>(m, "MP3Result")
+        .def(nb::init<>())
+        .def_rw("e_hf", &MP3Result::e_hf)
+        .def_rw("e_mp2", &MP3Result::e_mp2)
+        .def_rw("e_mp3", &MP3Result::e_mp3)
+        .def_rw("e3_aa", &MP3Result::e3_aa)
+        .def_rw("e3_bb", &MP3Result::e3_bb)
+        .def_rw("e3_ab", &MP3Result::e3_ab)
+        .def_rw("e_corr_total", &MP3Result::e_corr_total)
+        .def_rw("e_total", &MP3Result::e_total)
+        .def_rw("converged", &MP3Result::converged)
+        .def_rw("iterations", &MP3Result::iterations);
+
+    nb::class_<RMP3>(m, "RMP3")
+        .def(nb::init<const SCFResult&, const MP2Result&, const MP2Config&, std::shared_ptr<IntegralEngine>>(),
+             nb::arg("scf_guess"), nb::arg("mp2_guess"), nb::arg("config"), nb::arg("integrals"))
+        .def("compute", &RMP3::compute, nb::call_guard<nb::gil_scoped_release>());
+
+    nb::class_<UMP3>(m, "UMP3")
+        .def(nb::init<const SCFResult&, const MP2Result&, const MP2Config&, std::shared_ptr<IntegralEngine>>(),
+             nb::arg("scf_guess"), nb::arg("mp2_guess"), nb::arg("config"), nb::arg("integrals"))
+        .def("compute", &UMP3::compute, nb::call_guard<nb::gil_scoped_release>());
+
+    nb::class_<OMP3>(m, "OMP3")
+        .def(nb::init<const SCFResult&, const MP2Result&, const MP2Config&, std::shared_ptr<IntegralEngine>>(),
+             nb::arg("scf_guess"), nb::arg("mp2_guess"), nb::arg("config"), nb::arg("integrals"))
+        .def("compute", &OMP3::compute, nb::call_guard<nb::gil_scoped_release>());
 
     // ========================================================================
     // CI Methods
