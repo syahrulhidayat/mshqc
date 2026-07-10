@@ -654,46 +654,53 @@ void OMP2::build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_
     const size_t* __restrict__ Kp = K_ptr_.data();
 
     int n_threads = omp_get_max_threads();
-    std::vector<Eigen::MatrixXd> Ga_priv(n_threads, Eigen::MatrixXd::Zero(nbf_, nbf_));
-    std::vector<Eigen::MatrixXd> Gb_priv(n_threads, Eigen::MatrixXd::Zero(nbf_, nbf_));
-
-    size_t n_rows = row_map_.size();
-    
-    #pragma omp parallel for schedule(dynamic, 16)
-    for (size_t r = 0; r < n_rows; ++r) {
-        int mu = row_map_[r].first;
-        int nu = row_map_[r].second;
-        
-        if (schwarz_(mu, nu) * max_P < threshold) continue;
-
-        size_t js = Jp[r]; size_t je = Jp[r+1];
-        size_t ks = Kp[r]; size_t ke = Kp[r+1];
-
-        double vj = 0.0;
-        #pragma omp simd reduction(+:vj)
-        for (size_t k = js; k < je; ++k) vj += Jv[k] * p_dtot[Ji[k]];
-
-        double ka = 0.0, kb = 0.0;
-        #pragma omp simd reduction(+:ka, kb)
-        for (size_t k = ks; k < ke; ++k) {
-            double v = Kv[k]; int idx = Ki[k];
-            ka += v * p_da[idx];
-            kb += v * p_db[idx];
-        }
-        
-        int tid = omp_get_thread_num();
-        Ga_priv[tid](mu, nu) += vj - ka;
-        Gb_priv[tid](mu, nu) += vj - kb;
-    }
-
     Eigen::MatrixXd G_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
     Eigen::MatrixXd G_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
+    size_t n_rows = row_map_.size();
 
-    for (int t = 0; t < n_threads; ++t) { G_a += Ga_priv[t]; G_b += Gb_priv[t]; }
+    #pragma omp parallel
+    {
+        Eigen::MatrixXd Ga_local = Eigen::MatrixXd::Zero(nbf_, nbf_);
+        Eigen::MatrixXd Gb_local = Eigen::MatrixXd::Zero(nbf_, nbf_);
+        
+        #pragma omp for schedule(dynamic, 32)
+        for (size_t r = 0; r < n_rows; ++r) {
+            int mu = row_map_[r].first;
+            int nu = row_map_[r].second;
+            
+            if (schwarz_(mu, nu) * max_P < threshold) continue;
+
+            size_t js = Jp[r]; size_t je = Jp[r+1];
+            size_t ks = Kp[r]; size_t ke = Kp[r+1];
+
+            double vj = 0.0;
+            #pragma omp simd reduction(+:vj)
+            for (size_t k = js; k < je; ++k) vj += Jv[k] * p_dtot[Ji[k]];
+
+            double ka = 0.0, kb = 0.0;
+            #pragma omp simd reduction(+:ka, kb)
+            for (size_t k = ks; k < ke; ++k) {
+                double v = Kv[k]; int idx = Ki[k];
+                ka += v * p_da[idx];
+                kb += v * p_db[idx];
+            }
+            
+            Ga_local(mu, nu) += vj - ka;
+            Gb_local(mu, nu) += vj - kb;
+        }
+        
+        #pragma omp critical
+        {
+            G_a += Ga_local;
+            G_b += Gb_local;
+        }
+    }
+
     
     for (int i = 0; i < nbf_; ++i) {
         for (int j = 0; j < i; ++j) {
-            G_a(j, i) = G_a(i, j); G_b(j, i) = G_b(i, j);
+            G_a(j, i) = G_a(i, j); 
+            G_b(j, i) = G_b(i, j);
         }
     }
 
@@ -960,10 +967,9 @@ void OMP2::compute_t2_amplitudes() {
     if (nb_ > 0 && vb_ > 0) {
         auto* g_bb_blk = g_bb_.get_block(0,0,0,0);
         if (g_bb_blk) {
-            
             t2_bb_.allocate_block(0,0,0,0, nb_, nb_, vb_, vb_);
             auto* t_bb_blk = t2_bb_.get_block(0,0,0,0);
-           
+            if (t_bb_blk) t_bb_blk->setZero();
 
             for(int i = nf; i < nb_; ++i) for(int j = nf; j < nb_; ++j) {
                 double e_ij = scf_.orbital_energies_beta(i) + scf_.orbital_energies_beta(j);
@@ -973,7 +979,6 @@ void OMP2::compute_t2_amplitudes() {
                          double den = den_a - scf_.orbital_energies_beta(nb_+b);
                         double val = (*g_bb_blk)(i, a, j, b) - (*g_bb_blk)(i, b, j, a);
                         (*t_bb_blk)(i, j, a, b) = (std::abs(den) > 1e-12) ? val / den : 0.0;
-                        
                     }
                 }
             }
@@ -983,6 +988,8 @@ void OMP2::compute_t2_amplitudes() {
         if (g_ab_blk) {
             t2_ab_.allocate_block(0,0,0,0, na_, nb_, va_, vb_);
             auto* t_ab_blk = t2_ab_.get_block(0,0,0,0);
+            if (t_ab_blk) t_ab_blk->setZero(); 
+            
             for(int i = nf; i < na_; ++i) for(int j = nf; j < nb_; ++j) {
                 double e_ij = scf_.orbital_energies_alpha(i) + scf_.orbital_energies_beta(j);
                 for(int a=0; a<va_; ++a) {
