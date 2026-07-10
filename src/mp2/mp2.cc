@@ -1422,7 +1422,9 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
     Z_mat_a.setZero(va_, na_);
     if (nb_ > 0) Z_mat_b.setZero(vb_, nb_);
 
-    // 1. Ratakan (Flatten) Tensor T2 menjadi matriks 2D (Aman masuk RAM)
+    
+
+
     Eigen::MatrixXd T2_aa = Eigen::MatrixXd::Zero(na_*va_, na_*va_);
     auto* t_aa_blk = t2_aa_.get_block(0,0,0,0);
     if (t_aa_blk) {
@@ -1451,15 +1453,21 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
         }
     }
 
-    // 2. Evaluasi Z-Vector dengan Batched/Chunked Loop
-    const int CHUNK_SIZE = 128; // Optimal untuk L2/L3 Cache
+    
+
+
+    const int CHUNK_SIZE = 128; 
+
+
 
     #pragma omp parallel
     {
         Eigen::MatrixXd Z_loc_a = Eigen::MatrixXd::Zero(va_, na_);
         Eigen::MatrixXd Z_loc_b = Eigen::MatrixXd::Zero(vb_, nb_);
         
-        // Buffer yang sangat kecil, pasti muat di L1 Cache
+        
+
+
         Eigen::MatrixXd B_oo_a(na_, na_), B_vv_a(va_, va_);
         Eigen::MatrixXd B_oo_b(nb_, nb_), B_vv_b(vb_, vb_);
 
@@ -1467,7 +1475,9 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
         for (int P_start = 0; P_start < n_chol; P_start += CHUNK_SIZE) {
             int P_len = std::min(CHUNK_SIZE, n_chol - P_start);
             
-            // --- Hitung X_chunk (Perkalian matriks hanya sebesar CHUNK_SIZE) ---
+            
+
+
             Eigen::MatrixXd Bia_chunk = B_ia_P_alpha_.middleCols(P_start, P_len);
             Eigen::MatrixXd X_a_chunk = T2_aa * Bia_chunk;
             
@@ -1482,21 +1492,29 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
                 X_b_chunk = T2_bb * Bib_chunk + T2_ab.transpose() * Bia_chunk;
             }
 
-            // --- Evaluasi AO->MO dan Z-Vector secara on-the-fly untuk chunk ini ---
+            
+
+
             for (int p = 0; p < P_len; ++p) {
                 int P_global = P_start + p;
                 
-                // Ambil matriks AO dari Cholesky
+                
+
+
                 Eigen::Map<const Eigen::MatrixXd> B_AO(scf_.L_mat.col(P_global).data(), nbf_, nbf_);
                 
-                // --- Kontraksi Alpha ---
+                
+
+
                 B_oo_a.noalias() = scf_.C_alpha.leftCols(na_).transpose() * (B_AO * scf_.C_alpha.leftCols(na_));
                 B_vv_a.noalias() = scf_.C_alpha.rightCols(va_).transpose() * (B_AO * scf_.C_alpha.rightCols(va_));
                 
                 Eigen::Map<Eigen::MatrixXd> XT_a(X_a_chunk.col(p).data(), va_, na_);
                 Z_loc_a.noalias() += B_vv_a * XT_a - XT_a * B_oo_a;
 
-                // --- Kontraksi Beta (Jika Open-Shell) ---
+                
+
+
                 if (nb_ > 0 && vb_ > 0) {
                     B_oo_b.noalias() = scf_.C_beta.leftCols(nb_).transpose() * (B_AO * scf_.C_beta.leftCols(nb_));
                     B_vv_b.noalias() = scf_.C_beta.rightCols(vb_).transpose() * (B_AO * scf_.C_beta.rightCols(vb_));
@@ -1510,6 +1528,108 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
         { 
             Z_mat_a += Z_loc_a; 
             if (nb_ > 0) Z_mat_b += Z_loc_b;
+        }
+    }
+}
+void OMP2::transform_3center_mo_cholesky() {
+    int n_chol = scf_.L_mat.cols();
+    B_ia_P_alpha_ = Eigen::MatrixXd::Zero(na_ * va_, n_chol);
+    
+    bool has_beta = (nb_ > 0 && vb_ > 0);
+    if (has_beta) {
+        B_ia_P_beta_ = Eigen::MatrixXd::Zero(nb_ * vb_, n_chol);
+    }
+
+    const Eigen::MatrixXd& Ca_occ = scf_.C_alpha.leftCols(na_);
+    const Eigen::MatrixXd& Ca_vir = scf_.C_alpha.rightCols(va_);
+    
+    
+
+
+    Eigen::MatrixXd Cb_occ, Cb_vir;
+    if (has_beta) {
+        Cb_occ = scf_.C_beta.leftCols(nb_);
+        Cb_vir = scf_.C_beta.rightCols(vb_);
+    }
+
+    
+
+
+    int chunk_size = 128; 
+
+
+    
+    #pragma omp parallel for schedule(dynamic)
+    for (int P_start = 0; P_start < n_chol; P_start += chunk_size) {
+        int P_end = std::min(n_chol, P_start + chunk_size);
+        int P_size = P_end - P_start;
+
+        
+
+
+        Eigen::Map<const Eigen::MatrixXd> L_chunk(scf_.L_mat.col(P_start).data(), nbf_ * nbf_, P_size);
+        Eigen::Map<const Eigen::MatrixXd> L_reshaped(L_chunk.data(), nbf_, nbf_ * P_size);
+        
+        
+
+
+        
+
+
+        
+
+
+        
+
+
+        Eigen::MatrixXd X_a = Ca_vir.transpose() * L_reshaped;
+
+        for (int p = 0; p < P_size; ++p) {
+            Eigen::Map<Eigen::MatrixXd> X_P(X_a.data() + p * va_ * nbf_, va_, nbf_);
+            Eigen::MatrixXd B_MO_a = X_P * Ca_occ; 
+
+
+            
+            
+
+
+            for (int i = 0; i < na_; ++i) {
+                for (int a = 0; a < va_; ++a) {
+                    B_ia_P_alpha_(i * va_ + a, P_start + p) = B_MO_a(a, i);
+                }
+            }
+        }
+
+        
+
+
+        
+
+
+        
+
+
+        if (has_beta) {
+            
+
+
+            Eigen::MatrixXd X_b = Cb_vir.transpose() * L_reshaped;
+
+            for (int p = 0; p < P_size; ++p) {
+                Eigen::Map<Eigen::MatrixXd> X_P_b(X_b.data() + p * vb_ * nbf_, vb_, nbf_);
+                Eigen::MatrixXd B_MO_b = X_P_b * Cb_occ; 
+
+
+                
+                
+
+
+                for (int i = 0; i < nb_; ++i) {
+                    for (int a = 0; a < vb_; ++a) {
+                        B_ia_P_beta_(i * vb_ + a, P_start + p) = B_MO_b(a, i);
+                    }
+                }
+            }
         }
     }
 }
