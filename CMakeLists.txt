@@ -1,26 +1,14 @@
 cmake_minimum_required(VERSION 3.14)
 
-
-
-
 project(mshqc VERSION 1.0.0 LANGUAGES CXX C)
 
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-
-
-
 if(DEFINED ENV{GITHUB_ACTIONS})
-    
-    
-    
-    message(STATUS ">> CI/CD Server Detected: Menggunakan optimasi Biner Universal (AVX2/FMA Baseline)")
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -mavx2 -mfma -mno-avx512f -funroll-loops -ftree-vectorize -mtune=generic -DNDEBUG -fno-math-errno")
 else()
-    
-    message(STATUS ">> Local Environment Detected: Mengaktifkan Super Turbo (-march=native)")
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -march=native -funroll-loops -ftree-vectorize -DNDEBUG -fno-math-errno")
 endif()
 
@@ -31,134 +19,87 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_CXX_VISIBILITY_PRESET default)
 set(CMAKE_VISIBILITY_INLINES_HIDDEN 0)
 
-
 include(CheckIPOSupported)
 check_ipo_supported(RESULT ipo_supported OUTPUT error)
-
-    
-    
-
-
-
-
 
 if(DEFINED ENV{CONDA_PREFIX})
     set(Python_ROOT_DIR "$ENV{CONDA_PREFIX}")
     set(Python_EXECUTABLE "$ENV{CONDA_PREFIX}/bin/python")
     set(Python3_EXECUTABLE "$ENV{CONDA_PREFIX}/bin/python")
-    
-    include_directories("$ENV{CONDA_PREFIX}/include")
     link_directories("$ENV{CONDA_PREFIX}/lib")
 elseif(EXISTS "/opt/conda")
     set(Python_ROOT_DIR "/opt/conda")
-    include_directories("/opt/conda/include")
     link_directories("/opt/conda/lib")
 endif()
 
 find_package(Python COMPONENTS Interpreter Development REQUIRED)
 find_package(nanobind CONFIG REQUIRED)
 
-
-
-
 find_package(OpenMP REQUIRED)
 
-
-find_path(MKL_INCLUDE_DIRS "mkl.h" HINTS "$ENV{CONDA_PREFIX}/include" "/opt/conda/include" "/usr/local/include" "/usr/include")
 find_library(MKL_LIBRARY NAMES mkl_rt HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/local/lib" "/usr/lib")
 
 if(MKL_LIBRARY)
-    message(STATUS ">> Linear Algebra Engine: Intel MKL ditemukan! (${MKL_LIBRARY})")
-    
     set(BLAS_LIBRARIES ${MKL_LIBRARY})
     set(LAPACK_LIBRARIES ${MKL_LIBRARY})
 else()
-    message(STATUS ">> Intel MKL tidak ditemukan. Jatuh ke fallback (BLIS/FLAME/Standar)...")
     find_library(BLIS_LIBRARY NAMES blis-mt blis HINTS "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/lib64" "/usr/lib")
     find_library(FLAME_LIBRARY NAMES flame HINTS "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/lib64" "/usr/lib")
 
     if(BLIS_LIBRARY)
-        message(STATUS ">> BLAS: BLIS ditemukan!")
         set(BLAS_LIBRARIES ${BLIS_LIBRARY})
     else()
         find_package(BLAS REQUIRED)
     endif()
 
     if(FLAME_LIBRARY)
-        message(STATUS ">> LAPACK: libflame ditemukan!")
         set(LAPACK_LIBRARIES ${FLAME_LIBRARY})
     else()
         find_package(LAPACK REQUIRED)
-        
         find_library(LAPACKE_LIBRARY NAMES lapacke HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/lib/x86_64-linux-gnu" "/usr/lib")
         if(LAPACKE_LIBRARY)
-            message(STATUS ">> LAPACKE: Antarmuka C LAPACKE ditemukan! (${LAPACKE_LIBRARY})")
             list(APPEND LAPACK_LIBRARIES ${LAPACKE_LIBRARY})
         else()
-            message(FATAL_ERROR "CRITICAL: LAPACKE (lapacke) tidak ditemukan di sistem!")
+            message(FATAL_ERROR "CRITICAL: LAPACKE tidak ditemukan di sistem!")
         endif()
     endif()
 endif()
 
 set(EIGEN_LOCAL_PATH "${CMAKE_SOURCE_DIR}/include/eigen-3.4.0")
 if(EXISTS "${EIGEN_LOCAL_PATH}/Eigen/Dense")
-    message(STATUS ">> Linear Algebra: Menggunakan Eigen Lokal")
     add_library(Eigen3::Eigen INTERFACE IMPORTED)
     target_include_directories(Eigen3::Eigen INTERFACE "${EIGEN_LOCAL_PATH}")
 else()
-    message(STATUS ">> Eigen lokal tidak ditemukan. Mencari versi terbaru di Conda/Sistem...")
     find_package(Eigen3 CONFIG HINTS "$ENV{CONDA_PREFIX}/share/eigen3/cmake" "/opt/conda/share/eigen3/cmake")
-    if(Eigen3_FOUND)
-        message(STATUS ">> Linear Algebra: Eigen ${Eigen3_VERSION} ditemukan dari Conda!")
-    else()
+    if(NOT Eigen3_FOUND)
         find_package(Eigen3 REQUIRED NO_MODULE)
-        message(STATUS ">> Linear Algebra: Eigen ${Eigen3_VERSION} ditemukan sebagai fallback.")
     endif()
 endif()
 
-
-
-find_path(CINT_INCLUDE_DIRS "cint.h" HINTS "$ENV{CONDA_PREFIX}/include" "/opt/conda/include" "/usr/local/include" "/usr/include")
 find_library(CINT_LIBRARY cint HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/local/lib" "/usr/lib")
-
-if(CINT_INCLUDE_DIRS AND CINT_LIBRARY)
-    message(STATUS ">> Integral Engine: libcint dan cint.h ditemukan!")
-else()
-    message(FATAL_ERROR "CRITICAL: libcint atau cint.h tidak ditemukan!")
+if(NOT CINT_LIBRARY)
+    message(FATAL_ERROR "CRITICAL: libcint tidak ditemukan!")
 endif()
-
 
 find_library(TBLIS_LIBRARY NAMES libtblis.a tblis HINTS "$ENV{TBLIS_DIR}/lib" "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/lib")
 find_library(TCI_LIBRARY NAMES libtci.a tci HINTS "$ENV{TBLIS_DIR}/lib" "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/lib")
-
 if(TBLIS_LIBRARY AND TCI_LIBRARY)
-    message(STATUS ">> Tensor Engine: TBLIS & TCI ditemukan!")
     include_directories("$ENV{TBLIS_DIR}/include") 
 else()
     message(FATAL_ERROR "CRITICAL: TBLIS atau TCI tidak ditemukan!")
 endif()
 
-
-find_path(HDF5_INCLUDE_DIRS "H5Cpp.h" HINTS "$ENV{CONDA_PREFIX}/include" NO_DEFAULT_PATH)
 find_library(HDF5_C_LIB hdf5 HINTS "$ENV{CONDA_PREFIX}/lib" NO_DEFAULT_PATH)
 find_library(HDF5_CXX_LIB hdf5_cpp HINTS "$ENV{CONDA_PREFIX}/lib" NO_DEFAULT_PATH)
-
-if(HDF5_INCLUDE_DIRS AND HDF5_C_LIB AND HDF5_CXX_LIB)
-    message(STATUS ">> Out-of-Core Engine: HDF5 C++ Conda ditemukan secara manual!")
-    include_directories(${HDF5_INCLUDE_DIRS})
+if(HDF5_C_LIB AND HDF5_CXX_LIB)
     set(HDF5_LIBRARIES ${HDF5_CXX_LIB} ${HDF5_C_LIB})
 else()
-    message(FATAL_ERROR "CRITICAL: HDF5 C++ tidak ditemukan di Conda mshqcenv!")
+    message(FATAL_ERROR "CRITICAL: HDF5 C++ tidak ditemukan di Conda!")
 endif()
-
 
 if(JEMALLOC_LIB)
-    message(STATUS ">> Memori Allocator: Jemalloc ditemukan!")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-builtin-malloc -fno-builtin-calloc -fno-builtin-realloc -fno-builtin-free")
 endif()
-
-
-
 
 file(GLOB_RECURSE SRC_CORE CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/core/*.cc")
 file(GLOB_RECURSE SRC_SCF CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/scf/*.cc")
@@ -179,9 +120,6 @@ set(ALL_SOURCES
     ${SRC_UTILS}
 )
 
-
-
-
 add_library(mshqc STATIC ${ALL_SOURCES})
 
 set_target_properties(mshqc PROPERTIES 
@@ -189,7 +127,6 @@ set_target_properties(mshqc PROPERTIES
     INSTALL_RPATH "$ORIGIN:$ORIGIN/../../.."
     BUILD_WITH_INSTALL_RPATH TRUE
 )
-
 
 target_compile_definitions(mshqc PUBLIC 
     EIGEN_USE_MKL_ALL
@@ -213,26 +150,13 @@ if(JEMALLOC_LIB)
     target_link_libraries(mshqc PUBLIC ${JEMALLOC_LIB})
 endif()
 
-if(JEMALLOC_LIB)
-    target_link_libraries(mshqc PUBLIC ${JEMALLOC_LIB})
-endif()
-
-
-
-
-
 get_filename_component(PYTHON_BIN_DIR ${Python_EXECUTABLE} DIRECTORY)
 get_filename_component(CONDA_ROOT_DIR ${PYTHON_BIN_DIR} DIRECTORY)
 set(CONDA_ABSOLUTE_INCLUDE "${CONDA_ROOT_DIR}/include")
 
-message(STATUS ">> Memaksa Kompiler Membaca Folder: ${CONDA_ABSOLUTE_INCLUDE}")
-
-
-include_directories(${CONDA_ABSOLUTE_INCLUDE})
-
-
 target_include_directories(mshqc PUBLIC 
     $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${CONDA_ABSOLUTE_INCLUDE}>
     $<INSTALL_INTERFACE:include>
 )
 
@@ -255,9 +179,6 @@ if(ipo_supported)
     set_target_properties(mshqc PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
     set_target_properties(_mshqc PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
 endif()
-
-
-
 
 install(TARGETS mshqc _mshqc
     LIBRARY DESTINATION lib
