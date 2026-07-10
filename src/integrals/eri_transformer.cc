@@ -20,9 +20,9 @@
 namespace mshqc {
 namespace integrals {
 
-// ============================================================================
-// SMART TRANSFORM KERNEL (Powered by TBLIS Native C++ API)
-// ============================================================================
+
+
+
 static Eigen::Tensor<double, 4> smart_transform_kernel(
     const Eigen::Tensor<double, 4>& eri_ao,
     const Eigen::MatrixXd& C1, 
@@ -50,30 +50,33 @@ static Eigen::Tensor<double, 4> smart_transform_kernel(
     std::vector<stride_type> str_eri = { 1, (stride_type)nbf, (stride_type)(nbf*nbf), (stride_type)(nbf*nbf*nbf) };
     varray_view<double> t_eri(len_eri, const_cast<double*>(eri_ao.data()), str_eri);
 
-    // --- STEP 1: mu -> i ---
+    
     Eigen::Tensor<double, 4> T1(n1, nbf, nbf, nbf); 
-    // HAPUS .setZero() karena tblis::mult dengan beta=0.0 akan menimpanya!
+    T1.setZero();
     std::vector<len_type> len_T1 = { (len_type)n1, (len_type)nbf, (len_type)nbf, (len_type)nbf };
     std::vector<stride_type> str_T1 = { 1, (stride_type)n1, (stride_type)(n1*nbf), (stride_type)(n1*nbf*nbf) };
     varray_view<double> t_T1_view(len_T1, T1.data(), str_T1);
     tblis::mult<double>(1.0, t_eri, "abcd", t_C1, "ae", 0.0, t_T1_view, "ebcd");
 
-    // --- STEP 2: nu -> a ---
-    Eigen::Tensor<double, 4> T2(n1, n2, nbf, nbf); 
+    
+    Eigen::Tensor<double, 4> T2(n1, n2, nbf, nbf);
+    T2.setZero(); 
     std::vector<len_type> len_T2 = { (len_type)n1, (len_type)n2, (len_type)nbf, (len_type)nbf };
     std::vector<stride_type> str_T2 = { 1, (stride_type)n1, (stride_type)(n1*n2), (stride_type)(n1*n2*nbf) };
     varray_view<double> t_T2_view(len_T2, T2.data(), str_T2);
     tblis::mult<double>(1.0, t_T1_view, "ebcd", t_C2, "bf", 0.0, t_T2_view, "efcd");
 
-    // --- STEP 3: lam -> j ---
+    
     Eigen::Tensor<double, 4> T3(n1, n2, n3, nbf); 
+    T3.setZero();
     std::vector<len_type> len_T3 = { (len_type)n1, (len_type)n2, (len_type)n3, (len_type)nbf };
     std::vector<stride_type> str_T3 = { 1, (stride_type)n1, (stride_type)(n1*n2), (stride_type)(n1*n2*n3) };
     varray_view<double> t_T3_view(len_T3, T3.data(), str_T3);
     tblis::mult<double>(1.0, t_T2_view, "efcd", t_C3, "cg", 0.0, t_T3_view, "efgd");
 
-    // --- STEP 4: sig -> b ---
+    
     Eigen::Tensor<double, 4> result(n1, n2, n3, n4); 
+    result.setZero();
     std::vector<len_type> len_out = { (len_type)n1, (len_type)n2, (len_type)n3, (len_type)n4 };
     std::vector<stride_type> str_out = { 1, (stride_type)n1, (stride_type)(n1*n2), (stride_type)(n1*n2*n3) };
     varray_view<double> t_out_view(len_out, result.data(), str_out);
@@ -81,9 +84,9 @@ static Eigen::Tensor<double, 4> smart_transform_kernel(
 
     return result;
 }
-// ============================================================================
-// THE "O-O-V-V" OPTIMAL KERNEL (Trik Rahasia HPC Kimia Kuantum)
-// ============================================================================
+
+
+
 static Eigen::Tensor<double, 4> optimal_oovv_kernel(
     const Eigen::Tensor<double, 4>& eri_ao,
     const Eigen::MatrixXd& Co, const Eigen::MatrixXd& Cv, 
@@ -106,34 +109,38 @@ static Eigen::Tensor<double, 4> optimal_oovv_kernel(
     std::vector<stride_type> str_eri = { 1, (stride_type)nbf, (stride_type)(nbf*nbf), (stride_type)(nbf*nbf*nbf) };
     varray_view<double> t_eri(len_eri, const_cast<double*>(eri_ao.data()), str_eri);
 
-    // --- STEP 1: mu -> i (Menggunakan Occupied Co) ---
-    // (a,b,c,d) * (a,e) -> (e,b,c,d)
+    
+    
     Eigen::Tensor<double, 4> T1(no, nbf, nbf, nbf); 
+    T1.setZero();
     std::vector<len_type> len_T1 = { (len_type)no, (len_type)nbf, (len_type)nbf, (len_type)nbf };
     std::vector<stride_type> str_T1 = { 1, (stride_type)no, (stride_type)(no*nbf), (stride_type)(no*nbf*nbf) };
     varray_view<double> t_T1_view(len_T1, T1.data(), str_T1);
     tblis::mult<double>(1.0, t_eri, "abcd", t_Co, "ae", 0.0, t_T1_view, "ebcd");
 
-    // --- STEP 2: lam -> j (Menggunakan Occupied Co) ---
-    // KEAJAIBAN TBLIS: Kita lewati indeks ke-2 (b) dan langsung sikat indeks ke-3 (c)!
-    // (e,b,c,d) * (c,f) -> (e,b,f,d)
-    Eigen::Tensor<double, 4> T2(no, nbf, no, nbf); 
+    
+    
+    
+    Eigen::Tensor<double, 4> T2(no, nbf, no, nbf);
+    T2.setZero(); 
     std::vector<len_type> len_T2 = { (len_type)no, (len_type)nbf, (len_type)no, (len_type)nbf };
     std::vector<stride_type> str_T2 = { 1, (stride_type)no, (stride_type)(no*nbf), (stride_type)(no*nbf*no) };
     varray_view<double> t_T2_view(len_T2, T2.data(), str_T2);
     tblis::mult<double>(1.0, t_T1_view, "ebcd", t_Co, "cf", 0.0, t_T2_view, "ebfd");
 
-    // --- STEP 3: nu -> a (Menggunakan Virtual Cv) ---
-    // (e,b,f,d) * (b,g) -> (e,g,f,d)
-    Eigen::Tensor<double, 4> T3(no, nv, no, nbf); 
+    
+    
+    Eigen::Tensor<double, 4> T3(no, nv, no, nbf);
+    T3.setZero(); 
     std::vector<len_type> len_T3 = { (len_type)no, (len_type)nv, (len_type)no, (len_type)nbf };
     std::vector<stride_type> str_T3 = { 1, (stride_type)no, (stride_type)(no*nv), (stride_type)(no*nv*no) };
     varray_view<double> t_T3_view(len_T3, T3.data(), str_T3);
     tblis::mult<double>(1.0, t_T2_view, "ebfd", t_Cv, "bg", 0.0, t_T3_view, "egfd");
 
-    // --- STEP 4: sig -> b (Menggunakan Virtual Cv) ---
-    // (e,g,f,d) * (d,h) -> (e,g,f,h)
+    
+    
     Eigen::Tensor<double, 4> result(no, nv, no, nv); 
+    result.setZero();
     std::vector<len_type> len_out = { (len_type)no, (len_type)nv, (len_type)no, (len_type)nv };
     std::vector<stride_type> str_out = { 1, (stride_type)no, (stride_type)(no*nv), (stride_type)(no*nv*no) };
     varray_view<double> t_out_view(len_out, result.data(), str_out);
@@ -152,10 +159,10 @@ BlockedTensor4D ERITransformer::transform_oovv_blocked(
     int no = Co.cols();
     int nv = Cv.cols();
 
-    // 1. PANGGIL OPTIMAL KERNEL O-O-V-V (Kecepatan 11x Lipat)
+    
     Eigen::Tensor<double, 4> dense_oovv = optimal_oovv_kernel(eri_ao, Co, Cv, nbf, no, nv);
 
-    // 2. SLICING MEMORY MULTI-THREADED
+    
     for (const auto& o1 : occ_spaces) {
         if (o1.size == 0) continue;
         for (const auto& v1 : virt_spaces) {
@@ -173,7 +180,7 @@ BlockedTensor4D ERITransformer::transform_oovv_blocked(
                             for (int a = 0; a < v1.size; ++a) {
                                 for (int j = 0; j < o2.size; ++j) {
                                     for (int b = 0; b < v2.size; ++b) {
-                                        // Karena output Kernel sudah berindeks (i, a, j, b), slicingnya tetap natural!
+                                        
                                         block(i, a, j, b) = dense_oovv(o1.offset + i, v1.offset + a, o2.offset + j, v2.offset + b);
                                     }
                                 }
@@ -186,15 +193,15 @@ BlockedTensor4D ERITransformer::transform_oovv_blocked(
         }
     }
     
-    // =========================================================================
-    // TAHAP 6: MEMORY PROFILING (Untuk membuktikan penghematan RAM ke User)
-    // =========================================================================
+    
+    
+    
     size_t total_elements = 0;
     for (const auto& item : result.blocks) {
         total_elements += item.second.size();
     }
     
-    // Asumsi 1 double = 8 bytes
+    
     double mb_used = (total_elements * 8.0) / (1024.0 * 1024.0);
     double mb_dense = (no * nv * no * nv * 8.0) / (1024.0 * 1024.0); 
     double saved_percent = 100.0 * (1.0 - (mb_used / mb_dense));
@@ -216,10 +223,10 @@ BlockedTensor4D ERITransformer::transform_ovvv_blocked(
     int no = Co.cols();
     int nv = Cv.cols();
 
-    // 1. DENSE TRANSFORMATION (1 Kali Saja)
+    
     Eigen::Tensor<double, 4> dense_ovvv = smart_transform_kernel(eri_ao, Co, Cv, Cv, Cv, nbf, no, nv, nv, nv);
 
-    // 2. SLICING MEMORY
+    
     for (const auto& o1 : occ_spaces) {
         if (o1.size == 0) continue;
         for (const auto& v1 : virt_spaces) {
@@ -260,10 +267,10 @@ BlockedTensor4D ERITransformer::transform_ooov_blocked(
     int no = Co.cols();
     int nv = Cv.cols();
 
-    // 1. DENSE TRANSFORMATION (1 Kali Saja)
+    
     Eigen::Tensor<double, 4> dense_ooov = smart_transform_kernel(eri_ao, Co, Co, Co, Cv, nbf, no, no, no, nv);
 
-    // 2. SLICING MEMORY
+    
     for (const auto& o1 : occ_spaces) {
         if (o1.size == 0) continue;
         for (const auto& o2 : occ_spaces) {
@@ -294,12 +301,12 @@ BlockedTensor4D ERITransformer::transform_ooov_blocked(
 }
 
 
-// WRAPPER IMPLEMENTATIONS
-// ============================================================================
 
-// ============================================================================
-// WRAPPER IMPLEMENTATIONS
-// ============================================================================
+
+
+
+
+
 
 Eigen::Tensor<double, 4> ERITransformer::transform_oovv(
     const Eigen::Tensor<double, 4>& eri, const Eigen::MatrixXd& Co, const Eigen::MatrixXd& Cv, 
@@ -344,16 +351,16 @@ Eigen::Tensor<double, 4> ERITransformer::transform_oo_vv(
     if (use_disk) {
         utils::HDF5TensorIO io(hdf5_filename, utils::HDF5TensorIO::Mode::WRITE_TRUNCATE);
         
-        // Perhatikan urutannya: Occupied, Occupied, Virtual, Virtual
+        
         std::array<long, 4> dims = {no, no, nv, nv};
-        std::array<long, 4> chunk_dims = {1, no, nv, nv}; // Chunk per 1 indeks occupied
+        std::array<long, 4> chunk_dims = {1, no, nv, nv}; 
         
         std::string dataset_name = "oo_vv";
         io.create_dataset_4d(dataset_name, dims, chunk_dims);
         io.write_tensor_4d(dataset_name, result);
         
         std::cout << "[HDF5] Transformed OO-VV tensor saved to " << hdf5_filename << "\n";
-        return Eigen::Tensor<double, 4>(); // Bebaskan memori
+        return Eigen::Tensor<double, 4>(); 
     }
     return result;
 }
@@ -382,16 +389,16 @@ Eigen::Tensor<double, 4> ERITransformer::transform_vvvv(
     const Eigen::Tensor<double, 4>& eri, const Eigen::MatrixXd& C, int nbf, int n,
     bool use_disk, const std::string& hdf5_filename) {
     
-    // Panggil kernel transformasi
+    
     Eigen::Tensor<double, 4> result = smart_transform_kernel(eri, C, C, C, C, nbf, n, n, n, n);
 
-    // Tambahkan logika penyimpanan HDF5
+    
     if (use_disk) {
         utils::HDF5TensorIO io(hdf5_filename, utils::HDF5TensorIO::Mode::WRITE_TRUNCATE);
         
-        // Sesuaikan dimensi dengan output (n, n, n, n)
+        
         std::array<long, 4> dims = {n, n, n, n};
-        // Atur chunking, misalnya per 1 elemen di dimensi pertama
+        
         std::array<long, 4> chunk_dims = {1, n, n, n}; 
         
         std::string dataset_name = "vvvv";
@@ -400,7 +407,7 @@ Eigen::Tensor<double, 4> ERITransformer::transform_vvvv(
         
         std::cout << "[HDF5] Transformed VVVV tensor saved to " << hdf5_filename << "\n";
         
-        // Kembalikan tensor kosong untuk membebaskan RAM
+        
         return Eigen::Tensor<double, 4>(); 
     }
 
@@ -437,16 +444,16 @@ Eigen::Tensor<double, 4> ERITransformer::transform_ovov(
     if (use_disk) {
         utils::HDF5TensorIO io(hdf5_filename, utils::HDF5TensorIO::Mode::WRITE_TRUNCATE);
         
-        // Perhatikan urutannya: Occupied, Virtual, Occupied, Virtual
+        
         std::array<long, 4> dims = {no, nv, no, nv};
-        std::array<long, 4> chunk_dims = {1, nv, no, nv}; // Chunk per 1 indeks occupied
+        std::array<long, 4> chunk_dims = {1, nv, no, nv}; 
         
         std::string dataset_name = "ovov";
         io.create_dataset_4d(dataset_name, dims, chunk_dims);
         io.write_tensor_4d(dataset_name, result);
         
         std::cout << "[HDF5] Transformed OVOV tensor saved to " << hdf5_filename << "\n";
-        return Eigen::Tensor<double, 4>(); // Bebaskan memori
+        return Eigen::Tensor<double, 4>(); 
     }
     return result;
 }
@@ -465,7 +472,7 @@ Eigen::Tensor<double, 4> ERITransformer::transform_vvvo(
         utils::HDF5TensorIO io(hdf5_filename, utils::HDF5TensorIO::Mode::WRITE_TRUNCATE);
         
         std::array<long, 4> dims = {nv, nv, nv, no};
-        std::array<long, 4> chunk_dims = {1, nv, nv, no}; // Chunking per 1 virtual index di awal
+        std::array<long, 4> chunk_dims = {1, nv, nv, no}; 
         
         std::string dataset_name = "vvvo";
         io.create_dataset_4d(dataset_name, dims, chunk_dims);
@@ -496,14 +503,14 @@ Eigen::Tensor<double, 4> ERITransformer::transform_ovvv(
         utils::HDF5TensorIO io(hdf5_filename, utils::HDF5TensorIO::Mode::WRITE_TRUNCATE);
         
         std::array<long, 4> dims = {no, nv, nv, nv};
-        std::array<long, 4> chunk_dims = {1, nv, nv, nv}; // Chunking di dimensi pertama (occupied)
+        std::array<long, 4> chunk_dims = {1, nv, nv, nv}; 
         
         std::string dataset_name = "ovvv";
         io.create_dataset_4d(dataset_name, dims, chunk_dims);
         io.write_tensor_4d(dataset_name, result);
         
         std::cout << "[HDF5] Transformed OVVV tensor saved to " << hdf5_filename << "\n";
-        return Eigen::Tensor<double, 4>(); // Kembalikan tensor kosong
+        return Eigen::Tensor<double, 4>(); 
     }
     return result;
 }
@@ -516,7 +523,7 @@ Eigen::Tensor<double, 4> ERITransformer::transform_custom(
     return smart_transform_kernel(eri_ao, C1, C2, C3, C4, nbf, n1, n2, n3, n4);
 }
 
-// Parallel Wrappers 
+
 Eigen::Tensor<double, 4> ERITransformer::transform_oovv_parallel(
     const Eigen::Tensor<double, 4>& e, const Eigen::MatrixXd& o, const Eigen::MatrixXd& v, int n, int no, int nv, int) { 
     return transform_oovv(e, o, v, n, no, nv); 
@@ -537,20 +544,20 @@ Eigen::Tensor<double, 4> ERITransformer::get_mo_tensor(
     const Eigen::MatrixXd& C3, const Eigen::MatrixXd& C4,
     std::shared_ptr<IntegralEngine> ints) 
 {
-    // Ambil dimensi langsung dari matriks C
+    
     int nbf = C1.rows();
     int dim1 = C1.cols();
     int dim2 = C2.cols();
     int dim3 = C3.cols();
     int dim4 = C4.cols();
 
-    // RUTE 1: EXACT ERI (Fallback Klasik)
+    
     if (!use_df) {
         if (!ints) throw std::runtime_error("Exact integrals engine missing!");
         return transform_oovv_mixed(ints->compute_eri(), C1, C2, C3, C4, nbf, dim1, dim2, dim3, dim4);
     }
 
-    // RUTE 2: DENSITY FITTING / CHOLESKY (OUT-OF-CORE HDF5)
+    
     Eigen::Tensor<double, 4> V_mo(dim1, dim2, dim3, dim4);
     V_mo.setZero();
     if (n_aux <= 0) return V_mo;
@@ -558,7 +565,7 @@ Eigen::Tensor<double, 4> ERITransformer::get_mo_tensor(
     mshqc::utils::HDF5TensorIO io("df_tensor.h5", mshqc::utils::HDF5TensorIO::Mode::READ_ONLY);
     int chunk_size = std::min(128, n_aux); 
     
-    // Alokasi memori sementara (Sangat kecil, aman dari OOM)
+    
     Eigen::MatrixXd L_ao(nbf * nbf, chunk_size);
     std::vector<double> L_left_buf(dim1 * dim2 * chunk_size, 0.0);
     std::vector<double> L_right_buf(dim3 * dim4 * chunk_size, 0.0);
@@ -569,16 +576,16 @@ Eigen::Tensor<double, 4> ERITransformer::get_mo_tensor(
         int P_end = std::min(n_aux, P_start + chunk_size);
         int P_size = P_end - P_start;
         
-        // 1. Baca Slice L_{mu nu}^P dari SSD
+        
         L_ao.resize(nbf * nbf, P_size);
         io.read_slice_4d("df_tensor", {P_start, 0, 0, 0}, {P_size, (long)nbf, (long)nbf, 1}, L_ao.data());
         
-        // Setup TBLIS Tensors
+        
         std::vector<len_type> len_L_ao = { (len_type)nbf, (len_type)nbf, (len_type)P_size };
         std::vector<stride_type> str_L_ao = { 1, (stride_type)nbf, (stride_type)(nbf * nbf) };
         varray_view<double> t_L_ao(len_L_ao, L_ao.data(), str_L_ao);
 
-        // 2. Transformasi ke L_{pq}^P (Kiri)
+        
         std::vector<len_type> len_C1 = { (len_type)nbf, (len_type)dim1 };
         std::vector<stride_type> str_C1 = { 1, (stride_type)nbf };
         varray_view<double> t_C1(len_C1, const_cast<double*>(C1.data()), str_C1);
@@ -587,7 +594,7 @@ Eigen::Tensor<double, 4> ERITransformer::get_mo_tensor(
         std::vector<stride_type> str_C2 = { 1, (stride_type)nbf };
         varray_view<double> t_C2(len_C2, const_cast<double*>(C2.data()), str_C2);
 
-        // L_left = C1^T * L_ao * C2
+        
         std::vector<double> tmp_half(nbf * dim2 * P_size, 0.0);
         varray_view<double> t_tmp_half({(len_type)nbf, (len_type)dim2, (len_type)P_size}, tmp_half.data(), {1, (stride_type)nbf, (stride_type)(nbf*dim2)});
         varray_view<double> t_L_left({(len_type)dim1, (len_type)dim2, (len_type)P_size}, L_left_buf.data(), {1, (stride_type)dim1, (stride_type)(dim1*dim2)});
@@ -595,7 +602,7 @@ Eigen::Tensor<double, 4> ERITransformer::get_mo_tensor(
         tblis::mult<double>(1.0, t_L_ao, "mnP", t_C2, "nq", 0.0, t_tmp_half, "mqP");
         tblis::mult<double>(1.0, t_tmp_half, "mqP", t_C1, "mp", 0.0, t_L_left, "pqP");
 
-        // 3. Transformasi ke L_{rs}^P (Kanan)
+        
         varray_view<double> t_C3({(len_type)nbf, (len_type)dim3}, const_cast<double*>(C3.data()), {1, (stride_type)nbf});
         varray_view<double> t_C4({(len_type)nbf, (len_type)dim4}, const_cast<double*>(C4.data()), {1, (stride_type)nbf});
         
@@ -606,7 +613,7 @@ Eigen::Tensor<double, 4> ERITransformer::get_mo_tensor(
         tblis::mult<double>(1.0, t_L_ao, "mnP", t_C4, "ns", 0.0, t_tmp_half2, "msP");
         tblis::mult<double>(1.0, t_tmp_half2, "msP", t_C3, "mr", 0.0, t_L_right, "rsP");
 
-        // 4. Rakit menjadi MO Tensor: V_{pqrs} += L_{pq}^P * L_{rs}^P
+        
         varray_view<double> t_V_mo({(len_type)dim1, (len_type)dim2, (len_type)dim3, (len_type)dim4}, V_mo.data(), 
             {1, (stride_type)dim1, (stride_type)(dim1*dim2), (stride_type)(dim1*dim2*dim3)});
         
@@ -616,12 +623,12 @@ Eigen::Tensor<double, 4> ERITransformer::get_mo_tensor(
     return V_mo;
 }
 
-// Stubs for specific manipulations
+
 void ERITransformer::print_transform_info(const char*, int, int, int, int, double) {}
 void ERITransformer::antisymmetrize_vvvv(Eigen::Tensor<double, 4>&, int) {}
 void ERITransformer::antisymmetrize_oooo(Eigen::Tensor<double, 4>&, int) {}
 void ERITransformer::antisymmetrize_oovv(Eigen::Tensor<double, 4>&, int, int) {}
 void ERITransformer::antisymmetrize_ovov(Eigen::Tensor<double, 4>&, int, int) {}
 
-} // namespace integrals
-} // namespace mshqc
+} 
+} 
