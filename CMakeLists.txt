@@ -116,7 +116,7 @@ else()
     endif()
 endif()
 
-# --- LIBCINT ---
+
 
 find_path(CINT_INCLUDE_DIRS "cint.h" HINTS "$ENV{CONDA_PREFIX}/include" "/opt/conda/include" "/usr/local/include" "/usr/include")
 find_library(CINT_LIBRARY cint HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/local/lib" "/usr/lib")
@@ -217,16 +217,22 @@ if(JEMALLOC_LIB)
     target_link_libraries(mshqc PUBLIC ${JEMALLOC_LIB})
 endif()
 
+
+
+
+
 get_filename_component(PYTHON_BIN_DIR ${Python_EXECUTABLE} DIRECTORY)
 get_filename_component(CONDA_ROOT_DIR ${PYTHON_BIN_DIR} DIRECTORY)
-set(GLOBAL_CONDA_INCLUDE "${CONDA_ROOT_DIR}/include")
-message(STATUS ">> Force Inject Include Directory: ${GLOBAL_CONDA_INCLUDE}")
+set(CONDA_ABSOLUTE_INCLUDE "${CONDA_ROOT_DIR}/include")
+
+message(STATUS ">> Memaksa Kompiler Membaca Folder: ${CONDA_ABSOLUTE_INCLUDE}")
+
+
+include_directories(${CONDA_ABSOLUTE_INCLUDE})
+
 
 target_include_directories(mshqc PUBLIC 
     $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
-    $<BUILD_INTERFACE:${CINT_INCLUDE_DIRS}>
-    $<BUILD_INTERFACE:${MKL_INCLUDE_DIRS}>
-    $<BUILD_INTERFACE:${HDF5_INCLUDE_DIRS}>
     $<INSTALL_INTERFACE:include>
 )
 
