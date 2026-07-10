@@ -858,40 +858,51 @@ void OMP3::build_opdm_alpha() {
     G_vv_alpha_ = Eigen::MatrixXd::Zero(nv_a_, nv_a_);
     long va2 = nv_a_ * nv_a_;
 
-    Eigen::MatrixXd T_tot_AA_o(no_a_, no_a_ * va2);
+    Eigen::MatrixXd T1_AA_o(no_a_, no_a_ * va2), T2_AA_o(no_a_, no_a_ * va2);
     for(int i=0; i<no_a_; ++i) for(int k=0; k<no_a_; ++k) for(int ab=0; ab<va2; ++ab) {
         int a = ab/nv_a_; int b = ab%nv_a_;
-        T_tot_AA_o(i, k*va2+ab) = t2_aa_(i, k, a, b) + L2_aa_(i, k, a, b);
+        T1_AA_o(i, k*va2+ab) = t2_aa_(i, k, a, b);
+        T2_AA_o(i, k*va2+ab) = L2_aa_(i, k, a, b);
     }
-    G_oo_alpha_ = -0.5 * (T_tot_AA_o * T_tot_AA_o.transpose());
+    // Truncated at 3rd Order Density
+    G_oo_alpha_ = -0.5 * (T1_AA_o * T1_AA_o.transpose());
+    G_oo_alpha_ -= 0.5 * (T1_AA_o * T2_AA_o.transpose() + T2_AA_o * T1_AA_o.transpose());
 
     if (no_b_ > 0 && nv_b_ > 0) {
-        Eigen::MatrixXd T_tot_AB_o(no_a_, no_b_ * nv_a_ * nv_b_);
+        Eigen::MatrixXd T1_AB_o(no_a_, no_b_ * nv_a_ * nv_b_), T2_AB_o(no_a_, no_b_ * nv_a_ * nv_b_);
         for(int i=0; i<no_a_; ++i) for(int k=0; k<no_b_; ++k) for(int a=0; a<nv_a_; ++a) for(int b=0; b<nv_b_; ++b) {
             int col = k*(nv_a_*nv_b_) + a*nv_b_ + b;
-            T_tot_AB_o(i, col) = t2_ab_(i, k, a, b) + L2_ab_(i, k, a, b);
+            T1_AB_o(i, col) = t2_ab_(i, k, a, b); 
+            T2_AB_o(i, col) = L2_ab_(i, k, a, b);
         }
-        G_oo_alpha_ -= 1.0 * (T_tot_AB_o * T_tot_AB_o.transpose());
+        G_oo_alpha_ -= 1.0 * (T1_AB_o * T1_AB_o.transpose());
+        G_oo_alpha_ -= 1.0 * (T1_AB_o * T2_AB_o.transpose() + T2_AB_o * T1_AB_o.transpose());
     }
 
-    Eigen::MatrixXd T_tot_AA_v(nv_a_, no_a_ * no_a_ * nv_a_);
+    Eigen::MatrixXd T1_AA_v(nv_a_, no_a_ * no_a_ * nv_a_), T2_AA_v(nv_a_, no_a_ * no_a_ * nv_a_);
     for(int a=0; a<nv_a_; ++a) {
         int col = 0;
         for(int i=0; i<no_a_; ++i) for(int j=0; j<no_a_; ++j) for(int c=0; c<nv_a_; ++c) {
-            T_tot_AA_v(a, col) = t2_aa_(i, j, a, c) + L2_aa_(i, j, a, c); col++;
+            T1_AA_v(a, col) = t2_aa_(i, j, a, c); 
+            T2_AA_v(a, col) = L2_aa_(i, j, a, c); 
+            col++;
         }
     }
-    G_vv_alpha_ = 0.5 * (T_tot_AA_v * T_tot_AA_v.transpose());
+    G_vv_alpha_ = 0.5 * (T1_AA_v * T1_AA_v.transpose());
+    G_vv_alpha_ += 0.5 * (T1_AA_v * T2_AA_v.transpose() + T2_AA_v * T1_AA_v.transpose());
 
     if (no_b_ > 0 && nv_b_ > 0) {
-        Eigen::MatrixXd T_tot_AB_v(nv_a_, no_a_ * no_b_ * nv_b_);
+        Eigen::MatrixXd T1_AB_v(nv_a_, no_a_ * no_b_ * nv_b_), T2_AB_v(nv_a_, no_a_ * no_b_ * nv_b_);
         for(int a=0; a<nv_a_; ++a) {
             int col = 0;
             for(int i=0; i<no_a_; ++i) for(int j=0; j<no_b_; ++j) for(int c=0; c<nv_b_; ++c) {
-                T_tot_AB_v(a, col) = t2_ab_(i, j, a, c) + L2_ab_(i, j, a, c); col++;
+                T1_AB_v(a, col) = t2_ab_(i, j, a, c); 
+                T2_AB_v(a, col) = L2_ab_(i, j, a, c); 
+                col++;
             }
         }
-        G_vv_alpha_ += 1.0 * (T_tot_AB_v * T_tot_AB_v.transpose());
+        G_vv_alpha_ += 1.0 * (T1_AB_v * T1_AB_v.transpose());
+        G_vv_alpha_ += 1.0 * (T1_AB_v * T2_AB_v.transpose() + T2_AB_v * T1_AB_v.transpose());
     }
 }
 
@@ -901,37 +912,47 @@ void OMP3::build_opdm_beta() {
     if (no_b_ == 0 || nv_b_ == 0) return;
     long vb2 = nv_b_ * nv_b_;
 
-    Eigen::MatrixXd T_tot_BB_o(no_b_, no_b_ * vb2);
+    Eigen::MatrixXd T1_BB_o(no_b_, no_b_ * vb2), T2_BB_o(no_b_, no_b_ * vb2);
     for(int i=0; i<no_b_; ++i) for(int k=0; k<no_b_; ++k) for(int ab=0; ab<vb2; ++ab) {
         int a = ab/nv_b_; int b = ab%nv_b_;
-        T_tot_BB_o(i, k*vb2+ab) = t2_bb_(i, k, a, b) + L2_bb_(i, k, a, b);
+        T1_BB_o(i, k*vb2+ab) = t2_bb_(i, k, a, b); 
+        T2_BB_o(i, k*vb2+ab) = L2_bb_(i, k, a, b);
     }
-    G_oo_beta_ = -0.5 * (T_tot_BB_o * T_tot_BB_o.transpose());
+    G_oo_beta_ = -0.5 * (T1_BB_o * T1_BB_o.transpose());
+    G_oo_beta_ -= 0.5 * (T1_BB_o * T2_BB_o.transpose() + T2_BB_o * T1_BB_o.transpose());
 
-    Eigen::MatrixXd T_tot_BA_o(no_b_, no_a_ * nv_a_ * nv_b_);
+    Eigen::MatrixXd T1_BA_o(no_b_, no_a_ * nv_a_ * nv_b_), T2_BA_o(no_b_, no_a_ * nv_a_ * nv_b_);
     for(int i=0; i<no_b_; ++i) for(int k=0; k<no_a_; ++k) for(int a=0; a<nv_a_; ++a) for(int b=0; b<nv_b_; ++b) {
         int col = k*(nv_a_*nv_b_) + a*nv_b_ + b;
-        T_tot_BA_o(i, col) = t2_ab_(k, i, a, b) + L2_ab_(k, i, a, b);
+        T1_BA_o(i, col) = t2_ab_(k, i, a, b); 
+        T2_BA_o(i, col) = L2_ab_(k, i, a, b);
     }
-    G_oo_beta_ -= 1.0 * (T_tot_BA_o * T_tot_BA_o.transpose());
+    G_oo_beta_ -= 1.0 * (T1_BA_o * T1_BA_o.transpose());
+    G_oo_beta_ -= 1.0 * (T1_BA_o * T2_BA_o.transpose() + T2_BA_o * T1_BA_o.transpose());
 
-    Eigen::MatrixXd T_tot_BB_v(nv_b_, no_b_ * no_b_ * nv_b_);
+    Eigen::MatrixXd T1_BB_v(nv_b_, no_b_ * no_b_ * nv_b_), T2_BB_v(nv_b_, no_b_ * no_b_ * nv_b_);
     for(int a=0; a<nv_b_; ++a) {
         int col = 0;
         for(int i=0; i<no_b_; ++i) for(int j=0; j<no_b_; ++j) for(int c=0; c<nv_b_; ++c) {
-            T_tot_BB_v(a, col) = t2_bb_(i, j, a, c) + L2_bb_(i, j, a, c); col++;
+            T1_BB_v(a, col) = t2_bb_(i, j, a, c); 
+            T2_BB_v(a, col) = L2_bb_(i, j, a, c); 
+            col++;
         }
     }
-    G_vv_beta_ = 0.5 * (T_tot_BB_v * T_tot_BB_v.transpose());
+    G_vv_beta_ = 0.5 * (T1_BB_v * T1_BB_v.transpose());
+    G_vv_beta_ += 0.5 * (T1_BB_v * T2_BB_v.transpose() + T2_BB_v * T1_BB_v.transpose());
 
-    Eigen::MatrixXd T_tot_BA_v(nv_b_, no_a_ * no_b_ * nv_a_);
+    Eigen::MatrixXd T1_BA_v(nv_b_, no_a_ * no_b_ * nv_a_), T2_BA_v(nv_b_, no_a_ * no_b_ * nv_a_);
     for(int a=0; a<nv_b_; ++a) {
         int col = 0;
         for(int i=0; i<no_a_; ++i) for(int j=0; j<no_b_; ++j) for(int c=0; c<nv_a_; ++c) {
-            T_tot_BA_v(a, col) = t2_ab_(i, j, c, a) + L2_ab_(i, j, c, a); col++;
+            T1_BA_v(a, col) = t2_ab_(i, j, c, a); 
+            T2_BA_v(a, col) = L2_ab_(i, j, c, a); 
+            col++;
         }
     }
-    G_vv_beta_ += 1.0 * (T_tot_BA_v * T_tot_BA_v.transpose());
+    G_vv_beta_ += 1.0 * (T1_BA_v * T1_BA_v.transpose());
+    G_vv_beta_ += 1.0 * (T1_BA_v * T2_BA_v.transpose() + T2_BA_v * T1_BA_v.transpose());
 }
 
 MP3Result OMP3::compute() {
