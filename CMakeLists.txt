@@ -180,8 +180,7 @@ set_target_properties(mshqc PROPERTIES
 )
 
 target_compile_definitions(mshqc PUBLIC 
-    EIGEN_USE_BLAS 
-    EIGEN_USE_LAPACKE
+    EIGEN_USE_MKL_ALL
     EIGEN_NO_DEBUG 
     EIGEN_MPL2_ONLY
 )
