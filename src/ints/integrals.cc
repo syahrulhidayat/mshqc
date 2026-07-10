@@ -27,9 +27,7 @@ namespace mshqc {
 
 
 
-// Global ERI Cache
-static bool cache_valid = false;
-static Eigen::Tensor<double, 4> cached_eri;
+
 
 IntegralEngine::IntegralEngine(const Molecule& mol, const BasisSet& basis)
     : mol_(mol), basis_(basis), nbasis_(basis.n_basis_functions()), opt_(nullptr) {

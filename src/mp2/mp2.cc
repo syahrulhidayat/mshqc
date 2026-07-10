@@ -747,7 +747,7 @@ void OMP2::transform_integrals() {
                         for (const auto& v2 : vir_spaces_a) {
                             if ((o1.id ^ v1.id ^ o2.id ^ v2.id) == 0) {
                                 auto* g_blk = g_aa_.get_block(o1.id, v1.id, o2.id, v2.id);
-                                if (g_blk) {
+                                if (g_blk && g_blk->size() > 0) {
                                     for (int i=0; i<o1.size; ++i) {
                                         for (int a=0; a<v1.size; ++a) {
                                             for (int j=0; j<o2.size; ++j) {
@@ -918,11 +918,15 @@ void OMP2::compute_t2_amplitudes() {
                     if (v2.size == 0) continue; 
                     
                     if ((o1.id ^ v1.id ^ o2.id ^ v2.id) == 0) {
+                        if (o1.size == 0 || v1.size == 0 || o2.size == 0 || v2.size == 0) {
+                            continue; 
+                        }
                         auto* g_blk = g_aa_.get_block(o1.id, v1.id, o2.id, v2.id);
                         auto* g_blk_ex = g_aa_.get_block(o1.id, v2.id, o2.id, v1.id);
                         
                         
-                        bool ex_valid = false;
+                        bool ex_valid = (g_blk_ex->dimension(1) == (Eigen::Index)v2.size && 
+                                         g_blk_ex->dimension(3) == (Eigen::Index)v1.size);
                         if (g_blk_ex != nullptr) {
                             if (g_blk_ex->dimension(1) == (Eigen::Index)v2.size && 
                                 g_blk_ex->dimension(3) == (Eigen::Index)v1.size) {
@@ -1764,6 +1768,9 @@ void OMP2::build_generalized_fock() {
                     for (const auto& o2 : occ_spaces_a) {
                         for (const auto& v2 : vir_spaces_a) {
                             if ((o1.id ^ v1.id ^ o2.id ^ v2.id) == 0) {
+                                if (o1.size == 0 || v1.size == 0 || o2.size == 0 || v2.size == 0) {
+                                    continue; 
+                                }
                                 auto* g_blk = g_aa_.get_block(o1.id, v1.id, o2.id, v2.id);
                                 auto* g_blk_ex = g_aa_.get_block(o1.id, v2.id, o2.id, v1.id);
                                 if (g_blk && g_blk_ex) {
@@ -2176,11 +2183,16 @@ Eigen::VectorXd OMP2::compute_soscf_step() {
         }
     }
 
-    
+    for(int i=0; i<hessian_diag_.size(); ++i) {
+        if(std::abs(hessian_diag_(i)) < 1e-12) hessian_diag_(i) = 1e-12; 
+    }
     
     Eigen::VectorXd kappa = -orbital_gradient_.cwiseQuotient(hessian_diag_);
 
-    
+    if (kappa.hasNaN() || !kappa.allFinite()) {
+        std::cerr << "  [CRITICAL] Orbital gradient contains NaN/Inf! Fallback to zero rotation." << std::endl;
+        kappa.setZero();
+    }
     double max_step = 0.15; 
     double max_val = kappa.cwiseAbs().maxCoeff();
     if (max_val > max_step) {

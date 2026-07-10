@@ -58,13 +58,8 @@ private:
     const Molecule& mol_;
     const BasisSet& basis_;
     size_t nbasis_;
-    
-    
-
-    
-
-    
-
+    bool cache_valid = false;
+    Eigen::Tensor<double, 4> cached_eri;
     std::vector<int> atm_;
     std::vector<int> bas_;
     std::vector<double> env_;
@@ -73,6 +68,7 @@ private:
   
     
     void convert_basis_to_libcint();
+    
     
     
 
