@@ -75,7 +75,33 @@ jobs:
         make -j 4
         make install
 
+    # =========================================================================
     # 3. CCACHE & BUILD MSHQC WHEEL
+    # =========================================================================
+    - name: Setup Compiler Cache (ccache)
+      uses: hendrikmuhs/ccache-action@v1.2
+      with:
+        key: ${{ runner.os }}-mshqc-ccache-mkl-py314
+        max-size: 500M
+
+    # --- TAMBAHKAN STEP DEBUG INI DI SINI ---
+    - name: Debug Cari Lokasi Header Conda
+      shell: bash -el {0}
+      run: |
+        echo "=== MENCARI MKL.H ==="
+        find $CONDA_PREFIX -name "mkl.h" 2>/dev/null
+        
+        echo "=== MENCARI CINT.H ==="
+        find $CONDA_PREFIX -name "cint.h" 2>/dev/null
+        
+        echo "=== CEK ISI FOLDER INCLUDE UTAMA ==="
+        ls -la $CONDA_PREFIX/include
+    # ----------------------------------------
+
+    - name: Build Python Wheel (.whl)
+      shell: bash -el {0}
+      run: |
+        export CC="ccache $CONDA_PREFIX/bin/x86_64-conda-linux-gnu-cc"
         export CXX="ccache $CONDA_PREFIX/bin/x86_64-conda-linux-gnu-c++"
         
         # FLAG DIUBAH: Mengganti EIGEN_USE_BLAS/LAPACKE menjadi EIGEN_USE_MKL_ALL
