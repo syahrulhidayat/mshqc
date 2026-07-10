@@ -1,29 +1,29 @@
 cmake_minimum_required(VERSION 3.14)
 
-# ==============================================================================
-# 1. INFORMASI PROYEK
-# ==============================================================================
+
+
+
 project(mshqc VERSION 1.0.0 LANGUAGES CXX C)
 
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-# ==============================================================================
-# [OPTIMASI KOMPILER CERDAS: ULTRA PERFORMANCE]
-# ==============================================================================
+
+
+
 if(DEFINED ENV{GITHUB_ACTIONS})
-    # [PUBLIC RELEASE]: Biner Universal Dinamis (Standar Industri HPC)
-    # Eigen akan menggunakan AVX2/FMA sebagai standar dasar yang sangat cepat,
-    # sementara AVX-512 diblokir untuk mencegah SIGILL di CPU AMD/Intel standar.
+    
+    
+    
     message(STATUS ">> CI/CD Server Detected: Menggunakan optimasi Biner Universal (AVX2/FMA Baseline)")
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -mavx2 -mfma -mno-avx512f -funroll-loops -ftree-vectorize -mtune=generic -DNDEBUG -fno-math-errno")
 else()
-    # [PRIVATE/LOCAL]: Super Turbo (Deteksi CPU Otomatis)
+    
     message(STATUS ">> Local Environment Detected: Mengaktifkan Super Turbo (-march=native)")
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -march=native -funroll-loops -ftree-vectorize -DNDEBUG -fno-math-errno")
 endif()
-# [CRITICAL FIX]: TBLIS mewajibkan C++20
+
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
@@ -31,17 +31,17 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_CXX_VISIBILITY_PRESET default)
 set(CMAKE_VISIBILITY_INLINES_HIDDEN 0)
 
-# Mengembalikan Interprocedural Optimization (IPO/LTO) yang terbukti aman!
+
 include(CheckIPOSupported)
 check_ipo_supported(RESULT ipo_supported OUTPUT error)
-#if(ipo_supported)
-    #message(STATUS ">> IPO / LTO Didukung dan Diaktifkan! (Super Turbo)")
-    #set(CMAKE_INTERPROCEDURAL_OPTIMIZATION TRUE)
-#endif()
 
-# ==============================================================================
-# 2. KONFIGURASI LINGKUNGAN CONDA & PYTHON (PORTABEL UNTUK CODESPACES)
-# ==============================================================================
+    
+    
+
+
+
+
+
 if(DEFINED ENV{CONDA_PREFIX})
     set(Python_ROOT_DIR "$ENV{CONDA_PREFIX}")
     set(Python_EXECUTABLE "$ENV{CONDA_PREFIX}/bin/python")
@@ -58,40 +58,48 @@ endif()
 find_package(Python COMPONENTS Interpreter Development REQUIRED)
 find_package(nanobind CONFIG REQUIRED)
 
-# ==============================================================================
-# 3. PENCARIAN PUSTAKA "ULTIMATE STACK" 
-# ==============================================================================
+
+
+
 find_package(OpenMP REQUIRED)
 
-# --- BLAS & LAPACK ---
-find_library(BLIS_LIBRARY NAMES blis-mt blis HINTS "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/lib64" "/usr/lib")
-find_library(FLAME_LIBRARY NAMES flame HINTS "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/lib64" "/usr/lib")
 
-if(BLIS_LIBRARY)
-    message(STATUS ">> BLAS: BLIS ditemukan!")
-    set(BLAS_LIBRARIES ${BLIS_LIBRARY})
-else()
-    message(STATUS ">> BLIS tidak ditemukan. Mencari Standar BLAS Sistem...")
-    find_package(BLAS REQUIRED)
-endif()
 
-if(FLAME_LIBRARY)
-    message(STATUS ">> LAPACK: libflame ditemukan!")
-    set(LAPACK_LIBRARIES ${FLAME_LIBRARY})
-else()
-    message(STATUS ">> libflame tidak ditemukan. Mencari Standar LAPACK & LAPACKE Sistem...")
-    find_package(LAPACK REQUIRED)
+find_library(MKL_LIBRARY NAMES mkl_rt HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/local/lib" "/usr/lib")
+
+if(MKL_LIBRARY)
+    message(STATUS ">> Linear Algebra Engine: Intel MKL ditemukan! (${MKL_LIBRARY})")
     
-    find_library(LAPACKE_LIBRARY NAMES lapacke HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/lib/x86_64-linux-gnu" "/usr/lib")
-    if(LAPACKE_LIBRARY)
-        message(STATUS ">> LAPACKE: Antarmuka C LAPACKE ditemukan! (${LAPACKE_LIBRARY})")
-        list(APPEND LAPACK_LIBRARIES ${LAPACKE_LIBRARY})
+    set(BLAS_LIBRARIES ${MKL_LIBRARY})
+    set(LAPACK_LIBRARIES ${MKL_LIBRARY})
+else()
+    message(STATUS ">> Intel MKL tidak ditemukan. Jatuh ke fallback (BLIS/FLAME/Standar)...")
+    find_library(BLIS_LIBRARY NAMES blis-mt blis HINTS "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/lib64" "/usr/lib")
+    find_library(FLAME_LIBRARY NAMES flame HINTS "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/lib64" "/usr/lib")
+
+    if(BLIS_LIBRARY)
+        message(STATUS ">> BLAS: BLIS ditemukan!")
+        set(BLAS_LIBRARIES ${BLIS_LIBRARY})
     else()
-        message(FATAL_ERROR "CRITICAL: LAPACKE (lapacke) tidak ditemukan di sistem!")
+        find_package(BLAS REQUIRED)
+    endif()
+
+    if(FLAME_LIBRARY)
+        message(STATUS ">> LAPACK: libflame ditemukan!")
+        set(LAPACK_LIBRARIES ${FLAME_LIBRARY})
+    else()
+        find_package(LAPACK REQUIRED)
+        
+        find_library(LAPACKE_LIBRARY NAMES lapacke HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/lib/x86_64-linux-gnu" "/usr/lib")
+        if(LAPACKE_LIBRARY)
+            message(STATUS ">> LAPACKE: Antarmuka C LAPACKE ditemukan! (${LAPACKE_LIBRARY})")
+            list(APPEND LAPACK_LIBRARIES ${LAPACKE_LIBRARY})
+        else()
+            message(FATAL_ERROR "CRITICAL: LAPACKE (lapacke) tidak ditemukan di sistem!")
+        endif()
     endif()
 endif()
 
-# --- EIGEN ---
 set(EIGEN_LOCAL_PATH "${CMAKE_SOURCE_DIR}/include/eigen-3.4.0")
 if(EXISTS "${EIGEN_LOCAL_PATH}/Eigen/Dense")
     message(STATUS ">> Linear Algebra: Menggunakan Eigen Lokal")
@@ -108,7 +116,7 @@ else()
     endif()
 endif()
 
-# --- LIBCINT ---
+
 find_library(CINT_LIBRARY cint HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/local/lib" "/usr/lib")
 if(CINT_LIBRARY)
     message(STATUS ">> Integral Engine: libcint ditemukan!")
@@ -116,7 +124,7 @@ else()
     message(FATAL_ERROR "CRITICAL: libcint tidak ditemukan!")
 endif()
 
-# --- TBLIS & TCI ---
+
 find_library(TBLIS_LIBRARY NAMES libtblis.a tblis HINTS "$ENV{TBLIS_DIR}/lib" "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/lib")
 find_library(TCI_LIBRARY NAMES libtci.a tci HINTS "$ENV{TBLIS_DIR}/lib" "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/lib")
 
@@ -127,7 +135,7 @@ else()
     message(FATAL_ERROR "CRITICAL: TBLIS atau TCI tidak ditemukan!")
 endif()
 
-# --- HDF5 ---
+
 find_path(HDF5_INCLUDE_DIRS "H5Cpp.h" HINTS "$ENV{CONDA_PREFIX}/include" NO_DEFAULT_PATH)
 find_library(HDF5_C_LIB hdf5 HINTS "$ENV{CONDA_PREFIX}/lib" NO_DEFAULT_PATH)
 find_library(HDF5_CXX_LIB hdf5_cpp HINTS "$ENV{CONDA_PREFIX}/lib" NO_DEFAULT_PATH)
@@ -140,15 +148,15 @@ else()
     message(FATAL_ERROR "CRITICAL: HDF5 C++ tidak ditemukan di Conda mshqcenv!")
 endif()
 
-# --- JEMALLOC ---
+
 if(JEMALLOC_LIB)
     message(STATUS ">> Memori Allocator: Jemalloc ditemukan!")
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-builtin-malloc -fno-builtin-calloc -fno-builtin-realloc -fno-builtin-free")
 endif()
 
-# ==============================================================================
-# 4. KOLEKSI SOURCE CODE
-# ==============================================================================
+
+
+
 file(GLOB_RECURSE SRC_CORE CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/core/*.cc")
 file(GLOB_RECURSE SRC_SCF CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/scf/*.cc")
 file(GLOB_RECURSE SRC_MP CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/mp/*.cc" "${CMAKE_SOURCE_DIR}/src/mp2/*.cc" "${CMAKE_SOURCE_DIR}/src/mp3/*.cc")
@@ -168,9 +176,9 @@ set(ALL_SOURCES
     ${SRC_UTILS}
 )
 
-# ==============================================================================
-# 5. TARGET: LIBRARY C++ UTAMA (mshqc)
-# ==============================================================================
+
+
+
 add_library(mshqc STATIC ${ALL_SOURCES})
 
 set_target_properties(mshqc PROPERTIES 
@@ -179,11 +187,13 @@ set_target_properties(mshqc PROPERTIES
     BUILD_WITH_INSTALL_RPATH TRUE
 )
 
+
 target_compile_definitions(mshqc PUBLIC 
     EIGEN_USE_MKL_ALL
     EIGEN_NO_DEBUG 
     EIGEN_MPL2_ONLY
 )
+
 target_link_libraries(mshqc PUBLIC 
     Eigen3::Eigen
     ${CINT_LIBRARY}
@@ -206,13 +216,13 @@ target_include_directories(mshqc PUBLIC
     $<INSTALL_INTERFACE:include>
 )
 
-# ==============================================================================
-# 6. TARGET: PYTHON MODULE (_mshqc)
-# ==============================================================================
+
+
+
 nanobind_add_module(_mshqc "python/bindings.cc")
 
 if(JEMALLOC_LIB)
-    target_link_libraries(_mshqc PRIVATE mshqc ${CINT_LIBRARY} ${TBLIS_LIBRARY} ${JEMALLOC_LIB} atomic) # 
+    target_link_libraries(_mshqc PRIVATE mshqc ${CINT_LIBRARY} ${TBLIS_LIBRARY} ${JEMALLOC_LIB} atomic) 
 else()
     target_link_libraries(_mshqc PRIVATE mshqc ${CINT_LIBRARY} ${TBLIS_LIBRARY} atomic)
 endif()
@@ -229,9 +239,9 @@ if(ipo_supported)
     set_target_properties(_mshqc PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
 endif()
 
-# ==============================================================================
-# 7. INSTALASI
-# ==============================================================================
+
+
+
 install(TARGETS mshqc _mshqc
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
