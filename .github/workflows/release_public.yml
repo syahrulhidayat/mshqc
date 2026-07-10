@@ -75,20 +75,7 @@ jobs:
         make -j 4
         make install
 
-    # =========================================================================
     # 3. CCACHE & BUILD MSHQC WHEEL
-    # =========================================================================
-    - name: Setup Compiler Cache (ccache)
-      uses: hendrikmuhs/ccache-action@v1.2
-      with:
-        # KEY DIUBAH: Menambahkan suffix -mkl-py314 untuk memisahkan ccache lama
-        key: ${{ runner.os }}-mshqc-ccache-mkl-py314
-        max-size: 500M
-
-    - name: Build Python Wheel (.whl)
-      shell: bash -el {0}
-      run: |
-        export CC="ccache $CONDA_PREFIX/bin/x86_64-conda-linux-gnu-cc"
         export CXX="ccache $CONDA_PREFIX/bin/x86_64-conda-linux-gnu-c++"
         
         # FLAG DIUBAH: Mengganti EIGEN_USE_BLAS/LAPACKE menjadi EIGEN_USE_MKL_ALL
