@@ -224,7 +224,9 @@ message(STATUS ">> Force Inject Include Directory: ${GLOBAL_CONDA_INCLUDE}")
 
 target_include_directories(mshqc PUBLIC 
     $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
-    $<BUILD_INTERFACE:${GLOBAL_CONDA_INCLUDE}>
+    $<BUILD_INTERFACE:${CINT_INCLUDE_DIRS}>
+    $<BUILD_INTERFACE:${MKL_INCLUDE_DIRS}>
+    $<BUILD_INTERFACE:${HDF5_INCLUDE_DIRS}>
     $<INSTALL_INTERFACE:include>
 )
 
