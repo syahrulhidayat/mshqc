@@ -31,7 +31,7 @@ jobs:
       run: |
         # Mengganti openblas dengan mkl dan mkl-devel
         conda install -y -c conda-forge cmake make compilers eigen pkg-config "hdf5=1.14.3" pip libcint liblapacke mkl mkl-devel
-        ppython -m pip install build wheel nanobind setuptools
+        python -m pip install build wheel nanobind setuptools
 
     # =========================================================================
     # 2. CACHE & COMPILE TBLIS
