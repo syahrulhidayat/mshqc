@@ -1251,7 +1251,268 @@ void OMP2::build_opdm_beta() {
         G_vv_beta_ += Gvv_temp;
     }
 }
+void OMP2::compute_t2_and_energy_cholesky() {
+    double E_ss_aa = 0.0, E_ss_bb = 0.0, E_os = 0.0;
+    int nf = n_frozen_;
 
+    
+
+
+    
+
+
+    
+
+
+    t2_aa_.allocate_block(0, 0, 0, 0, na_, va_, na_, va_);
+    auto* t_aa_blk = t2_aa_.get_block(0, 0, 0, 0);
+
+    if (t_aa_blk) {
+        #pragma omp parallel for reduction(+:E_ss_aa) schedule(dynamic, 1)
+        for (int i = nf; i < na_; ++i) {
+            Eigen::MatrixXd g_ijab(va_, va_); 
+
+
+            
+            for (int j = nf; j < na_; ++j) {
+                
+
+
+                Eigen::MatrixXd Bia = B_ia_P_alpha_.middleRows(i * va_, va_);
+                Eigen::MatrixXd Bjb = B_ia_P_alpha_.middleRows(j * va_, va_);
+                
+                
+
+
+                g_ijab.noalias() = Bia * Bjb.transpose(); 
+
+                double e_ij = scf_.orbital_energies_alpha(i) + scf_.orbital_energies_alpha(j);
+                
+                for (int a = 0; a < va_; ++a) {
+                    double den_a = e_ij - scf_.orbital_energies_alpha(na_ + a);
+                    for (int b = 0; b < va_; ++b) {
+                        double den = den_a - scf_.orbital_energies_alpha(na_ + b);
+                        
+                        double val_dir = g_ijab(a, b);
+                        double val_ex  = g_ijab(b, a); 
+
+
+                        
+                        double t_val = 0.0;
+                        if (std::abs(den) > 1e-12) {
+                            t_val = (val_dir - val_ex) / den;
+                            
+
+
+                            E_ss_aa += t_val * (val_dir - val_ex); 
+                        }
+                        (*t_aa_blk)(i, a, j, b) = t_val;
+                    }
+                }
+            }
+        }
+    }
+
+    
+
+
+    
+
+
+    
+
+
+    if (nb_ > 0 && vb_ > 0) {
+        
+
+
+        t2_bb_.allocate_block(0, 0, 0, 0, nb_, nb_, vb_, vb_);
+        auto* t_bb_blk = t2_bb_.get_block(0, 0, 0, 0);
+
+        t2_ab_.allocate_block(0, 0, 0, 0, na_, nb_, va_, vb_);
+        auto* t_ab_blk = t2_ab_.get_block(0, 0, 0, 0);
+
+        
+
+
+        if (t_bb_blk) {
+            #pragma omp parallel for reduction(+:E_ss_bb) schedule(dynamic, 1)
+            for (int i = nf; i < nb_; ++i) {
+                Eigen::MatrixXd g_ijab(vb_, vb_);
+                
+                for (int j = nf; j < nb_; ++j) {
+                    Eigen::MatrixXd Bia = B_ia_P_beta_.middleRows(i * vb_, vb_);
+                    Eigen::MatrixXd Bjb = B_ia_P_beta_.middleRows(j * vb_, vb_);
+                    
+                    g_ijab.noalias() = Bia * Bjb.transpose();
+                    
+                    double e_ij = scf_.orbital_energies_beta(i) + scf_.orbital_energies_beta(j);
+                    
+                    for (int a = 0; a < vb_; ++a) {
+                        double den_a = e_ij - scf_.orbital_energies_beta(nb_ + a);
+                        for (int b = 0; b < vb_; ++b) {
+                            double den = den_a - scf_.orbital_energies_beta(nb_ + b);
+                            
+                            double val_dir = g_ijab(a, b);
+                            double val_ex  = g_ijab(b, a);
+                            
+                            double t_val = 0.0;
+                            if (std::abs(den) > 1e-12) {
+                                t_val = (val_dir - val_ex) / den;
+                                E_ss_bb += t_val * (val_dir - val_ex);
+                            }
+                            (*t_bb_blk)(i, j, a, b) = t_val; 
+                        }
+                    }
+                }
+            }
+        }
+
+        
+
+
+        if (t_ab_blk) {
+            #pragma omp parallel for reduction(+:E_os) schedule(dynamic, 1)
+            for (int i = nf; i < na_; ++i) {
+                Eigen::MatrixXd g_ijab(va_, vb_);
+                
+                for (int j = nf; j < nb_; ++j) {
+                    Eigen::MatrixXd Bia = B_ia_P_alpha_.middleRows(i * va_, va_);
+                    Eigen::MatrixXd Bjb = B_ia_P_beta_.middleRows(j * vb_, vb_);
+                    
+                    g_ijab.noalias() = Bia * Bjb.transpose(); 
+
+
+                    
+                    double e_ij = scf_.orbital_energies_alpha(i) + scf_.orbital_energies_beta(j);
+                    
+                    for (int a = 0; a < va_; ++a) {
+                        double den_a = e_ij - scf_.orbital_energies_alpha(na_ + a);
+                        for (int b = 0; b < vb_; ++b) {
+                            double den = den_a - scf_.orbital_energies_beta(nb_ + b);
+                            
+                            
+
+
+                            double val_dir = g_ijab(a, b);
+                            
+                            double t_val = 0.0;
+                            if (std::abs(den) > 1e-12) {
+                                t_val = val_dir / den;
+                                E_os += t_val * val_dir; 
+
+
+                            }
+                            (*t_ab_blk)(i, j, a, b) = t_val;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    
+
+
+    e_ss_ = 0.25 * E_ss_aa + 0.25 * E_ss_bb;
+    e_os_ = E_os;
+}
+void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd& Z_mat_b) {
+    int n_chol = scf_.L_mat.cols();
+    Z_mat_a.setZero(va_, na_);
+    if (nb_ > 0) Z_mat_b.setZero(vb_, nb_);
+
+    // 1. Ratakan (Flatten) Tensor T2 menjadi matriks 2D (Aman masuk RAM)
+    Eigen::MatrixXd T2_aa = Eigen::MatrixXd::Zero(na_*va_, na_*va_);
+    auto* t_aa_blk = t2_aa_.get_block(0,0,0,0);
+    if (t_aa_blk) {
+        #pragma omp parallel for collapse(2)
+        for (int i = 0; i < na_; ++i) for (int a = 0; a < va_; ++a)
+            for (int j = 0; j < na_; ++j) for (int b = 0; b < va_; ++b)
+                T2_aa(i*va_+a, j*va_+b) = (*t_aa_blk)(i, a, j, b);
+    }
+
+    Eigen::MatrixXd T2_ab = Eigen::MatrixXd::Zero(na_*va_, nb_*vb_);
+    Eigen::MatrixXd T2_bb = Eigen::MatrixXd::Zero(nb_*vb_, nb_*vb_);
+    if (nb_ > 0 && vb_ > 0) {
+        auto* t_ab_blk = t2_ab_.get_block(0,0,0,0);
+        if (t_ab_blk) {
+            #pragma omp parallel for collapse(2)
+            for (int i = 0; i < na_; ++i) for (int a = 0; a < va_; ++a)
+                for (int j = 0; j < nb_; ++j) for (int b = 0; b < vb_; ++b)
+                    T2_ab(i*va_+a, j*vb_+b) = (*t_ab_blk)(i, j, a, b);
+        }
+        auto* t_bb_blk = t2_bb_.get_block(0,0,0,0);
+        if (t_bb_blk) {
+            #pragma omp parallel for collapse(2)
+            for (int i = 0; i < nb_; ++i) for (int a = 0; a < vb_; ++a)
+                for (int j = 0; j < nb_; ++j) for (int b = 0; b < vb_; ++b)
+                    T2_bb(i*vb_+a, j*vb_+b) = (*t_bb_blk)(i, j, a, b);
+        }
+    }
+
+    // 2. Evaluasi Z-Vector dengan Batched/Chunked Loop
+    const int CHUNK_SIZE = 128; // Optimal untuk L2/L3 Cache
+
+    #pragma omp parallel
+    {
+        Eigen::MatrixXd Z_loc_a = Eigen::MatrixXd::Zero(va_, na_);
+        Eigen::MatrixXd Z_loc_b = Eigen::MatrixXd::Zero(vb_, nb_);
+        
+        // Buffer yang sangat kecil, pasti muat di L1 Cache
+        Eigen::MatrixXd B_oo_a(na_, na_), B_vv_a(va_, va_);
+        Eigen::MatrixXd B_oo_b(nb_, nb_), B_vv_b(vb_, vb_);
+
+        #pragma omp for schedule(dynamic)
+        for (int P_start = 0; P_start < n_chol; P_start += CHUNK_SIZE) {
+            int P_len = std::min(CHUNK_SIZE, n_chol - P_start);
+            
+            // --- Hitung X_chunk (Perkalian matriks hanya sebesar CHUNK_SIZE) ---
+            Eigen::MatrixXd Bia_chunk = B_ia_P_alpha_.middleCols(P_start, P_len);
+            Eigen::MatrixXd X_a_chunk = T2_aa * Bia_chunk;
+            
+            if (nb_ > 0 && vb_ > 0) {
+                Eigen::MatrixXd Bib_chunk = B_ia_P_beta_.middleCols(P_start, P_len);
+                X_a_chunk += T2_ab * Bib_chunk;
+            }
+
+            Eigen::MatrixXd X_b_chunk;
+            if (nb_ > 0 && vb_ > 0) {
+                Eigen::MatrixXd Bib_chunk = B_ia_P_beta_.middleCols(P_start, P_len);
+                X_b_chunk = T2_bb * Bib_chunk + T2_ab.transpose() * Bia_chunk;
+            }
+
+            // --- Evaluasi AO->MO dan Z-Vector secara on-the-fly untuk chunk ini ---
+            for (int p = 0; p < P_len; ++p) {
+                int P_global = P_start + p;
+                
+                // Ambil matriks AO dari Cholesky
+                Eigen::Map<const Eigen::MatrixXd> B_AO(scf_.L_mat.col(P_global).data(), nbf_, nbf_);
+                
+                // --- Kontraksi Alpha ---
+                B_oo_a.noalias() = scf_.C_alpha.leftCols(na_).transpose() * (B_AO * scf_.C_alpha.leftCols(na_));
+                B_vv_a.noalias() = scf_.C_alpha.rightCols(va_).transpose() * (B_AO * scf_.C_alpha.rightCols(va_));
+                
+                Eigen::Map<Eigen::MatrixXd> XT_a(X_a_chunk.col(p).data(), va_, na_);
+                Z_loc_a.noalias() += B_vv_a * XT_a - XT_a * B_oo_a;
+
+                // --- Kontraksi Beta (Jika Open-Shell) ---
+                if (nb_ > 0 && vb_ > 0) {
+                    B_oo_b.noalias() = scf_.C_beta.leftCols(nb_).transpose() * (B_AO * scf_.C_beta.leftCols(nb_));
+                    B_vv_b.noalias() = scf_.C_beta.rightCols(vb_).transpose() * (B_AO * scf_.C_beta.rightCols(vb_));
+                    
+                    Eigen::Map<Eigen::MatrixXd> XT_b(X_b_chunk.col(p).data(), vb_, nb_);
+                    Z_loc_b.noalias() += B_vv_b * XT_b - XT_b * B_oo_b;
+                }
+            }
+        }
+        #pragma omp critical
+        { 
+            Z_mat_a += Z_loc_a; 
+            if (nb_ > 0) Z_mat_b += Z_loc_b;
+        }
+    }
+}
 
 
 double OMP2::execute_micro_iterations() {
@@ -1270,14 +1531,27 @@ double OMP2::execute_micro_iterations() {
     C_a_current_ = scf_.C_alpha;
     C_b_current_ = scf_.C_beta;
 
-    
-    transform_integrals();
-    compute_t2_amplitudes();
-    
-    
-    compute_mp2_energy();
+    if (config_.eri_method == "cholesky") {
+        transform_3center_mo_cholesky();
+        compute_t2_and_energy_cholesky();
+        
 
-    
+
+    } else if (config_.eri_method == "df") {
+        transform_3center_mo(); 
+        transform_integrals(); 
+
+
+        compute_t2_amplitudes();
+        compute_mp2_energy();
+    } else {
+        transform_integrals(); 
+
+
+        compute_t2_amplitudes();
+        compute_mp2_energy();
+    }
+
     build_opdm_alpha();
     if (nb_ > 0) build_opdm_beta();
 
@@ -1579,8 +1853,20 @@ void OMP2::build_generalized_fock() {
         }
         
         if (config_.print_level > 0) std::cout << "  [DEBUG] Evaluasi Z-Vector Irrep-Blocked Selesai!" << std::endl;
+    } else if (config_.eri_method == "cholesky") {
+        if (config_.print_level > 0) std::cout << "  [DEBUG] Memulai evaluasi Z-Vector O(N^4) Cholesky (Chunked/Batched)..." << std::endl;
+        
+        
+
+
+        evaluate_z_vector_cholesky(Z_mat_a, Z_mat_b);
+        
+        bool is_restricted = (na_ == nb_ && va_ == vb_);
+        if (is_restricted) {
+            Z_mat_b = Z_mat_a;
+        }
     } else {
-        if (config_.print_level > 0) std::cout << "  [DEBUG] Memulai evaluasi Z-Vector O(N^4) Density Fitting/Cholesky..." << std::endl;
+        if (config_.print_level > 0) std::cout << "  [DEBUG] Memulai evaluasi Z-Vector O(N^4) Density Fitting..." << std::endl;
         
         bool is_restricted = (na_ == nb_ && va_ == vb_);
         int n_aux = scf_.L_mat.cols();

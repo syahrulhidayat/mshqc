@@ -275,6 +275,11 @@ private:
     void build_opdm_beta();
     void build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_b,
                          Eigen::MatrixXd& F_a, Eigen::MatrixXd& F_b);
+    void transform_3center_mo_cholesky();
+    void compute_t2_and_energy_cholesky();
+    void build_opdm_cholesky();
+    void compute_t2_and_energy_cholesky();
+    void evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd& Z_mat_b);
 };
 
 } 
