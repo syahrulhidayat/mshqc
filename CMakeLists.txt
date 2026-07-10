@@ -64,7 +64,7 @@ find_package(nanobind CONFIG REQUIRED)
 find_package(OpenMP REQUIRED)
 
 
-
+find_path(MKL_INCLUDE_DIRS "mkl.h" HINTS "$ENV{CONDA_PREFIX}/include" "/opt/conda/include" "/usr/local/include" "/usr/include")
 find_library(MKL_LIBRARY NAMES mkl_rt HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/local/lib" "/usr/lib")
 
 if(MKL_LIBRARY)
@@ -217,6 +217,7 @@ target_include_directories(mshqc PUBLIC
     $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
     $<BUILD_INTERFACE:${HDF5_INCLUDE_DIRS}>
     $<BUILD_INTERFACE:${CINT_INCLUDE_DIRS}>
+    $<BUILD_INTERFACE:${MKL_INCLUDE_DIRS}>
     $<INSTALL_INTERFACE:include>
 )
 
