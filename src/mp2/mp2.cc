@@ -1762,6 +1762,7 @@ void OMP2::build_generalized_fock() {
                                 if (g_blk && g_blk_ex) {
                                     T2_spatial.allocate_block(o1.id, v1.id, o2.id, v2.id, o1.size, v1.size, o2.size, v2.size);
                                     auto* T_blk = T2_spatial.get_block(o1.id, v1.id, o2.id, v2.id);
+                                    T_blk->setZero();
                                     
                                     for (int di = 0; di < o1.size; ++di) {
                                         if (o1.offset+di < n_frozen_) continue;

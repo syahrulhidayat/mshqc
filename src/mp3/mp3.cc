@@ -43,12 +43,19 @@ double BaseMP3::tensor_dot(const Eigen::Tensor<double, 4>& A, const Eigen::Tenso
     return vecA.dot(vecB);
 }
 
-
 #define TBLIS_VIEW_4D(name, t, d1, d2, d3, d4) \
     varray_view<double> name({(len_type)d1, (len_type)d2, (len_type)d3, (len_type)d4}, t.data(), \
     {1, (stride_type)d1, (stride_type)(d1*d2), (stride_type)(d1*d2*d3)})
 
 
+#define TBLIS_VIEW_3D(name, ptr, d1, d2, d3) \
+    varray_view<double> name({(len_type)d1, (len_type)d2, (len_type)d3}, ptr, \
+    {1, (stride_type)d1, (stride_type)(d1*d2)})
+
+
+#define TBLIS_VIEW_2D(name, ptr, d1, d2) \
+    varray_view<double> name({(len_type)d1, (len_type)d2}, ptr, \
+    {1, (stride_type)d1})
 
 
 MP3Result RMP3::compute() {
@@ -493,25 +500,35 @@ double OMP3::compute_mp2_energy() {
         t2_bb_ = Eigen::Tensor<double, 4>(no_b_, no_b_, nv_b_, nv_b_);
         t2_ab_ = Eigen::Tensor<double, 4>(no_a_, no_b_, nv_a_, nv_b_);
     }
-    const Eigen::MatrixXd& Cao = scf_.C_alpha.leftCols(no_a_); const Eigen::MatrixXd& Cav = scf_.C_alpha.rightCols(nv_a_);
-    const auto& ea = scf_.orbital_energies_alpha; double e_sum = 0.0;
+    const Eigen::MatrixXd& Cao = scf_.C_alpha.leftCols(no_a_); 
+    const Eigen::MatrixXd& Cav = scf_.C_alpha.rightCols(nv_a_);
+    const auto& ea = scf_.orbital_energies_alpha; 
+    double e_sum = 0.0;
     
     
+
+
+    const double delta = 0.0; 
+
     auto g_aa = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cao, Cav, Cao, Cav, ints_);
     double e_aa = 0.0;
     #pragma omp parallel for collapse(4) reduction(+:e_aa)
     for(int i=0; i<no_a_; ++i) for(int j=0; j<no_a_; ++j) 
         for(int a=0; a<nv_a_; ++a) for(int b=0; b<nv_a_; ++b) {
-            double D = ea(i)+ea(j)-ea(no_a_+a)-ea(no_a_+b);
-            if(std::abs(D)>1e-12) {
-                double val = g_aa(i,a,j,b) - g_aa(i,b,j,a);
-                t2_aa_(i,j,a,b) = val / D; e_aa += t2_aa_(i,j,a,b) * val;
-            } else t2_aa_(i,j,a,b) = 0.0;
+            double D = ea(i) + ea(j) - ea(no_a_+a) - ea(no_a_+b);
+            double val = g_aa(i,a,j,b) - g_aa(i,b,j,a);
+            
+
+
+            double reg_D = D / (D * D + delta * delta); 
+            t2_aa_(i,j,a,b) = val * reg_D; 
+            e_aa += t2_aa_(i,j,a,b) * val;
         }
     e_sum += 0.25 * e_aa;
 
     if (no_b_ > 0 && nv_b_ > 0) {
-        const Eigen::MatrixXd& Cbo = scf_.C_beta.leftCols(no_b_); const Eigen::MatrixXd& Cbv = scf_.C_beta.rightCols(nv_b_);
+        const Eigen::MatrixXd& Cbo = scf_.C_beta.leftCols(no_b_); 
+        const Eigen::MatrixXd& Cbv = scf_.C_beta.rightCols(nv_b_);
         const auto& eb = scf_.orbital_energies_beta;
         
         auto g_bb = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cbo, Cbv, Cbo, Cbv, ints_);
@@ -519,11 +536,11 @@ double OMP3::compute_mp2_energy() {
         #pragma omp parallel for collapse(4) reduction(+:e_bb)
         for(int i=0; i<no_b_; ++i) for(int j=0; j<no_b_; ++j)
             for(int a=0; a<nv_b_; ++a) for(int b=0; b<nv_b_; ++b) {
-                double D = eb(i)+eb(j)-eb(no_b_+a)-eb(no_b_+b);
-                if(std::abs(D)>1e-12) {
-                    double val = g_bb(i,a,j,b) - g_bb(i,b,j,a);
-                    t2_bb_(i,j,a,b) = val / D; e_bb += t2_bb_(i,j,a,b) * val;
-                } else t2_bb_(i,j,a,b) = 0.0;
+                double D = eb(i) + eb(j) - eb(no_b_+a) - eb(no_b_+b);
+                double val = g_bb(i,a,j,b) - g_bb(i,b,j,a);
+                double reg_D = D / (D * D + delta * delta);
+                t2_bb_(i,j,a,b) = val * reg_D; 
+                e_bb += t2_bb_(i,j,a,b) * val;
             }
         e_sum += 0.25 * e_bb;
 
@@ -532,11 +549,11 @@ double OMP3::compute_mp2_energy() {
         #pragma omp parallel for collapse(4) reduction(+:e_ab)
         for(int i=0; i<no_a_; ++i) for(int j=0; j<no_b_; ++j)
             for(int a=0; a<nv_a_; ++a) for(int b=0; b<nv_b_; ++b) {
-                double D = ea(i)+eb(j)-ea(no_a_+a)-eb(no_b_+b);
-                if(std::abs(D)>1e-12) {
-                    double val = g_ab(i,a,j,b);
-                    t2_ab_(i,j,a,b) = val / D; e_ab += t2_ab_(i,j,a,b) * val;
-                } else t2_ab_(i,j,a,b) = 0.0;
+                double D = ea(i) + eb(j) - ea(no_a_+a) - eb(no_b_+b);
+                double val = g_ab(i,a,j,b);
+                double reg_D = D / (D * D + delta * delta);
+                t2_ab_(i,j,a,b) = val * reg_D; 
+                e_ab += t2_ab_(i,j,a,b) * val;
             }
         e_sum += e_ab;
     }
@@ -591,14 +608,20 @@ double OMP3::compute_mp3_correction() {
             tblis::mult<double>(1.0, t_Vovov_ab, "iakc", t_Tab, "jkbc", 1.0, t_Waa, "ijab");
         }
 
+        
+
+
+        const double delta = 0.0;
+
         #pragma omp parallel for collapse(4) reduction(+:e3_aa)
         for(int i=0; i<no_a_; ++i) for(int j=0; j<no_a_; ++j) for(int a=0; a<nv_a_; ++a) for(int b=0; b<nv_a_; ++b) {
             double D = ea(i) + ea(j) - ea(no_a_+a) - ea(no_a_+b);
-            if (std::abs(D) > 1e-12) {
-                double val = Waa(i,j,a,b) / D;
-                t2_3rd_aa_(i,j,a,b) = val;
-                e3_aa += 0.125 * t2_aa_(i,j,a,b) * Waa(i,j,a,b);
-            }
+            double reg_D = D / (D * D + delta * delta); 
+
+
+            double val = Waa(i,j,a,b) * reg_D;
+            t2_3rd_aa_(i,j,a,b) = val;
+            e3_aa += 0.125 * t2_aa_(i,j,a,b) * Waa(i,j,a,b);
         }
     }
 
@@ -639,15 +662,16 @@ double OMP3::compute_mp3_correction() {
             auto V_ovov_ab = ERITransformer::get_mo_tensor(config_.use_df, n_aux_, Cao, Cav, Cbo, Cbv, ints_);
             TBLIS_VIEW_4D(t_Vovov_ab, V_ovov_ab, no_a_, nv_a_, no_b_, nv_b_);
             tblis::mult<double>(1.0, t_Vovov_ab, "kcia", t_Tab, "kjcb", 1.0, t_Wbb, "ijab");
-
+            const double delta = 0.0;
             #pragma omp parallel for collapse(4) reduction(+:e3_bb)
             for(int i=0; i<no_b_; ++i) for(int j=0; j<no_b_; ++j) for(int a=0; a<nv_b_; ++a) for(int b=0; b<nv_b_; ++b) {
                 double D = eb(i) + eb(j) - eb(no_b_+a) - eb(no_b_+b);
-                if (std::abs(D) > 1e-12) {
-                    double val = Wbb(i,j,a,b) / D;
-                    t2_3rd_bb_(i,j,a,b) = val;
-                    e3_bb += 0.125 * t2_bb_(i,j,a,b) * Wbb(i,j,a,b);
-                }
+                double reg_D = D / (D * D + delta * delta); 
+
+
+                double val = Wbb(i,j,a,b) * reg_D;
+                t2_3rd_bb_(i,j,a,b) = val;
+                e3_bb += 0.125 * t2_bb_(i,j,a,b) * Wbb(i,j,a,b);
             }
         }
 
@@ -695,15 +719,16 @@ double OMP3::compute_mp3_correction() {
 
             tblis::mult<double>(-1.0, t_Voovv_ab_ex, "ikbc", t_Tab, "kjac", 1.0, t_Wab, "ijab");
             tblis::mult<double>(-1.0, t_Tab, "ikcb", t_Voovv_ba_ex, "kjac", 1.0, t_Wab, "ijab");
-
+            const double delta = 0.0;
             #pragma omp parallel for collapse(4) reduction(+:e3_ab)
             for(int i=0; i<no_a_; ++i) for(int j=0; j<no_b_; ++j) for(int a=0; a<nv_a_; ++a) for(int b=0; b<nv_b_; ++b) {
                 double D = ea(i) + eb(j) - ea(no_a_+a) - eb(no_b_+b);
-                if (std::abs(D) > 1e-12) {
-                    double val = Wab(i,j,a,b) / D;
-                    t2_3rd_ab_(i,j,a,b) = val;
-                    e3_ab += 1.0 * t2_ab_(i,j,a,b) * Wab(i,j,a,b);
-                }
+                double reg_D = D / (D * D + delta * delta); 
+
+
+                double val = Wab(i,j,a,b) * reg_D;
+                t2_3rd_ab_(i,j,a,b) = val;
+                e3_ab += 1.0 * t2_ab_(i,j,a,b) * Wab(i,j,a,b);
             }
         }
     }
@@ -1021,30 +1046,35 @@ MP3Result OMP3::compute() {
         if (no_b_ > 0 && nv_b_ > 0) X_b = Teff_bb * B_ia_b + Teff_ab.transpose() * B_ia_a;
 
         Eigen::MatrixXd Z_mat_a = Eigen::MatrixXd::Zero(nv_a_, no_a_);
-        Eigen::MatrixXd Z_mat_b = Eigen::MatrixXd::Zero(nv_b_, no_b_);
+        Eigen::MatrixXd Z_mat_b;
+        if (no_b_ > 0 && nv_b_ > 0) Z_mat_b = Eigen::MatrixXd::Zero(nv_b_, no_b_);
 
-        #pragma omp parallel
-        {
-            Eigen::MatrixXd Z_loc_a = Eigen::MatrixXd::Zero(nv_a_, no_a_);
-            Eigen::MatrixXd Z_loc_b;
-            if (no_b_ > 0 && nv_b_ > 0) Z_loc_b = Eigen::MatrixXd::Zero(nv_b_, no_b_);
+        
+        
+        
+        
+        
+        TBLIS_VIEW_3D(t_Bvv_a, B_vv_a.data(), nv_a_, nv_a_, n_aux_);
+        TBLIS_VIEW_3D(t_Xa, X_a.data(), nv_a_, no_a_, n_aux_);
+        TBLIS_VIEW_3D(t_Boo_a, B_oo_a.data(), no_a_, no_a_, n_aux_);
+        TBLIS_VIEW_2D(t_Za, Z_mat_a.data(), nv_a_, no_a_);
 
-            #pragma omp for schedule(dynamic)
-            for (int P = 0; P < n_aux_; ++P) {
-                Eigen::Map<const Eigen::MatrixXd> XT_a(X_a.col(P).data(), nv_a_, no_a_);
-                Eigen::Map<const Eigen::MatrixXd> V_a(B_vv_a.col(P).data(), nv_a_, nv_a_);
-                Eigen::Map<const Eigen::MatrixXd> O_a(B_oo_a.col(P).data(), no_a_, no_a_);
-                Z_loc_a.noalias() += V_a * XT_a - XT_a * O_a;
-                
-                if (no_b_ > 0 && nv_b_ > 0) {
-                    Eigen::Map<const Eigen::MatrixXd> XT_b(X_b.col(P).data(), nv_b_, no_b_);
-                    Eigen::Map<const Eigen::MatrixXd> V_b(B_vv_b.col(P).data(), nv_b_, nv_b_);
-                    Eigen::Map<const Eigen::MatrixXd> O_b(B_oo_b.col(P).data(), no_b_, no_b_);
-                    Z_loc_b.noalias() += V_b * XT_b - XT_b * O_b;
-                }
-            }
-            #pragma omp critical
-            { Z_mat_a += Z_loc_a; if (no_b_ > 0 && nv_b_ > 0) Z_mat_b += Z_loc_b; }
+        
+        
+        tblis::mult<double>(1.0, t_Bvv_a, "baP", t_Xa, "biP", 1.0, t_Za, "ai");
+
+        
+        
+        tblis::mult<double>(-1.0, t_Xa, "ajP", t_Boo_a, "jiP", 1.0, t_Za, "ai");
+
+        if (no_b_ > 0 && nv_b_ > 0) {
+            TBLIS_VIEW_3D(t_Bvv_b, B_vv_b.data(), nv_b_, nv_b_, n_aux_);
+            TBLIS_VIEW_3D(t_Xb, X_b.data(), nv_b_, no_b_, n_aux_);
+            TBLIS_VIEW_3D(t_Boo_b, B_oo_b.data(), no_b_, no_b_, n_aux_);
+            TBLIS_VIEW_2D(t_Zb, Z_mat_b.data(), nv_b_, no_b_);
+
+            tblis::mult<double>(1.0, t_Bvv_b, "baP", t_Xb, "biP", 1.0, t_Zb, "ai");
+            tblis::mult<double>(-1.0, t_Xb, "ajP", t_Boo_b, "jiP", 1.0, t_Zb, "ai");
         }
 
         F_gen_mo_a.block(no_a_, 0, nv_a_, no_a_) += Z_mat_a;
@@ -1145,6 +1175,11 @@ MP3Result OMP3::compute() {
 
         mshqc::gradient::TrustRegionResult step_info = soscf_engine.solve(orbital_gradient_, diag_H, 0.50, compute_hessian_vector);
         Eigen::VectorXd actual_step = step_info.step;
+        double max_rotation = 0.15; 
+        for(int i = 0; i < actual_step.size(); ++i) {
+            if (actual_step(i) > max_rotation) actual_step(i) = max_rotation;
+            if (actual_step(i) < -max_rotation) actual_step(i) = -max_rotation;
+        }
 
         Eigen::MatrixXd Ka = Eigen::Map<const Eigen::MatrixXd>(actual_step.data(), no_a_, nv_a_);
         Eigen::MatrixXd K_full = Eigen::MatrixXd::Zero(nbf_, nbf_);

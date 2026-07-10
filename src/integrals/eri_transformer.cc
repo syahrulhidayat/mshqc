@@ -174,6 +174,7 @@ BlockedTensor4D ERITransformer::transform_oovv_blocked(
                     
                     if ((o1.id ^ v1.id ^ o2.id ^ v2.id) == 0) {
                         Eigen::Tensor<double, 4> block(o1.size, v1.size, o2.size, v2.size);
+                        block.setZero();
                         
                         #pragma omp parallel for collapse(2) schedule(static)
                         for (int i = 0; i < o1.size; ++i) {
@@ -238,6 +239,7 @@ BlockedTensor4D ERITransformer::transform_ovvv_blocked(
                     
                     if ((o1.id ^ v1.id ^ v2.id ^ v3.id) == 0) {
                         Eigen::Tensor<double, 4> block(o1.size, v1.size, v2.size, v3.size);
+                        block.setZero();
                         for (int i = 0; i < o1.size; ++i) {
                             for (int a = 0; a < v1.size; ++a) {
                                 for (int b = 0; b < v2.size; ++b) {
@@ -282,6 +284,7 @@ BlockedTensor4D ERITransformer::transform_ooov_blocked(
                     
                     if ((o1.id ^ o2.id ^ o3.id ^ v1.id) == 0) {
                         Eigen::Tensor<double, 4> block(o1.size, o2.size, o3.size, v1.size);
+                        block.setZero();
                         for (int i = 0; i < o1.size; ++i) {
                             for (int j = 0; j < o2.size; ++j) {
                                 for (int k = 0; k < o3.size; ++k) {
