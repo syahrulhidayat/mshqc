@@ -213,7 +213,10 @@ if(JEMALLOC_LIB)
     target_link_libraries(mshqc PUBLIC ${JEMALLOC_LIB})
 endif()
 
-target_include_directories(mshqc PUBLIC 
+if(JEMALLOC_LIB)
+    target_link_libraries(mshqc PUBLIC ${JEMALLOC_LIB})
+endif()
+
 get_filename_component(PYTHON_BIN_DIR ${Python_EXECUTABLE} DIRECTORY)
 get_filename_component(CONDA_ROOT_DIR ${PYTHON_BIN_DIR} DIRECTORY)
 set(GLOBAL_CONDA_INCLUDE "${CONDA_ROOT_DIR}/include")
@@ -224,9 +227,6 @@ target_include_directories(mshqc PUBLIC
     $<BUILD_INTERFACE:${GLOBAL_CONDA_INCLUDE}>
     $<INSTALL_INTERFACE:include>
 )
-
-
-
 
 nanobind_add_module(_mshqc "python/bindings.cc")
 
