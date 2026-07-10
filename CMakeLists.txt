@@ -214,10 +214,14 @@ if(JEMALLOC_LIB)
 endif()
 
 target_include_directories(mshqc PUBLIC 
+get_filename_component(PYTHON_BIN_DIR ${Python_EXECUTABLE} DIRECTORY)
+get_filename_component(CONDA_ROOT_DIR ${PYTHON_BIN_DIR} DIRECTORY)
+set(GLOBAL_CONDA_INCLUDE "${CONDA_ROOT_DIR}/include")
+message(STATUS ">> Force Inject Include Directory: ${GLOBAL_CONDA_INCLUDE}")
+
+target_include_directories(mshqc PUBLIC 
     $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
-    $<BUILD_INTERFACE:${HDF5_INCLUDE_DIRS}>
-    $<BUILD_INTERFACE:${CINT_INCLUDE_DIRS}>
-    $<BUILD_INTERFACE:${MKL_INCLUDE_DIRS}>
+    $<BUILD_INTERFACE:${GLOBAL_CONDA_INCLUDE}>
     $<INSTALL_INTERFACE:include>
 )
 
