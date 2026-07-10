@@ -2,7 +2,7 @@ name: Compile and Release Wheel to Public Repoo
 
 on:
   push:
-    branches: [ "" ]
+    branches: [ "mshqc-1.0.0" ]
 
 jobs:
   build-and-deploy:
@@ -81,22 +81,9 @@ jobs:
     - name: Setup Compiler Cache (ccache)
       uses: hendrikmuhs/ccache-action@v1.2
       with:
+        # KEY DIUBAH: Menambahkan suffix -mkl-py314 untuk memisahkan ccache lama
         key: ${{ runner.os }}-mshqc-ccache-mkl-py314
         max-size: 500M
-
-    # --- TAMBAHKAN STEP DEBUG INI DI SINI ---
-    - name: Debug Cari Lokasi Header Conda
-      shell: bash -el {0}
-      run: |
-        echo "=== MENCARI MKL.H ==="
-        find $CONDA_PREFIX -name "mkl.h" 2>/dev/null
-        
-        echo "=== MENCARI CINT.H ==="
-        find $CONDA_PREFIX -name "cint.h" 2>/dev/null
-        
-        echo "=== CEK ISI FOLDER INCLUDE UTAMA ==="
-        ls -la $CONDA_PREFIX/include
-    # ----------------------------------------
 
     - name: Build Python Wheel (.whl)
       shell: bash -el {0}
