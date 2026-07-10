@@ -38,8 +38,9 @@ find_package(nanobind CONFIG REQUIRED)
 find_package(OpenMP REQUIRED)
 
 find_library(MKL_LIBRARY NAMES mkl_rt HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/local/lib" "/usr/lib")
+find_path(MKL_INCLUDE_DIR NAMES mkl.h HINTS "$ENV{CONDA_PREFIX}/include" "/opt/conda/include" "/usr/local/include")
 
-if(MKL_LIBRARY)
+if(MKL_LIBRARY AND MKL_INCLUDE_DIR)
     set(BLAS_LIBRARIES ${MKL_LIBRARY})
     set(LAPACK_LIBRARIES ${MKL_LIBRARY})
 else()
@@ -77,8 +78,9 @@ else()
 endif()
 
 find_library(CINT_LIBRARY cint HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/local/lib" "/usr/lib")
-if(NOT CINT_LIBRARY)
-    message(FATAL_ERROR "CRITICAL: libcint tidak ditemukan!")
+find_path(CINT_INCLUDE_DIR NAMES cint.h HINTS "$ENV{CONDA_PREFIX}/include" "/opt/conda/include" "/usr/local/include")
+if(NOT CINT_LIBRARY OR NOT CINT_INCLUDE_DIR)
+    message(FATAL_ERROR "CRITICAL: libcint library atau cint.h header tidak ditemukan!")
 endif()
 
 find_library(TBLIS_LIBRARY NAMES libtblis.a tblis HINTS "$ENV{TBLIS_DIR}/lib" "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/lib")
@@ -150,13 +152,11 @@ if(JEMALLOC_LIB)
     target_link_libraries(mshqc PUBLIC ${JEMALLOC_LIB})
 endif()
 
-get_filename_component(PYTHON_BIN_DIR ${Python_EXECUTABLE} DIRECTORY)
-get_filename_component(CONDA_ROOT_DIR ${PYTHON_BIN_DIR} DIRECTORY)
-set(CONDA_ABSOLUTE_INCLUDE "${CONDA_ROOT_DIR}/include")
-
 target_include_directories(mshqc PUBLIC 
     $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
-    $<BUILD_INTERFACE:${CONDA_ABSOLUTE_INCLUDE}>
+    $<BUILD_INTERFACE:${CINT_INCLUDE_DIR}>
+    $<BUILD_INTERFACE:${MKL_INCLUDE_DIR}>
+    $<BUILD_INTERFACE:$ENV{CONDA_PREFIX}/include>
     $<INSTALL_INTERFACE:include>
 )
 
