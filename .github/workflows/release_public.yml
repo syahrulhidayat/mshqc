@@ -16,32 +16,33 @@ jobs:
         fetch-depth: 0 
 
     # =========================================================================
-    # 1. SETUP CONDA (Dilakukan awal agar kita bisa pakai compilernya)
+    # 1. SETUP CONDA (Python 3.14 + MKL)
     # =========================================================================
-    - name: Setup Conda Environment (Python 3.12)
+    - name: Setup Conda Environment (Python 3.14)
       uses: conda-incubator/setup-miniconda@v3
       with:
         auto-update-conda: true
-        python-version: "3.12"
+        python-version: "3.14"
         channels: conda-forge
         use-only-tar-bz2: false 
 
     - name: Install Build Dependencies
       shell: bash -el {0}
       run: |
-        # PERHATIAN: 'tblis' dihapus dari sini agar kita menggunakan versi kustom
-        conda install -y -c conda-forge cmake make compilers eigen pkg-config "hdf5=1.14.3" pip libcint liblapacke openblas
+        # Mengganti openblas dengan mkl dan mkl-devel
+        conda install -y -c conda-forge cmake make compilers eigen pkg-config "hdf5=1.14.3" pip libcint liblapacke mkl mkl-devel
         python -m pip install build wheel nanobind
 
     # =========================================================================
-    # 2. CACHE & COMPILE TBLIS (Hanya jika belum ada di Cache)
+    # 2. CACHE & COMPILE TBLIS
     # =========================================================================
     - name: Cache Custom TBLIS
       id: cache-tblis
       uses: actions/cache@v3
       with:
         path: ~/tblis_install
-        key: tblis-v1.2.0-static-avx2-fpic-v4
+        # KEY DIUBAH: Menambahkan suffix -mkl-py314 agar memulai cache baru yang bersih
+        key: tblis-v1.2.0-static-avx2-fpic-mkl-py314
 
     - name: Compile TBLIS (Static + Safe AVX2)
       if: steps.cache-tblis.outputs.cache-hit != 'true'
@@ -64,7 +65,6 @@ jobs:
         export CXXFLAGS="-O3 -fPIC -mno-avx512f -mno-avx512vl -mno-avx512dq -mno-avx512bw -mno-avx512cd"
 
         # 2. Paksa TBLIS hanya membuat konfigurasi yang aman secara eksplisit 
-        # (Membuang skx1, skx2, dan knl yang berbasis AVX-512)
         ./configure --prefix=$HOME/tblis_install \
                     --enable-static --disable-shared \
                     --without-hwloc \
@@ -74,13 +74,15 @@ jobs:
                     
         make -j 4
         make install
+
     # =========================================================================
     # 3. CCACHE & BUILD MSHQC WHEEL
     # =========================================================================
     - name: Setup Compiler Cache (ccache)
       uses: hendrikmuhs/ccache-action@v1.2
       with:
-        key: ${{ runner.os }}-mshqc-ccache-v4
+        # KEY DIUBAH: Menambahkan suffix -mkl-py314 untuk memisahkan ccache lama
+        key: ${{ runner.os }}-mshqc-ccache-mkl-py314
         max-size: 500M
 
     - name: Build Python Wheel (.whl)
@@ -89,14 +91,15 @@ jobs:
         export CC="ccache $CONDA_PREFIX/bin/x86_64-conda-linux-gnu-cc"
         export CXX="ccache $CONDA_PREFIX/bin/x86_64-conda-linux-gnu-c++"
         
-        # Samakan flag dengan CMake: Pakai AVX2/FMA, blokir AVX-512
-        export CXXFLAGS="-std=c++17 -fopenmp -O3 -mavx2 -mfma -mno-avx512f -mtune=generic -DEIGEN_USE_BLAS -DEIGEN_USE_LAPACKE -DNDEBUG -I$HOME/tblis_install/include"
+        # FLAG DIUBAH: Mengganti EIGEN_USE_BLAS/LAPACKE menjadi EIGEN_USE_MKL_ALL
+        export CXXFLAGS="-std=c++17 -fopenmp -O3 -mavx2 -mfma -mno-avx512f -mtune=generic -DEIGEN_USE_MKL_ALL -DNDEBUG -I$HOME/tblis_install/include"
         
         export CMAKE_PREFIX_PATH=$HOME/tblis_install:$CONDA_PREFIX
         export TBLIS_DIR=$HOME/tblis_install
         
         python setup.py bdist_wheel
         ccache -s
+
     # =========================================================================
     # 4. COMMIT KEMBALI KE REPO PRIVAT
     # =========================================================================
