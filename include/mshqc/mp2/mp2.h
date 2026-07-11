@@ -95,8 +95,8 @@ protected:
     
     std::shared_ptr<PointGroup> pg_;
     std::shared_ptr<PetiteList> pl_;
-    virtual double execute_micro_iterations();
-    virtual void build_generalized_fock();
+    virtual double execute_micro_iterations() { return 0.0; }
+    virtual void build_generalized_fock() {}
 
     
 
