@@ -1304,10 +1304,19 @@ MP3Result OMP3::compute() {
         }
 
 
-        // 1. Deklarasi Tensor TPDM
+        // 1. Deklarasi Tensor TPDM (Scope Utama)
         Eigen::Tensor<double, 4> Gamma_vvvv_aa(nv_a_, nv_a_, nv_a_, nv_a_); Gamma_vvvv_aa.setZero();
         Eigen::Tensor<double, 4> Gamma_oooo_aa(no_a_, no_a_, no_a_, no_a_); Gamma_oooo_aa.setZero();
         Eigen::Tensor<double, 4> Gamma_ovov_aa(no_a_, nv_a_, no_a_, nv_a_); Gamma_ovov_aa.setZero();
+
+        // Deklarasi Beta dan Alpha-Beta di Scope Utama agar terbaca di semua blok
+        Eigen::Tensor<double, 4> Gamma_vvvv_bb, Gamma_oooo_bb, Gamma_ovov_bb, Gamma_ovov_ab;
+        if (no_b_ > 0 && nv_b_ > 0) {
+            Gamma_vvvv_bb = Eigen::Tensor<double, 4>(nv_b_, nv_b_, nv_b_, nv_b_); Gamma_vvvv_bb.setZero();
+            Gamma_oooo_bb = Eigen::Tensor<double, 4>(no_b_, no_b_, no_b_, no_b_); Gamma_oooo_bb.setZero();
+            Gamma_ovov_bb = Eigen::Tensor<double, 4>(no_b_, nv_b_, no_b_, nv_b_); Gamma_ovov_bb.setZero();
+            Gamma_ovov_ab = Eigen::Tensor<double, 4>(no_a_, nv_a_, no_b_, nv_b_); Gamma_ovov_ab.setZero();
+        }
 
         TBLIS_VIEW_4D(t_Taa, t2_aa_, no_a_, no_a_, nv_a_, nv_a_);
         TBLIS_VIEW_4D(t_Gvvvv_aa, Gamma_vvvv_aa, nv_a_, nv_a_, nv_a_, nv_a_);
@@ -1338,21 +1347,47 @@ MP3Result OMP3::compute() {
         // 4. Struktur Data untuk Unrestricted (Beta & Alpha-Beta)
         Eigen::MatrixXd Teff_ab, Teff_bb;
         if (no_b_ > 0 && nv_b_ > 0) {
+            TBLIS_VIEW_4D(t_Tbb, t2_bb_, no_b_, no_b_, nv_b_, nv_b_);
+            TBLIS_VIEW_4D(t_Gvvvv_bb, Gamma_vvvv_bb, nv_b_, nv_b_, nv_b_, nv_b_);
+            TBLIS_VIEW_4D(t_Goooo_bb, Gamma_oooo_bb, no_b_, no_b_, no_b_, no_b_);
+            TBLIS_VIEW_4D(t_Govov_bb, Gamma_ovov_bb, no_b_, nv_b_, no_b_, nv_b_);
+            
+            TBLIS_VIEW_4D(t_Tab, t2_ab_, no_a_, no_b_, nv_a_, nv_b_);
+            TBLIS_VIEW_4D(t_Govov_ab, Gamma_ovov_ab, no_a_, nv_a_, no_b_, nv_b_);
+
+            tblis::mult<double>(0.5, t_Tbb, "ijab", t_Tbb, "ijcd", 1.0, t_Gvvvv_bb, "abcd");
+            tblis::mult<double>(0.5, t_Tbb, "ijab", t_Tbb, "klab", 1.0, t_Goooo_bb, "ijkl");
+            tblis::mult<double>(1.0, t_Tbb, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_bb, "iajb");
+            tblis::mult<double>(1.0, t_Tab, "ikac", t_Tab, "kjcb", 1.0, t_Govov_ab, "iajb");
+
             Teff_ab = Eigen::MatrixXd::Zero(no_a_*nv_a_, no_b_*nv_b_);
             Teff_bb = Eigen::MatrixXd::Zero(no_b_*nv_b_, no_b_*nv_b_);
             
-            // [TODO U-OMP3: Tambahkan Gamma_vvvv_bb, Gamma_oooo_bb, Gamma_ovov_bb, dan Gamma_ovov_ab di sini]
-            // Untuk saat ini, kita gunakan Teff_ab dan Teff_bb murni dari MP2 + T3 
-            // agar R-OMP3 (molekul closed-shell) bisa diuji secara terisolasi.
             #pragma omp parallel for collapse(2)
-            for (int i = 0; i < no_a_; ++i) for (int a = 0; a < nv_a_; ++a)
-                for (int j = 0; j < no_b_; ++j) for (int b = 0; b < nv_b_; ++b)
-                    Teff_ab(i*nv_a_+a, j*nv_b_+b) = t2_ab_(i, j, a, b) + L2_ab_(i, j, a, b);
+            for (int i = 0; i < no_a_; ++i) {
+                for (int a = 0; a < nv_a_; ++a) {
+                    for (int j = 0; j < no_b_; ++j) {
+                        for (int b = 0; b < nv_b_; ++b) {
+                            Teff_ab(i*nv_a_+a, j*nv_b_+b) = t2_ab_(i, j, a, b) 
+                                                          + 1.0 * L2_ab_(i, j, a, b) 
+                                                          + 1.0 * Gamma_ovov_ab(i, a, j, b);
+                        }
+                    }
+                }
+            }
                     
             #pragma omp parallel for collapse(2)
-            for (int i = 0; i < no_b_; ++i) for (int a = 0; a < nv_b_; ++a)
-                for (int j = 0; j < no_b_; ++j) for (int b = 0; b < nv_b_; ++b)
-                    Teff_bb(i*nv_b_+a, j*nv_b_+b) = t2_bb_(i, j, a, b) + L2_bb_(i, j, a, b);
+            for (int i = 0; i < no_b_; ++i) {
+                for (int a = 0; a < nv_b_; ++a) {
+                    for (int j = 0; j < no_b_; ++j) {
+                        for (int b = 0; b < nv_b_; ++b) {
+                            Teff_bb(i*nv_b_+a, j*nv_b_+b) = t2_bb_(i, j, a, b) 
+                                                          + 0.5 * L2_bb_(i, j, a, b) 
+                                                          + 0.5 * Gamma_ovov_bb(i, a, j, b);
+                        }
+                    }
+                }
+            }
         }
 
         
@@ -1387,17 +1422,32 @@ MP3Result OMP3::compute() {
         tblis::mult<double>(0.5, t_Goooo_aa, "ijkl", t_Boo_a, "lkP", 0.0, t_Xoo_a, "jiP"); 
         tblis::mult<double>(-1.0, t_Xoo_a, "jiP", t_Bia_a, "ajP", 1.0, t_Za, "ai");
 
-        // 8. Evaluasi U-OMP3 Beta (Sementara menggunakan Z-Vector MP2 Standar)
+        // 8. Evaluasi U-OMP3 Beta
         if (no_b_ > 0 && nv_b_ > 0) {
             TBLIS_VIEW_3D(t_Bvv_b, B_vv_b.data(), nv_b_, nv_b_, n_aux_);
             TBLIS_VIEW_3D(t_Xb, X_b.data(), nv_b_, no_b_, n_aux_);
             TBLIS_VIEW_3D(t_Boo_b, B_oo_b.data(), no_b_, no_b_, n_aux_);
             TBLIS_VIEW_2D(t_Zb, Z_mat_b.data(), nv_b_, no_b_);
+            TBLIS_VIEW_3D(t_Bia_b, B_ia_b.data(), nv_b_, no_b_, n_aux_);
 
+            // Regenerate views untuk TPDM
+            TBLIS_VIEW_4D(t_Gvvvv_bb, Gamma_vvvv_bb, nv_b_, nv_b_, nv_b_, nv_b_);
+            TBLIS_VIEW_4D(t_Goooo_bb, Gamma_oooo_bb, no_b_, no_b_, no_b_, no_b_);
+
+            // Kontraksi Teff
             tblis::mult<double>(1.0, t_Bvv_b, "baP", t_Xb, "biP", 1.0, t_Zb, "ai");
             tblis::mult<double>(-1.0, t_Xb, "ajP", t_Boo_b, "jiP", 1.0, t_Zb, "ai");
             
-            // [TODO: Tambahkan evaluasi X_vv_b dan X_oo_b menggunakan Gamma_vvvv_bb dan Gamma_oooo_bb di masa depan]
+            // Kontraksi Ladder
+            Eigen::MatrixXd X_vv_b = Eigen::MatrixXd::Zero(nv_b_ * nv_b_, n_aux_);
+            TBLIS_VIEW_3D(t_Xvv_b, X_vv_b.data(), nv_b_, nv_b_, n_aux_);
+            tblis::mult<double>(0.5, t_Gvvvv_bb, "abcd", t_Bvv_b, "dcP", 0.0, t_Xvv_b, "baP"); 
+            tblis::mult<double>(1.0, t_Xvv_b, "baP", t_Bia_b, "biP", 1.0, t_Zb, "ai");        
+            
+            Eigen::MatrixXd X_oo_b = Eigen::MatrixXd::Zero(no_b_ * no_b_, n_aux_);
+            TBLIS_VIEW_3D(t_Xoo_b, X_oo_b.data(), no_b_, no_b_, n_aux_);
+            tblis::mult<double>(0.5, t_Goooo_bb, "ijkl", t_Boo_b, "lkP", 0.0, t_Xoo_b, "jiP"); 
+            tblis::mult<double>(-1.0, t_Xoo_b, "jiP", t_Bia_b, "ajP", 1.0, t_Zb, "ai");
         }
 
         
