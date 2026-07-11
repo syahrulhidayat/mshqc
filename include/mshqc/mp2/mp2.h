@@ -253,10 +253,6 @@ protected:
     Eigen::VectorXd orbital_gradient_;
     Eigen::VectorXd hessian_diag_;
 
-    // Variabel energi ini sering jadi penyebab utama jika ketinggalan
-    double e_ss_ = 0.0;
-    double e_os_ = 0.0;
-
    
     virtual double execute_micro_iterations();
     virtual void build_generalized_fock();
