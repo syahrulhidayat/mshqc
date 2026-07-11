@@ -86,6 +86,7 @@ struct T2Amplitudes {
 
 class BaseMP2 {
 protected:
+
     const Molecule& mol_;
     const BasisSet& basis_;
     std::shared_ptr<IntegralEngine> integrals_;
@@ -94,6 +95,8 @@ protected:
     
     std::shared_ptr<PointGroup> pg_;
     std::shared_ptr<PetiteList> pl_;
+    virtual double execute_micro_iterations();
+    virtual void build_generalized_fock();
 
     
 
@@ -101,6 +104,8 @@ protected:
     int nocc_a_, nocc_b_;
     int nvir_a_, nvir_b_;
     int n_frozen_ = 0; 
+    double e_ss_ = 0.0;
+    double e_os_ = 0.0;
 
     
 
@@ -119,13 +124,17 @@ public:
 
     
 
-    virtual MP2Result compute() = 0;
+
+    virtual MP2Result compute();
     virtual void transform_integrals() = 0;
+    virtual double get_correlation_energy() const { return e_ss_ + e_os_; }
 
     
 
     void transform_3center_mo();
     void set_frozen_core(int n_frozen) { n_frozen_ = n_frozen; }
+
+    
 };
 
 
