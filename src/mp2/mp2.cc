@@ -35,7 +35,11 @@ BaseMP2::BaseMP2(const Molecule& mol, const BasisSet& basis,
 
     if (config_.eri_method == "df") config_.use_df = true;
 }
+BaseMP2::~BaseMP2() = default;
 
+MP2Result BaseMP2::compute() {
+    return MP2Result();
+}
 void BaseMP2::transform_3center_mo() {
     if (scf_.L_mat.size() == 0) {
         throw std::runtime_error("FATAL: L_mat kosong! Mode DF/Cholesky butuh tensor dari SCF.");
