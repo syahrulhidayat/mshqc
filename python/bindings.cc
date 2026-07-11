@@ -42,6 +42,7 @@
 
 #include "mshqc/mp2/mp2.h"
 #include "mshqc/mp3/mp3.h"
+#include "mshqc/mp3/omp3.h"
 #include "mshqc/foundation/fcidump.h"
 #include "mshqc/foundation/wavefunction.h"
 
@@ -512,11 +513,13 @@ NB_MODULE(_mshqc, m) {
              nb::arg("scf_guess"), nb::arg("mp2_guess"), nb::arg("config"), nb::arg("integrals"))
         .def("compute", &UMP3::compute, nb::call_guard<nb::gil_scoped_release>());
 
-    nb::class_<OMP3>(m, "OMP3")
-        .def(nb::init<const SCFResult&, const MP2Result&, const MP2Config&, std::shared_ptr<IntegralEngine>>(),
-             nb::arg("scf_guess"), nb::arg("mp2_guess"), nb::arg("config"), nb::arg("integrals"))
-        .def("compute", &OMP3::compute, nb::call_guard<nb::gil_scoped_release>());
 
+    nb::class_<OMP3>(m, "OMP3")
+        .def(nb::init<const Molecule&, const BasisSet&, std::shared_ptr<IntegralEngine>, 
+                      const SCFResult&, const MP2Config&, std::shared_ptr<PointGroup>, std::shared_ptr<PetiteList>>(), 
+             nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
+             nb::arg("config"), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
+        .def("compute", &OMP3::compute_omp3, nb::call_guard<nb::gil_scoped_release>(), "Run Orbital-Optimized MP3");
     
     
     
