@@ -73,7 +73,6 @@ private:
     Eigen::Tensor<double, 4> L2_aa_, L2_bb_, L2_ab_;
     Eigen::MatrixXd G_oo_alpha_, G_vv_alpha_, G_oo_beta_, G_vv_beta_;
     
-    
 
     void pseudocanonicalize();
     void build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_b, Eigen::MatrixXd& F_a, Eigen::MatrixXd& F_b);
