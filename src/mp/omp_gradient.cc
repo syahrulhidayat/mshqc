@@ -2,6 +2,7 @@
 #include "mshqc/gradient/optimizer.h"
 #include <omp.h>
 #include <tblis/tblis.h>
+#include <unsupported/Eigen/MatrixFunctions>
 
 namespace mshqc {
 

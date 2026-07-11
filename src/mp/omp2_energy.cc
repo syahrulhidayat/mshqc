@@ -1,5 +1,6 @@
 #include "mshqc/mp2/mp2.h"
 #include "mshqc/integrals/eri_transformer.h"
+#include <unsupported/Eigen/MatrixFunctions>
 #include <omp.h>
 #include <tblis/tblis.h>
 
