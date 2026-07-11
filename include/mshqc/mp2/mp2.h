@@ -280,8 +280,8 @@ private:
     void pseudocanonicalize();
     void compute_t2_amplitudes();
     double compute_mp2_energy(); 
-    void build_opdm_alpha();
-    void build_opdm_beta();
+    virtual void build_opdm_alpha();
+    virtual void build_opdm_beta();
     void build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_b,
                          Eigen::MatrixXd& F_a, Eigen::MatrixXd& F_b);
     void transform_3center_mo_cholesky();
