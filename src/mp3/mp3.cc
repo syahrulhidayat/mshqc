@@ -228,33 +228,23 @@ MP3Result UMP3::compute() {
     return res;
 }
 
-// ==============================================================================
-// OMP3: ORBITAL-OPTIMIZED MP3 (INHERITS OMP2 ENGINE)
-// ==============================================================================
 
-OMP3::OMP3(const Molecule& mol, const BasisSet& basis, 
-           std::shared_ptr<IntegralEngine> integrals, 
-           const SCFResult& scf_guess,
-           const MP2Config& config,         
-           std::shared_ptr<PointGroup> pg,
-           std::shared_ptr<PetiteList> pl)
-    : OMP2(mol, basis, integrals, scf_guess, config, pg, pl) 
-{
-    // Constructor memanggil base class OMP2
-}
+
+
+
 
 double OMP3::get_correlation_energy() const {
     return e_ss_ + e_os_ + e_mp3_tot_;
 }
 
 double OMP3::execute_micro_iterations() {
-    // 1. Eksekusi siklus OMP2 (Transformasi Integral DF & Amplitudo T2)
+    
     OMP2::execute_micro_iterations();
 
-    // 2. Hitung energi MP3 dari T2 yang baru di-update
+    
     compute_mp3_correction(); 
     
-    // 3. Update L2 (Saat ini L2 = T3. Fase 2 akan diganti solver Lambda2)
+ 
     L2_aa_ = t2_3rd_aa_;
     if (nb_ > 0 && vb_ > 0) {
         L2_bb_ = t2_3rd_bb_;
@@ -310,7 +300,7 @@ void OMP3::compute_mp3_correction() {
         }
     }
 
-    // [Alpha-Alpha Correction]
+    
     {
         Eigen::Tensor<double, 4> Waa_ladder(na_, na_, va_, va_); Waa_ladder.setZero();
         Eigen::Tensor<double, 4> Waa_ring(na_, na_, va_, va_); Waa_ring.setZero();
@@ -373,7 +363,7 @@ void OMP3::compute_mp3_correction() {
         }
     }
 
-    // [Beta-Beta and Alpha-Beta Correction]
+    
     if (nb_ > 0 && vb_ > 0) {
         const Eigen::MatrixXd& Cbo = scf_.C_beta.leftCols(nb_); 
         const Eigen::MatrixXd& Cbv = scf_.C_beta.rightCols(vb_);
@@ -384,7 +374,7 @@ void OMP3::compute_mp3_correction() {
         TBLIS_VIEW_4D(t_Tbb, (*t2_bb_dense), nb_, nb_, vb_, vb_);
         TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
 
-        // Beta-Beta
+        
         {
             Eigen::Tensor<double, 4> Wbb_ladder(nb_, nb_, vb_, vb_); Wbb_ladder.setZero();
             Eigen::Tensor<double, 4> Wbb_ring(nb_, nb_, vb_, vb_); Wbb_ring.setZero();
@@ -443,7 +433,7 @@ void OMP3::compute_mp3_correction() {
             }
         }
 
-        // Alpha-Beta
+        
         {
             Eigen::Tensor<double, 4> Wab_ladder(na_, nb_, va_, vb_); Wab_ladder.setZero();
             Eigen::Tensor<double, 4> Wab_ring(na_, nb_, va_, vb_); Wab_ring.setZero();
@@ -532,7 +522,7 @@ void OMP3::build_opdm_alpha() {
 
     auto* t2_aa_dense = t2_aa_.get_block(0,0,0,0);
 
-    // --- BLOK OCCUPIED-OCCUPIED (OO) ---
+    
     Eigen::MatrixXd T2_AA_o(na_, na_ * va2);
     Eigen::MatrixXd T3_AA_o(na_, na_ * va2);
     for(int i = 0; i < na_; ++i) {
@@ -569,7 +559,7 @@ void OMP3::build_opdm_alpha() {
         G_oo_alpha_.noalias() -= 1.0 * (T3_AB_o * T2_AB_o.transpose());
     }
 
-    // --- BLOK VIRTUAL-VIRTUAL (VV) ---
+    
     Eigen::MatrixXd T2_AA_v(va_, na_ * na_ * va_);
     Eigen::MatrixXd T3_AA_v(va_, na_ * na_ * va_);
     for(int a = 0; a < va_; ++a) {
@@ -618,7 +608,7 @@ void OMP3::build_opdm_beta() {
 
     auto* t2_bb_dense = t2_bb_.get_block(0,0,0,0);
 
-    // --- BLOK OCCUPIED-OCCUPIED (OO) BETA ---
+    
     Eigen::MatrixXd T2_BB_o(nb_, nb_ * vb2);
     Eigen::MatrixXd T3_BB_o(nb_, nb_ * vb2);
     for(int i = 0; i < nb_; ++i) {
@@ -652,7 +642,7 @@ void OMP3::build_opdm_beta() {
     G_oo_beta_.noalias() -= 1.0 * (T2_BA_o * T3_BA_o.transpose());
     G_oo_beta_.noalias() -= 1.0 * (T3_BA_o * T2_BA_o.transpose());
 
-    // --- BLOK VIRTUAL-VIRTUAL (VV) BETA ---
+    
     Eigen::MatrixXd T2_BB_v(vb_, nb_ * nb_ * vb_);
     Eigen::MatrixXd T3_BB_v(vb_, nb_ * nb_ * vb_);
     for(int a = 0; a < vb_; ++a) {
@@ -691,7 +681,7 @@ void OMP3::build_opdm_beta() {
 }
 
 void OMP3::build_generalized_fock() {
-    // 1. Build P_corr and G_gamma
+    
     Eigen::MatrixXd G_full_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
     G_full_a.block(0, 0, na_, na_) = G_oo_alpha_; 
     G_full_a.block(na_, na_, va_, va_) = G_vv_alpha_;
@@ -736,7 +726,7 @@ void OMP3::build_generalized_fock() {
         F_gen_b_.block(0, nb_, nb_, vb_) += L_sep_b.transpose();
     }
 
-    // 2. Compute B_oo and B_vv for Z-Vector
+    
     int n_aux = scf_.L_mat.cols();
     Eigen::MatrixXd B_oo_a = Eigen::MatrixXd::Zero(na_*na_, n_aux);
     Eigen::MatrixXd B_vv_a = Eigen::MatrixXd::Zero(va_*va_, n_aux);
@@ -777,7 +767,7 @@ void OMP3::build_generalized_fock() {
         }
     }
 
-    // 3. OMP3 Exact Z-Vector Contraction
+    
     Eigen::Tensor<double, 4> Gamma_vvvv_aa(va_, va_, va_, va_); Gamma_vvvv_aa.setZero();
     Eigen::Tensor<double, 4> Gamma_oooo_aa(na_, na_, na_, na_); Gamma_oooo_aa.setZero();
     Eigen::Tensor<double, 4> Gamma_ovov_aa(na_, va_, na_, va_); Gamma_ovov_aa.setZero();
@@ -891,7 +881,7 @@ void OMP3::build_generalized_fock() {
     tblis::mult<double>(1.0, t_Goooo_aa, "ijkl", t_Boo_a, "lkP", 0.0, t_Xoo_a, "jiP"); 
     tblis::mult<double>(-1.0, t_Xoo_a, "jiP", t_Bia_a, "ajP", 1.0, t_Za, "ai");
 
-    // 8. Evaluasi U-OMP3 Beta
+    
     if (nb_ > 0 && vb_ > 0) {
         TBLIS_VIEW_3D(t_Bvv_b, B_vv_b.data(), vb_, vb_, n_aux);
         TBLIS_VIEW_3D(t_Xb, X_b.data(), vb_, nb_, n_aux);
@@ -929,8 +919,8 @@ MP3Result OMP3::compute_omp3() {
         std::cout << "========================================================\n";
     }
 
-    // Panggil mesin optimasi raksasa dari OMP2. Karena kita menggunakan pewarisan, 
-    // ia akan menjalankan execute_micro_iterations() dan build_generalized_fock() milik OMP3!
+    
+    
     MP2Result res2 = OMP2::compute();
 
     MP3Result res3;
@@ -945,4 +935,4 @@ MP3Result OMP3::compute_omp3() {
     return res3;
 }
 
-} // namespace mshqc
+} 
