@@ -3,25 +3,23 @@ channels:
   - conda-forge
   - defaults
 dependencies:
-  # --- Core Tools ---
+  
   - python>=3.8
   - pip
   - cmake>=3.18
   - ninja
-  
-  # --- Compilers (Cross-Platform) ---
+  - pkg-config 
+  - c-compiler       
   - cxx-compiler
   - llvm-openmp
-  
-  # --- The "Ultimate Stack" C++ Libraries ---
+  - mkl              
+  - mkl-include      
   - eigen
-  - libcint         # Menggantikan libint
-  - tblis           # Tensor contraction engine
-  - hdf5            # Out-of-Core storage engine
-  - jemalloc        # High-performance memory allocator
-
-  # --- Python Libraries ---
-  - pybind11
+  - libcint          
+  - tblis            
+  - hdf5             
+  - jemalloc         
+  - nanobind         
   - numpy>=1.20
   - scipy
   - pytest
