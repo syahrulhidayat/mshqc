@@ -2,9 +2,7 @@
  * @file src/mp2/mp2.cc
  * @brief Implementasi Terpadu BaseMP2, RMP2, dan UMP2
  */
-extern "C" {
-#include <cint.h>
-}
+
 #include <tblis/tblis.h>
 #include "mshqc/symmetry/salc_builder.h"
 #include "mshqc/mp2/mp2.h"
