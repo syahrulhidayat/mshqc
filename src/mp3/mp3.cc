@@ -1320,13 +1320,16 @@ MP3Result OMP3::compute() {
         tblis::mult<double>(1.0, t_Taa, "ikac", t_Taa, "kjcb", 1.0, t_Govov_aa, "iajb"); 
 
       
+        // 3. Injeksi MP2, T3 (L2), dan Ring (OVOV) ke dalam Teff
         Eigen::MatrixXd Teff_aa = Eigen::MatrixXd::Zero(no_a_*nv_a_, no_a_*nv_a_);
         #pragma omp parallel for collapse(2)
         for (int i = 0; i < no_a_; ++i) {
             for (int a = 0; a < nv_a_; ++a) {
                 for (int j = 0; j < no_a_; ++j) {
                     for (int b = 0; b < nv_a_; ++b) {
-                        Teff_aa(i*nv_a_+a, j*nv_a_+b) = t2_aa_(i, j, a, b) + L2_aa_(i, j, a, b) + Gamma_ovov_aa(i, a, j, b);
+                        Teff_aa(i*nv_a_+a, j*nv_a_+b) = t2_aa_(i, j, a, b) 
+                                                      + 0.5 * L2_aa_(i, j, a, b) 
+                                                      + 0.5 * Gamma_ovov_aa(i, a, j, b);
                     }
                 }
             }
@@ -1374,14 +1377,15 @@ MP3Result OMP3::compute() {
         tblis::mult<double>(-1.0, t_Xa, "ajP", t_Boo_a, "jiP", 1.0, t_Za, "ai");
 
        
+        // 7. Evaluasi TPDM Ladder Contractions (KHUSUS OMP3)
         Eigen::MatrixXd X_vv_a = Eigen::MatrixXd::Zero(nv_a_ * nv_a_, n_aux_);
         TBLIS_VIEW_3D(t_Xvv_a, X_vv_a.data(), nv_a_, nv_a_, n_aux_);
-        tblis::mult<double>(1.0, t_Gvvvv_aa, "abcd", t_Bvv_a, "dcP", 0.0, t_Xvv_a, "baP"); 
+        tblis::mult<double>(0.5, t_Gvvvv_aa, "abcd", t_Bvv_a, "dcP", 0.0, t_Xvv_a, "baP"); 
         tblis::mult<double>(1.0, t_Xvv_a, "baP", t_Bia_a, "biP", 1.0, t_Za, "ai");        
         Eigen::MatrixXd X_oo_a = Eigen::MatrixXd::Zero(no_a_ * no_a_, n_aux_);
         TBLIS_VIEW_3D(t_Xoo_a, X_oo_a.data(), no_a_, no_a_, n_aux_);
-        tblis::mult<double>(1.0, t_Goooo_aa, "ijkl", t_Boo_a, "lkP", 0.0, t_Xoo_a, "jiP"); 
-        tblis::mult<double>(-1.0, t_Xoo_a, "jiP", t_Bia_a, "ajP", 1.0, t_Za, "ai");       
+        tblis::mult<double>(0.5, t_Goooo_aa, "ijkl", t_Boo_a, "lkP", 0.0, t_Xoo_a, "jiP"); 
+        tblis::mult<double>(-1.0, t_Xoo_a, "jiP", t_Bia_a, "ajP", 1.0, t_Za, "ai");
 
         // 8. Evaluasi U-OMP3 Beta (Sementara menggunakan Z-Vector MP2 Standar)
         if (no_b_ > 0 && nv_b_ > 0) {
