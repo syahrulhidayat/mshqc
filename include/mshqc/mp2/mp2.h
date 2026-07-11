@@ -214,17 +214,15 @@ public:
     MP2Result compute() override;
     void transform_integrals() override;
     
-    
-
     void reset_diis();
     Eigen::MatrixXd build_opdm();
     Eigen::MatrixXd extrapolate_diis(std::vector<Eigen::MatrixXd>&, std::vector<Eigen::MatrixXd>&);
 
-private:
+// ======= PASTIKAN HANYA ADA SATU BLOK PROTECTED =======
+protected: 
     std::unique_ptr<BasisSymmetrizer> symmetrizer_;
     int na_, nb_, va_, vb_;         
     bool exact_2rdm_;
-    
 
     int max_iter_;
     double conv_thresh_;
@@ -233,55 +231,47 @@ private:
     Eigen::MatrixXd S_;
     Eigen::MatrixXd H_core_;
 
-    
-
     std::vector<double> J_val_, K_val_;
     std::vector<int> J_ind_, K_ind_;
     std::vector<size_t> J_ptr_, K_ptr_;
     std::vector<std::pair<int, int>> row_map_;
     Eigen::MatrixXd schwarz_;
     
-    
-
     BlockedTensor4D g_aa_, g_bb_, g_ab_;
     BlockedTensor4D t2_aa_, t2_bb_, t2_ab_;
     
-    
-
     Eigen::MatrixXd G_oo_alpha_;
     Eigen::MatrixXd G_vv_alpha_;
     Eigen::MatrixXd G_oo_beta_; 
     Eigen::MatrixXd G_vv_beta_; 
-
-    
 
     Eigen::MatrixXd C_a_current_; 
     Eigen::MatrixXd C_b_current_;
     Eigen::MatrixXd F_gen_a_;
     Eigen::MatrixXd F_gen_b_;
 
-    
-
     Eigen::VectorXd orbital_gradient_;
     Eigen::VectorXd hessian_diag_;
 
+    // Variabel energi ini sering jadi penyebab utama jika ketinggalan
     double e_ss_ = 0.0;
     double e_os_ = 0.0;
 
-    
+   
+    virtual double execute_micro_iterations();
+    virtual void build_generalized_fock();
+    virtual void build_opdm_alpha();
+    virtual void build_opdm_beta();
 
-    double execute_micro_iterations();
+    // Sisa fungsi private/protected...
     void execute_macro_iterations();
     void execute_macro_iterations(DIIS& diis_a, DIIS& diis_b, int macro_iter);
-    void build_generalized_fock();
     Eigen::VectorXd compute_soscf_step();
     void apply_orbital_rotation(const Eigen::VectorXd& kappa);
     void init_fast_integrals(); 
     void pseudocanonicalize();
     void compute_t2_amplitudes();
     double compute_mp2_energy(); 
-    virtual void build_opdm_alpha();
-    virtual void build_opdm_beta();
     void build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_b,
                          Eigen::MatrixXd& F_a, Eigen::MatrixXd& F_b);
     void transform_3center_mo_cholesky();
@@ -289,7 +279,6 @@ private:
     void build_opdm_cholesky();
     void evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd& Z_mat_b);
 };
-
 } 
 
 
