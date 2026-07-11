@@ -935,6 +935,100 @@ void OMP3::build_opdm_beta() {
     G_vv_beta_ += 1.0 * (T_tot_BA_v * T_tot_BA_v.transpose());
 }
 
+Eigen::VectorXd OMP3::compute_fd_gradient(double delta) {
+    int dim_a = nv_a_ * no_a_;
+    int dim_b = (no_b_ > 0) ? (nv_b_ * no_b_) : 0;
+    int n_params = dim_a + dim_b;
+    Eigen::VectorXd fd_grad = Eigen::VectorXd::Zero(n_params);
+
+    
+    Eigen::MatrixXd C_a_orig = scf_.C_alpha;
+    Eigen::MatrixXd C_b_orig = scf_.C_beta;
+    
+    
+    Eigen::MatrixXd F_ao_a_init, F_ao_b_init;
+    build_fock_fast(scf_.P_alpha, scf_.P_beta, F_ao_a_init, F_ao_b_init);
+    double e_elec_init = 0.5 * (scf_.P_alpha.cwiseProduct(H_core_ + F_ao_a_init).sum() + 
+                                scf_.P_beta.cwiseProduct(H_core_ + F_ao_b_init).sum());
+    double e_nuc = scf_.energy_total - e_elec_init;
+
+    
+    auto eval_energy = [&](const Eigen::MatrixXd& C_a, const Eigen::MatrixXd& C_b) -> double {
+        scf_.C_alpha = C_a;
+        scf_.C_beta = C_b;
+        scf_.P_alpha = C_a.leftCols(no_a_) * C_a.leftCols(no_a_).transpose();
+        if (no_b_ > 0) scf_.P_beta = C_b.leftCols(no_b_) * C_b.leftCols(no_b_).transpose();
+        else scf_.P_beta = scf_.P_alpha;
+
+        
+        
+        pseudocanonicalize(); 
+
+        double e_mp2 = compute_mp2_energy();
+        double e_mp3 = compute_mp3_correction();
+
+        Eigen::MatrixXd Fa, Fb;
+        build_fock_fast(scf_.P_alpha, scf_.P_beta, Fa, Fb);
+        double e_scf = 0.5 * (scf_.P_alpha.cwiseProduct(H_core_ + Fa).sum() + 
+                              scf_.P_beta.cwiseProduct(H_core_ + Fb).sum()) + e_nuc;
+
+        return e_scf + e_mp2 + e_mp3;
+    };
+
+    if (omp_get_thread_num() == 0) {
+        std::cout << "  -> Computing FD Gradient (Central Difference, Delta = " << delta << ")...\n";
+    }
+
+    
+    int idx = 0;
+    for (int a = 0; a < nv_a_; ++a) {
+        for (int i = 0; i < no_a_; ++i) {
+            
+            Eigen::MatrixXd K_plus = Eigen::MatrixXd::Zero(nbf_, nbf_);
+            K_plus(no_a_ + a, i) = delta;
+            K_plus(i, no_a_ + a) = -delta;
+            Eigen::MatrixXd C_a_plus = C_a_orig * K_plus.exp();
+            double e_plus = eval_energy(C_a_plus, C_b_orig);
+
+            
+            Eigen::MatrixXd K_minus = Eigen::MatrixXd::Zero(nbf_, nbf_);
+            K_minus(no_a_ + a, i) = -delta;
+            K_minus(i, no_a_ + a) = delta;
+            Eigen::MatrixXd C_a_minus = C_a_orig * K_minus.exp();
+            double e_minus = eval_energy(C_a_minus, C_b_orig);
+
+            
+            fd_grad(idx++) = (e_plus - e_minus) / (2.0 * delta);
+        }
+    }
+
+    
+    if (no_b_ > 0 && dim_b > 0) {
+        for (int a = 0; a < nv_b_; ++a) {
+            for (int i = 0; i < no_b_; ++i) {
+                Eigen::MatrixXd K_plus = Eigen::MatrixXd::Zero(nbf_, nbf_);
+                K_plus(no_b_ + a, i) = delta;
+                K_plus(i, no_b_ + a) = -delta;
+                Eigen::MatrixXd C_b_plus = C_b_orig * K_plus.exp();
+                double e_plus = eval_energy(C_a_orig, C_b_plus);
+
+                Eigen::MatrixXd K_minus = Eigen::MatrixXd::Zero(nbf_, nbf_);
+                K_minus(no_b_ + a, i) = -delta;
+                K_minus(i, no_b_ + a) = delta;
+                Eigen::MatrixXd C_b_minus = C_b_orig * K_minus.exp();
+                double e_minus = eval_energy(C_a_orig, C_b_minus);
+
+                fd_grad(idx++) = (e_plus - e_minus) / (2.0 * delta);
+            }
+        }
+    }
+
+    
+    eval_energy(C_a_orig, C_b_orig);
+
+    return fd_grad;
+}
+
 MP3Result OMP3::compute() {
     init_fast_integrals();
     std::string mode = (no_a_ == no_b_) ? "R" : "U";
@@ -1198,6 +1292,28 @@ MP3Result OMP3::compute() {
         }
         
         grad_norm = orbital_gradient_.norm();
+        if (macro_iter == 0) {
+            Eigen::VectorXd fd_gradient = compute_fd_gradient(1e-4);
+            
+            double max_diff = 0.0;
+            int max_idx = -1;
+            for (int i = 0; i < n_params; ++i) {
+                double diff = std::abs(orbital_gradient_(i) - fd_gradient(i));
+                if (diff > max_diff) {
+                    max_diff = diff;
+                    max_idx = i;
+                }
+            }
+            
+            std::cout << "\n[DEBUG] Gradient Validation (Analytic vs FD):\n";
+            std::cout << "  Norm Analytic : " << grad_norm << "\n";
+            std::cout << "  Norm FD       : " << fd_gradient.norm() << "\n";
+            std::cout << "  Max Error     : " << max_diff << " (at index " << max_idx << ")\n";
+            std::cout << "  Sample (Ana)  : " << orbital_gradient_(0) << "\n";
+            std::cout << "  Sample (FD)   : " << fd_gradient(0) << "\n\n";
+            
+            
+        }
 
         if(omp_get_thread_num() == 0) {
             std::cout << std::setw(4) << macro_iter << "    " 
@@ -1305,4 +1421,4 @@ MP3Result OMP3::compute() {
     result.iterations = macro_iter;
     return result;
 }
-}//mshqd
+}

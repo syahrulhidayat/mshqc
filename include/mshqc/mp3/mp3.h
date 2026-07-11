@@ -65,6 +65,7 @@ class OMP3 : public BaseMP3 {
 public:
     using BaseMP3::BaseMP3;
     MP3Result compute() override;
+    Eigen::VectorXd compute_fd_gradient(double delta = 1e-4);
 private:
     
 
