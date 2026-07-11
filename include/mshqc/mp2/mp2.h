@@ -120,7 +120,7 @@ public:
             std::shared_ptr<PointGroup> pg = nullptr,
             std::shared_ptr<PetiteList> pl = nullptr);
 
-    virtual ~BaseMP2() = default;
+    virtual ~BaseMP2();
 
     
 
