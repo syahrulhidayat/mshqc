@@ -340,6 +340,7 @@ struct TrustRegionConfig {
     int max_micro_iter = 30;      // Maksimal iterasi TCG
     double micro_thresh = 1e-4;   // Toleransi residual
     int print_level = 0;
+    double precond_shift = 1e-4;
 };
 
 struct TrustRegionResult {

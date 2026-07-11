@@ -44,7 +44,7 @@ struct MP2Config {
     double gradient_threshold = -1.0;    
     int print_level = 1;
     bool exact_2rdm = true;              
-    
+    double level_shift = 1e-4;
     double memory_limit_gb = 4.0;        
 };
 

@@ -202,8 +202,6 @@ double UMP2::compute_ss_alpha() {
                 for(int i = 0; i < nocc_a_; ++i) {
                     if (i < n_frozen_) continue;
                     double den = den_partial + eo(i);
-                    if (std::abs(den) < 1e-12) { t2_aa_(i, j, a, b) = 0.0; continue; }
-
                     double val_iajb = 0.0, val_ibja = 0.0;
                     if (is_exact) {
                         val_iajb = eri_aaaa_(i, j, a, b);
@@ -217,8 +215,16 @@ double UMP2::compute_ss_alpha() {
                         val_ibja = B_ia_P_alpha_.row(idx_ib).dot(B_ia_P_alpha_.row(idx_ja));
                     }
 
+                    
                     double val_num = val_iajb - val_ibja;
-                    double val_t = val_num / den;
+
+                   
+                    double safe_den = (std::abs(den) < config_.level_shift) 
+                                    ? std::copysign(config_.level_shift, den) 
+                                    : den;
+
+                   
+                    double val_t = val_num / safe_den;
                     t2_aa_(i, j, a, b) = val_t;
                     e_sum += val_t * val_num;
                 }

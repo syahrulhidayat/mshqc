@@ -547,8 +547,7 @@ TrustRegionResult TrustRegionSOSCF::solve(
     
     // Preconditioner M^-1. Kita gunakan abs() dan max() untuk mencegah pembagian dengan nol
     // atau nilai negatif tanpa perlu menambahkan manual level shift.
-    Eigen::VectorXd M_inv = diag_hessian.cwiseAbs().cwiseMax(1e-12).cwiseInverse();
-    Eigen::VectorXd p = -M_inv.cwiseProduct(r);
+    Eigen::VectorXd M_inv = diag_hessian.cwiseAbs().cwiseMax(config_.precond_shift).cwiseInverse();    Eigen::VectorXd p = -M_inv.cwiseProduct(r);
     
     double r_norm = r.norm();
     if (r_norm < config_.micro_thresh) return {z, 0.0, false};
