@@ -38,7 +38,7 @@ find_package(nanobind CONFIG REQUIRED)
 find_package(OpenMP REQUIRED)
 
 find_library(MKL_LIBRARY NAMES mkl_rt HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/local/lib" "/usr/lib")
-find_path(MKL_INCLUDE_DIR NAMES mkl.h HINTS "$ENV{CONDA_PREFIX}/include" "/opt/conda/include" "/usr/local/include")
+find_path(MKL_INCLUDE_DIR NAMES mkl.h HINTS "$ENV{CONDA_PREFIX}/include" "$ENV{CONDA_PREFIX}/include/mkl" "/opt/conda/include" "/opt/conda/include/mkl" "/usr/local/include")
 
 if(MKL_LIBRARY AND MKL_INCLUDE_DIR)
     set(BLAS_LIBRARIES ${MKL_LIBRARY})
