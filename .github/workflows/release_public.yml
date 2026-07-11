@@ -30,7 +30,7 @@ jobs:
       shell: bash -el {0}
       run: |
         # Mengganti openblas dengan mkl dan mkl-devel
-        conda install -y -c conda-forge cmake make compilers eigen pkg-config "hdf5=1.14.3" pip libcint liblapacke mkl mkl-include mkl-devel
+        conda install -y -c conda-forge cmake make compilers eigen pkg-config "hdf5=1.14.3" pip libcint liblapacke mkl mkl-devel mkl-include
         python -m pip install build wheel nanobind setuptools
 
     # =========================================================================
@@ -90,10 +90,7 @@ jobs:
       run: |
         export CC="ccache $CONDA_PREFIX/bin/x86_64-conda-linux-gnu-cc"
         export CXX="ccache $CONDA_PREFIX/bin/x86_64-conda-linux-gnu-c++"
-        
-        # FLAG DIUBAH: Mengganti EIGEN_USE_BLAS/LAPACKE menjadi EIGEN_USE_MKL_ALL
-        export CXXFLAGS="-std=c++17 -fopenmp -O3 -mavx2 -mfma -mno-avx512f -mtune=generic -DEIGEN_USE_MKL_ALL -DNDEBUG -I$HOME/tblis_install/include"
-        
+        export CXXFLAGS="-std=c++17 -fopenmp -O3 -mavx2 -mfma -mno-avx512f -mtune=generic -DEIGEN_USE_MKL_ALL -DNDEBUG -I$HOME/tblis_install/include -I$CONDA_PREFIX/include"
         export CMAKE_PREFIX_PATH=$HOME/tblis_install:$CONDA_PREFIX
         export TBLIS_DIR=$HOME/tblis_install
         
