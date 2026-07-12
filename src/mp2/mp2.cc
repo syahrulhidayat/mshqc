@@ -562,7 +562,7 @@ void OMP2::init_fast_integrals() {
 
 
 void OMP2::transform_integrals() {
-    
+
     scf_.irreps_alpha.assign(nbf_, 0);
     scf_.irreps_beta.assign(nbf_, 0);
 
@@ -925,26 +925,21 @@ MP2Result OMP2::compute() {
         Eigen::VectorXd diag_H(n_params);
         int idx = 0;
         double level_shift = (grad_norm > 0.1) ? 0.05 : 0.005;
-
+        double spin_factor = is_restricted ? 4.0 : 2.0;
+        
         for (int a = 0; a < va_; ++a) {
             for (int i = 0; i < na_; ++i) {
                 double eps_diff = scf_.orbital_energies_alpha(na_ + a) - scf_.orbital_energies_alpha(i);
                 double J_ia = 0.0;
                 
                 if (config_.eri_method != "exact") {
-                    J_ia = B_ia_P_alpha_.row(i * va_ + a).squaredNorm();
+                  
+                    J_ia = B_ia_P_alpha_.row(i * va_ + a).squaredNorm(); 
                 } else {
                     auto* g_blk = g_aa_.get_block(0, 0, 0, 0);
-                    if (g_blk) {
-                    
-                        J_ia = std::abs((*g_blk)(i, a, i, a));
-                    }
+                    if (g_blk) J_ia = std::abs((*g_blk)(i, a, i, a));
                 }
-
-                double H_diag_val = 4.0 * std::abs(eps_diff) + 8.0 * J_ia + level_shift;
-                double min_curvature = 4.0 * std::abs(eps_diff) + level_shift;
-
-                diag_H(idx++) = std::max(H_diag_val, min_curvature);
+                diag_H(idx++) = spin_factor * std::abs(eps_diff) + spin_factor * J_ia + level_shift; 
             }
         }
         
@@ -958,14 +953,9 @@ MP2Result OMP2::compute() {
                         J_ia = B_ia_P_beta_.row(i * vb_ + a).squaredNorm();
                     } else {
                         auto* g_blk = g_bb_.get_block(0, 0, 0, 0);
-                        if (g_blk) {
-                            J_ia = std::abs((*g_blk)(i, a, i, a));
-                        }
+                        if (g_blk) J_ia = std::abs((*g_blk)(i, a, i, a));
                     }
-                    double H_diag_val = 4.0 * std::abs(eps_diff) + 8.0 * J_ia + level_shift;
-                    double min_curvature = 4.0 * std::abs(eps_diff) + level_shift;
-
-                    diag_H(idx++) = std::max(H_diag_val, min_curvature);
+                    diag_H(idx++) = 2.0 * std::abs(eps_diff) + 2.0 * J_ia + level_shift;
                 }
             }
         }
@@ -978,18 +968,16 @@ MP2Result OMP2::compute() {
             mshqc::gradient::TrustRegionSOSCF soscf_engine(tr_conf);
 
             auto compute_hessian_vector = [&](const Eigen::VectorXd& p_vec) -> Eigen::VectorXd {
-                // 1. Ambil bagian diagonal preconditioner yang sudah kita amankan
                 Eigen::VectorXd Hp = diag_H.cwiseProduct(p_vec);
                 
                 int dim_a = va_ * na_;
                 int dim_b = (is_restricted) ? 0 : (vb_ * nb_);
                 double spin_factor = is_restricted ? 4.0 : 2.0;
                 double ex_factor   = is_restricted ? 2.0 : 1.0;
+                int n_aux = (config_.eri_method != "exact") ? scf_.L_mat.cols() : 0;
 
-                // 2. KONTRAKSI BASIS MO (Bypass build_fock_fast AO)
                 if (config_.eri_method == "exact") {
                     
-                    // --- BLOK SPIN ALPHA ---
                     auto* ptr_aa = g_aa_.get_block(0, 0, 0, 0);
                     if (ptr_aa && dim_a > 0) {
                         Eigen::Map<const Eigen::MatrixXd> kappa_a(p_vec.data(), na_, va_);
@@ -999,7 +987,7 @@ MP2Result OMP2::compute() {
                                 double off_diag = 0.0;
                                 for (int b = 0; b < va_; ++b) {
                                     for (int j = 0; j < na_; ++j) {
-                                        if (i == j && a == b) continue; // Diagonal di-skip
+                                        if (i == j && a == b) continue; 
                                         double coulomb = (*ptr_aa)(i, a, j, b);
                                         double exchange = (*ptr_aa)(i, b, j, a);
                                         off_diag += (spin_factor * coulomb - ex_factor * exchange) * kappa_a(j, b);
@@ -1032,26 +1020,70 @@ MP2Result OMP2::compute() {
                     }
                     
                 } else {
-        
+                    
                     if (dim_a > 0) {
                         Eigen::Map<const Eigen::VectorXd> kappa_a_vec(p_vec.data(), dim_a);
                         Eigen::VectorXd v_P = B_ia_P_alpha_.transpose() * kappa_a_vec;
-                        Eigen::VectorXd Hp_off_a = B_ia_P_alpha_ * v_P;
-                        Hp.head(dim_a) += spin_factor * Hp_off_a;
+                        Eigen::VectorXd Hp_J_a = B_ia_P_alpha_ * v_P;
+                        Eigen::Map<const Eigen::MatrixXd> K_mat(kappa_a_vec.data(), va_, na_);
+                        Eigen::MatrixXd K_mat_trans = K_mat.transpose(); 
+                        Eigen::MatrixXd Hp_K_mat_a = Eigen::MatrixXd::Zero(va_, na_);
+                        
+                        #pragma omp parallel
+                        {
+                            Eigen::MatrixXd H_local = Eigen::MatrixXd::Zero(va_, na_);
+                            Eigen::MatrixXd M_p(na_, na_); 
+                            
+                            #pragma omp for schedule(dynamic)
+                            for (int P = 0; P < n_aux; ++P) {
+                                Eigen::Map<const Eigen::MatrixXd> B_P(B_ia_P_alpha_.col(P).data(), va_, na_);
+                                M_p.noalias() = K_mat_trans * B_P;
+                                H_local.noalias() += B_P * M_p;
+                            }
+                            #pragma omp critical
+                            {
+                                Hp_K_mat_a += H_local;
+                            }
+                        }
+                        
+                        // Akumulasi Akhir: Hp += (spin_factor * J) - (ex_factor * K)
+                        Hp.head(dim_a) += spin_factor * Hp_J_a - ex_factor * Eigen::Map<Eigen::VectorXd>(Hp_K_mat_a.data(), dim_a);
                     }
+
                     if (!is_restricted && dim_b > 0) {
                         Eigen::Map<const Eigen::VectorXd> kappa_b_vec(p_vec.data() + dim_a, dim_b);
                         
                         Eigen::VectorXd v_P_b = B_ia_P_beta_.transpose() * kappa_b_vec;
-                        Eigen::VectorXd Hp_off_b = B_ia_P_beta_ * v_P_b;
+                        Eigen::VectorXd Hp_J_b = B_ia_P_beta_ * v_P_b;
+                        Eigen::Map<const Eigen::MatrixXd> K_mat_b(kappa_b_vec.data(), vb_, nb_);
+                        Eigen::MatrixXd K_mat_trans_b = K_mat_b.transpose(); 
+                        Eigen::MatrixXd Hp_K_mat_b = Eigen::MatrixXd::Zero(vb_, nb_);
                         
-                        Hp.tail(dim_b) += spin_factor * Hp_off_b;
+                        #pragma omp parallel
+                        {
+                            Eigen::MatrixXd H_local_b = Eigen::MatrixXd::Zero(vb_, nb_);
+                            Eigen::MatrixXd M_p_b(nb_, nb_);
+                            
+                            #pragma omp for schedule(dynamic)
+                            for (int P = 0; P < n_aux; ++P) {
+                                Eigen::Map<const Eigen::MatrixXd> B_P_b(B_ia_P_beta_.col(P).data(), vb_, nb_);
+                                
+                                M_p_b.noalias() = K_mat_trans_b * B_P_b;
+                                H_local_b.noalias() += B_P_b * M_p_b;
+                            }
+                            
+                            #pragma omp critical
+                            {
+                                Hp_K_mat_b += H_local_b;
+                            }
+                        }
+                        
+                        Hp.tail(dim_b) += spin_factor * Hp_J_b - ex_factor * Eigen::Map<Eigen::VectorXd>(Hp_K_mat_b.data(), dim_b);
                     }
                 }
 
                 return Hp;
             };
-
             mshqc::gradient::TrustRegionResult step_info = soscf_engine.solve(orbital_gradient_, diag_H, 0.50, compute_hessian_vector);
             actual_step = step_info.step;
 
