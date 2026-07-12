@@ -46,12 +46,12 @@ void BaseMP2::transform_3center_mo() {
     }
 
     int n_aux = scf_.L_mat.cols();
+    bool is_restricted = (nocc_a_ == nocc_b_ && nvir_a_ == nvir_b_ && scf_.n_occ_alpha == scf_.n_occ_beta);
+
     B_ia_P_alpha_ = Eigen::MatrixXd::Zero(nocc_a_ * nvir_a_, n_aux);
-    if (nocc_b_ > 0 && nvir_b_ > 0) B_ia_P_beta_ = Eigen::MatrixXd::Zero(nocc_b_ * nvir_b_, n_aux);
 
     const Eigen::MatrixXd& Ca_occ = scf_.C_alpha.leftCols(nocc_a_);
     const Eigen::MatrixXd& Ca_vir = scf_.C_alpha.rightCols(nvir_a_);
-
     Eigen::Map<const Eigen::MatrixXd> L_flat(scf_.L_mat.data(), nbf_, nbf_ * n_aux);
 
     Eigen::MatrixXd X_a = Ca_vir.transpose() * L_flat; 
@@ -60,11 +60,12 @@ void BaseMP2::transform_3center_mo() {
     for (int P = 0; P < n_aux; ++P) {
         Eigen::Map<Eigen::MatrixXd> X_P(X_a.data() + P * nvir_a_ * nbf_, nvir_a_, nbf_);
         Eigen::MatrixXd B_MO_a = X_P * Ca_occ; 
-
         std::copy(B_MO_a.data(), B_MO_a.data() + nocc_a_ * nvir_a_, B_ia_P_alpha_.col(P).data());
     }
 
-    if (nocc_b_ > 0 && nvir_b_ > 0) {
+    
+    if (!is_restricted && nocc_b_ > 0 && nvir_b_ > 0) {
+        B_ia_P_beta_ = Eigen::MatrixXd::Zero(nocc_b_ * nvir_b_, n_aux);
         const Eigen::MatrixXd& Cb_occ = scf_.C_beta.leftCols(nocc_b_);
         const Eigen::MatrixXd& Cb_vir = scf_.C_beta.rightCols(nvir_b_);
         Eigen::MatrixXd X_b = Cb_vir.transpose() * L_flat;
@@ -562,16 +563,16 @@ void OMP2::init_fast_integrals() {
 
 
 void OMP2::transform_integrals() {
-
+    bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     scf_.irreps_alpha.assign(nbf_, 0);
-    scf_.irreps_beta.assign(nbf_, 0);
+    if (!is_restricted && nb_ > 0) {
+        scf_.irreps_beta.assign(nbf_, 0);
+    }
 
     if (config_.eri_method == "exact") {
         const auto& eri_ao = integrals_->compute_eri();
         const Eigen::MatrixXd& Ca_o = scf_.C_alpha.leftCols(na_);
         const Eigen::MatrixXd& Ca_v = scf_.C_alpha.rightCols(va_);
-        const Eigen::MatrixXd& Cb_o = scf_.C_beta.leftCols(nb_);
-        const Eigen::MatrixXd& Cb_v = scf_.C_beta.rightCols(vb_);
 
         g_aa_.clear(); g_bb_.clear(); g_ab_.clear();
 
@@ -581,13 +582,10 @@ void OMP2::transform_integrals() {
         g_aa_.allocate_block(0, 0, 0, 0, na_, va_, na_, va_);
         *(g_aa_.get_block(0, 0, 0, 0)) = dense_aa;
 
-        bool is_restricted = (na_ == nb_ && va_ == vb_);
-        if (is_restricted && nb_ > 0 && vb_ > 0) {
-            g_bb_.allocate_block(0, 0, 0, 0, nb_, vb_, nb_, vb_);
-            g_ab_.allocate_block(0, 0, 0, 0, na_, va_, nb_, vb_);
-            *(g_bb_.get_block(0, 0, 0, 0)) = dense_aa;
-            *(g_ab_.get_block(0, 0, 0, 0)) = dense_aa;
-        } else if (!is_restricted && nb_ > 0 && vb_ > 0) {
+        if (!is_restricted && nb_ > 0 && vb_ > 0) {
+            const Eigen::MatrixXd& Cb_o = scf_.C_beta.leftCols(nb_);
+            const Eigen::MatrixXd& Cb_v = scf_.C_beta.rightCols(vb_);
+
             auto dense_bb = integrals::ERITransformer::transform_custom(eri_ao, Cb_o, Cb_v, Cb_o, Cb_v, nbf_, nb_, vb_, nb_, vb_);
             g_bb_.allocate_block(0, 0, 0, 0, nb_, vb_, nb_, vb_);
             *(g_bb_.get_block(0, 0, 0, 0)) = dense_bb;
@@ -597,9 +595,9 @@ void OMP2::transform_integrals() {
             *(g_ab_.get_block(0, 0, 0, 0)) = dense_ab;
         }
     } else {
-        // Mode DF (Density Fitting) dan Cholesky
         scf_.C_alpha = C_a_current_;
-        scf_.C_beta = C_b_current_;
+        if (!is_restricted) scf_.C_beta = C_b_current_;
+        
         transform_3center_mo(); 
 
         g_aa_.clear(); g_bb_.clear(); g_ab_.clear();
@@ -622,9 +620,7 @@ void OMP2::transform_integrals() {
                 }
             }
         }
-
-        bool is_restricted = (na_ == nb_ && va_ == vb_);
-        if (nb_ > 0 && vb_ > 0) {
+        if (!is_restricted && nb_ > 0 && vb_ > 0) {
             g_bb_.allocate_block(0, 0, 0, 0, nb_, vb_, nb_, vb_);
             auto* ptr_bb = g_bb_.get_block(0, 0, 0, 0);
 
@@ -666,7 +662,7 @@ void OMP2::pseudocanonicalize() {
     Eigen::MatrixXd F_ao_a, F_ao_b;
     build_fock_fast(scf_.P_alpha, scf_.P_beta, F_ao_a, F_ao_b);
 
-    // MUTLAK: Matikan penggunaan blok simetri untuk mendiagonalisasi
+    
     bool use_sym = false; 
 
     auto diag_block = [&](const Eigen::MatrixXd& F_ao, Eigen::MatrixXd& C, Eigen::VectorXd& eps, int nocc, int nvir) {
@@ -694,8 +690,8 @@ void OMP2::pseudocanonicalize() {
 void OMP2::transform_3center_mo_cholesky() {
     int n_chol = scf_.L_mat.cols();
     B_ia_P_alpha_ = Eigen::MatrixXd::Zero(na_ * va_, n_chol);
-
-    bool has_beta = (nb_ > 0 && vb_ > 0);
+    bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
+    bool has_beta = (!is_restricted && nb_ > 0 && vb_ > 0);
     if (has_beta) {
         B_ia_P_beta_ = Eigen::MatrixXd::Zero(nb_ * vb_, n_chol);
     }
@@ -733,7 +729,6 @@ void OMP2::transform_3center_mo_cholesky() {
         }
 
         if (has_beta) {
-
             Eigen::MatrixXd X_b = Cb_vir.transpose() * L_reshaped;
 
             for (int p = 0; p < P_size; ++p) {
@@ -1046,15 +1041,19 @@ MP2Result OMP2::compute() {
                             }
                         }
                         
-                        // Akumulasi Akhir: Hp += (spin_factor * J) - (ex_factor * K)
+                        
                         Hp.head(dim_a) += spin_factor * Hp_J_a - ex_factor * Eigen::Map<Eigen::VectorXd>(Hp_K_mat_a.data(), dim_a);
                     }
 
+                    
                     if (!is_restricted && dim_b > 0) {
                         Eigen::Map<const Eigen::VectorXd> kappa_b_vec(p_vec.data() + dim_a, dim_b);
                         
+                        
                         Eigen::VectorXd v_P_b = B_ia_P_beta_.transpose() * kappa_b_vec;
                         Eigen::VectorXd Hp_J_b = B_ia_P_beta_ * v_P_b;
+                        
+                        
                         Eigen::Map<const Eigen::MatrixXd> K_mat_b(kappa_b_vec.data(), vb_, nb_);
                         Eigen::MatrixXd K_mat_trans_b = K_mat_b.transpose(); 
                         Eigen::MatrixXd Hp_K_mat_b = Eigen::MatrixXd::Zero(vb_, nb_);

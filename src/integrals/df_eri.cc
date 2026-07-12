@@ -26,73 +26,117 @@ DensityFittingERI::DensityFittingERI(const BasisSet& primary_basis,
     n_aux_     = aux_basis_->n_basis_functions();
 }
 
-Eigen::MatrixXd DensityFittingERI::compute_J_inv_half() {
-    Eigen::MatrixXd J_mat = Eigen::MatrixXd::Zero(n_aux_, n_aux_);
-    int n_shells_aux = aux_basis_->n_shells();
+struct CholeskyResult {
+    Eigen::MatrixXd L;
+    std::vector<int> pivot_map;
+    int rank;
+};
 
+CholeskyResult compute_pivoted_cholesky(Eigen::MatrixXd& J, double tol = 1e-10) {
+    int n = J.rows();
+    std::vector<int> p(n);
+    std::iota(p.begin(), p.end(), 0); 
     
-    std::vector<int> aux_starts(n_shells_aux), aux_sizes(n_shells_aux);
-    int offset = 0;
-    for(int i = 0; i < n_shells_aux; ++i) {
-        aux_starts[i] = offset;
-        aux_sizes[i] = aux_basis_->shell(i).n_functions();
-        offset += aux_sizes[i];
+    Eigen::VectorXd diag = J.diagonal();
+    Eigen::MatrixXd L = Eigen::MatrixXd::Zero(n, n);
+    
+    int rank = 0;
+    for (int i = 0; i < n; ++i) {
+        
+        int max_idx = i;
+        double max_val = diag(i);
+        for (int j = i + 1; j < n; ++j) {
+            if (diag(j) > max_val) {
+                max_val = diag(j);
+                max_idx = j;
+            }
+        }
+        
+      
+        if (max_val < tol) break; 
+        
+       
+        if (max_idx != i) {
+            std::swap(p[i], p[max_idx]);
+            std::swap(diag(i), diag(max_idx));
+            J.row(i).swap(J.row(max_idx));
+            J.col(i).swap(J.col(max_idx));
+            L.row(i).swap(L.row(max_idx)); 
+        }
+        
+        L(i, i) = std::sqrt(diag(i));
+        double L_ii_inv = 1.0 / L(i, i);
+        
+       
+        for (int j = i + 1; j < n; ++j) {
+            double sum = 0.0;
+        
+            for (int k = 0; k < i; ++k) {
+                sum += L(j, k) * L(i, k);
+            }
+            L(j, i) = (J(j, i) - sum) * L_ii_inv;
+            diag(j) -= L(j, i) * L(j, i); 
+        }
+        rank++;
     }
-
     
-    #pragma omp parallel for schedule(dynamic)
-    for (int P = 0; P < n_shells_aux; ++P) {
-        int abs_P = primary_basis_->n_shells() + P; 
-        int bf_P_start = aux_starts[P];
-        int dim_P = aux_sizes[P];
 
-        for (int Q = 0; Q <= P; ++Q) {
-            int abs_Q = primary_basis_->n_shells() + Q;
-            int bf_Q_start = aux_starts[Q];
-            int dim_Q = aux_sizes[Q];
+    L.conservativeResize(n, rank);
+    return {L, p, rank};
+}
 
-            auto buffer = integrals_->compute_2c2e_block(abs_P, abs_Q);
+void DensityFittingERI::compute() {
+    std::cout << "  Starting Density Fitting (RI) Decomposition (Ultra HPC)...\n";
+    std::cout << "  Primary Basis: " << n_primary_ << " BF\n";
+    std::cout << "  Auxiliary Basis: " << n_aux_ << " BF\n";
+
+    int n_shells_prim = primary_basis_->n_shells();
+    int n_shells_aux  = aux_basis_->n_shells();
+
+  
+    std::vector<int> aux_starts(n_shells_aux), aux_sizes(n_shells_aux);
+    int offset_a = 0;
+    for(int i = 0; i < n_shells_aux; ++i) {
+        aux_starts[i] = offset_a;
+        aux_sizes[i] = aux_basis_->shell(i).n_functions();
+        offset_a += aux_sizes[i];
+    }
+    Eigen::MatrixXd J_metric = Eigen::MatrixXd::Zero(n_aux_, n_aux_);
+
+    #pragma omp parallel for schedule(dynamic, 1)
+    for (int R = 0; R < n_shells_aux; ++R) {
+        int abs_R = n_shells_prim + R; 
+        int dim_R = aux_sizes[R];
+        int bf_R_start = aux_starts[R];
+
+        for (int S = 0; S <= R; ++S) {
+            int abs_S = n_shells_prim + S;
+            int dim_S = aux_sizes[S];
+            int bf_S_start = aux_starts[S];
+            auto buffer = integrals_->compute_2c2e_block(abs_R, abs_S); 
             if (buffer.empty()) continue;
 
-            for (int p = 0; p < dim_P; ++p) {
-                for (int q = 0; q < dim_Q; ++q) {
-                    size_t idx = p + dim_P * q;
-                    double val = buffer[idx];
+            for (int s = 0; s < dim_S; ++s) {
+                int idx_S = bf_S_start + s;
+                int buffer_offset = dim_R * s;
+                for (int r = 0; r < dim_R; ++r) {
+                    int idx_R = bf_R_start + r;
+                    double val = buffer[r + buffer_offset];
                     
-                   
-                    J_mat(bf_P_start + p, bf_Q_start + q) = val;
-                    J_mat(bf_Q_start + q, bf_P_start + p) = val; 
+                    J_metric(idx_R, idx_S) = val;
+                    if (idx_R != idx_S) J_metric(idx_S, idx_R) = val;
                 }
             }
         }
     }
-
-    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> solver(J_mat);
-    
-    if (solver.info() != Eigen::Success) {
-        throw std::runtime_error("FATAL: Eigen gagal mendiagonalisasi J_mat. Matriks berisi nilai ilegal.");
+    CholeskyResult chol = compute_pivoted_cholesky(J_metric, 1e-10);
+    int n_aux_rank = chol.rank;
+    std::cout << "  Pivoted Cholesky Rank: " << n_aux_rank << " / " << n_aux_ << "\n";
+    auto L_tri = chol.L.topLeftCorner(n_aux_rank, n_aux_rank).triangularView<Eigen::Lower>();
+    std::vector<int> inv_pivot(n_aux_);
+    for (int p = 0; p < n_aux_; ++p) {
+        inv_pivot[chol.pivot_map[p]] = p;
     }
-    Eigen::VectorXd eigenvalues = solver.eigenvalues();
-    Eigen::MatrixXd eigenvectors = solver.eigenvectors();
-
-    double cutoff = cutoff_;
-    Eigen::MatrixXd J_inv_half = Eigen::MatrixXd::Zero(n_aux_, n_aux_);
-    
-    for (int i = 0; i < n_aux_; ++i) {
-        if (eigenvalues(i) > cutoff) {
-            J_inv_half.col(i) = eigenvectors.col(i) * (1.0 / std::sqrt(eigenvalues(i)));
-        }
-    }
-
-    return J_inv_half * eigenvectors.transpose();
-}
-
-void DensityFittingERI::compute() {
-    std::cout << "  Starting Density Fitting (RI) Decomposition...\n";
-    std::cout << "  Primary Basis: " << n_primary_ << " BF\n";
-    std::cout << "  Auxiliary Basis: " << n_aux_ << " BF\n";
-
-    Eigen::MatrixXd J_inv_half = compute_J_inv_half();
 
     int n_pairs = n_primary_ * n_primary_;
     B_mat_ = Eigen::MatrixXd::Zero(n_pairs, n_aux_);
@@ -100,7 +144,6 @@ void DensityFittingERI::compute() {
     int n_shells_prim = primary_basis_->n_shells();
     int n_shells_aux  = aux_basis_->n_shells();
 
-    
     std::vector<int> prim_starts(n_shells_prim), prim_sizes(n_shells_prim);
     int offset_p = 0;
     for(int i = 0; i < n_shells_prim; ++i) {
@@ -109,7 +152,6 @@ void DensityFittingERI::compute() {
         offset_p += prim_sizes[i];
     }
 
-    
     std::vector<int> aux_starts(n_shells_aux), aux_sizes(n_shells_aux);
     int offset_a = 0;
     for(int i = 0; i < n_shells_aux; ++i) {
@@ -118,76 +160,61 @@ void DensityFittingERI::compute() {
         offset_a += aux_sizes[i];
     }
 
-    
-    
-    
-    int batch_size = 32; 
-    for (int R_start = 0; R_start < n_shells_aux; R_start += batch_size) {
-        int R_end = std::min(n_shells_aux, R_start + batch_size);
-        int aux_bf_start = aux_starts[R_start];
-        int aux_bf_end = (R_end < n_shells_aux) ? aux_starts[R_end] : n_aux_;
-        int aux_bf_size = aux_bf_end - aux_bf_start;
+    std::cout << "  Evaluating 3-Center Integrals and Pivoting...\n";
+    #pragma omp parallel for schedule(dynamic, 1)
+    for (int i = 0; i < n_shells_prim; ++i) {
+        int bf_i_start = prim_starts[i];
+        int dim_i = prim_sizes[i];
 
-        
-        Eigen::MatrixXd V_batch = Eigen::MatrixXd::Zero(n_pairs, aux_bf_size);
+        for (int j = 0; j <= i; ++j) {
+            int bf_j_start = prim_starts[j];
+            int dim_j = prim_sizes[j];
 
-        #pragma omp parallel for schedule(dynamic, 1)
-        for (int R = R_start; R < R_end; ++R) {
-            int abs_R = n_shells_prim + R; 
-            int dim_R = aux_sizes[R];
-            int col_offset = aux_starts[R] - aux_bf_start;
+            for (int R = 0; R < n_shells_aux; ++R) {
+                int abs_R = n_shells_prim + R; 
+                int dim_R = aux_sizes[R];
+                int aux_start = aux_starts[R];
 
-            for (int i = 0; i < n_shells_prim; ++i) {
-                int bf_i_start = prim_starts[i];
-                int dim_i = prim_sizes[i];
+                auto buffer = integrals_->compute_3c2e_block(i, j, abs_R);
+                if (buffer.empty()) continue;
 
-                for (int j = 0; j <= i; ++j) {
-                    int bf_j_start = prim_starts[j];
-                    int dim_j = prim_sizes[j];
+                for (int r = 0; r < dim_R; ++r) {
+                    int orig_P = aux_start + r;         
+                    int new_P  = inv_pivot[orig_P]; 
 
-                    auto buffer = integrals_->compute_3c2e_block(i, j, abs_R);
-                    if (buffer.empty()) continue;
-
-                    for (int r = 0; r < dim_R; ++r) {
-                        int col_idx = col_offset + r; 
-                        for (int p_j = 0; p_j < dim_j; ++p_j) {
-                            int base_r1 = bf_j_start + p_j;
-                            int base_r2 = (bf_j_start + p_j) * n_primary_;
-                            int buffer_offset = dim_i * (p_j + dim_j * r);
-                            
-                            for (int p_i = 0; p_i < dim_i; ++p_i) {
-                                double val = buffer[p_i + buffer_offset];
-                                int r1 = (bf_i_start + p_i) * n_primary_ + base_r1;
-                                int r2 = base_r2 + (bf_i_start + p_i);
-                                
-                                V_batch(r1, col_idx) = val;
-                                if (r1 != r2) V_batch(r2, col_idx) = val;
-                            }
+                    for (int p_j = 0; p_j < dim_j; ++p_j) {
+                        int base_r1 = bf_j_start + p_j;
+                        int base_r2 = (bf_j_start + p_j) * n_primary_;
+                        int buffer_offset = dim_i * (p_j + dim_j * r);
+                        
+                        for (int p_i = 0; p_i < dim_i; ++p_i) {
+                            double val = buffer[p_i + buffer_offset];
+                            int r1 = (bf_i_start + p_i) * n_primary_ + base_r1;
+                            int r2 = base_r2 + (bf_i_start + p_i);
+                            B_mat_(r1, new_P) = val;
+                            if (r1 != r2) B_mat_(r2, new_P) = val;
                         }
                     }
                 }
             }
         }
-        std::cout << "  Computing V * J^{-1/2} for Shells " << R_start << " to " << R_end - 1 << " ...\n";
-        B_mat_ += V_batch * J_inv_half.middleRows(aux_bf_start, aux_bf_size);
     }
 
-    
-    
-    
+    std::cout << "  In-Place Triangular Solve (cblas_dtrsm)...\n";
+    auto V_rank = B_mat_.leftCols(n_aux_rank);
+    L_tri.solveInPlace(V_rank.transpose());
+
     std::cout << "  Writing Density Fitting Tensor to HDF5 (Out-of-Core)...\n";
     utils::HDF5TensorIO io("df_tensor.h5", utils::HDF5TensorIO::Mode::WRITE_TRUNCATE);
-    std::array<long, 4> dims = {(long)n_aux_, (long)n_primary_, (long)n_primary_, 1};
+    std::array<long, 4> dims = {(long)n_aux_rank, (long)n_primary_, (long)n_primary_, 1};
     std::array<long, 4> chunks = {1, (long)n_primary_, (long)n_primary_, 1};
     io.create_dataset_4d("df_tensor", dims, chunks);
 
-    for (int P = 0; P < n_aux_; ++P) {
+    for (int P = 0; P < n_aux_rank; ++P) {
         std::array<long, 4> offset = {P, 0, 0, 0};
-        io.write_slice_4d("df_tensor", offset, chunks, B_mat_.col(P).data());
+        io.write_slice_4d("df_tensor", offset, chunks, V_rank.col(P).data());
     }
-
-    
-    B_mat_.resize(0, 0); 
+    B_mat_ = V_rank; 
     is_computed_ = true;
     std::cout << "  Density Fitting Decomposition Complete.\n";
 }
