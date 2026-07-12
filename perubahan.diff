@@ -1,0 +1,378 @@
+diff --git a/src/mp/omp_fock.cc b/src/mp/omp_fock.cc
+index 60710fd..21b2f1d 100644
+--- a/src/mp/omp_fock.cc
++++ b/src/mp/omp_fock.cc
+@@ -292,7 +292,10 @@ void OMP2::build_opdm_beta() {
+     }
+ }
+ void OMP2::build_generalized_fock() {
++    
++    bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
+ 
++    
+     Eigen::MatrixXd G_full_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
+     G_full_a.block(0, 0, na_, na_) = G_oo_alpha_; 
+     G_full_a.block(na_, na_, va_, va_) = G_vv_alpha_;
+@@ -300,7 +303,14 @@ void OMP2::build_generalized_fock() {
+ 
+     Eigen::MatrixXd G_full_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
+     Eigen::MatrixXd P_corr_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
+-    if (nb_ > 0) {
++    
++    
++    if (is_restricted) {
++        G_oo_beta_ = G_oo_alpha_;
++        G_vv_beta_ = G_vv_alpha_;
++        G_full_b = G_full_a;
++        P_corr_b = P_corr_a;
++    } else if (nb_ > 0) {
+         G_full_b.block(0, 0, nb_, nb_) = G_oo_beta_;
+         G_full_b.block(nb_, nb_, vb_, vb_) = G_vv_beta_;
+         P_corr_b = scf_.C_beta * G_full_b * scf_.C_beta.transpose();
+@@ -311,9 +321,7 @@ void OMP2::build_generalized_fock() {
+     Eigen::MatrixXd F_HF_mo_a = scf_.C_alpha.transpose() * F_HF_ao_a * scf_.C_alpha;
+ 
+     Eigen::MatrixXd F_HF_mo_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
+-    if (nb_ > 0) {
+-        F_HF_mo_b = scf_.C_beta.transpose() * F_HF_ao_b * scf_.C_beta;
+-    }
++    if (nb_ > 0) F_HF_mo_b = scf_.C_beta.transpose() * F_HF_ao_b * scf_.C_beta;
+ 
+     Eigen::MatrixXd G_gamma_ao_a, G_gamma_ao_b;
+     build_fock_fast(P_corr_a, P_corr_b, G_gamma_ao_a, G_gamma_ao_b);
+@@ -321,11 +329,8 @@ void OMP2::build_generalized_fock() {
+     if (nb_ > 0) G_gamma_ao_b -= H_core_;
+ 
+     Eigen::MatrixXd G_gamma_mo_a = scf_.C_alpha.transpose() * G_gamma_ao_a * scf_.C_alpha;
+-
+     Eigen::MatrixXd G_gamma_mo_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
+-    if (nb_ > 0) {
+-        G_gamma_mo_b = scf_.C_beta.transpose() * G_gamma_ao_b * scf_.C_beta;
+-    }
++    if (nb_ > 0) G_gamma_mo_b = scf_.C_beta.transpose() * G_gamma_ao_b * scf_.C_beta;
+ 
+     Eigen::MatrixXd Z_mat_a = Eigen::MatrixXd::Zero(va_, na_);
+     Eigen::MatrixXd Z_mat_b = Eigen::MatrixXd::Zero(vb_, nb_);
+@@ -335,7 +340,7 @@ void OMP2::build_generalized_fock() {
+         Z_mat_b.setZero();
+ 
+         if (scf_.irreps_alpha.empty()) scf_.irreps_alpha.assign(nbf_, 0);
+-        if (scf_.irreps_beta.empty())  scf_.irreps_beta.assign(nbf_, 0);
++        if (!is_restricted && scf_.irreps_beta.empty()) scf_.irreps_beta.assign(nbf_, 0);
+ 
+         if (config_.print_level > 0) {
+             std::cout << "  [DEBUG] Memulai evaluasi Z-Vector O(N^5) MO-Driven (Irrep-Blocked TBLIS)..." << std::endl;
+@@ -344,18 +349,13 @@ void OMP2::build_generalized_fock() {
+         const auto& eri_ao = integrals_->compute_eri();
+         const Eigen::MatrixXd& Ca_o = scf_.C_alpha.leftCols(na_);
+         const Eigen::MatrixXd& Ca_v = scf_.C_alpha.rightCols(va_);
+-        const Eigen::MatrixXd& Cb_o = scf_.C_beta.leftCols(nb_);
+-        const Eigen::MatrixXd& Cb_v = scf_.C_beta.rightCols(vb_);
+-
+-        bool has_beta = (nb_ > 0 && vb_ > 0 && !t2_bb_.blocks.empty() && !t2_ab_.blocks.empty());
+ 
+         auto occ_spaces_a = get_irrep_spaces(scf_.irreps_alpha, 0, na_);
+         auto vir_spaces_a = get_irrep_spaces(scf_.irreps_alpha, na_, va_);
+ 
+-        auto ovvv_blk = ERITransformer::transform_ovvv_blocked(eri_ao, Ca_o, Ca_v, occ_spaces_a, vir_spaces_a, nbf_);
+-        auto ooov_blk = ERITransformer::transform_ooov_blocked(eri_ao, Ca_o, Ca_v, occ_spaces_a, vir_spaces_a, nbf_);
++        auto ovvv_blk = integrals::ERITransformer::transform_ovvv_blocked(eri_ao, Ca_o, Ca_v, occ_spaces_a, vir_spaces_a, nbf_);
++        auto ooov_blk = integrals::ERITransformer::transform_ooov_blocked(eri_ao, Ca_o, Ca_v, occ_spaces_a, vir_spaces_a, nbf_);
+ 
+-        bool is_restricted = (na_ == nb_ && va_ == vb_);
+         BlockedTensor4D T2_spatial;
+         BlockedTensor4D* T2_ptr = &t2_aa_;
+ 
+@@ -365,9 +365,8 @@ void OMP2::build_generalized_fock() {
+                     for (const auto& o2 : occ_spaces_a) {
+                         for (const auto& v2 : vir_spaces_a) {
+                             if ((o1.id ^ v1.id ^ o2.id ^ v2.id) == 0) {
+-                                if (o1.size == 0 || v1.size == 0 || o2.size == 0 || v2.size == 0) {
+-                                    continue; 
+-                                }
++                                if (o1.size == 0 || v1.size == 0 || o2.size == 0 || v2.size == 0) continue; 
++                                
+                                 auto* g_blk = g_aa_.get_block(o1.id, v1.id, o2.id, v2.id);
+                                 auto* g_blk_ex = g_aa_.get_block(o1.id, v2.id, o2.id, v1.id);
+                                 if (g_blk && g_blk_ex) {
+@@ -387,7 +386,6 @@ void OMP2::build_generalized_fock() {
+                                                     double v_dir = (*g_blk)(di, da, dj, db);
+                                                     double v_ex = (*g_blk_ex)(di, db, dj, da);
+                                                     (*T_blk)(di, da, dj, db) = (std::abs(den) > 1e-12) ? (2.0 * v_dir - v_ex) / den : 0.0;
+-
+                                                 }
+                                             }
+                                         }
+@@ -401,7 +399,7 @@ void OMP2::build_generalized_fock() {
+             T2_ptr = &T2_spatial;
+         }
+ 
+-#pragma omp parallel
++        #pragma omp parallel
+         {
+             Eigen::MatrixXd Z_local = Eigen::MatrixXd::Zero(va_, na_);
+             std::vector<double> z_buffer(na_ * va_, 0.0);
+@@ -503,13 +501,17 @@ void OMP2::build_generalized_fock() {
+             Z_mat_a += Z_local;
+         }
+ 
+-        if (!is_restricted && has_beta) {
+-            auto ovvv_bb = ERITransformer::transform_custom(eri_ao, Cb_o, Cb_v, Cb_v, Cb_v, nbf_, nb_, vb_, vb_, vb_);
+-            auto ooov_bb = ERITransformer::transform_custom(eri_ao, Cb_o, Cb_o, Cb_o, Cb_v, nbf_, nb_, nb_, nb_, vb_);
+-            auto ovvv_ba_aa = ERITransformer::transform_custom(eri_ao, Cb_o, Cb_v, Ca_v, Ca_v, nbf_, nb_, vb_, va_, va_);
+-            auto ooov_aa_bb = ERITransformer::transform_custom(eri_ao, Ca_o, Ca_o, Cb_o, Cb_v, nbf_, na_, na_, nb_, vb_);
+-            auto ovvv_ab_bb = ERITransformer::transform_custom(eri_ao, Ca_o, Ca_v, Cb_v, Cb_v, nbf_, na_, va_, vb_, vb_);
+-            auto ooov_bb_aa = ERITransformer::transform_custom(eri_ao, Cb_o, Cb_o, Ca_o, Ca_v, nbf_, nb_, nb_, na_, va_);
++        bool has_beta = (!is_restricted && nb_ > 0 && vb_ > 0 && !t2_bb_.blocks.empty() && !t2_ab_.blocks.empty());
++
++        if (has_beta) {
++            const Eigen::MatrixXd& Cb_o = scf_.C_beta.leftCols(nb_);
++            const Eigen::MatrixXd& Cb_v = scf_.C_beta.rightCols(vb_);
++            auto ovvv_bb = integrals::ERITransformer::transform_custom(eri_ao, Cb_o, Cb_v, Cb_v, Cb_v, nbf_, nb_, vb_, vb_, vb_);
++            auto ooov_bb = integrals::ERITransformer::transform_custom(eri_ao, Cb_o, Cb_o, Cb_o, Cb_v, nbf_, nb_, nb_, nb_, vb_);
++            auto ovvv_ba_aa = integrals::ERITransformer::transform_custom(eri_ao, Cb_o, Cb_v, Ca_v, Ca_v, nbf_, nb_, vb_, va_, va_);
++            auto ooov_aa_bb = integrals::ERITransformer::transform_custom(eri_ao, Ca_o, Ca_o, Cb_o, Cb_v, nbf_, na_, na_, nb_, vb_);
++            auto ovvv_ab_bb = integrals::ERITransformer::transform_custom(eri_ao, Ca_o, Ca_v, Cb_v, Cb_v, nbf_, na_, va_, vb_, vb_);
++            auto ooov_bb_aa = integrals::ERITransformer::transform_custom(eri_ao, Cb_o, Cb_o, Ca_o, Ca_v, nbf_, nb_, nb_, na_, va_);
+ 
+             auto* t_bb_dense = t2_bb_.get_block(0,0,0,0);
+             auto* t_ab_dense = t2_ab_.get_block(0,0,0,0);
+@@ -518,7 +520,6 @@ void OMP2::build_generalized_fock() {
+                 #pragma omp parallel for
+                 for (int i = 0; i < nb_; ++i) {
+                     for (int a = 0; a < vb_; ++a) {
+-                        if ((scf_.irreps_beta[i] ^ scf_.irreps_beta[nb_+a]) != 0) continue; 
+                         double z1 = 0.0, z2 = 0.0;
+                         for (int j = 0; j < nb_; ++j) {
+                             for (int b = 0; b < vb_; ++b) {
+@@ -533,7 +534,6 @@ void OMP2::build_generalized_fock() {
+                 #pragma omp parallel for
+                 for (int i = 0; i < na_; ++i) {
+                     for (int a = 0; a < va_; ++a) {
+-                        if ((scf_.irreps_alpha[i] ^ scf_.irreps_alpha[na_+a]) != 0) continue; 
+                         double z1 = 0.0, z2 = 0.0;
+                         for (int j = 0; j < nb_; ++j) {
+                             for (int b = 0; b < va_; ++b) {
+@@ -552,7 +552,6 @@ void OMP2::build_generalized_fock() {
+                 #pragma omp parallel for
+                 for (int i = 0; i < nb_; ++i) {
+                     for (int a = 0; a < vb_; ++a) {
+-                        if ((scf_.irreps_beta[i] ^ scf_.irreps_beta[nb_+a]) != 0) continue; 
+                         double z1 = 0.0, z2 = 0.0;
+                         for (int j = 0; j < na_; ++j) {
+                             for (int b = 0; b < vb_; ++b) {
+@@ -574,18 +573,14 @@ void OMP2::build_generalized_fock() {
+ 
+         if (config_.print_level > 0) std::cout << "  [DEBUG] Evaluasi Z-Vector Irrep-Blocked Selesai!" << std::endl;
+     } else if (config_.eri_method == "cholesky") {
+-        if (config_.print_level > 0) std::cout << "  [DEBUG] Memulai evaluasi Z-Vector O(N^4) Cholesky (Chunked/Batched)..." << std::endl;
+-
+         evaluate_z_vector_cholesky(Z_mat_a, Z_mat_b);
+-
+-        bool is_restricted = (na_ == nb_ && va_ == vb_);
+-        if (is_restricted) {
+-            Z_mat_b = Z_mat_a;
+-        }
++        if (is_restricted) Z_mat_b = Z_mat_a;
+     } else {
++        
++        
++        
+         if (config_.print_level > 0) std::cout << "  [DEBUG] Memulai evaluasi Z-Vector O(N^4) Density Fitting..." << std::endl;
+ 
+-        bool is_restricted = (na_ == nb_ && va_ == vb_);
+         int n_aux = scf_.L_mat.cols();
+ 
+         Eigen::MatrixXd T2_aa = Eigen::MatrixXd::Zero(na_*va_, na_*va_);
+@@ -597,49 +592,19 @@ void OMP2::build_generalized_fock() {
+                     T2_aa(i*va_+a, j*va_+b) = (*t_aa_blk)(i, a, j, b);
+         }
+ 
+-        Eigen::MatrixXd T2_ab = Eigen::MatrixXd::Zero(na_*va_, nb_*vb_);
+-        Eigen::MatrixXd T2_bb = Eigen::MatrixXd::Zero(nb_*vb_, nb_*vb_);
+-
+-        if (nb_ > 0 && vb_ > 0) {
+-            auto* t_ab_blk = t2_ab_.get_block(0,0,0,0);
+-            if (t_ab_blk) {
+-                #pragma omp parallel for collapse(2)
+-                for (int i = 0; i < na_; ++i) for (int a = 0; a < va_; ++a)
+-                    for (int j = 0; j < nb_; ++j) for (int b = 0; b < vb_; ++b)
+-                        T2_ab(i*va_+a, j*vb_+b) = (*t_ab_blk)(i, j, a, b);
+-            }
+-            auto* t_bb_blk = t2_bb_.get_block(0,0,0,0);
+-
+-            if (t_bb_blk) {
+-                #pragma omp parallel for collapse(2)
+-                for (int i = 0; i < nb_; ++i) for (int a = 0; a < vb_; ++a)
+-                    for (int j = 0; j < nb_; ++j) for (int b = 0; b < vb_; ++b)
+-                        T2_bb(i*vb_+a, j*vb_+b) = (*t_bb_blk)(i, j, a, b);
+-            }
+-        }
+-
++        
+         Eigen::MatrixXd X_a = T2_aa * B_ia_P_alpha_;
+-        if (nb_ > 0 && vb_ > 0) X_a += T2_ab * B_ia_P_beta_;
+-
+-        Eigen::MatrixXd X_b = Eigen::MatrixXd::Zero(nb_*vb_, n_aux);
+-        if (nb_ > 0 && vb_ > 0) X_b = T2_bb * B_ia_P_beta_ + T2_ab.transpose() * B_ia_P_alpha_;
+-
++        
+         Eigen::MatrixXd B_oo_a = Eigen::MatrixXd::Zero(na_*na_, n_aux);
+         Eigen::MatrixXd B_vv_a = Eigen::MatrixXd::Zero(va_*va_, n_aux);
+-        Eigen::MatrixXd B_oo_b = Eigen::MatrixXd::Zero(nb_*nb_, n_aux);
+-        Eigen::MatrixXd B_vv_b = Eigen::MatrixXd::Zero(vb_*vb_, n_aux);
+ 
+         const Eigen::MatrixXd& Ca_o = scf_.C_alpha.leftCols(na_);
+         const Eigen::MatrixXd& Ca_v = scf_.C_alpha.rightCols(va_);
+-        const Eigen::MatrixXd& Cb_o = scf_.C_beta.leftCols(nb_);
+-        const Eigen::MatrixXd& Cb_v = scf_.C_beta.rightCols(vb_);
+ 
+         #pragma omp parallel
+         {
+             Eigen::MatrixXd priv_oo_a = Eigen::MatrixXd::Zero(na_*na_, n_aux);
+             Eigen::MatrixXd priv_vv_a = Eigen::MatrixXd::Zero(va_*va_, n_aux);
+-            Eigen::MatrixXd priv_oo_b = Eigen::MatrixXd::Zero(nb_*nb_, n_aux);
+-            Eigen::MatrixXd priv_vv_b = Eigen::MatrixXd::Zero(vb_*vb_, n_aux);
+ 
+             #pragma omp for schedule(dynamic)
+             for (int P = 0; P < n_aux; ++P) {
+@@ -649,56 +614,107 @@ void OMP2::build_generalized_fock() {
+ 
+                 for(int i=0; i<na_; ++i) for(int j=0; j<na_; ++j) priv_oo_a(i*na_+j, P) = MO_oo_a(i, j);
+                 for(int a=0; a<va_; ++a) for(int b=0; b<va_; ++b) priv_vv_a(a*va_+b, P) = MO_vv_a(a, b);
+-
+-                if (nb_ > 0 && vb_ > 0) {
+-                    Eigen::MatrixXd MO_oo_b = Cb_o.transpose() * (B_AO * Cb_o);
+-                    Eigen::MatrixXd MO_vv_b = Cb_v.transpose() * (B_AO * Cb_v);
+-                    for(int i=0; i<nb_; ++i) for(int j=0; j<nb_; ++j) priv_oo_b(i*nb_+j, P) = MO_oo_b(i, j);
+-                    for(int a=0; a<vb_; ++a) for(int b=0; b<vb_; ++b) priv_vv_b(a*vb_+b, P) = MO_vv_b(a, b);
+-                }
+             }
+             #pragma omp critical
+             {
+-                B_oo_a += priv_oo_a; B_vv_a += priv_vv_a;
+-                if (nb_ > 0) { B_oo_b += priv_oo_b; B_vv_b += priv_vv_b; }
++                B_oo_a += priv_oo_a; 
++                B_vv_a += priv_vv_a;
+             }
+         }
+ 
+         Z_mat_a.setZero();
+-        if (nb_ > 0) Z_mat_b.setZero();
+ 
+         #pragma omp parallel
+         {
+             Eigen::MatrixXd Z_loc_a = Eigen::MatrixXd::Zero(va_, na_);
+-            Eigen::MatrixXd Z_loc_b = Eigen::MatrixXd::Zero(vb_, nb_);
+ 
+             #pragma omp for schedule(dynamic)
+             for (int P = 0; P < n_aux; ++P) {
+-
+                 Eigen::Map<const Eigen::MatrixXd> XT_a(X_a.col(P).data(), va_, na_);
+                 Eigen::Map<const Eigen::MatrixXd> V_a(B_vv_a.col(P).data(), va_, va_);
+                 Eigen::Map<const Eigen::MatrixXd> O_a(B_oo_a.col(P).data(), na_, na_);
+ 
+                 Z_loc_a.noalias() += V_a * XT_a - XT_a * O_a;
++            }
++            #pragma omp critical
++            {
++                Z_mat_a += Z_loc_a;
++            }
++        }
++
++        if (is_restricted) {
++            Z_mat_b = Z_mat_a;
++        } else if (nb_ > 0 && vb_ > 0) {
++            
++            
++            
++            Eigen::MatrixXd T2_ab = Eigen::MatrixXd::Zero(na_*va_, nb_*vb_);
++            Eigen::MatrixXd T2_bb = Eigen::MatrixXd::Zero(nb_*vb_, nb_*vb_);
++            
++            auto* t_ab_blk = t2_ab_.get_block(0,0,0,0);
++            if (t_ab_blk) {
++                #pragma omp parallel for collapse(2)
++                for (int i = 0; i < na_; ++i) for (int a = 0; a < va_; ++a)
++                    for (int j = 0; j < nb_; ++j) for (int b = 0; b < vb_; ++b)
++                        T2_ab(i*va_+a, j*vb_+b) = (*t_ab_blk)(i, j, a, b);
++            }
++            auto* t_bb_blk = t2_bb_.get_block(0,0,0,0);
++            if (t_bb_blk) {
++                #pragma omp parallel for collapse(2)
++                for (int i = 0; i < nb_; ++i) for (int a = 0; a < vb_; ++a)
++                    for (int j = 0; j < nb_; ++j) for (int b = 0; b < vb_; ++b)
++                        T2_bb(i*vb_+a, j*vb_+b) = (*t_bb_blk)(i, j, a, b);
++            }
++
++            
++            X_a += T2_ab * B_ia_P_beta_;
++            Eigen::MatrixXd X_b = T2_bb * B_ia_P_beta_ + T2_ab.transpose() * B_ia_P_alpha_;
++
++            Eigen::MatrixXd B_oo_b = Eigen::MatrixXd::Zero(nb_*nb_, n_aux);
++            Eigen::MatrixXd B_vv_b = Eigen::MatrixXd::Zero(vb_*vb_, n_aux);
++            const Eigen::MatrixXd& Cb_o = scf_.C_beta.leftCols(nb_);
++            const Eigen::MatrixXd& Cb_v = scf_.C_beta.rightCols(vb_);
+ 
+-                if (nb_ > 0 && vb_ > 0) {
++            #pragma omp parallel
++            {
++                Eigen::MatrixXd priv_oo_b = Eigen::MatrixXd::Zero(nb_*nb_, n_aux);
++                Eigen::MatrixXd priv_vv_b = Eigen::MatrixXd::Zero(vb_*vb_, n_aux);
++
++                #pragma omp for schedule(dynamic)
++                for (int P = 0; P < n_aux; ++P) {
++                    Eigen::Map<const Eigen::MatrixXd> B_AO(scf_.L_mat.col(P).data(), nbf_, nbf_);
++                    Eigen::MatrixXd MO_oo_b = Cb_o.transpose() * (B_AO * Cb_o);
++                    Eigen::MatrixXd MO_vv_b = Cb_v.transpose() * (B_AO * Cb_v);
++                    for(int i=0; i<nb_; ++i) for(int j=0; j<nb_; ++j) priv_oo_b(i*nb_+j, P) = MO_oo_b(i, j);
++                    for(int a=0; a<vb_; ++a) for(int b=0; b<vb_; ++b) priv_vv_b(a*vb_+b, P) = MO_vv_b(a, b);
++                }
++                #pragma omp critical
++                {
++                    B_oo_b += priv_oo_b; 
++                    B_vv_b += priv_vv_b;
++                }
++            }
++
++            Z_mat_b.setZero();
++            #pragma omp parallel
++            {
++                Eigen::MatrixXd Z_loc_b = Eigen::MatrixXd::Zero(vb_, nb_);
++                #pragma omp for schedule(dynamic)
++                for (int P = 0; P < n_aux; ++P) {
+                     Eigen::Map<const Eigen::MatrixXd> XT_b(X_b.col(P).data(), vb_, nb_);
+                     Eigen::Map<const Eigen::MatrixXd> V_b(B_vv_b.col(P).data(), vb_, vb_);
+                     Eigen::Map<const Eigen::MatrixXd> O_b(B_oo_b.col(P).data(), nb_, nb_);
+-
+                     Z_loc_b.noalias() += V_b * XT_b - XT_b * O_b;
+                 }
+-            }
+-            #pragma omp critical
+-            {
+-                Z_mat_a += Z_loc_a;
+-                if (nb_ > 0) Z_mat_b += Z_loc_b;
++                #pragma omp critical
++                {
++                    Z_mat_b += Z_loc_b;
++                }
+             }
+         }
+-
+-        if (is_restricted) Z_mat_b = Z_mat_a;
+     }
+ 
++    
+     F_gen_a_ = F_HF_mo_a + G_gamma_mo_a;
+     if (na_ > 0 && va_ > 0) {
+         Eigen::MatrixXd F_vo_a = F_gen_a_.block(na_, 0, va_, na_);
+@@ -722,7 +738,5 @@ void OMP2::build_generalized_fock() {
+         F_gen_b_.block(nb_, 0, vb_, nb_) += Z_mat_b;
+         F_gen_b_.block(0, nb_, nb_, vb_) += Z_mat_b.transpose();
+     }
+-
+ }
+-
+-} // namespace mshqc
+\ No newline at end of file
++} 
+\ No newline at end of file
