@@ -502,7 +502,7 @@ void OMP2::init_fast_integrals() {
     K_ptr_.push_back(0);
 
     auto ERI = integrals_->compute_eri(); 
-    const double sparse_threshold = 1e-12;
+    const double sparse_threshold = 0;
 
     int nshells = basis_.n_shells();
     std::vector<int> shell_starts(nshells), shell_sizes(nshells);
