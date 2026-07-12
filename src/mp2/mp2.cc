@@ -898,6 +898,10 @@ MP2Result OMP2::compute() {
     C_a_current_ = scf_.C_alpha;
     C_b_current_ = scf_.C_beta;
 
+    //Symetry storage
+    std::vector<int> true_irreps_a = scf_.irreps_alpha;
+    std::vector<int> true_irreps_b = scf_.irreps_beta;
+
     double e_total_best = 1e99;
     double e_corr_best = 0.0;
     double e_total_last = 1e99;
@@ -965,6 +969,27 @@ MP2Result OMP2::compute() {
         if (e_tot < e_total_best) { e_total_best = e_tot; e_corr_best = e_mp2_corr; }
 
         execute_macro_iterations(diis_alpha, diis_beta, macro_iter);
+        //injex gardient use symetry
+        bool use_sym = (!true_irreps_a.empty() && true_irreps_a[0] != -1);
+        if (use_sym) {
+            int idx_mask = 0;
+            for (int a = 0; a < va_; ++a) {
+                for (int i = 0; i < na_; ++i) {
+                    if ((true_irreps_a[i] ^ true_irreps_a[na_ + a]) != 0) 
+                        orbital_gradient_(idx_mask) = 0.0;
+                    idx_mask++;
+                }
+            }
+            if (!is_restricted && nb_ > 0) {
+                for (int b = 0; b < vb_; ++b) {
+                    for (int i = 0; i < nb_; ++i) {
+                        if ((true_irreps_b[i] ^ true_irreps_b[nb_ + b]) != 0) 
+                            orbital_gradient_(idx_mask) = 0.0;
+                        idx_mask++;
+                    }
+                }
+            }
+        }
         double grad_norm = orbital_gradient_.norm();
 
         if(omp_get_thread_num() == 0) {
