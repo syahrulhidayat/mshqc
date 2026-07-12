@@ -564,9 +564,9 @@ void OMP2::init_fast_integrals() {
 
 
 void OMP2::transform_integrals() {
-    
-        scf_.irreps_alpha.assign(nbf_, 0);
-        scf_.irreps_beta.assign(nbf_, 0);
+    // 1. MUTLAK: Matikan simetri untuk semua metode OMP2 (Exact, DF, Cholesky)
+    scf_.irreps_alpha.assign(nbf_, 0);
+    scf_.irreps_beta.assign(nbf_, 0);
 
     if (config_.eri_method == "exact") {
         const auto& eri_ao = integrals_->compute_eri();
@@ -575,58 +575,31 @@ void OMP2::transform_integrals() {
         const Eigen::MatrixXd& Cb_o = scf_.C_beta.leftCols(nb_);
         const Eigen::MatrixXd& Cb_v = scf_.C_beta.rightCols(vb_);
 
-        auto occ_spaces_a = get_irrep_spaces(scf_.irreps_alpha, 0, na_);
-        auto vir_spaces_a = get_irrep_spaces(scf_.irreps_alpha, na_, va_);
-
         g_aa_.clear(); g_bb_.clear(); g_ab_.clear();
 
-        if (config_.print_level > 0) std::cout << "  [DEBUG] Memulai Transformasi Integral OOVV (GEMM Harvesting)..." << std::endl;
+        if (config_.print_level > 0) std::cout << "  [DEBUG] Memulai Transformasi Integral OOVV (HPC Dense TBLIS)..." << std::endl;
 
-        g_aa_ = ERITransformer::transform_oovv_blocked(eri_ao, Ca_o, Ca_v, occ_spaces_a, vir_spaces_a, nbf_);
+        auto dense_aa = integrals::ERITransformer::transform_custom(eri_ao, Ca_o, Ca_v, Ca_o, Ca_v, nbf_, na_, va_, na_, va_);
+        g_aa_.allocate_block(0, 0, 0, 0, na_, va_, na_, va_);
+        *(g_aa_.get_block(0, 0, 0, 0)) = dense_aa;
 
         bool is_restricted = (na_ == nb_ && va_ == vb_);
         if (is_restricted && nb_ > 0 && vb_ > 0) {
             g_bb_.allocate_block(0, 0, 0, 0, nb_, vb_, nb_, vb_);
             g_ab_.allocate_block(0, 0, 0, 0, na_, va_, nb_, vb_);
-            auto* ptr_bb = g_bb_.get_block(0, 0, 0, 0);
-            auto* ptr_ab = g_ab_.get_block(0, 0, 0, 0);
-            ptr_bb->setZero(); ptr_ab->setZero();
-
-            for (const auto& o1 : occ_spaces_a) {
-                for (const auto& v1 : vir_spaces_a) {
-                    for (const auto& o2 : occ_spaces_a) {
-                        for (const auto& v2 : vir_spaces_a) {
-                            if ((o1.id ^ v1.id ^ o2.id ^ v2.id) == 0) {
-                                auto* g_blk = g_aa_.get_block(o1.id, v1.id, o2.id, v2.id);
-                                if (g_blk && g_blk->size() > 0) {
-                                    for (int i=0; i<o1.size; ++i) {
-                                        for (int a=0; a<v1.size; ++a) {
-                                            for (int j=0; j<o2.size; ++j) {
-                                                for (int b=0; b<v2.size; ++b) {
-                                                    double val = (*g_blk)(i, a, j, b);
-                                                    (*ptr_bb)(o1.offset+i, v1.offset+a, o2.offset+j, v2.offset+b) = val;
-                                                    (*ptr_ab)(o1.offset+i, v1.offset+a, o2.offset+j, v2.offset+b) = val;
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            *(g_bb_.get_block(0, 0, 0, 0)) = dense_aa;
+            *(g_ab_.get_block(0, 0, 0, 0)) = dense_aa;
         } else if (!is_restricted && nb_ > 0 && vb_ > 0) {
-            auto dense_bb = ERITransformer::transform_custom(eri_ao, Cb_o, Cb_v, Cb_o, Cb_v, nbf_, nb_, vb_, nb_, vb_);
+            auto dense_bb = integrals::ERITransformer::transform_custom(eri_ao, Cb_o, Cb_v, Cb_o, Cb_v, nbf_, nb_, vb_, nb_, vb_);
             g_bb_.allocate_block(0, 0, 0, 0, nb_, vb_, nb_, vb_);
             *(g_bb_.get_block(0, 0, 0, 0)) = dense_bb;
 
-            auto dense_ab = ERITransformer::transform_custom(eri_ao, Ca_o, Ca_v, Cb_o, Cb_v, nbf_, na_, va_, nb_, vb_);
+            auto dense_ab = integrals::ERITransformer::transform_custom(eri_ao, Ca_o, Ca_v, Cb_o, Cb_v, nbf_, na_, va_, nb_, vb_);
             g_ab_.allocate_block(0, 0, 0, 0, na_, va_, nb_, vb_);
             *(g_ab_.get_block(0, 0, 0, 0)) = dense_ab;
         }
     } else {
-
+        // Mode DF (Density Fitting) dan Cholesky
         scf_.C_alpha = C_a_current_;
         scf_.C_beta = C_b_current_;
         transform_3center_mo(); 
@@ -690,58 +663,29 @@ void OMP2::transform_integrals() {
             }
         }
     }
-}       
+}
 void OMP2::pseudocanonicalize() {
     Eigen::MatrixXd F_ao_a, F_ao_b;
     build_fock_fast(scf_.P_alpha, scf_.P_beta, F_ao_a, F_ao_b);
 
-    auto diag_block_by_irrep = [&](const Eigen::MatrixXd& F_ao, Eigen::MatrixXd& C, Eigen::VectorXd& eps, int nocc, int nvir, const std::vector<int>& irreps) {
+    // MUTLAK: Matikan penggunaan blok simetri untuk mendiagonalisasi
+    bool use_sym = false; 
+
+    auto diag_block = [&](const Eigen::MatrixXd& F_ao, Eigen::MatrixXd& C, Eigen::VectorXd& eps, int nocc, int nvir) {
         Eigen::MatrixXd F_mo = C.transpose() * F_ao * C;
+        Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_o(F_mo.topLeftCorner(nocc, nocc));
+        Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_v(F_mo.bottomRightCorner(nvir, nvir));
         Eigen::MatrixXd U = Eigen::MatrixXd::Zero(nbf_, nbf_);
-
-        auto occ_spaces = get_irrep_spaces(irreps, 0, nocc);
-        auto vir_spaces = get_irrep_spaces(irreps, nocc, nvir);
-
-        for (const auto& space : occ_spaces) {
-            Eigen::MatrixXd F_sub = F_mo.block(space.offset, space.offset, space.size, space.size);
-            Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(F_sub);
-            U.block(space.offset, space.offset, space.size, space.size) = es.eigenvectors();
-            eps.segment(space.offset, space.size) = es.eigenvalues();
-        }
-
-        for (const auto& space : vir_spaces) {
-            int off = nocc + space.offset;
-            Eigen::MatrixXd F_sub = F_mo.block(off, off, space.size, space.size);
-            Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(F_sub);
-            U.block(off, off, space.size, space.size) = es.eigenvectors();
-            eps.segment(off, space.size) = es.eigenvalues();
-        }
+        U.topLeftCorner(nocc, nocc) = es_o.eigenvectors();
+        U.bottomRightCorner(nvir, nvir) = es_v.eigenvectors();
         C = C * U;
+        eps.resize(nbf_);
+        eps.head(nocc) = es_o.eigenvalues();
+        eps.tail(nvir) = es_v.eigenvalues();
     };
 
-    bool use_sym = (!scf_.irreps_alpha.empty() && scf_.irreps_alpha[0] != -1);
-
-    if (use_sym) {
-        diag_block_by_irrep(F_ao_a, scf_.C_alpha, scf_.orbital_energies_alpha, na_, va_, scf_.irreps_alpha);
-        if (nb_ > 0 && vb_ > 0) {
-            diag_block_by_irrep(F_ao_b, scf_.C_beta, scf_.orbital_energies_beta, nb_, vb_, scf_.irreps_beta);
-        }
-    } else {
-        auto diag_block = [&](const Eigen::MatrixXd& F_ao, Eigen::MatrixXd& C, Eigen::VectorXd& eps, int nocc, int nvir) {
-            Eigen::MatrixXd F_mo = C.transpose() * F_ao * C;
-            Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_o(F_mo.topLeftCorner(nocc, nocc));
-            Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_v(F_mo.bottomRightCorner(nvir, nvir));
-            Eigen::MatrixXd U = Eigen::MatrixXd::Zero(nbf_, nbf_);
-            U.topLeftCorner(nocc, nocc) = es_o.eigenvectors();
-            U.bottomRightCorner(nvir, nvir) = es_v.eigenvectors();
-            C = C * U;
-            eps.resize(nbf_);
-            eps.head(nocc) = es_o.eigenvalues();
-            eps.tail(nvir) = es_v.eigenvalues();
-        };
-        diag_block(F_ao_a, scf_.C_alpha, scf_.orbital_energies_alpha, na_, va_);
-        if (nb_ > 0 && vb_ > 0) diag_block(F_ao_b, scf_.C_beta,  scf_.orbital_energies_beta,  nb_, vb_);
-    }
+    diag_block(F_ao_a, scf_.C_alpha, scf_.orbital_energies_alpha, na_, va_);
+    if (nb_ > 0 && vb_ > 0) diag_block(F_ao_b, scf_.C_beta,  scf_.orbital_energies_beta,  nb_, vb_);
 
     scf_.P_alpha = scf_.C_alpha.leftCols(na_) * scf_.C_alpha.leftCols(na_).transpose();
     if (nb_ > 0) scf_.P_beta  = scf_.C_beta.leftCols(nb_)  * scf_.C_beta.leftCols(nb_).transpose();
@@ -859,21 +803,19 @@ void OMP2::execute_macro_iterations(DIIS& diis_a, DIIS& diis_b, int macro_iter) 
     if (orbital_gradient_.size() != n_params) orbital_gradient_.resize(n_params);
 
     int idx = 0;
-    bool use_sym = (!scf_.irreps_alpha.empty() && scf_.irreps_alpha[0] != -1);
+  
 
     if (!is_restricted && nb_ > 0) {
         Eigen::MatrixXd wa = 2.0 * F_gen_a_.block(na_, 0, va_, na_);
         for (int a = 0; a < va_; ++a) {
             for (int i = 0; i < na_; ++i) {
-                if (use_sym && (scf_.irreps_alpha[i] ^ scf_.irreps_alpha[na_ + a]) != 0) orbital_gradient_(idx++) = 0.0;
-                else orbital_gradient_(idx++) = wa(a, i);
+                orbital_gradient_(idx++) = wa(a, i);
             }
         }
         Eigen::MatrixXd wb = 2.0 * F_gen_b_.block(nb_, 0, vb_, nb_);
         for (int b = 0; b < vb_; ++b) {
             for (int i = 0; i < nb_; ++i) {
-                if (use_sym && (scf_.irreps_beta[i] ^ scf_.irreps_beta[nb_ + b]) != 0) orbital_gradient_(idx++) = 0.0;
-                else orbital_gradient_(idx++) = wb(b, i);
+                orbital_gradient_(idx++) = wb(b, i);
             }
         }
     } else {
@@ -883,8 +825,7 @@ void OMP2::execute_macro_iterations(DIIS& diis_a, DIIS& diis_b, int macro_iter) 
 
         for (int a = 0; a < va_; ++a) {
             for (int i = 0; i < na_; ++i) {
-                if (use_sym && (scf_.irreps_alpha[i] ^ scf_.irreps_alpha[na_ + a]) != 0) orbital_gradient_(idx++) = 0.0;
-                else orbital_gradient_(idx++) = w_sym(a, i);
+                orbital_gradient_(idx++) = w_sym(a, i);
             }
         }
     }
@@ -897,10 +838,6 @@ MP2Result OMP2::compute() {
 
     C_a_current_ = scf_.C_alpha;
     C_b_current_ = scf_.C_beta;
-
-    //Symetry storage
-    std::vector<int> true_irreps_a = scf_.irreps_alpha;
-    std::vector<int> true_irreps_b = scf_.irreps_beta;
 
     double e_total_best = 1e99;
     double e_corr_best = 0.0;
@@ -969,27 +906,6 @@ MP2Result OMP2::compute() {
         if (e_tot < e_total_best) { e_total_best = e_tot; e_corr_best = e_mp2_corr; }
 
         execute_macro_iterations(diis_alpha, diis_beta, macro_iter);
-        //injex gardient use symetry
-        bool use_sym = (!true_irreps_a.empty() && true_irreps_a[0] != -1);
-        if (use_sym) {
-            int idx_mask = 0;
-            for (int a = 0; a < va_; ++a) {
-                for (int i = 0; i < na_; ++i) {
-                    if ((true_irreps_a[i] ^ true_irreps_a[na_ + a]) != 0) 
-                        orbital_gradient_(idx_mask) = 0.0;
-                    idx_mask++;
-                }
-            }
-            if (!is_restricted && nb_ > 0) {
-                for (int b = 0; b < vb_; ++b) {
-                    for (int i = 0; i < nb_; ++i) {
-                        if ((true_irreps_b[i] ^ true_irreps_b[nb_ + b]) != 0) 
-                            orbital_gradient_(idx_mask) = 0.0;
-                        idx_mask++;
-                    }
-                }
-            }
-        }
         double grad_norm = orbital_gradient_.norm();
 
         if(omp_get_thread_num() == 0) {
