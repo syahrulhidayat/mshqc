@@ -41,13 +41,8 @@ MP2Result BaseMP2::compute() {
     return MP2Result();
 }
 void BaseMP2::transform_3center_mo() {
-    if (scf_.L_mat.size() == 0) {
-        throw std::runtime_error("FATAL: L_mat kosong! Mode DF/Cholesky butuh tensor dari SCF.");
-    }
-
     int n_aux = scf_.L_mat.cols();
     bool is_restricted = (nocc_a_ == nocc_b_ && nvir_a_ == nvir_b_ && scf_.n_occ_alpha == scf_.n_occ_beta);
-
     B_ia_P_alpha_ = Eigen::MatrixXd::Zero(nocc_a_ * nvir_a_, n_aux);
 
     const Eigen::MatrixXd& Ca_occ = scf_.C_alpha.leftCols(nocc_a_);
@@ -55,15 +50,17 @@ void BaseMP2::transform_3center_mo() {
     Eigen::Map<const Eigen::MatrixXd> L_flat(scf_.L_mat.data(), nbf_, nbf_ * n_aux);
 
     Eigen::MatrixXd X_a = Ca_vir.transpose() * L_flat; 
-
     #pragma omp parallel for schedule(static)
     for (int P = 0; P < n_aux; ++P) {
         Eigen::Map<Eigen::MatrixXd> X_P(X_a.data() + P * nvir_a_ * nbf_, nvir_a_, nbf_);
         Eigen::MatrixXd B_MO_a = X_P * Ca_occ; 
-        std::copy(B_MO_a.data(), B_MO_a.data() + nocc_a_ * nvir_a_, B_ia_P_alpha_.col(P).data());
+        for (int a = 0; a < nvir_a_; ++a) {
+            for (int i = 0; i < nocc_a_; ++i) {
+                B_ia_P_alpha_(a * nocc_a_ + i, P) = B_MO_a(a, i);
+            }
+        }
     }
 
-    
     if (!is_restricted && nocc_b_ > 0 && nvir_b_ > 0) {
         B_ia_P_beta_ = Eigen::MatrixXd::Zero(nocc_b_ * nvir_b_, n_aux);
         const Eigen::MatrixXd& Cb_occ = scf_.C_beta.leftCols(nocc_b_);
@@ -74,7 +71,11 @@ void BaseMP2::transform_3center_mo() {
         for (int P = 0; P < n_aux; ++P) {
             Eigen::Map<Eigen::MatrixXd> X_P_b(X_b.data() + P * nvir_b_ * nbf_, nvir_b_, nbf_);
             Eigen::MatrixXd B_MO_b = X_P_b * Cb_occ;
-            std::copy(B_MO_b.data(), B_MO_b.data() + nocc_b_ * nvir_b_, B_ia_P_beta_.col(P).data());
+            for (int a = 0; a < nvir_b_; ++a) {
+                for (int i = 0; i < nocc_b_; ++i) {
+                    B_ia_P_beta_(a * nocc_b_ + i, P) = B_MO_b(a, i);
+                }
+            }
         }
     }
 }
@@ -929,7 +930,7 @@ MP2Result OMP2::compute() {
                 
                 if (config_.eri_method != "exact") {
                   
-                    J_ia = B_ia_P_alpha_.row(i * va_ + a).squaredNorm(); 
+                    J_ia = B_ia_P_alpha_.row(a * na_ + i).squaredNorm(); 
                 } else {
                     auto* g_blk = g_aa_.get_block(0, 0, 0, 0);
                     if (g_blk) J_ia = std::abs((*g_blk)(i, a, i, a));
@@ -945,7 +946,7 @@ MP2Result OMP2::compute() {
                     double J_ia = 0.0;
                     
                     if (config_.eri_method != "exact") {
-                        J_ia = B_ia_P_beta_.row(i * vb_ + a).squaredNorm();
+                        J_ia = B_ia_P_beta_.row(a * nb_ + i).squaredNorm();
                     } else {
                         auto* g_blk = g_bb_.get_block(0, 0, 0, 0);
                         if (g_blk) J_ia = std::abs((*g_blk)(i, a, i, a));
