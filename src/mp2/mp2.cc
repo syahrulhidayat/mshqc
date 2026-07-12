@@ -564,6 +564,9 @@ void OMP2::init_fast_integrals() {
 
 
 void OMP2::transform_integrals() {
+    
+        scf_.irreps_alpha.assign(nbf_, 0);
+        scf_.irreps_beta.assign(nbf_, 0);
 
     if (config_.eri_method == "exact") {
         const auto& eri_ao = integrals_->compute_eri();
