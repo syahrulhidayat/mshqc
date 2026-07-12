@@ -565,10 +565,6 @@ void OMP2::init_fast_integrals() {
 
 void OMP2::transform_integrals() {
 
-    if (config_.eri_method != "exact") {
-        scf_.irreps_alpha.assign(nbf_, 0);
-        scf_.irreps_beta.assign(nbf_, 0);
-    }
     if (config_.eri_method == "exact") {
         const auto& eri_ao = integrals_->compute_eri();
         const Eigen::MatrixXd& Ca_o = scf_.C_alpha.leftCols(na_);
