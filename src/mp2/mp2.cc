@@ -932,16 +932,31 @@ MP2Result OMP2::compute() {
             for (int i = 0; i < na_; ++i) {
                 double eps_diff = scf_.orbital_energies_alpha(na_ + a) - scf_.orbital_energies_alpha(i);
                 double J_ia = 0.0;
-                if (config_.eri_method != "exact") J_ia = B_ia_P_alpha_.row(i * va_ + a).squaredNorm(); 
+                
+                if (config_.eri_method != "exact") {
+                    J_ia = B_ia_P_alpha_.row(i * va_ + a).squaredNorm(); 
+                } else {
+                    auto* g_blk = g_aa_.get_block(0, 0, 0, 0);
+                    if (g_blk) J_ia = (*g_blk)(i, a, i, a);
+                }
+                
                 diag_H(idx++) = 4.0 * std::abs(eps_diff) + 8.0 * J_ia + level_shift; 
             }
         }
+        
         if (!is_restricted && nb_ > 0) {
             for (int a = 0; a < vb_; ++a) {
                 for (int i = 0; i < nb_; ++i) {
                     double eps_diff = scf_.orbital_energies_beta(nb_ + a) - scf_.orbital_energies_beta(i);
                     double J_ia = 0.0;
-                    if (config_.eri_method != "exact") J_ia = B_ia_P_beta_.row(i * vb_ + a).squaredNorm();
+                    
+                    if (config_.eri_method != "exact") {
+                        J_ia = B_ia_P_beta_.row(i * vb_ + a).squaredNorm();
+                    } else {
+                        auto* g_blk = g_bb_.get_block(0, 0, 0, 0);
+                        if (g_blk) J_ia = (*g_blk)(i, a, i, a);
+                    }
+                    
                     diag_H(idx++) = 4.0 * std::abs(eps_diff) + 8.0 * J_ia + level_shift;
                 }
             }
