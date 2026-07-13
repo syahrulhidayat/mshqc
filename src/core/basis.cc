@@ -54,10 +54,6 @@ int Shell::n_functions() const {
     }
 }
 
-int Shell::l() const {
-    return static_cast<int>(am_);
-}
-
 void Shell::normalize() {
     double self_overlap = 0.0;
     int l_val = this->l();
