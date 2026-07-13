@@ -687,14 +687,9 @@ void OMP2::pseudocanonicalize() {
         eps.head(nocc) = es_o.eigenvalues();
         eps.tail(nvir) = es_v.eigenvalues();
     };
-
-    // Eksekusi untuk Alpha
     diag_block(F_ao_a, scf_.C_alpha, scf_.orbital_energies_alpha, na_, va_);
-    
-    // Pembaruan Densitas Alpha (In-place)
     scf_.P_alpha.noalias() = scf_.C_alpha.leftCols(na_) * scf_.C_alpha.leftCols(na_).transpose();
 
-    // Eksekusi untuk Beta (Jika Unrestricted)
     if (nb_ > 0 && vb_ > 0) {
         diag_block(F_ao_b, scf_.C_beta, scf_.orbital_energies_beta, nb_, vb_);
         scf_.P_beta.noalias() = scf_.C_beta.leftCols(nb_) * scf_.C_beta.leftCols(nb_).transpose();

@@ -511,9 +511,7 @@ TrustRegionResult TrustRegionSOSCF::solve(
     Eigen::VectorXd z = Eigen::VectorXd::Zero(n); 
     Eigen::VectorXd Hz = Eigen::VectorXd::Zero(n); // PERBAIKAN: Pelacak nilai (H * z) 
     Eigen::VectorXd r = gradient;
-    
-    // PERBAIKAN PRECONDITIONER: Gunakan cwiseMax(shift) agar tidak memanipulasi tanda
-    // kelengkungan fisik, memastikan matriks definit positif tanpa distorsi arah.
+  
     Eigen::VectorXd M_inv = diag_hessian.cwiseMax(config_.precond_shift).cwiseInverse();    
     Eigen::VectorXd p = -M_inv.cwiseProduct(r);
     
