@@ -132,7 +132,6 @@ void OMP2::build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_
     F_b = H_core_ + G_b;
 }
 void OMP2::build_opdm_alpha() {
-    // 1. Deteksi molekul Restricted secara lokal
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     
     if (is_restricted && config_.eri_method == "exact") {
@@ -150,15 +149,14 @@ void OMP2::build_opdm_alpha() {
                             for (int b = 0; b < va_; ++b) {
                                 double t_ik = (*t_blk)(i, a, k, b);
                                 double t_jk = (*t_blk)(j, a, k, b);
-                                double t_jk_ex = (*t_blk)(j, b, k, a);
-                                p_oo -= t_ik * (2.0 * t_jk - t_jk_ex);
+                                double t_jk_ex = (*t_blk)(j, b, k, a); 
+                                p_oo += t_ik * (2.0 * t_jk - t_jk_ex);
                             }
                         }
                     }
-                    G_oo_alpha_(i, j) = p_oo;
+                    G_oo_alpha_(i, j) = -2.0 * p_oo; 
                 }
             }
-            
             #pragma omp parallel for
             for (int a = 0; a < va_; ++a) {
                 for (int b = 0; b < va_; ++b) {
@@ -173,7 +171,7 @@ void OMP2::build_opdm_alpha() {
                             }
                         }
                     }
-                    G_vv_alpha_(a, b) = p_vv;
+                    G_vv_alpha_(a, b) = 2.0 * p_vv; 
                 }
             }
         }
@@ -209,7 +207,8 @@ void OMP2::build_opdm_alpha() {
     }
 
     #pragma omp parallel
-    {
+    {   
+        tblis::tblis_set_num_threads(1);
         Eigen::MatrixXd G_vv_local = Eigen::MatrixXd::Zero(va_, va_);
         std::vector<double> gvv_buffer(va_ * va_, 0.0);
 
@@ -399,16 +398,19 @@ void OMP2::build_generalized_fock() {
                         for (int j=0; j<na_; ++j) {
                             for (int c=0; c<va_; ++c) {
                                 for (int b=0; b<va_; ++b) {
+                                    // PERBAIKAN: Amplitudo spasial T(i,b,j,c) dan T(i,c,j,b)
                                     double tau = 2.0 * (*t_blk)(i, b, j, c) - (*t_blk)(i, c, j, b);
                                     z1 += tau * ovvv(j, c, a, b);
                                 }
                                 for (int k=0; k<na_; ++k) {
+                                    // PERBAIKAN: Amplitudo spasial T(j,a,k,c) dan T(j,c,k,a)
                                     double tau = 2.0 * (*t_blk)(j, a, k, c) - (*t_blk)(j, c, k, a);
                                     z2 += tau * ooov(j, i, k, c);
                                 }
                             }
                         }
-                        Z_mat_a(a, i) = z1 - z2;
+                        // PERBAIKAN: Kalikan dengan 4.0 untuk total spin Lagrangian
+                        Z_mat_a(a, i) = 4.0 * (z1 - z2);
                     }
                 }
             }

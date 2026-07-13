@@ -12,35 +12,14 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
     Z_mat_a.setZero(va_, na_);
     if (nb_ > 0) Z_mat_b.setZero(vb_, nb_);
 
-    Eigen::MatrixXd T2_aa = Eigen::MatrixXd::Zero(na_*va_, na_*va_);
     auto* t_aa_blk = t2_aa_.get_block(0,0,0,0);
-    if (t_aa_blk) {
-        #pragma omp parallel for collapse(2)
-        for (int i = 0; i < na_; ++i) for (int a = 0; a < va_; ++a)
-            for (int j = 0; j < na_; ++j) for (int b = 0; b < va_; ++b)
-                T2_aa(i*va_+a, j*va_+b) = (*t_aa_blk)(i, a, j, b);
-    }
-
-    Eigen::MatrixXd T2_ab = Eigen::MatrixXd::Zero(na_*va_, nb_*vb_);
-    Eigen::MatrixXd T2_bb = Eigen::MatrixXd::Zero(nb_*vb_, nb_*vb_);
-    if (nb_ > 0 && vb_ > 0) {
-        auto* t_ab_blk = t2_ab_.get_block(0,0,0,0);
-        if (t_ab_blk) {
-            #pragma omp parallel for collapse(2)
-            for (int i = 0; i < na_; ++i) for (int a = 0; a < va_; ++a)
-                for (int j = 0; j < nb_; ++j) for (int b = 0; b < vb_; ++b)
-                    T2_ab(i*va_+a, j*vb_+b) = (*t_ab_blk)(i, j, a, b);
-        }
-        auto* t_bb_blk = t2_bb_.get_block(0,0,0,0);
-        if (t_bb_blk) {
-            #pragma omp parallel for collapse(2)
-            for (int i = 0; i < nb_; ++i) for (int a = 0; a < vb_; ++a)
-                for (int j = 0; j < nb_; ++j) for (int b = 0; b < vb_; ++b)
-                    T2_bb(i*vb_+a, j*vb_+b) = (*t_bb_blk)(i, j, a, b);
-        }
-    }
+    auto* t_ab_blk = (nb_ > 0 && vb_ > 0) ? t2_ab_.get_block(0,0,0,0) : nullptr;
+    auto* t_bb_blk = (nb_ > 0 && vb_ > 0) ? t2_bb_.get_block(0,0,0,0) : nullptr;
 
     const int CHUNK_SIZE = 128; 
+    
+    // Spesifikasi tata letak baris-utama untuk pemetaan Zero-Copy memori C++
+    using MatrixXdRowMajor = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
 
     #pragma omp parallel
     {
@@ -55,22 +34,33 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
             int P_len = std::min(CHUNK_SIZE, n_chol - P_start);
 
             Eigen::MatrixXd Bia_chunk = B_ia_P_alpha_.middleCols(P_start, P_len);
-            Eigen::MatrixXd X_a_chunk = T2_aa * Bia_chunk;
+            Eigen::MatrixXd X_a_chunk = Eigen::MatrixXd::Zero(na_ * va_, P_len);
+            Eigen::MatrixXd X_b_chunk;
+            if (nb_ > 0 && vb_ > 0) X_b_chunk = Eigen::MatrixXd::Zero(nb_ * vb_, P_len);
 
-            if (nb_ > 0 && vb_ > 0) {
-                Eigen::MatrixXd Bib_chunk = B_ia_P_beta_.middleCols(P_start, P_len);
-                X_a_chunk += T2_ab * Bib_chunk;
+            // Kontraksi In-the-fly dengan BLAS DGEMM yang sadar orientasi memori
+            if (t_aa_blk) {
+                Eigen::Map<const MatrixXdRowMajor> T2_aa_map(t_aa_blk->data(), na_ * va_, na_ * va_);
+                X_a_chunk.noalias() += T2_aa_map * Bia_chunk;
             }
 
-            Eigen::MatrixXd X_b_chunk;
             if (nb_ > 0 && vb_ > 0) {
                 Eigen::MatrixXd Bib_chunk = B_ia_P_beta_.middleCols(P_start, P_len);
-                X_b_chunk = T2_bb * Bib_chunk + T2_ab.transpose() * Bia_chunk;
+                
+                if (t_ab_blk) {
+                    Eigen::Map<const MatrixXdRowMajor> T2_ab_map(t_ab_blk->data(), na_ * va_, nb_ * vb_);
+                    X_a_chunk.noalias() += T2_ab_map * Bib_chunk;
+                    X_b_chunk.noalias() += T2_ab_map.transpose() * Bia_chunk;
+                }
+
+                if (t_bb_blk) {
+                    Eigen::Map<const MatrixXdRowMajor> T2_bb_map(t_bb_blk->data(), nb_ * vb_, nb_ * vb_);
+                    X_b_chunk.noalias() += T2_bb_map * Bib_chunk;
+                }
             }
 
             for (int p = 0; p < P_len; ++p) {
                 int P_global = P_start + p;
-
                 Eigen::Map<const Eigen::MatrixXd> B_AO(scf_.L_mat.col(P_global).data(), nbf_, nbf_);
 
                 B_oo_a.noalias() = scf_.C_alpha.leftCols(na_).transpose() * (B_AO * scf_.C_alpha.leftCols(na_));
@@ -101,28 +91,45 @@ Eigen::VectorXd OMP2::compute_soscf_step() {
 
     if (hessian_diag_.size() != n_params) hessian_diag_.resize(n_params);
     int idx = 0;
-    double grad_norm = 0.0;
-
-    double level_shift = (grad_norm > 0.1) ? 0.02 : 1e-4; 
-    bool is_restricted = (na_ == nb_ && va_ == vb_);
-
+    double grad_norm = orbital_gradient_.norm(); 
+    
+    double level_shift = (grad_norm > 0.1) ? 0.05 : 0.005; 
+    bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
+    
+    double spin_factor = is_restricted ? 4.0 : 2.0;
     for (int a = 0; a < va_; ++a) {
         for (int i = 0; i < na_; ++i) {
-            double e_diff = scf_.orbital_energies_alpha(na_ + a) - scf_.orbital_energies_alpha(i);
-            hessian_diag_(idx++) = 4.0 * std::abs(e_diff) + level_shift; 
+            double eps_diff = scf_.orbital_energies_alpha(na_ + a) - scf_.orbital_energies_alpha(i);
+            double J_ia = 0.0;
+            
+            if (config_.eri_method != "exact") {
+                J_ia = B_ia_P_alpha_.row(a * na_ + i).squaredNorm(); 
+            } else {
+                auto* g_blk = g_aa_.get_block(0, 0, 0, 0);
+                if (g_blk) J_ia = std::abs((*g_blk)(i, a, i, a));
+            }
+            hessian_diag_(idx++) = spin_factor * std::abs(eps_diff) + spin_factor * J_ia + level_shift; 
         }
     }
 
     if (!is_restricted && nb_ > 0) {
         for (int a = 0; a < vb_; ++a) {
             for (int i = 0; i < nb_; ++i) {
-                double e_diff = scf_.orbital_energies_beta(nb_ + a) - scf_.orbital_energies_beta(i);
-                hessian_diag_(idx++) = 4.0 * std::abs(e_diff) + level_shift;
+                double eps_diff = scf_.orbital_energies_beta(nb_ + a) - scf_.orbital_energies_beta(i);
+                double J_ia = 0.0;
+                
+                if (config_.eri_method != "exact") {
+                    J_ia = B_ia_P_beta_.row(a * nb_ + i).squaredNorm();
+                } else {
+                    auto* g_blk = g_bb_.get_block(0, 0, 0, 0);
+                    if (g_blk) J_ia = std::abs((*g_blk)(i, a, i, a));
+                }
+                hessian_diag_(idx++) = 2.0 * std::abs(eps_diff) + 2.0 * J_ia + level_shift;
             }
         }
     }
 
-    for(int i=0; i<hessian_diag_.size(); ++i) {
+    for(int i = 0; i < hessian_diag_.size(); ++i) {
         if(std::abs(hessian_diag_(i)) < 1e-12) hessian_diag_(i) = 1e-12; 
     }
 
@@ -132,10 +139,12 @@ Eigen::VectorXd OMP2::compute_soscf_step() {
         std::cerr << "  [CRITICAL] Orbital gradient contains NaN/Inf! Fallback to zero rotation." << std::endl;
         kappa.setZero();
     }
-    double max_step = 0.15; 
-    double max_val = kappa.cwiseAbs().maxCoeff();
-    if (max_val > max_step) {
-        kappa *= (max_step / max_val);
+    
+    double max_step = 0.15;
+    double step_norm = kappa.norm(); 
+    
+    if (step_norm > max_step) {
+        kappa *= (max_step / step_norm); 
     }
 
     return kappa;
@@ -143,39 +152,58 @@ Eigen::VectorXd OMP2::compute_soscf_step() {
 void OMP2::apply_orbital_rotation(const Eigen::VectorXd& kappa) {
     if (kappa.norm() < 1e-12) return;
 
-    bool is_restricted = (na_ == nb_ && va_ == vb_);
-    int idx = 0;
-
-    int n_mo_a = na_ + va_;
-    Eigen::MatrixXd K_a = Eigen::MatrixXd::Zero(n_mo_a, n_mo_a);
-
-    for (int a = 0; a < va_; ++a) {
-        for (int i = 0; i < na_; ++i) {
-            double val = kappa(idx++);
-            K_a(na_ + a, i) = val;
-            K_a(i, na_ + a) = -val;
-        }
-    }
-    C_a_current_ = C_a_current_ * K_a.exp();
-
-    int n_mo_b = nb_ + vb_;
-    Eigen::MatrixXd K_b = Eigen::MatrixXd::Zero(n_mo_b, n_mo_b);
-
-    if (!is_restricted && nb_ > 0) {
-        for (int a = 0; a < vb_; ++a) {
-            for (int i = 0; i < nb_; ++i) {
-                double val = kappa(idx++);
-                K_b(nb_ + a, i) = val;
-                K_b(i, nb_ + a) = -val;
+    bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
+    
+    auto compute_exact_unitary = [](const Eigen::VectorXd& k_vec, int n_occ, int n_vir) -> Eigen::MatrixXd {
+        Eigen::MatrixXd kappa_mat = Eigen::MatrixXd::Zero(n_vir, n_occ);
+        int local_idx = 0;
+        for (int a = 0; a < n_vir; ++a) {
+            for (int i = 0; i < n_occ; ++i) {
+                kappa_mat(a, i) = k_vec(local_idx++);
             }
         }
-    } else if (is_restricted && nb_ > 0) {
-        K_b = K_a; 
-    }
 
-    if (nb_ > 0) {
-        C_b_current_ = C_b_current_ * K_b.exp();
+        Eigen::BDCSVD<Eigen::MatrixXd> svd(kappa_mat, Eigen::ComputeThinU | Eigen::ComputeThinV);
+        const Eigen::VectorXd& sigma = svd.singularValues();
+        const Eigen::MatrixXd& U_k = svd.matrixU(); 
+        const Eigen::MatrixXd& V_k = svd.matrixV(); 
+
+        Eigen::VectorXd cos_sigma = sigma.array().cos();
+        Eigen::VectorXd sin_sigma = sigma.array().sin();
+        Eigen::VectorXd cos_minus_one = cos_sigma.array() - 1.0;
+
+        Eigen::MatrixXd U_oo = V_k * cos_sigma.asDiagonal() * V_k.transpose();
+        Eigen::MatrixXd U_vo = U_k * sin_sigma.asDiagonal() * V_k.transpose();
+        Eigen::MatrixXd U_ov = -U_vo.transpose();
+        Eigen::MatrixXd U_vv = Eigen::MatrixXd::Identity(n_vir, n_vir) + 
+                               (U_k * cos_minus_one.asDiagonal() * U_k.transpose());
+
+        int n_mo = n_occ + n_vir;
+        Eigen::MatrixXd U_full = Eigen::MatrixXd::Zero(n_mo, n_mo);
+        U_full.block(0, 0, n_occ, n_occ) = U_oo;
+        U_full.block(n_occ, 0, n_vir, n_occ) = U_vo;
+        U_full.block(0, n_occ, n_occ, n_vir) = U_ov;
+        U_full.block(n_occ, n_occ, n_vir, n_vir) = U_vv;
+
+        return U_full;
+    };
+
+    // Eksekusi untuk Orbital Alpha
+    int len_a = na_ * va_;
+    Eigen::VectorXd kappa_a = kappa.head(len_a);
+    Eigen::MatrixXd U_a = compute_exact_unitary(kappa_a, na_, va_);
+    C_a_current_ = C_a_current_ * U_a;
+
+    // Eksekusi untuk Orbital Beta
+    if (nb_ > 0 && vb_ > 0) {
+        if (!is_restricted) {
+            int len_b = nb_ * vb_;
+            Eigen::VectorXd kappa_b = kappa.segment(len_a, len_b);
+            Eigen::MatrixXd U_b = compute_exact_unitary(kappa_b, nb_, vb_);
+            C_b_current_ = C_b_current_ * U_b;
+        } else {
+            C_b_current_ = C_b_current_ * U_a;
+        }
     }
 }
-
 } // namespace mshqc
