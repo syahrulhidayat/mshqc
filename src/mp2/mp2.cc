@@ -953,10 +953,7 @@ MP2Result OMP2::compute() {
         double level_shift = (grad_norm > 0.1) ? 0.05 : 0.005;
         double spin_factor = is_restricted ? 4.0 : 2.0;
         
-        for (int i = 0; i < na_; ++i) {
-            for (int a = 0; a < va_; ++a) {
-                double eps_diff = scf_.orbital_energies_alpha(na_ + a) - scf_.orbital_energies_alpha(i);
-               
+  
         for (int i = 0; i < na_; ++i) {             
             for (int a = 0; a < va_; ++a) {        
                 double eps_diff = scf_.orbital_energies_alpha(na_ + a) - scf_.orbital_energies_alpha(i);
@@ -964,7 +961,7 @@ MP2Result OMP2::compute() {
                 double J_ia = 0.0;
                 
                 if (config_.eri_method != "exact") {
-                   
+                  
                     J_ia = B_ia_P_alpha_.row(i * va_ + a).squaredNorm(); 
                 } else {
                     auto* g_blk = g_aa_.get_block(0, 0, 0, 0);
@@ -974,6 +971,7 @@ MP2Result OMP2::compute() {
             }
         }
         
+      
         if (!is_restricted && nb_ > 0) {
             for (int i = 0; i < nb_; ++i) {         
                 for (int a = 0; a < vb_; ++a) {    
@@ -982,7 +980,6 @@ MP2Result OMP2::compute() {
                     double J_ia = 0.0;
                     
                     if (config_.eri_method != "exact") {
-                       
                         J_ia = B_ia_P_beta_.row(i * vb_ + a).squaredNorm();
                     } else {
                         auto* g_blk = g_bb_.get_block(0, 0, 0, 0);
@@ -1011,19 +1008,21 @@ MP2Result OMP2::compute() {
                 int n_aux = (config_.eri_method != "exact") ? scf_.L_mat.cols() : 0;
 
                 if (config_.eri_method == "exact") {
+                    // ========================================================
+                    // 1. BLOK ALPHA-ALPHA (PTR_AA)
+                    // ========================================================
                     auto* ptr_aa = g_aa_.get_block(0, 0, 0, 0);
                     if (ptr_aa && dim_a > 0) {
                         Eigen::Map<const Eigen::MatrixXd> kappa_a(p_vec.data(), va_, na_);
                         int idx_h = 0;
-                        for (int i = 0; i < na_; ++i) {         
-                            for (int a = 0; a < va_; ++a) {       
+                        for (int i = 0; i < na_; ++i) {          
+                            for (int a = 0; a < va_; ++a) {      
                                 double off_diag = 0.0;
                                 for (int j = 0; j < na_; ++j) {
                                     for (int b = 0; b < va_; ++b) {
                                         if (i == j && a == b) continue; 
                                         double coulomb = (*ptr_aa)(i, a, j, b);
                                         double exchange = (*ptr_aa)(i, b, j, a);
-                                       
                                         off_diag += (spin_factor * coulomb - ex_factor * exchange) * kappa_a(b, j);
                                     }
                                 }
@@ -1031,20 +1030,24 @@ MP2Result OMP2::compute() {
                             }
                         }
                     }
+
+                    // ========================================================
+                    // 2. BLOK BETA-BETA (PTR_BB)
+                    // ========================================================
                     if (!is_restricted && dim_b > 0) {
                         auto* ptr_bb = g_bb_.get_block(0, 0, 0, 0);
                         if (ptr_bb) {
-                            Eigen::Map<const Eigen::MatrixXd> kappa_b(p_vec.data() + dim_a, nb_, vb_);
+                            Eigen::Map<const Eigen::MatrixXd> kappa_b(p_vec.data() + dim_a, vb_, nb_);
                             int idx_h = dim_a; 
-                            for (int a = 0; a < vb_; ++a) {
-                                for (int i = 0; i < nb_; ++i) {
+                            for (int i = 0; i < nb_; ++i) {          
+                                for (int a = 0; a < vb_; ++a) {       
                                     double off_diag = 0.0;
-                                    for (int b = 0; b < vb_; ++b) {
-                                        for (int j = 0; j < nb_; ++j) {
+                                    for (int j = 0; j < nb_; ++j) {
+                                        for (int b = 0; b < vb_; ++b) {
                                             if (i == j && a == b) continue; 
                                             double coulomb = (*ptr_bb)(i, a, j, b);
                                             double exchange = (*ptr_bb)(i, b, j, a);
-                                            off_diag += (spin_factor * coulomb - ex_factor * exchange) * kappa_b(j, b);
+                                            off_diag += (spin_factor * coulomb - ex_factor * exchange) * kappa_b(b, j);
                                         }
                                     }
                                     Hp(idx_h++) += off_diag;
@@ -1053,10 +1056,15 @@ MP2Result OMP2::compute() {
                         }
                     }
                 } else {
+                    // ========================================================
+                    // 3. BLOK DENSITY FITTING (DF / CHOLESKY)
+                    // ========================================================
                     if (dim_a > 0) {
                         Eigen::Map<const Eigen::VectorXd> kappa_a_vec(p_vec.data(), dim_a);
                         Eigen::VectorXd v_P = B_ia_P_alpha_.transpose() * kappa_a_vec;
                         Eigen::VectorXd Hp_J_a = B_ia_P_alpha_ * v_P;
+                        
+                        // Perhatikan bahwa di sini sudah memakai (va_, na_) sejak awal
                         Eigen::Map<const Eigen::MatrixXd> K_mat(kappa_a_vec.data(), va_, na_);
                         Eigen::MatrixXd K_mat_T = K_mat.transpose(); 
                         Eigen::MatrixXd Hp_K_mat_a = Eigen::MatrixXd::Zero(va_, na_);
@@ -1083,6 +1091,7 @@ MP2Result OMP2::compute() {
                         Eigen::Map<const Eigen::VectorXd> kappa_b_vec(p_vec.data() + dim_a, dim_b);
                         Eigen::VectorXd v_P_b = B_ia_P_beta_.transpose() * kappa_b_vec;
                         Eigen::VectorXd Hp_J_b = B_ia_P_beta_ * v_P_b;
+                        
                         Eigen::Map<const Eigen::MatrixXd> K_mat_b(kappa_b_vec.data(), vb_, nb_);
                         Eigen::MatrixXd K_mat_T_b = K_mat_b.transpose(); 
                         Eigen::MatrixXd Hp_K_mat_b = Eigen::MatrixXd::Zero(vb_, nb_);

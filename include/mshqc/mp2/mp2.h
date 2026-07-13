@@ -218,6 +218,10 @@ public:
     Eigen::MatrixXd build_opdm();
     Eigen::MatrixXd extrapolate_diis(std::vector<Eigen::MatrixXd>&, std::vector<Eigen::MatrixXd>&);
 
+    void OMP2::reset_diis() {}
+    Eigen::MatrixXd OMP2::build_opdm() { return G_oo_alpha_ + G_oo_beta_; } 
+    Eigen::MatrixXd OMP2::extrapolate_diis(std::vector<Eigen::MatrixXd>&, std::vector<Eigen::MatrixXd>&) { return Eigen::MatrixXd(); }
+
 // ======= PASTIKAN HANYA ADA SATU BLOK PROTECTED =======
 protected: 
     std::unique_ptr<BasisSymmetrizer> symmetrizer_;
