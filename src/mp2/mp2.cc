@@ -54,9 +54,9 @@ void BaseMP2::transform_3center_mo() {
     for (int P = 0; P < n_aux; ++P) {
         Eigen::Map<Eigen::MatrixXd> X_P(X_a.data() + P * nvir_a_ * nbf_, nvir_a_, nbf_);
         Eigen::MatrixXd B_MO_a = X_P * Ca_occ; 
-        for (int a = 0; a < nvir_a_; ++a) {
-            for (int i = 0; i < nocc_a_; ++i) {
-                B_ia_P_alpha_(a * nocc_a_ + i, P) = B_MO_a(a, i);
+        for (int i = 0; i < nocc_a_; ++i) {
+            for (int a = 0; a < nvir_a_; ++a) {
+                B_ia_P_alpha_(i * nvir_a_ + a, P) = B_MO_a(a, i);
             }
         }
     }
@@ -71,9 +71,10 @@ void BaseMP2::transform_3center_mo() {
         for (int P = 0; P < n_aux; ++P) {
             Eigen::Map<Eigen::MatrixXd> X_P_b(X_b.data() + P * nvir_b_ * nbf_, nvir_b_, nbf_);
             Eigen::MatrixXd B_MO_b = X_P_b * Cb_occ;
-            for (int a = 0; a < nvir_b_; ++a) {
-                for (int i = 0; i < nocc_b_; ++i) {
-                    B_ia_P_beta_(a * nocc_b_ + i, P) = B_MO_b(a, i);
+            
+            for (int i = 0; i < nocc_b_; ++i) {
+                for (int a = 0; a < nvir_b_; ++a) {
+                    B_ia_P_beta_(i * nvir_b_ + a, P) = B_MO_b(a, i);
                 }
             }
         }
@@ -1080,7 +1081,8 @@ MP2Result OMP2::compute() {
 
                 return Hp;
             };
-            
+            double dynamic_trust = std::min(0.15, grad_norm * 0.5);
+            if (dynamic_trust < 0.05) dynamic_trust = 0.05;
             mshqc::gradient::TrustRegionResult step_info = soscf_engine.solve(orbital_gradient_, diag_H, 0.50, compute_hessian_vector);
             actual_step = step_info.step;
 
