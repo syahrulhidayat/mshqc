@@ -133,11 +133,11 @@ void OMP2::build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_
 void OMP2::build_opdm_alpha() {
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     
+    G_oo_alpha_ = Eigen::MatrixXd::Zero(na_, na_);
+    G_vv_alpha_ = Eigen::MatrixXd::Zero(va_, va_);
+    
     if (is_restricted) { 
-        G_oo_alpha_ = Eigen::MatrixXd::Zero(na_, na_);
-        G_vv_alpha_ = Eigen::MatrixXd::Zero(va_, va_);
         auto* t_blk = t2_aa_.get_block(0,0,0,0);
-        
         if (t_blk) {
             #pragma omp parallel for
             for (int i = 0; i < na_; ++i) {
@@ -176,108 +176,45 @@ void OMP2::build_opdm_alpha() {
         }
         return; 
     }
-    G_oo_alpha_ = Eigen::MatrixXd::Zero(na_, na_);
-    G_vv_alpha_ = Eigen::MatrixXd::Zero(va_, va_);
 
-    auto occ_spaces_a = get_irrep_spaces(scf_.irreps_alpha, 0, na_);
-    auto vir_spaces_a = get_irrep_spaces(scf_.irreps_alpha, na_, va_);
-    for (const auto& o1 : occ_spaces_a) {
-        if (o1.size == 0) continue; 
-        for (const auto& o2 : occ_spaces_a) {
-            if (o2.size == 0) continue; 
-            for (const auto& v1 : vir_spaces_a) {
-                if (v1.size == 0) continue; 
-                for (const auto& v2 : vir_spaces_a) {
-                    if (v2.size == 0) continue; 
+    // --- UMP2 OPDM DENGAN EIGEN DGEMM (BEBAS TBLIS, 100% THREAD SAFE) ---
+    auto* t_aa_blk = t2_aa_.get_block(0,0,0,0);
+    if (t_aa_blk) {
+        Eigen::Map<Eigen::MatrixXd> T_mat(t_aa_blk->data(), na_, va_ * na_ * va_);
+        G_oo_alpha_.noalias() = -0.5 * (T_mat * T_mat.transpose());
 
-                    if ((o1.id ^ v1.id ^ o2.id ^ v2.id) != 0) continue;
-
-                    auto* t_blk = t2_aa_.get_block(o1.id, v1.id, o2.id, v2.id);
-                    if (t_blk) {
-                        int rows = o1.size;
-                        int cols = v1.size * o2.size * v2.size;
-
-                        Eigen::Map<Eigen::MatrixXd> T_mat(t_blk->data(), rows, cols);
-                        G_oo_alpha_.block(o1.offset, o1.offset, o1.size, o1.size) -= 0.5 * (T_mat * T_mat.transpose());
+        Eigen::MatrixXd X_vv(na_ * na_ * va_, va_);
+        #pragma omp parallel for collapse(3)
+        for (int i = 0; i < na_; ++i) {
+            for (int j = 0; j < na_; ++j) {
+                for (int c = 0; c < va_; ++c) {
+                    for (int a = 0; a < va_; ++a) {
+                        X_vv((i * na_ + j) * va_ + c, a) = (*t_aa_blk)(i, a, j, c);
                     }
                 }
             }
         }
+        G_vv_alpha_.noalias() = 0.5 * (X_vv.transpose() * X_vv);
     }
 
-    #pragma omp parallel
+    if (nb_ > 0 && vb_ > 0) {
+        auto* t_ab_blk = t2_ab_.get_block(0,0,0,0);
+        if (t_ab_blk) {
+            Eigen::Map<Eigen::MatrixXd> Tab_mat(t_ab_blk->data(), na_, nb_ * va_ * vb_);
+            G_oo_alpha_.noalias() -= Tab_mat * Tab_mat.transpose();
 
-    {   ::tblis_set_num_threads(1);
-        Eigen::MatrixXd G_vv_local = Eigen::MatrixXd::Zero(va_, va_);
-        std::vector<double> gvv_buffer(va_ * va_, 0.0);
-
-        #pragma omp for schedule(dynamic)
-        for (size_t s_v1 = 0; s_v1 < vir_spaces_a.size(); ++s_v1) {
-            const auto& v1 = vir_spaces_a[s_v1];
-            if (v1.size == 0) continue; 
-            for (const auto& v2 : vir_spaces_a) {
-                if (v2.size == 0) continue; 
-                for (const auto& o1 : occ_spaces_a) {
-                    if (o1.size == 0) continue; 
-                    for (const auto& o2 : occ_spaces_a) {
-                        if (o2.size == 0) continue; 
-
-                        if ((o1.id ^ v1.id ^ o2.id ^ v2.id) != 0) continue;
-
-                        auto* t_blk = t2_aa_.get_block(o1.id, v1.id, o2.id, v2.id);
-                        if (t_blk) {
-
-                            tblis::len_type ni = o1.size, na_len = v1.size, nj = o2.size, nc = v2.size;
-                            tblis::len_type len_T[] = {ni, na_len, nj, nc};
-                            tblis::stride_type str_T[] = {1, ni, ni*na_len, ni*na_len*nj};
-
-                            tblis::tblis_tensor t_T;
-                            tblis::tblis_init_tensor_d(&t_T, 4, len_T, t_blk->data(), str_T);
-
-                            Eigen::Map<Eigen::MatrixXd> Gvv_temp(gvv_buffer.data(), na_len, na_len);
-                            Gvv_temp.setZero(); 
-
-                            tblis::len_type len_G[] = {na_len, na_len};
-                            tblis::stride_type str_G[] = {1, na_len};
-
-                            tblis::tblis_tensor t_Gvv;
-                            tblis::tblis_init_tensor_d(&t_Gvv, 2, len_G, Gvv_temp.data(), str_G);
-
-                            tblis::tblis_tensor_mult(nullptr, nullptr, &t_T, "iajc", &t_T, "ibjc", &t_Gvv, "ab");
-
-                            G_vv_local.block(v1.offset, v1.offset, na_len, na_len).noalias() += 0.5 * Gvv_temp;
+            Eigen::MatrixXd X_vv_ab(na_ * nb_ * vb_, va_);
+            #pragma omp parallel for collapse(3)
+            for (int i = 0; i < na_; ++i) {
+                for (int j = 0; j < nb_; ++j) {
+                    for (int b = 0; b < vb_; ++b) {
+                        for (int a = 0; a < va_; ++a) {
+                            X_vv_ab((i * nb_ + j) * vb_ + b, a) = (*t_ab_blk)(i, j, a, b);
                         }
                     }
                 }
             }
-        }
-
-        #pragma omp critical
-        {
-            G_vv_alpha_ += G_vv_local;
-        }
-    }
-
-    if (!is_restricted && nb_ > 0 && vb_ > 0) {
-        auto* t_ab = t2_ab_.get_block(0,0,0,0);
-        if (t_ab) {
-
-            Eigen::Map<Eigen::MatrixXd> Tab_mat(t_ab->data(), na_, nb_ * va_ * vb_);
-            G_oo_alpha_ -= Tab_mat * Tab_mat.transpose();
-
-            tblis::len_type len_Tab[] = {na_, nb_, va_, vb_};
-            tblis::stride_type str_Tab[] = {1, na_, na_*nb_, na_*nb_*va_};
-            tblis::tblis_tensor t_Tab;
-            tblis::tblis_init_tensor_d(&t_Tab, 4, len_Tab, t_ab->data(), str_Tab);
-
-            Eigen::MatrixXd Gvv_temp = Eigen::MatrixXd::Zero(va_, va_);
-            tblis::len_type len_G[] = {va_, va_};
-            tblis::stride_type str_G[] = {1, va_};
-            tblis::tblis_tensor t_Gvv;
-            tblis::tblis_init_tensor_d(&t_Gvv, 2, len_G, Gvv_temp.data(), str_G);
-
-            tblis::tblis_tensor_mult(nullptr, nullptr, &t_Tab, "ijab", &t_Tab, "ijcb", &t_Gvv, "ac");
-            G_vv_alpha_ += Gvv_temp;
+            G_vv_alpha_.noalias() += X_vv_ab.transpose() * X_vv_ab;
         }
     }
 }
@@ -287,52 +224,53 @@ void OMP2::build_opdm_beta() {
     G_vv_beta_ = Eigen::MatrixXd::Zero(vb_, vb_);
     if (nb_ == 0 || vb_ == 0) return;
 
-    auto* t_bb = t2_bb_.get_block(0,0,0,0);
-    auto* t_ab = t2_ab_.get_block(0,0,0,0);
+    auto* t_bb_blk = t2_bb_.get_block(0,0,0,0);
+    auto* t_ab_blk = t2_ab_.get_block(0,0,0,0);
 
-    if (t_bb) {
+    if (t_bb_blk) {
+        Eigen::Map<Eigen::MatrixXd> T_mat(t_bb_blk->data(), nb_, vb_ * nb_ * vb_);
+        G_oo_beta_.noalias() = -0.5 * (T_mat * T_mat.transpose());
 
-        Eigen::Map<Eigen::MatrixXd> Tbb_mat(t_bb->data(), nb_, nb_ * vb_ * vb_);
-        G_oo_beta_ -= 0.5 * (Tbb_mat * Tbb_mat.transpose());
-
-        tblis::len_type len_Tbb[] = {nb_, nb_, vb_, vb_};
-        tblis::stride_type str_Tbb[] = {1, nb_, nb_*nb_, nb_*nb_*vb_};
-        tblis::tblis_tensor t_Tbb;
-        tblis::tblis_init_tensor_d(&t_Tbb, 4, len_Tbb, t_bb->data(), str_Tbb);
-
-        Eigen::MatrixXd Gvv_temp = Eigen::MatrixXd::Zero(vb_, vb_);
-        tblis::len_type len_G[] = {vb_, vb_};
-        tblis::stride_type str_G[] = {1, vb_};
-        tblis::tblis_tensor t_Gvv;
-        tblis::tblis_init_tensor_d(&t_Gvv, 2, len_G, Gvv_temp.data(), str_G);
-
-        tblis::tblis_tensor_mult(nullptr, nullptr, &t_Tbb, "ijab", &t_Tbb, "ijcb", &t_Gvv, "ac");
-        G_vv_beta_ += 0.5 * Gvv_temp;
+        Eigen::MatrixXd X_vv(nb_ * nb_ * vb_, vb_);
+        #pragma omp parallel for collapse(3)
+        for (int i = 0; i < nb_; ++i) {
+            for (int j = 0; j < nb_; ++j) {
+                for (int c = 0; c < vb_; ++c) {
+                    for (int a = 0; a < vb_; ++a) {
+                        X_vv((i * nb_ + j) * vb_ + c, a) = (*t_bb_blk)(i, a, j, c);
+                    }
+                }
+            }
+        }
+        G_vv_beta_.noalias() = 0.5 * (X_vv.transpose() * X_vv);
     }
 
-    if (t_ab) {
-        tblis::len_type len_Tab[] = {na_, nb_, va_, vb_};
-        tblis::stride_type str_Tab[] = {1, na_, na_*nb_, na_*nb_*va_};
-        tblis::tblis_tensor t_Tab;
-        tblis::tblis_init_tensor_d(&t_Tab, 4, len_Tab, t_ab->data(), str_Tab);
+    if (t_ab_blk) {
+        Eigen::MatrixXd X_oo_ab(na_ * va_ * vb_, nb_);
+        #pragma omp parallel for collapse(3)
+        for (int i = 0; i < na_; ++i) {
+            for (int a = 0; a < va_; ++a) {
+                for (int b = 0; b < vb_; ++b) {
+                    for (int j = 0; j < nb_; ++j) {
+                        X_oo_ab((i * va_ + a) * vb_ + b, j) = (*t_ab_blk)(i, j, a, b);
+                    }
+                }
+            }
+        }
+        G_oo_beta_.noalias() -= X_oo_ab.transpose() * X_oo_ab;
 
-        Eigen::MatrixXd Goo_temp = Eigen::MatrixXd::Zero(nb_, nb_);
-        tblis::len_type len_Goo[] = {nb_, nb_};
-        tblis::stride_type str_Goo[] = {1, nb_};
-        tblis::tblis_tensor t_Goo;
-        tblis::tblis_init_tensor_d(&t_Goo, 2, len_Goo, Goo_temp.data(), str_Goo);
-
-        tblis::tblis_tensor_mult(nullptr, nullptr, &t_Tab, "kiab", &t_Tab, "kjab", &t_Goo, "ij");
-        G_oo_beta_ -= Goo_temp;
-
-        Eigen::MatrixXd Gvv_temp = Eigen::MatrixXd::Zero(vb_, vb_);
-        tblis::len_type len_Gvv[] = {vb_, vb_};
-        tblis::stride_type str_Gvv[] = {1, vb_};
-        tblis::tblis_tensor t_Gvv;
-        tblis::tblis_init_tensor_d(&t_Gvv, 2, len_Gvv, Gvv_temp.data(), str_Gvv);
-
-        tblis::tblis_tensor_mult(nullptr, nullptr, &t_Tab, "ijba", &t_Tab, "ijbc", &t_Gvv, "ac");
-        G_vv_beta_ += Gvv_temp;
+        Eigen::MatrixXd X_vv_ab(na_ * nb_ * va_, vb_);
+        #pragma omp parallel for collapse(3)
+        for (int i = 0; i < na_; ++i) {
+            for (int j = 0; j < nb_; ++j) {
+                for (int a = 0; a < va_; ++a) {
+                    for (int b = 0; b < vb_; ++b) {
+                        X_vv_ab((i * nb_ + j) * va_ + a, b) = (*t_ab_blk)(i, j, a, b);
+                    }
+                }
+            }
+        }
+        G_vv_beta_.noalias() += X_vv_ab.transpose() * X_vv_ab;
     }
 }
 void OMP2::build_generalized_fock() {

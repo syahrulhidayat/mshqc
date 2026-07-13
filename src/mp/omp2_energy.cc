@@ -9,6 +9,7 @@ namespace mshqc {
 void OMP2::compute_t2_amplitudes() {
     t2_aa_.clear(); t2_bb_.clear(); t2_ab_.clear();
     int nf = n_frozen_;
+    bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
 
     auto occ_spaces_a = get_irrep_spaces(scf_.irreps_alpha, 0, na_);
     auto vir_spaces_a = get_irrep_spaces(scf_.irreps_alpha, na_, va_);
@@ -23,20 +24,10 @@ void OMP2::compute_t2_amplitudes() {
                     if (v2.size == 0) continue; 
 
                     if ((o1.id ^ v1.id ^ o2.id ^ v2.id) == 0) {
-                        if (o1.size == 0 || v1.size == 0 || o2.size == 0 || v2.size == 0) {
-                            continue; 
-                        }
                         auto* g_blk = g_aa_.get_block(o1.id, v1.id, o2.id, v2.id);
                         auto* g_blk_ex = g_aa_.get_block(o1.id, v2.id, o2.id, v1.id);
 
-                        bool ex_valid = (g_blk_ex->dimension(1) == (Eigen::Index)v2.size && 
-                                         g_blk_ex->dimension(3) == (Eigen::Index)v1.size);
-                        if (g_blk_ex != nullptr) {
-                            if (g_blk_ex->dimension(1) == (Eigen::Index)v2.size && 
-                                g_blk_ex->dimension(3) == (Eigen::Index)v1.size) {
-                                ex_valid = true;
-                            }
-                        }
+                        bool ex_valid = (g_blk_ex != nullptr && g_blk_ex->dimension(1) == (Eigen::Index)v2.size && g_blk_ex->dimension(3) == (Eigen::Index)v1.size);
 
                         if (g_blk && ex_valid) { 
                             t2_aa_.allocate_block(o1.id, v1.id, o2.id, v2.id, o1.size, v1.size, o2.size, v2.size);
@@ -44,7 +35,6 @@ void OMP2::compute_t2_amplitudes() {
 
                             if (t_blk) {              
                                 t_blk->setZero(); 
-
                                 for (int di = 0; di < o1.size; ++di) {
                                     int i_glb = o1.offset + di;
                                     if (i_glb < nf) continue; 
@@ -57,8 +47,15 @@ void OMP2::compute_t2_amplitudes() {
                                             double den_a = e_ij - scf_.orbital_energies_alpha(na_ + v1.offset + da);
                                             for (int db = 0; db < v2.size; ++db) {
                                                 double den = den_a - scf_.orbital_energies_alpha(na_ + v2.offset + db);
-                                                double val = (*g_blk)(di, da, dj, db) - (*g_blk_ex)(di, db, dj, da);
-                                                (*t_blk)(di, da, dj, db) = (std::abs(den) > 1e-12) ? val / den : 0.0;
+                                                
+                                                // FIX 1: Restricted = Spasial (J), Unrestricted = Antisymmetrized (J - K)
+                                                double val = (*g_blk)(di, da, dj, db);
+                                                if (!is_restricted) val -= (*g_blk_ex)(di, db, dj, da);
+                                                
+                                                // FIX 2: Mencegah Dirac Delta/Singularitas PES dengan Regularisasi Lorentz
+                                                constexpr double sigma_sq = 1e-20;
+                                                double reg_den = den / (den * den + sigma_sq);
+                                                (*t_blk)(di, da, dj, db) = val * reg_den;
                                             }
                                         }
                                     }
@@ -71,7 +68,7 @@ void OMP2::compute_t2_amplitudes() {
         }
     }
 
-    if (nb_ > 0 && vb_ > 0) {
+    if (!is_restricted && nb_ > 0 && vb_ > 0) {
         auto* g_bb_blk = g_bb_.get_block(0,0,0,0);
         if (g_bb_blk) {
             t2_bb_.allocate_block(0,0,0,0, nb_, nb_, vb_, vb_);
@@ -83,9 +80,10 @@ void OMP2::compute_t2_amplitudes() {
                 for(int a=0; a<vb_; ++a) {
                     double den_a = e_ij - scf_.orbital_energies_beta(nb_+a);
                     for(int b=0; b<vb_; ++b) {
-                         double den = den_a - scf_.orbital_energies_beta(nb_+b);
+                        double den = den_a - scf_.orbital_energies_beta(nb_+b);
                         double val = (*g_bb_blk)(i, a, j, b) - (*g_bb_blk)(i, b, j, a);
-                        (*t_bb_blk)(i, j, a, b) = (std::abs(den) > 1e-12) ? val / den : 0.0;
+                        constexpr double sigma_sq = 1e-20;
+                        (*t_bb_blk)(i, j, a, b) = val * (den / (den * den + sigma_sq));
                     }
                 }
             }
@@ -103,7 +101,8 @@ void OMP2::compute_t2_amplitudes() {
                     double den_a = e_ij - scf_.orbital_energies_alpha(na_+a);
                     for(int b=0; b<vb_; ++b) {
                         double den = den_a - scf_.orbital_energies_beta(nb_+b);
-                        (*t_ab_blk)(i, j, a, b) = (std::abs(den) > 1e-12) ? (*g_ab_blk)(i, a, j, b) / den : 0.0;
+                        constexpr double sigma_sq = 1e-20;
+                        (*t_ab_blk)(i, j, a, b) = (*g_ab_blk)(i, a, j, b) * (den / (den * den + sigma_sq));
                     }
                 }
             }
@@ -230,6 +229,9 @@ double OMP2::compute_mp2_energy() {
 void OMP2::compute_t2_and_energy_cholesky() {
     double E_ss_aa = 0.0, E_ss_bb = 0.0, E_os = 0.0;
     int nf = n_frozen_;
+    
+    // Deteksi mode Restricted vs Unrestricted
+    bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
 
     t2_aa_.allocate_block(0, 0, 0, 0, na_, va_, na_, va_);
     auto* t_aa_blk = t2_aa_.get_block(0, 0, 0, 0);
@@ -240,10 +242,9 @@ void OMP2::compute_t2_and_energy_cholesky() {
             Eigen::MatrixXd g_ijab(va_, va_); 
 
             for (int j = nf; j < na_; ++j) {
-
+               
                 Eigen::MatrixXd Bia = B_ia_P_alpha_.middleRows(i * va_, va_);
                 Eigen::MatrixXd Bjb = B_ia_P_alpha_.middleRows(j * va_, va_);
-
                 g_ijab.noalias() = Bia * Bjb.transpose(); 
 
                 double e_ij = scf_.orbital_energies_alpha(i) + scf_.orbital_energies_alpha(j);
@@ -256,20 +257,27 @@ void OMP2::compute_t2_and_energy_cholesky() {
                         double val_dir = g_ijab(a, b);
                         double val_ex  = g_ijab(b, a); 
 
+                        
+                        constexpr double sigma_sq = 1e-20;
+                        double reg_den = den / (den * den + sigma_sq);
                         double t_val = 0.0;
-                        if (std::abs(den) > 1e-12) {
-                            t_val = (val_dir - val_ex) / den;
 
+                        
+                        if (is_restricted) {
+                            t_val = val_dir * reg_den;
+                            E_ss_aa += t_val * (2.0 * val_dir - val_ex); 
+                        } else {
+                            t_val = (val_dir - val_ex) * reg_den;
                             E_ss_aa += t_val * (val_dir - val_ex); 
                         }
+                        
                         (*t_aa_blk)(i, a, j, b) = t_val;
                     }
                 }
             }
         }
     }
-
-    if (nb_ > 0 && vb_ > 0) {
+    if (!is_restricted && nb_ > 0 && vb_ > 0) {
 
         t2_bb_.allocate_block(0, 0, 0, 0, nb_, nb_, vb_, vb_);
         auto* t_bb_blk = t2_bb_.get_block(0, 0, 0, 0);
@@ -285,7 +293,6 @@ void OMP2::compute_t2_and_energy_cholesky() {
                 for (int j = nf; j < nb_; ++j) {
                     Eigen::MatrixXd Bia = B_ia_P_beta_.middleRows(i * vb_, vb_);
                     Eigen::MatrixXd Bjb = B_ia_P_beta_.middleRows(j * vb_, vb_);
-
                     g_ijab.noalias() = Bia * Bjb.transpose();
 
                     double e_ij = scf_.orbital_energies_beta(i) + scf_.orbital_energies_beta(j);
@@ -298,11 +305,12 @@ void OMP2::compute_t2_and_energy_cholesky() {
                             double val_dir = g_ijab(a, b);
                             double val_ex  = g_ijab(b, a);
 
-                            double t_val = 0.0;
-                            if (std::abs(den) > 1e-12) {
-                                t_val = (val_dir - val_ex) / den;
-                                E_ss_bb += t_val * (val_dir - val_ex);
-                            }
+                            constexpr double sigma_sq = 1e-20;
+                            double reg_den = den / (den * den + sigma_sq);
+                            
+                            double t_val = (val_dir - val_ex) * reg_den;
+                            E_ss_bb += t_val * (val_dir - val_ex);
+                            
                             (*t_bb_blk)(i, j, a, b) = t_val; 
                         }
                     }
@@ -318,7 +326,6 @@ void OMP2::compute_t2_and_energy_cholesky() {
                 for (int j = nf; j < nb_; ++j) {
                     Eigen::MatrixXd Bia = B_ia_P_alpha_.middleRows(i * va_, va_);
                     Eigen::MatrixXd Bjb = B_ia_P_beta_.middleRows(j * vb_, vb_);
-
                     g_ijab.noalias() = Bia * Bjb.transpose(); 
 
                     double e_ij = scf_.orbital_energies_alpha(i) + scf_.orbital_energies_beta(j);
@@ -330,12 +337,12 @@ void OMP2::compute_t2_and_energy_cholesky() {
 
                             double val_dir = g_ijab(a, b);
 
-                            double t_val = 0.0;
-                            if (std::abs(den) > 1e-12) {
-                                t_val = val_dir / den;
-                                E_os += t_val * val_dir; 
-
-                            }
+                            constexpr double sigma_sq = 1e-20;
+                            double reg_den = den / (den * den + sigma_sq);
+                            
+                            double t_val = val_dir * reg_den;
+                            E_os += t_val * val_dir; 
+                            
                             (*t_ab_blk)(i, j, a, b) = t_val;
                         }
                     }
@@ -343,9 +350,12 @@ void OMP2::compute_t2_and_energy_cholesky() {
             }
         }
     }
-
-    e_ss_ = 0.25 * E_ss_aa + 0.25 * E_ss_bb;
-    e_os_ = E_os;
+    if (is_restricted) {
+        e_ss_ = 0.0;
+        e_os_ = E_ss_aa;
+    } else {
+        e_ss_ = 0.25 * E_ss_aa + 0.25 * E_ss_bb;
+        e_os_ = E_os;
+    }
 }
-
 } // namespace mshqc
