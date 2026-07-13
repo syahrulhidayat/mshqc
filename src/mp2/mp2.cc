@@ -417,6 +417,7 @@ struct OrbitalLBFGS {
     std::vector<Eigen::VectorXd> s_hist;
     std::vector<Eigen::VectorXd> y_hist;
     std::vector<double> rho_hist;
+    std::array<double, 20> alpha_buffer;
 
     Eigen::VectorXd g_prev;
     Eigen::VectorXd s_prev;
@@ -608,19 +609,20 @@ void OMP2::transform_integrals() {
 
         if (g_blk) {
             Eigen::MatrixXd G_tmp_aa = B_ia_P_alpha_ * B_ia_P_alpha_.transpose();
-            #pragma omp parallel for collapse(2)
-            for (int i = 0; i < na_; ++i) {
-                for (int a = 0; a < va_; ++a) {
-                    int idx_ia = i * va_ + a;
-                    for (int j = 0; j < na_; ++j) {
-                        for (int b = 0; b < va_; ++b) {
-                            int idx_jb = j * va_ + b;
+            #pragma omp parallel for collapse(2) schedule(static)
+            for (int j = 0; j < na_; ++j) {
+                for (int b = 0; b < va_; ++b) {
+                    int idx_jb = j * va_ + b;
+                    for (int i = 0; i < na_; ++i) {
+                        for (int a = 0; a < va_; ++a) {
+                            int idx_ia = i * va_ + a;
                             (*g_blk)(i, a, j, b) = G_tmp_aa(idx_ia, idx_jb);
                         }
                     }
                 }
             }
         }
+        
         if (!is_restricted && nb_ > 0 && vb_ > 0) {
             g_bb_.allocate_block(0, 0, 0, 0, nb_, vb_, nb_, vb_);
             auto* ptr_bb = g_bb_.get_block(0, 0, 0, 0);
@@ -631,26 +633,26 @@ void OMP2::transform_integrals() {
             Eigen::MatrixXd G_tmp_bb = B_ia_P_beta_ * B_ia_P_beta_.transpose();
             Eigen::MatrixXd G_tmp_ab = B_ia_P_alpha_ * B_ia_P_beta_.transpose();
 
-            #pragma omp parallel for collapse(2)
-            for (int i = 0; i < nb_; ++i) {
-                for (int a = 0; a < vb_; ++a) {
-                    int idx_ia = i * vb_ + a;
-                    for (int j = 0; j < nb_; ++j) {
-                        for (int b = 0; b < vb_; ++b) {
-                            int idx_jb = j * vb_ + b;
+            #pragma omp parallel for collapse(2) schedule(static)
+            for (int j = 0; j < nb_; ++j) {
+                for (int b = 0; b < vb_; ++b) {
+                    int idx_jb = j * vb_ + b;
+                    for (int i = 0; i < nb_; ++i) {
+                        for (int a = 0; a < vb_; ++a) {
+                            int idx_ia = i * vb_ + a;
                             (*ptr_bb)(i, a, j, b) = G_tmp_bb(idx_ia, idx_jb);
                         }
                     }
                 }
             }
 
-            #pragma omp parallel for collapse(2)
-            for (int i = 0; i < na_; ++i) {
-                for (int a = 0; a < va_; ++a) {
-                    int idx_ia = i * va_ + a;
-                    for (int j = 0; j < nb_; ++j) {
-                        for (int b = 0; b < vb_; ++b) {
-                            int idx_jb = j * vb_ + b;
+            #pragma omp parallel for collapse(2) schedule(static)
+            for (int j = 0; j < nb_; ++j) {
+                for (int b = 0; b < vb_; ++b) {
+                    int idx_jb = j * vb_ + b;
+                    for (int i = 0; i < na_; ++i) {
+                        for (int a = 0; a < va_; ++a) {
+                            int idx_ia = i * va_ + a;
                             (*ptr_ab)(i, a, j, b) = G_tmp_ab(idx_ia, idx_jb);
                         }
                     }
@@ -888,14 +890,13 @@ MP2Result OMP2::compute() {
         double e_mp2_corr = get_correlation_energy(); 
         double e_tot = e_scf + e_mp2_corr;
 
+      
         if (macro_iter > 0 && e_tot > e_total_last + 1e-7) {
             current_step *= 0.5; 
 
             C_a_current_ = C_a_last; 
             C_b_current_ = C_b_last;
-
-            if (config_.opt_method != "soscf") lbfgs_engine.reset();
-
+            
             Eigen::VectorXd actual_step = last_kappa * current_step;
             apply_orbital_rotation(actual_step);
 
@@ -934,19 +935,20 @@ MP2Result OMP2::compute() {
         double level_shift = (grad_norm > 0.1) ? 0.05 : 0.005;
         double spin_factor = is_restricted ? 4.0 : 2.0;
         
+       
         for (int a = 0; a < va_; ++a) {
             for (int i = 0; i < na_; ++i) {
                 double eps_diff = scf_.orbital_energies_alpha(na_ + a) - scf_.orbital_energies_alpha(i);
+                double safe_diff = std::max(std::abs(eps_diff), 1e-4);
                 double J_ia = 0.0;
                 
                 if (config_.eri_method != "exact") {
-                  
                     J_ia = B_ia_P_alpha_.row(a * na_ + i).squaredNorm(); 
                 } else {
                     auto* g_blk = g_aa_.get_block(0, 0, 0, 0);
                     if (g_blk) J_ia = std::abs((*g_blk)(i, a, i, a));
                 }
-                diag_H(idx++) = spin_factor * std::abs(eps_diff) + spin_factor * J_ia + level_shift; 
+                diag_H(idx++) = spin_factor * safe_diff + spin_factor * J_ia + level_shift; 
             }
         }
         
@@ -954,6 +956,7 @@ MP2Result OMP2::compute() {
             for (int a = 0; a < vb_; ++a) {
                 for (int i = 0; i < nb_; ++i) {
                     double eps_diff = scf_.orbital_energies_beta(nb_ + a) - scf_.orbital_energies_beta(i);
+                    double safe_diff = std::max(std::abs(eps_diff), 1e-4); // Batas dinamis minimal
                     double J_ia = 0.0;
                     
                     if (config_.eri_method != "exact") {
@@ -962,7 +965,7 @@ MP2Result OMP2::compute() {
                         auto* g_blk = g_bb_.get_block(0, 0, 0, 0);
                         if (g_blk) J_ia = std::abs((*g_blk)(i, a, i, a));
                     }
-                    diag_H(idx++) = 2.0 * std::abs(eps_diff) + 2.0 * J_ia + level_shift;
+                    diag_H(idx++) = 2.0 * safe_diff + 2.0 * J_ia + level_shift;
                 }
             }
         }
@@ -985,6 +988,7 @@ MP2Result OMP2::compute() {
                 int n_aux = (config_.eri_method != "exact") ? scf_.L_mat.cols() : 0;
 
                 if (config_.eri_method == "exact") {
+                    // ... [Bagian exact tetap sama] ...
                     auto* ptr_aa = g_aa_.get_block(0, 0, 0, 0);
                     if (ptr_aa && dim_a > 0) {
                         Eigen::Map<const Eigen::MatrixXd> kappa_a(p_vec.data(), na_, va_);
@@ -1035,9 +1039,13 @@ MP2Result OMP2::compute() {
                         Eigen::MatrixXd K_mat_T = K_mat.transpose(); 
                         Eigen::MatrixXd Hp_K_mat_a = Eigen::MatrixXd::Zero(va_, na_);
                         
+                        // --- PERBAIKAN OPENMP: Akumulasi Thread-Local Alpha ---
+                        int n_threads = omp_get_max_threads();
+                        std::vector<Eigen::MatrixXd> local_H_a(n_threads, Eigen::MatrixXd::Zero(va_, na_));
+                        
                         #pragma omp parallel
                         {
-                            Eigen::MatrixXd H_local = Eigen::MatrixXd::Zero(va_, na_);
+                            int tid = omp_get_thread_num();
                             Eigen::MatrixXd M_p(na_, na_); 
                             
                             #pragma omp for schedule(dynamic)
@@ -1045,13 +1053,13 @@ MP2Result OMP2::compute() {
                                 Eigen::Map<const Eigen::MatrixXd> B_P(B_ia_P_alpha_.col(P).data(), va_, na_);
                                 
                                 M_p.noalias() = K_mat_T * B_P; 
-                                H_local.noalias() += B_P * M_p;
+                                local_H_a[tid].noalias() += B_P * M_p;
                             }
-                            
-                            #pragma omp critical
-                            {
-                                Hp_K_mat_a += H_local;
-                            }
+                        }
+                        
+                        // Reduksi serial
+                        for(int t = 0; t < n_threads; ++t) {
+                            Hp_K_mat_a += local_H_a[t];
                         }
                         
                         Hp.head(dim_a) += spin_factor * Hp_J_a - ex_factor * Eigen::Map<Eigen::VectorXd>(Hp_K_mat_a.data(), dim_a);
@@ -1064,9 +1072,13 @@ MP2Result OMP2::compute() {
                         Eigen::MatrixXd K_mat_T_b = K_mat_b.transpose(); 
                         Eigen::MatrixXd Hp_K_mat_b = Eigen::MatrixXd::Zero(vb_, nb_);
                         
+                        // --- PERBAIKAN OPENMP: Akumulasi Thread-Local Beta ---
+                        int n_threads = omp_get_max_threads();
+                        std::vector<Eigen::MatrixXd> local_H_b(n_threads, Eigen::MatrixXd::Zero(vb_, nb_));
+                        
                         #pragma omp parallel
                         {
-                            Eigen::MatrixXd H_local_b = Eigen::MatrixXd::Zero(vb_, nb_);
+                            int tid = omp_get_thread_num();
                             Eigen::MatrixXd M_p_b(nb_, nb_);
                             
                             #pragma omp for schedule(dynamic)
@@ -1074,13 +1086,13 @@ MP2Result OMP2::compute() {
                                 Eigen::Map<const Eigen::MatrixXd> B_P_b(B_ia_P_beta_.col(P).data(), vb_, nb_);
                                 
                                 M_p_b.noalias() = K_mat_T_b * B_P_b;
-                                H_local_b.noalias() += B_P_b * M_p_b;
+                                local_H_b[tid].noalias() += B_P_b * M_p_b;
                             }
-                            
-                            #pragma omp critical
-                            {
-                                Hp_K_mat_b += H_local_b;
-                            }
+                        }
+                        
+                        // Reduksi serial
+                        for(int t = 0; t < n_threads; ++t) {
+                            Hp_K_mat_b += local_H_b[t];
                         }
                         
                         Hp.tail(dim_b) += spin_factor * Hp_J_b - ex_factor * Eigen::Map<Eigen::VectorXd>(Hp_K_mat_b.data(), dim_b);
@@ -1089,6 +1101,7 @@ MP2Result OMP2::compute() {
 
                 return Hp;
             };
+            
             mshqc::gradient::TrustRegionResult step_info = soscf_engine.solve(orbital_gradient_, diag_H, 0.50, compute_hessian_vector);
             actual_step = step_info.step;
 
@@ -1100,10 +1113,8 @@ MP2Result OMP2::compute() {
                 kappa = -orbital_gradient_.cwiseQuotient(diag_H); 
             }
 
-            double max_val = kappa.cwiseAbs().maxCoeff();
-            if (max_val > 0.45) kappa *= (0.45 / max_val);
-
-            actual_step = kappa;
+            // --- PERBAIKAN 3: Penghapusan limit absolut dan pemanfaatan line-search step ---
+            actual_step = kappa * current_step; 
             lbfgs_engine.s_prev = actual_step;
         }
 
@@ -1133,7 +1144,6 @@ MP2Result OMP2::compute() {
 
     return res;
 }
-
 void OMP2::reset_diis() {}
 Eigen::MatrixXd OMP2::build_opdm() { return G_oo_alpha_ + G_oo_beta_; } 
 Eigen::MatrixXd OMP2::extrapolate_diis(std::vector<Eigen::MatrixXd>&, std::vector<Eigen::MatrixXd>&) { return Eigen::MatrixXd(); }

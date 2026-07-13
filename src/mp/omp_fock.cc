@@ -177,44 +177,68 @@ void OMP2::build_opdm_alpha() {
         return; 
     }
 
-    // --- UMP2 OPDM DENGAN EIGEN DGEMM (BEBAS TBLIS, 100% THREAD SAFE) ---
+    // --- UMP2 OPDM DENGAN EIGEN DGEMM (BEBAS OOM, ZERO-ALLOCATION) ---
     auto* t_aa_blk = t2_aa_.get_block(0,0,0,0);
     if (t_aa_blk) {
-        Eigen::Map<Eigen::MatrixXd> T_mat(t_aa_blk->data(), na_, va_ * na_ * va_);
+        // Blok G_oo_alpha_: Sudah optimal menggunakan Map.
+        Eigen::Map<const Eigen::MatrixXd> T_mat(t_aa_blk->data(), na_, va_ * na_ * va_);
         G_oo_alpha_.noalias() = -0.5 * (T_mat * T_mat.transpose());
 
-        Eigen::MatrixXd X_vv(na_ * na_ * va_, va_);
-        #pragma omp parallel for collapse(3)
-        for (int i = 0; i < na_; ++i) {
-            for (int j = 0; j < na_; ++j) {
-                for (int c = 0; c < va_; ++c) {
-                    for (int a = 0; a < va_; ++a) {
-                        X_vv((i * na_ + j) * va_ + c, a) = (*t_aa_blk)(i, a, j, c);
-                    }
-                }
+        // Blok G_vv_alpha_: PERBAIKAN FATAL OOM
+        // Dimensi ColMajor (i, a, j, c) -> Stride i=1, a=na_, j=na_*va_, c=na_*va_*na_
+        // Untuk j dan c yang tetap, elemen (i, a) membentuk matriks berurutan berukuran na_ x va_.
+        const double* base_ptr = t_aa_blk->data();
+        
+        #pragma omp parallel
+        {
+            Eigen::MatrixXd G_vv_local = Eigen::MatrixXd::Zero(va_, va_);
+            
+            #pragma omp for schedule(dynamic)
+            for (int jc = 0; jc < na_ * va_; ++jc) {
+                int j = jc % na_;
+                int c = jc / na_;
+                
+                size_t offset = j * (na_ * va_) + c * (na_ * va_ * na_);
+                
+                // M adalah pemetaan matriks T_ij (ukuran na_ x va_)
+                Eigen::Map<const Eigen::MatrixXd> M(base_ptr + offset, na_, va_);
+                
+                // G_ab += (T_ij)^T * T_ij
+                G_vv_local.noalias() += M.transpose() * M;
+            }
+            
+            #pragma omp critical
+            {
+                G_vv_alpha_ += 0.5 * G_vv_local;
             }
         }
-        G_vv_alpha_.noalias() = 0.5 * (X_vv.transpose() * X_vv);
     }
 
     if (nb_ > 0 && vb_ > 0) {
         auto* t_ab_blk = t2_ab_.get_block(0,0,0,0);
         if (t_ab_blk) {
-            Eigen::Map<Eigen::MatrixXd> Tab_mat(t_ab_blk->data(), na_, nb_ * va_ * vb_);
+            Eigen::Map<const Eigen::MatrixXd> Tab_mat(t_ab_blk->data(), na_, nb_ * va_ * vb_);
             G_oo_alpha_.noalias() -= Tab_mat * Tab_mat.transpose();
 
-            Eigen::MatrixXd X_vv_ab(na_ * nb_ * vb_, va_);
-            #pragma omp parallel for collapse(3)
-            for (int i = 0; i < na_; ++i) {
-                for (int j = 0; j < nb_; ++j) {
-                    for (int b = 0; b < vb_; ++b) {
-                        for (int a = 0; a < va_; ++a) {
-                            X_vv_ab((i * nb_ + j) * vb_ + b, a) = (*t_ab_blk)(i, j, a, b);
-                        }
-                    }
+            const double* base_ab = t_ab_blk->data();
+            
+            #pragma omp parallel
+            {
+                Eigen::MatrixXd G_vv_local = Eigen::MatrixXd::Zero(va_, va_);
+                
+                #pragma omp for schedule(dynamic)
+                for (int b = 0; b < vb_; ++b) {
+                    size_t offset = b * (na_ * nb_ * va_);
+                    
+                    Eigen::Map<const Eigen::MatrixXd> M(base_ab + offset, na_ * nb_, va_);
+                    G_vv_local.noalias() += M.transpose() * M;
+                }
+                
+                #pragma omp critical
+                {
+                    G_vv_alpha_ += G_vv_local;
                 }
             }
-            G_vv_alpha_.noalias() += X_vv_ab.transpose() * X_vv_ab;
         }
     }
 }
@@ -228,49 +252,52 @@ void OMP2::build_opdm_beta() {
     auto* t_ab_blk = t2_ab_.get_block(0,0,0,0);
 
     if (t_bb_blk) {
-        Eigen::Map<Eigen::MatrixXd> T_mat(t_bb_blk->data(), nb_, vb_ * nb_ * vb_);
+        Eigen::Map<const Eigen::MatrixXd> T_mat(t_bb_blk->data(), nb_, vb_ * nb_ * vb_);
         G_oo_beta_.noalias() = -0.5 * (T_mat * T_mat.transpose());
-
-        Eigen::MatrixXd X_vv(nb_ * nb_ * vb_, vb_);
-        #pragma omp parallel for collapse(3)
-        for (int i = 0; i < nb_; ++i) {
-            for (int j = 0; j < nb_; ++j) {
-                for (int c = 0; c < vb_; ++c) {
-                    for (int a = 0; a < vb_; ++a) {
-                        X_vv((i * nb_ + j) * vb_ + c, a) = (*t_bb_blk)(i, a, j, c);
-                    }
-                }
+        const double* base_bb = t_bb_blk->data();
+        #pragma omp parallel
+        {
+            Eigen::MatrixXd G_vv_local = Eigen::MatrixXd::Zero(vb_, vb_);
+            #pragma omp for schedule(dynamic)
+            for (int jc = 0; jc < nb_ * vb_; ++jc) {
+                int j = jc % nb_;
+                int c = jc / nb_;
+                
+                size_t offset = j * (nb_ * vb_) + c * (nb_ * vb_ * nb_);
+                Eigen::Map<const Eigen::MatrixXd> M(base_bb + offset, nb_, vb_);
+                
+                G_vv_local.noalias() += M.transpose() * M;
+            }
+            #pragma omp critical
+            {
+                G_vv_beta_ += 0.5 * G_vv_local;
             }
         }
-        G_vv_beta_.noalias() = 0.5 * (X_vv.transpose() * X_vv);
     }
 
     if (t_ab_blk) {
-        Eigen::MatrixXd X_oo_ab(na_ * va_ * vb_, nb_);
-        #pragma omp parallel for collapse(3)
-        for (int i = 0; i < na_; ++i) {
-            for (int a = 0; a < va_; ++a) {
-                for (int b = 0; b < vb_; ++b) {
-                    for (int j = 0; j < nb_; ++j) {
-                        X_oo_ab((i * va_ + a) * vb_ + b, j) = (*t_ab_blk)(i, j, a, b);
-                    }
-                }
+        const double* base_ab = t_ab_blk->data();
+        #pragma omp parallel
+        {
+            Eigen::MatrixXd G_oo_local = Eigen::MatrixXd::Zero(nb_, nb_);
+            #pragma omp for schedule(dynamic)
+            for (int ab = 0; ab < va_ * vb_; ++ab) {
+                int a = ab % va_;
+                int b = ab / va_;
+                
+                size_t offset = a * (na_ * nb_) + b * (na_ * nb_ * va_);
+                Eigen::Map<const Eigen::MatrixXd> M(base_ab + offset, na_, nb_);
+                
+                G_oo_local.noalias() += M.transpose() * M;
+            }
+            #pragma omp critical
+            {
+                G_oo_beta_ -= G_oo_local;
             }
         }
-        G_oo_beta_.noalias() -= X_oo_ab.transpose() * X_oo_ab;
 
-        Eigen::MatrixXd X_vv_ab(na_ * nb_ * va_, vb_);
-        #pragma omp parallel for collapse(3)
-        for (int i = 0; i < na_; ++i) {
-            for (int j = 0; j < nb_; ++j) {
-                for (int a = 0; a < va_; ++a) {
-                    for (int b = 0; b < vb_; ++b) {
-                        X_vv_ab((i * nb_ + j) * va_ + a, b) = (*t_ab_blk)(i, j, a, b);
-                    }
-                }
-            }
-        }
-        G_vv_beta_.noalias() += X_vv_ab.transpose() * X_vv_ab;
+        Eigen::Map<const Eigen::MatrixXd> M_vv(base_ab, na_ * nb_ * va_, vb_);
+        G_vv_beta_.noalias() += M_vv.transpose() * M_vv;
     }
 }
 void OMP2::build_generalized_fock() {

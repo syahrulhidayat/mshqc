@@ -258,17 +258,10 @@ void GeometryOptimizer::initialize_bfgs_hessian() {
 }
 
 void GeometryOptimizer::update_bfgs_hessian(const Eigen::VectorXd& s, const Eigen::VectorXd& y) {
-    // BFGS update formula:
-    // H_{k+1} = (I - ρ s y^T) H_k (I - ρ y s^T) + ρ s s^T
-    // where ρ = 1 / (y^T s)
-    //
-    // REFERENCE: Nocedal & Wright (2006), Equation (6.17)
+
     
     double ys = y.dot(s);
-    
-    // Check curvature condition
     if (ys < 1e-10) {
-        // Skip update if curvature condition not satisfied
         return;
     }
     
@@ -277,8 +270,6 @@ void GeometryOptimizer::update_bfgs_hessian(const Eigen::VectorXd& s, const Eige
     
     Eigen::MatrixXd I = Eigen::MatrixXd::Identity(n, n);
     Eigen::MatrixXd V = I - rho * y * s.transpose();
-    
-    // H_{k+1} = V^T H_k V + ρ s s^T
     hessian_inverse_ = V.transpose() * hessian_inverse_ * V + rho * s * s.transpose();
 }
 
@@ -287,34 +278,22 @@ void GeometryOptimizer::update_bfgs_hessian(const Eigen::VectorXd& s, const Eige
 // ============================================================================
 
 double GeometryOptimizer::line_search(const Eigen::VectorXd& direction) {
-    // Backtracking line search with Armijo condition
-    // Find α such that: E(x + α·d) ≤ E(x) + c1·α·∇E^T·d
-    //
-    // REFERENCE: Nocedal & Wright (2006), Algorithm 3.1
     
     double alpha = config_.alpha_init;
     double grad_dot_dir = current_gradient_.dot(direction);
-    
-    // Armijo condition threshold
     double threshold = config_.c1 * grad_dot_dir;
     
     for (int i = 0; i < config_.max_line_search; ++i) {
-        // Test geometry at x + α·d
         Eigen::VectorXd test_coords = current_coords_ + alpha * direction;
         Molecule test_geom = coords_to_molecule(test_coords);
         
         auto grad_result = gradient_func_(test_geom);
         double test_energy = grad_result.energy;
-        
-        // Check Armijo condition
         if (test_energy <= current_energy_ + alpha * threshold) {
             return alpha;
         }
-        
-        // Reduce step size
         alpha *= config_.rho;
         
-        // Safety check
         if (alpha < 1e-10) {
             return alpha;
         }
@@ -324,8 +303,6 @@ double GeometryOptimizer::line_search(const Eigen::VectorXd& direction) {
 }
 
 Eigen::VectorXd GeometryOptimizer::apply_trust_region(const Eigen::VectorXd& step) {
-    // Scale step to fit within trust radius
-    // REFERENCE: Nocedal & Wright (2006), Section 4.1
     
     double step_norm = step.norm();
     
@@ -333,7 +310,6 @@ Eigen::VectorXd GeometryOptimizer::apply_trust_region(const Eigen::VectorXd& ste
         return step;
     }
     
-    // Scale down to trust radius
     return step * (config_.trust_radius / step_norm);
 }
 
@@ -342,7 +318,6 @@ Eigen::VectorXd GeometryOptimizer::apply_trust_region(const Eigen::VectorXd& ste
 // ============================================================================
 
 Molecule GeometryOptimizer::coords_to_molecule(const Eigen::VectorXd& coords) const {
-    // Rebuild molecule with new coordinates
     Molecule mol;
     mol.set_charge(current_geom_.charge());
     mol.set_multiplicity(current_geom_.multiplicity());
@@ -442,7 +417,6 @@ void GeometryOptimizer::print_iteration(int iter, const Eigen::VectorXd& step_ve
     std::cout << std::setw(12) << max_step << "  ";
     std::cout << std::setw(12) << rms_step << "\n";
     
-    // Print geometry if requested
     if (config_.print_geometry && config_.print_level > 1) {
         std::cout << "\nCurrent geometry (Bohr):\n";
         int natoms = current_geom_.n_atoms();
@@ -493,13 +467,12 @@ OptResult optimize_rhf(
     const std::string& basis_name,
     const OptConfig& config
 ) {
-    // Create gradient function for RHF
     auto gradient_func = [basis_name](const Molecule& mol) -> GradientResult {
         BasisSet basis(basis_name, mol);
         auto integrals = std::make_shared<IntegralEngine>(mol, basis);
         
         SCFConfig scf_config;
-        scf_config.print_level = 0;  // Silence SCF output during optimization
+        scf_config.print_level = 0; 
         
         return compute_rhf_gradient_numerical(mol, basis, integrals, 0, scf_config);
     };
@@ -543,47 +516,48 @@ TrustRegionResult TrustRegionSOSCF::solve(
 {
     int n = gradient.size();
     Eigen::VectorXd z = Eigen::VectorXd::Zero(n); 
+    Eigen::VectorXd Hz = Eigen::VectorXd::Zero(n); // PERBAIKAN: Pelacak nilai (H * z) 
     Eigen::VectorXd r = gradient;
     
-    // Preconditioner M^-1. Kita gunakan abs() dan max() untuk mencegah pembagian dengan nol
-    // atau nilai negatif tanpa perlu menambahkan manual level shift.
-    Eigen::VectorXd M_inv = diag_hessian.cwiseAbs().cwiseMax(config_.precond_shift).cwiseInverse();    Eigen::VectorXd p = -M_inv.cwiseProduct(r);
+    // PERBAIKAN PRECONDITIONER: Gunakan cwiseMax(shift) agar tidak memanipulasi tanda
+    // kelengkungan fisik, memastikan matriks definit positif tanpa distorsi arah.
+    Eigen::VectorXd M_inv = diag_hessian.cwiseMax(config_.precond_shift).cwiseInverse();    
+    Eigen::VectorXd p = -M_inv.cwiseProduct(r);
     
     double r_norm = r.norm();
     if (r_norm < config_.micro_thresh) return {z, 0.0, false};
 
-    double r_M_r_old = r.dot(-p); // sama dengan r.dot(M_inv * r)
+    double r_M_r_old = r.dot(-p); 
     
     for (int iter = 0; iter < config_.max_micro_iter; ++iter) {
-        // Panggil Hessian-Vector murni (Tidak ada manipulasi diagonal di dalam fungsi ini lagi)
         Eigen::VectorXd Hp = compute_hessian_vector(p);
-        
-        // Evaluasi kelengkungan (curvature)
         double kappa = p.dot(Hp);
-        
-        // KASUS 1: Kelengkungan Negatif / Nol (Menemukan Saddle Point)
         if (kappa <= 0.0) {
             double tau = compute_boundary_intersection(z, p, trust_radius);
             Eigen::VectorXd step = z + tau * p;
-            return {step, compute_model_energy(gradient, step, compute_hessian_vector), true};
+            Eigen::VectorXd H_step = Hz + tau * Hp; 
+            double m_energy = gradient.dot(step) + 0.5 * step.dot(H_step);
+            return {step, m_energy, true};
         }
         
         double alpha = r_M_r_old / kappa;
         Eigen::VectorXd z_next = z + alpha * p;
-        
-        // KASUS 2: Langkah konjugat berikutnya keluar dari batas Trust Region
         if (z_next.norm() >= trust_radius) {
             double tau = compute_boundary_intersection(z, p, trust_radius);
             Eigen::VectorXd step = z + tau * p;
-            return {step, compute_model_energy(gradient, step, compute_hessian_vector), true};
+            
+            Eigen::VectorXd H_step = Hz + tau * Hp;
+            double m_energy = gradient.dot(step) + 0.5 * step.dot(H_step);
+            return {step, m_energy, true};
         }
-        
-        // Update langkah dan residual
+    
         z = z_next;
+        Hz += alpha * Hp;
         r += alpha * Hp;
         
         if (r.norm() < config_.micro_thresh) {
-            return {z, compute_model_energy(gradient, z, compute_hessian_vector), false};
+            double m_energy = gradient.dot(z) + 0.5 * z.dot(Hz);
+            return {z, m_energy, false};
         }
         
         Eigen::VectorXd z_M_inv = M_inv.cwiseProduct(r);
@@ -594,7 +568,8 @@ TrustRegionResult TrustRegionSOSCF::solve(
         r_M_r_old = r_M_r_new;
     }
     
-    return {z, compute_model_energy(gradient, z, compute_hessian_vector), false};
+    double final_m_energy = gradient.dot(z) + 0.5 * z.dot(Hz);
+    return {z, final_m_energy, false};
 }
 
 double TrustRegionSOSCF::compute_boundary_intersection(const Eigen::VectorXd& z, const Eigen::VectorXd& p, double R) {
@@ -603,15 +578,13 @@ double TrustRegionSOSCF::compute_boundary_intersection(const Eigen::VectorXd& z,
     double c = z.squaredNorm() - (R * R);
     
     double discriminant = (b * b) - (4.0 * a * c);
-    if (discriminant < 0.0) return 0.0; // Fallback numerik jika ada error presisi
-    
-    // Ambil akar positif karena kita ingin bergerak maju searah vektor p
+    if (discriminant < 0.0) return 0.0; 
     return (-b + std::sqrt(discriminant)) / (2.0 * a);
 }
 
 double TrustRegionSOSCF::compute_model_energy(const Eigen::VectorXd& g, const Eigen::VectorXd& step, 
                                               std::function<Eigen::VectorXd(const Eigen::VectorXd&)>& compute_H_vec) {
-    // Model Taylor Orde 2: m(s) = g^T s + 0.5 * s^T H s
+
     return g.dot(step) + 0.5 * step.dot(compute_H_vec(step));
 }
 

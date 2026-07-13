@@ -161,48 +161,20 @@ void OMP2::apply_orbital_rotation(const Eigen::VectorXd& kappa) {
     if (kappa.norm() < 1e-12) return;
 
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
-    
+
     auto compute_exact_unitary = [](const Eigen::VectorXd& k_vec, int n_occ, int n_vir) -> Eigen::MatrixXd {
-        Eigen::MatrixXd kappa_mat = Eigen::MatrixXd::Zero(n_vir, n_occ);
-        int local_idx = 0;
-        for (int a = 0; a < n_vir; ++a) {
-            for (int i = 0; i < n_occ; ++i) {
-                kappa_mat(a, i) = k_vec(local_idx++);
-            }
-        }
-
-        Eigen::BDCSVD<Eigen::MatrixXd, Eigen::ComputeThinU | Eigen::ComputeThinV> svd(kappa_mat);
-        const Eigen::VectorXd& sigma = svd.singularValues();
-        const Eigen::MatrixXd& U_k = svd.matrixU(); 
-        const Eigen::MatrixXd& V_k = svd.matrixV(); 
-
-        Eigen::VectorXd cos_sigma = sigma.array().cos();
-        Eigen::VectorXd sin_sigma = sigma.array().sin();
-        Eigen::VectorXd cos_minus_one = cos_sigma.array() - 1.0;
-
-        Eigen::MatrixXd U_oo = V_k * cos_sigma.asDiagonal() * V_k.transpose();
-        Eigen::MatrixXd U_vo = U_k * sin_sigma.asDiagonal() * V_k.transpose();
-        Eigen::MatrixXd U_ov = -U_vo.transpose();
-        Eigen::MatrixXd U_vv = Eigen::MatrixXd::Identity(n_vir, n_vir) + 
-                               (U_k * cos_minus_one.asDiagonal() * U_k.transpose());
-
         int n_mo = n_occ + n_vir;
-        Eigen::MatrixXd U_full = Eigen::MatrixXd::Zero(n_mo, n_mo);
-        U_full.block(0, 0, n_occ, n_occ) = U_oo;
-        U_full.block(n_occ, 0, n_vir, n_occ) = U_vo;
-        U_full.block(0, n_occ, n_occ, n_vir) = U_ov;
-        U_full.block(n_occ, n_occ, n_vir, n_vir) = U_vv;
-
-        return U_full;
+        Eigen::MatrixXd K_full = Eigen::MatrixXd::Zero(n_mo, n_mo);
+        Eigen::Map<const Eigen::MatrixXd> kappa_mat(k_vec.data(), n_vir, n_occ);
+        K_full.block(n_occ, 0, n_vir, n_occ) = kappa_mat;
+        K_full.block(0, n_occ, n_occ, n_vir) = -kappa_mat.transpose();
+        return K_full.exp(); 
     };
-
-    // Eksekusi untuk Orbital Alpha
     int len_a = na_ * va_;
     Eigen::VectorXd kappa_a = kappa.head(len_a);
     Eigen::MatrixXd U_a = compute_exact_unitary(kappa_a, na_, va_);
     C_a_current_ = C_a_current_ * U_a;
 
-    // Eksekusi untuk Orbital Beta
     if (nb_ > 0 && vb_ > 0) {
         if (!is_restricted) {
             int len_b = nb_ * vb_;

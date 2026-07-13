@@ -25,20 +25,12 @@ int cint3c2e_sph(double *buf, int *shls, int *atm, int natm, int *bas, int nbas,
 
 namespace mshqc {
 
-
-
-
-
 IntegralEngine::IntegralEngine(const Molecule& mol, const BasisSet& basis)
     : mol_(mol), basis_(basis), nbasis_(basis.n_basis_functions()), opt_(nullptr) {
     
     convert_basis_to_libcint(); 
-    
-    // Gunakan pointer sementara bertipe CINTOpt*
     CINTOpt* tmp_opt = nullptr;
     cint2e_sph_optimizer(&tmp_opt, atm_.data(), mol_.n_atoms(), bas_.data(), basis_.n_shells(), env_.data());
-    
-    // Simpan ke void*
     opt_ = static_cast<void*>(tmp_opt); 
     
     cache_valid = false;
@@ -46,22 +38,14 @@ IntegralEngine::IntegralEngine(const Molecule& mol, const BasisSet& basis)
 
 IntegralEngine::~IntegralEngine() {
     if (opt_ != nullptr) {
-        // Cast kembali ke CINTOpt* untuk dihapus
         CINTOpt* tmp_opt = static_cast<CINTOpt*>(opt_);
         CINTdel_optimizer(&tmp_opt);
     }
 }
 
-
-
-
-
-// ============================================================================
-// KONVERSI KE LIBCINT (Pembentukan ATM, BAS, ENV)
-// ============================================================================
 int IntegralEngine::find_atom_index(const std::array<double, 3>& center) {
     int best_i = 0;
-    double min_dist = 1e10; // Inisialisasi dengan jarak yang sangat besar
+    double min_dist = 1e10; 
     for (size_t i = 0; i < mol_.n_atoms(); i++) {
         double dx = mol_.atom(i).x - center[0];
         double dy = mol_.atom(i).y - center[1];
@@ -91,56 +75,23 @@ void IntegralEngine::convert_basis_to_libcint() {
         env_.push_back(mol_.atom(i).z);
     }
 
-    // 2. Pack Basis (Shells) - DENGAN NORMALISASI PRIMITIF
     for (int s = 0; s < nbas; ++s) {
         const auto& shell = basis_.shell(s);
-        auto pos = shell.position();
-        
+        auto pos = shell.position(); 
         bas_[s * BAS_SLOTS + ATOM_OF]  = find_atom_index({pos[0], pos[1], pos[2]});
         bas_[s * BAS_SLOTS + ANG_OF]   = shell.l();
         bas_[s * BAS_SLOTS + NPRIM_OF] = shell.n_primitives();
-        bas_[s * BAS_SLOTS + NCTR_OF]  = 1; // Segmented contraction
-        
-        // Exponents
+        bas_[s * BAS_SLOTS + NCTR_OF]  = 1;
         bas_[s * BAS_SLOTS + PTR_EXP] = env_.size();
         for (size_t p = 0; p < shell.n_primitives(); ++p) {
             env_.push_back(shell.primitive(p).exponent);
         }
-        
-        // Contraction Coefficients
         bas_[s * BAS_SLOTS + PTR_COEFF] = env_.size();
         for (size_t p = 0; p < shell.n_primitives(); ++p) {
             double exp = shell.primitive(p).exponent;
             double coef = shell.primitive(p).coefficient;
-            // SYARAT MUTLAK LIBCINT: Kalikan dengan primitive norm
             double norm = CINTgto_norm(shell.l(), exp);
             env_.push_back(coef * norm);
-        }
-    }
-
-    // 3. THE SILVER BULLET: Force Exact Self-Overlap Normalization
-    // Memastikan S_ii = 1.0 secara paksa agar akurasi setara dengan Psi4
-    for (int s = 0; s < nbas; ++s) {
-        int dim = CINTcgto_spheric(s, bas_.data());
-        if (dim == 0) continue;
-
-        int shls[2] = {s, s};
-        std::vector<double> buf(dim * dim, 0.0);
-        
-        // Hitung overlap matriks untuk shell ini dengan dirinya sendiri
-        cint1e_ovlp_sph(buf.data(), shls, atm_.data(), natm, bas_.data(), nbas, env_.data(), nullptr);
-        
-        // Elemen pertama adalah Self-Overlap dari basis fungsi pertama di shell ini
-        double S_ii = buf[0];
-        
-        // Jika S_ii tidak sama dengan 1.0, skalakan seluruh koefisiennya!
-        if (S_ii > 1e-12 && std::abs(S_ii - 1.0) > 1e-8) {
-            double scale = 1.0 / std::sqrt(S_ii);
-            int ptr_coeff = bas_[s * BAS_SLOTS + PTR_COEFF];
-            int nprim = bas_[s * BAS_SLOTS + NPRIM_OF];
-            for (int p = 0; p < nprim; ++p) {
-                env_[ptr_coeff + p] *= scale; // Skalakan koefisien di memori libcint
-            }
         }
     }
 }
@@ -160,7 +111,6 @@ Eigen::MatrixXd IntegralEngine::compute_overlap() {
         for (int s1 = 0; s1 < nbas; s1++) {
             for (int s2 = 0; s2 <= s1; s2++) {
                 int shls[2] = {s1, s2};
-                // [FIX 2] Tambahkan nullptr di akhir fungsi
                 int has_val = cint1e_ovlp_sph(buf.data(), shls, atm_.data(), mol_.n_atoms(), bas_.data(), nbas, env_.data(), nullptr);
                 if (!has_val) continue;
 
@@ -194,7 +144,6 @@ Eigen::MatrixXd IntegralEngine::compute_kinetic() {
         for (int s1 = 0; s1 < nbas; s1++) {
             for (int s2 = 0; s2 <= s1; s2++) {
                 int shls[2] = {s1, s2};
-                // [FIX 2] Tambahkan nullptr
                 int has_val = cint1e_kin_sph(buf.data(), shls, atm_.data(), mol_.n_atoms(), bas_.data(), nbas, env_.data(), nullptr);
                 if (!has_val) continue;
 
@@ -260,14 +209,10 @@ Eigen::MatrixXd IntegralEngine::compute_core_hamiltonian() {
 const Eigen::Tensor<double, 4>& IntegralEngine::compute_eri() {
     if (cache_valid) return cached_eri;
 
-    // TAMBAHKAN BARIS INI UNTUK MENGALOKASIKAN MEMORI!
     cached_eri.resize(nbasis_, nbasis_, nbasis_, nbasis_);
     cached_eri.setZero();
-
     auto shell2bf = basis_.shell_to_basis_function_map();
     int nbas = basis_.n_shells();
-
-    // 1. Precompute Schwarz Screening
     std::vector<double> schwarz_max(nbas * nbas, 0.0);
     #pragma omp parallel
     {
@@ -413,12 +358,8 @@ std::vector<double> IntegralEngine::compute_3c2e_block(int sh_i, int sh_j, int s
     size_t sz = dim1 * dim2 * dimP;
     
     if (t_buffer.size() < sz) t_buffer.resize(sz);
-    
-    // Format shell Libcint: (bra1, ket1, bra2) -> i, j, P
     int shls[3] = {sh_i, sh_j, sh_P};
     CINTOpt* tmp_opt = static_cast<CINTOpt*>(opt_);
-    
-    // Panggil Libcint 3-center 2-electron (TANPA OPTIMIZER)
     int has_val = cint3c2e_sph(t_buffer.data(), shls, atm_.data(), mol_.n_atoms(), bas_.data(), basis_.n_shells(), env_.data(), nullptr);
     
     if (!has_val) {

@@ -48,14 +48,14 @@ void OMP2::compute_t2_amplitudes() {
                                             for (int db = 0; db < v2.size; ++db) {
                                                 double den = den_a - scf_.orbital_energies_alpha(na_ + v2.offset + db);
                                                 
-                                                // FIX 1: Restricted = Spasial (J), Unrestricted = Antisymmetrized (J - K)
                                                 double val = (*g_blk)(di, da, dj, db);
                                                 if (!is_restricted) val -= (*g_blk_ex)(di, db, dj, da);
-                                                
-                                                // FIX 2: Mencegah Dirac Delta/Singularitas PES dengan Regularisasi Lorentz
-                                                constexpr double sigma_sq = 1e-20;
-                                                double reg_den = den / (den * den + sigma_sq);
-                                                (*t_blk)(di, da, dj, db) = val * reg_den;
+
+                                                if (std::abs(den) < 1e-12) {
+                                                    (*t_blk)(di, da, dj, db) = 0.0; 
+                                                } else {
+                                                    (*t_blk)(di, da, dj, db) = val / den; 
+                                                }
                                             }
                                         }
                                     }
