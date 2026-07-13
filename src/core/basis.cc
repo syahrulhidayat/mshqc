@@ -1,10 +1,6 @@
 /**
  * @file src/core/basis.cc
- * @brief Basis Set Handling (Raw Import - No Manual Normalization)
- * @details 
- * 1. File ini hanya membaca koefisien dan eksponen mentah dari file .gbs.
- * 2. Normalisasi diserahkan sepenuhnya ke Libint (di integrals.cc).
- * 3. Tabel periodik lengkap (Z=0-118).
+ * @brief Basis Set Handling (HPC Edition - Exact Contraction Normalization & Dynamic Path)
  */
 
 #include "mshqc/basis.h"
@@ -17,6 +13,8 @@
 #include <stdexcept>
 #include <cctype>
 #include <vector>
+#include <cstdlib> // Diperlukan untuk std::getenv
+
 #ifdef I
 #undef I
 #endif
@@ -29,8 +27,6 @@ constexpr double PI = 3.14159265358979323846;
 // HELPERS
 // ============================================================================
 
-// Helper: Mengubah 'D'/'d' menjadi 'E' untuk notasi ilmiah (Format Fortran lama)
-// Contoh: 0.123D-04 -> 0.123E-04
 std::string sanitize_number(std::string str) {
     for (char &c : str) {
         if (c == 'D' || c == 'd') c = 'E';
@@ -58,11 +54,33 @@ int Shell::n_functions() const {
     }
 }
 
+int Shell::l() const {
+    return static_cast<int>(am_);
+}
+
 void Shell::normalize() {
-    // [EMPTY BY DESIGN]
-    // Kita SENGAJA tidak melakukan apa-apa di sini.
-    // Kita membiarkan Libint melakukan normalisasi otomatis saat Engine dibuat.
-    // Ini mencegah "Double Normalization" yang menyebabkan Overlap > 1.0.
+    double self_overlap = 0.0;
+    int l_val = this->l();
+    
+    for (size_t i = 0; i < primitives_.size(); ++i) {
+        for (size_t j = 0; j < primitives_.size(); ++j) {
+            double alpha_i = primitives_[i].exponent;
+            double alpha_j = primitives_[j].exponent;
+            double c_i = primitives_[i].coefficient;
+            double c_j = primitives_[j].coefficient;
+            double term = (2.0 * std::sqrt(alpha_i * alpha_j)) / (alpha_i + alpha_j);
+            double S_ij = std::pow(term, l_val + 1.5);
+            
+            self_overlap += c_i * c_j * S_ij;
+        }
+    }
+    
+    if (self_overlap > 1e-12) {
+        double scale = 1.0 / std::sqrt(self_overlap);
+        for (auto& prim : primitives_) {
+            prim.coefficient *= scale;
+        }
+    }
 }
 
 // ============================================================================
@@ -76,7 +94,16 @@ BasisSet::BasisSet(const std::string& basis_name, const Molecule& mol, const std
     
     std::string basis_lower = basis_name;
     std::transform(basis_lower.begin(), basis_lower.end(), basis_lower.begin(), ::tolower);
-    std::string basis_file = basis_dir + "/" + basis_lower + ".gbs";
+    std::string resolved_dir = basis_dir;
+    const char* env_path = std::getenv("MSHQC_BASIS_PATH");
+    
+    if (env_path != nullptr) {
+        resolved_dir = std::string(env_path);
+    } else if (resolved_dir.empty()) {
+        resolved_dir = "./basis"; 
+    }
+    
+    std::string basis_file = resolved_dir + "/" + basis_lower + ".gbs";
     
     if (!read_gbs(basis_file, mol)) {
         throw std::runtime_error("Failed to read basis set: " + basis_file);
@@ -95,28 +122,24 @@ bool BasisSet::read_gbs(const std::string& basis_file, const Molecule& mol) {
     }
     
     std::string line;
-    std::getline(f, line); // Baca header file
+    std::getline(f, line); 
     
-    // Deteksi default spherical/cartesian dari header file GBS jika ada
     if (line.find("spherical") != std::string::npos) spherical_ = true;
     else if (line.find("cartesian") != std::string::npos) spherical_ = false;
     
     shells_.clear();
     
-    // Loop untuk setiap atom dalam molekul
     for (size_t i = 0; i < mol.n_atoms(); i++) {
         const auto& atom = mol.atom(i);
         std::string sym = get_element_symbol(atom.atomic_number);
         std::array<double, 3> pos = {atom.x, atom.y, atom.z};
         
-        // Reset file stream ke awal untuk setiap atom (Inefisen tapi aman)
         f.clear();
         f.seekg(0);
-        std::getline(f, line); // Skip header lagi
+        std::getline(f, line); 
         
         bool found = false;
         while (std::getline(f, line)) {
-            // Skip komentar/baris kosong
             if (line.empty() || line[0] == '!') continue;
 
             std::istringstream iss(line);
@@ -124,7 +147,6 @@ bool BasisSet::read_gbs(const std::string& basis_file, const Molecule& mol) {
             int dummy; 
             
             if (iss >> elem >> dummy) {
-                // Header atom di GBS biasanya format: "Li 0"
                 if (elem == sym && dummy == 0) {
                     found = true;
                     parse_atom_basis(f, sym, i, pos);
@@ -149,7 +171,7 @@ int BasisSet::parse_atom_basis(std::ifstream& file,
     int n_added = 0;
     
     while (std::getline(file, line)) {
-        if (line.find("****") != std::string::npos) break; // Penanda akhir blok atom
+        if (line.find("****") != std::string::npos) break; 
         if (line.empty() || line[0] == '!') continue;
         
         std::istringstream iss(line);
@@ -160,16 +182,10 @@ int BasisSet::parse_atom_basis(std::ifstream& file,
         if (!(iss >> stype)) continue;
         std::transform(stype.begin(), stype.end(), stype.begin(), ::toupper);
 
-        // Parsing baris tipe shell: "S 3 1.00" atau "P 2 1.00"
-        if (!(iss >> nprim)) {
-             // Handle kasus format non-standar
-             continue; 
-        }
-        iss >> scale; // Scale factor (biasanya 1.0)
+        if (!(iss >> nprim)) continue; 
+        iss >> scale; 
         
         if (stype == "SP") {
-            // Shell gabungan SP (S dan P share exponent yang sama)
-            // Umum di STO-3G, 6-31G, dll.
             Shell s_sh(AngularMomentum::S, atom_index, atom_pos);
             Shell p_sh(AngularMomentum::P, atom_index, atom_pos);
             s_sh.set_spherical(spherical_);
@@ -177,39 +193,39 @@ int BasisSet::parse_atom_basis(std::ifstream& file,
             
             for (int i = 0; i < nprim; i++) {
                 if (!std::getline(file, line)) break;
-                
-                // [CRITICAL] Sanitasi input D -> E
                 line = sanitize_number(line); 
                 
                 std::istringstream piss(line);
                 double exp, sc, pc;
-                // Format: exponent S-coeff P-coeff
                 if (piss >> exp >> sc >> pc) {
                     s_sh.add_primitive(exp, sc);
                     p_sh.add_primitive(exp, pc);
                 }
             }
+            
+            // Eksekusi normalisasi kontraksi sebelum dimasukkan ke list paket
+            s_sh.normalize();
+            p_sh.normalize();
+            
             add_shell(s_sh);
             add_shell(p_sh);
             n_added += 2;
             
         } else {
-            // Shell tunggal (S, P, D, F, ...)
             AngularMomentum am = char_to_am(stype[0]);
-            
             Shell sh(am, atom_index, atom_pos);
             sh.set_spherical(spherical_);
             
             for (int i = 0; i < nprim; i++) {
                 if (!std::getline(file, line)) break;
-                
-                // [CRITICAL] Sanitasi input
                 line = sanitize_number(line); 
                 
                 std::istringstream piss(line);
                 double exp, c;
                 if (piss >> exp >> c) sh.add_primitive(exp, c);
             }
+            sh.normalize();
+            
             add_shell(sh);
             n_added++;
         }
@@ -239,9 +255,7 @@ void BasisSet::print() const {
 }
 
 void BasisSet::append(const BasisSet& other) {
-    // Gabungkan list shell
     this->shells_.insert(this->shells_.end(), other.shells_.begin(), other.shells_.end());
-
 }
 
 int BasisSet::max_angular_momentum() const {
@@ -249,10 +263,6 @@ int BasisSet::max_angular_momentum() const {
     for (const auto& shell : shells_) max_l = std::max(max_l, shell.l());
     return max_l;
 }
-
-// ============================================================================
-// Utility Functions (Mappers & Periodic Table)
-// ============================================================================
 
 std::vector<int> BasisSet::shell_to_basis_function_map() const {
     std::vector<int> map;
@@ -272,7 +282,7 @@ AngularMomentum char_to_am(char c) {
         case 'F': return AngularMomentum::F;
         case 'G': return AngularMomentum::G;
         case 'H': return AngularMomentum::H;
-        default: return AngularMomentum::S; // Fallback safe
+        default: return AngularMomentum::S; 
     }
 }
 
@@ -289,27 +299,23 @@ std::string am_to_string(AngularMomentum am) {
 }
 
 std::string get_element_symbol(int Z) {
-    // Daftar Lengkap Unsur (Z=0 s/d 118)
     static const char* symbols[] = {
-        "X", // 0
-        "H", "He", // 1-2
-        "Li", "Be", "B", "C", "N", "O", "F", "Ne", // 3-10
-        "Na", "Mg", "Al", "Si", "P", "S", "Cl", "Ar", // 11-18
-        "K", "Ca", "Sc", "Ti", "V", "Cr", "Mn", "Fe", "Co", "Ni", "Cu", "Zn", "Ga", "Ge", "As", "Se", "Br", "Kr", // 19-36
-        "Rb", "Sr", "Y", "Zr", "Nb", "Mo", "Tc", "Ru", "Rh", "Pd", "Ag", "Cd", "In", "Sn", "Sb", "Te", "I", "Xe", // 37-54
-        "Cs", "Ba", // 55-56
-        "La", "Ce", "Pr", "Nd", "Pm", "Sm", "Eu", "Gd", "Tb", "Dy", "Ho", "Er", "Tm", "Yb", "Lu", // 57-71 (Lanthanides)
-        "Hf", "Ta", "W", "Re", "Os", "Ir", "Pt", "Au", "Hg", "Tl", "Pb", "Bi", "Po", "At", "Rn", // 72-86
-        "Fr", "Ra", // 87-88
-        "Ac", "Th", "Pa", "U", "Np", "Pu", "Am", "Cm", "Bk", "Cf", "Es", "Fm", "Md", "No", "Lr", // 89-103 (Actinides)
-        "Rf", "Db", "Sg", "Bh", "Hs", "Mt", "Ds", "Rg", "Cn", "Nh", "Fl", "Mc", "Lv", "Ts", "Og" // 104-118
+        "X", "H", "He", "Li", "Be", "B", "C", "N", "O", "F", "Ne", 
+        "Na", "Mg", "Al", "Si", "P", "S", "Cl", "Ar", "K", "Ca", 
+        "Sc", "Ti", "V", "Cr", "Mn", "Fe", "Co", "Ni", "Cu", "Zn", 
+        "Ga", "Ge", "As", "Se", "Br", "Kr", "Rb", "Sr", "Y", "Zr", 
+        "Nb", "Mo", "Tc", "Ru", "Rh", "Pd", "Ag", "Cd", "In", "Sn", 
+        "Sb", "Te", "I", "Xe", "Cs", "Ba", "La", "Ce", "Pr", "Nd", 
+        "Pm", "Sm", "Eu", "Gd", "Tb", "Dy", "Ho", "Er", "Tm", "Yb", 
+        "Lu", "Hf", "Ta", "W", "Re", "Os", "Ir", "Pt", "Au", "Hg", 
+        "Tl", "Pb", "Bi", "Po", "At", "Rn", "Fr", "Ra", "Ac", "Th", 
+        "Pa", "U", "Np", "Pu", "Am", "Cm", "Bk", "Cf", "Es", "Fm", 
+        "Md", "No", "Lr", "Rf", "Db", "Sg", "Bh", "Hs", "Mt", "Ds", 
+        "Rg", "Cn", "Nh", "Fl", "Mc", "Lv", "Ts", "Og"
     };
-    
-    // Bounds checking
     if (Z < 0 || Z >= static_cast<int>(sizeof(symbols)/sizeof(char*))) {
         return "?";
     }
-    
     return symbols[Z];
 }
 
