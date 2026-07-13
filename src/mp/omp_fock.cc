@@ -208,7 +208,6 @@ void OMP2::build_opdm_alpha() {
 
     #pragma omp parallel
     {   
-        tblis::tblis_set_num_threads(1);
         Eigen::MatrixXd G_vv_local = Eigen::MatrixXd::Zero(va_, va_);
         std::vector<double> gvv_buffer(va_ * va_, 0.0);
 
