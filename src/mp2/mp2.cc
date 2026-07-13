@@ -964,6 +964,7 @@ MP2Result OMP2::compute() {
             mshqc::gradient::TrustRegionSOSCF soscf_engine(tr_conf);
 
             auto compute_hessian_vector = [&](const Eigen::VectorXd& p_vec) -> Eigen::VectorXd {
+                bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
                 Eigen::VectorXd Hp = diag_H.cwiseProduct(p_vec);
                 
                 int dim_a = va_ * na_;
@@ -973,7 +974,6 @@ MP2Result OMP2::compute() {
                 int n_aux = (config_.eri_method != "exact") ? scf_.L_mat.cols() : 0;
 
                 if (config_.eri_method == "exact") {
-                    
                     auto* ptr_aa = g_aa_.get_block(0, 0, 0, 0);
                     if (ptr_aa && dim_a > 0) {
                         Eigen::Map<const Eigen::MatrixXd> kappa_a(p_vec.data(), na_, va_);
@@ -1016,13 +1016,12 @@ MP2Result OMP2::compute() {
                     }
                     
                 } else {
-                    
                     if (dim_a > 0) {
                         Eigen::Map<const Eigen::VectorXd> kappa_a_vec(p_vec.data(), dim_a);
                         Eigen::VectorXd v_P = B_ia_P_alpha_.transpose() * kappa_a_vec;
                         Eigen::VectorXd Hp_J_a = B_ia_P_alpha_ * v_P;
                         Eigen::Map<const Eigen::MatrixXd> K_mat(kappa_a_vec.data(), va_, na_);
-                        Eigen::MatrixXd K_mat_trans = K_mat.transpose(); 
+                        Eigen::MatrixXd K_mat_T = K_mat.transpose(); 
                         Eigen::MatrixXd Hp_K_mat_a = Eigen::MatrixXd::Zero(va_, na_);
                         
                         #pragma omp parallel
@@ -1033,30 +1032,25 @@ MP2Result OMP2::compute() {
                             #pragma omp for schedule(dynamic)
                             for (int P = 0; P < n_aux; ++P) {
                                 Eigen::Map<const Eigen::MatrixXd> B_P(B_ia_P_alpha_.col(P).data(), va_, na_);
-                                M_p.noalias() = K_mat_trans * B_P;
+                                
+                                M_p.noalias() = K_mat_T * B_P; 
                                 H_local.noalias() += B_P * M_p;
                             }
+                            
                             #pragma omp critical
                             {
                                 Hp_K_mat_a += H_local;
                             }
                         }
                         
-                        
                         Hp.head(dim_a) += spin_factor * Hp_J_a - ex_factor * Eigen::Map<Eigen::VectorXd>(Hp_K_mat_a.data(), dim_a);
                     }
-
-                    
                     if (!is_restricted && dim_b > 0) {
                         Eigen::Map<const Eigen::VectorXd> kappa_b_vec(p_vec.data() + dim_a, dim_b);
-                        
-                        
                         Eigen::VectorXd v_P_b = B_ia_P_beta_.transpose() * kappa_b_vec;
                         Eigen::VectorXd Hp_J_b = B_ia_P_beta_ * v_P_b;
-                        
-                        
                         Eigen::Map<const Eigen::MatrixXd> K_mat_b(kappa_b_vec.data(), vb_, nb_);
-                        Eigen::MatrixXd K_mat_trans_b = K_mat_b.transpose(); 
+                        Eigen::MatrixXd K_mat_T_b = K_mat_b.transpose(); 
                         Eigen::MatrixXd Hp_K_mat_b = Eigen::MatrixXd::Zero(vb_, nb_);
                         
                         #pragma omp parallel
@@ -1068,7 +1062,7 @@ MP2Result OMP2::compute() {
                             for (int P = 0; P < n_aux; ++P) {
                                 Eigen::Map<const Eigen::MatrixXd> B_P_b(B_ia_P_beta_.col(P).data(), vb_, nb_);
                                 
-                                M_p_b.noalias() = K_mat_trans_b * B_P_b;
+                                M_p_b.noalias() = K_mat_T_b * B_P_b;
                                 H_local_b.noalias() += B_P_b * M_p_b;
                             }
                             
