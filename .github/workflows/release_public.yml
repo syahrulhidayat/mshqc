@@ -17,7 +17,7 @@ jobs:
 
     # =========================================================================
     # 1. SETUP CONDA (Python 3.14 + MKL)
-    # =========================================================================
+    # ==========================================================================
     - name: Setup Conda Environment (Python 3.14)
       uses: conda-incubator/setup-miniconda@v3
       with:
@@ -29,7 +29,6 @@ jobs:
     - name: Install Build Dependencies
       shell: bash -el {0}
       run: |
-        # Dihapus: libcint (akan dikompilasi manual untuk HPC)
         conda install -y -c conda-forge cmake make compilers eigen pkg-config "hdf5=1.14.3" pip liblapacke mkl mkl-devel mkl-include
         python -m pip install build wheel nanobind setuptools
 
