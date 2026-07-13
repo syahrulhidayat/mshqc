@@ -79,12 +79,14 @@ using namespace mshqc::integrals;
 
 namespace mshqc_auto_tune {
 
-    void set_env_safe(const char* name, const char* value) {
-    #if defined(_WIN32)
-        _putenv_s(name, value);
-    #else
-        setenv(name, value, 1);
-    #endif
+    void set_env_if_empty(const char* name, const char* value) {
+        if (std::getenv(name) == nullptr) {
+        #if defined(_WIN32)
+            _putenv_s(name, value);
+        #else
+            setenv(name, value, 0); 
+        #endif
+        }
     }
 
     int get_physical_cores() {
@@ -123,25 +125,22 @@ namespace mshqc_auto_tune {
     }
 
     void initialize_hpc_environment() {
-        
-        int physical_cores = get_physical_cores();
-        
+        int num_threads = get_physical_cores();
+        if (const char* env_omp = std::getenv("OMP_NUM_THREADS")) {
+            num_threads = std::atoi(env_omp);
+        }
         
         omp_set_dynamic(0);
-        omp_set_num_threads(physical_cores);
+        omp_set_num_threads(num_threads);
         
-        
-        set_env_safe("OPENBLAS_NUM_THREADS", "1");
-        set_env_safe("MKL_NUM_THREADS", "1");
-        set_env_safe("TBLIS_NUM_THREADS", "1");
-        set_env_safe("VECLIB_MAXIMUM_THREADS", "1");
-        set_env_safe("NUMEXPR_NUM_THREADS", "1");
-        set_env_safe("OMP_MAX_ACTIVE_LEVELS", "1"); 
+        set_env_if_empty("OPENBLAS_NUM_THREADS", "1");
+        set_env_if_empty("MKL_NUM_THREADS", "1");
+        set_env_if_empty("TBLIS_NUM_THREADS", "1");
+        set_env_if_empty("VECLIB_MAXIMUM_THREADS", "1");
+        set_env_if_empty("NUMEXPR_NUM_THREADS", "1");
+        set_env_if_empty("OMP_MAX_ACTIVE_LEVELS", "1"); 
     }
 }
-
-
-
 
 NB_MODULE(_mshqc, m) {
     

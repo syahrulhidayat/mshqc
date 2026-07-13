@@ -35,13 +35,12 @@ void OMP2::build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_
         Eigen::MatrixXd Ka_mat = Eigen::MatrixXd::Zero(nbf_, nbf_);
         Eigen::MatrixXd Kb_mat = Eigen::MatrixXd::Zero(nbf_, nbf_);
 
-        #pragma omp parallel
-        {
+        
             Eigen::MatrixXd Ka_priv = Eigen::MatrixXd::Zero(nbf_, nbf_);
             Eigen::MatrixXd Kb_priv = Eigen::MatrixXd::Zero(nbf_, nbf_);
             Eigen::MatrixXd Ta_buf(nbf_, nbf_), Tb_buf(nbf_, nbf_);
 
-            #pragma omp for schedule(dynamic)
+            
             for (int K = 0; K < n_chol; ++K) {
                 Eigen::Map<const Eigen::MatrixXd> L_K(scf_.L_mat.col(K).data(), nbf_, nbf_);
 
@@ -53,9 +52,9 @@ void OMP2::build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_
                     Kb_priv.noalias() += Tb_buf * L_K;
                 }
             }
-            #pragma omp critical
+         
             { Ka_mat += Ka_priv; if (nb_ > 0) Kb_mat += Kb_priv; }
-        }
+        
 
         F_a = H_core_ + J_mat - Ka_mat;
         if (nb_ > 0) F_b = H_core_ + J_mat - Kb_mat;
