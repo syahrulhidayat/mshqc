@@ -163,7 +163,7 @@ void OMP2::apply_orbital_rotation(const Eigen::VectorXd& kappa) {
             }
         }
 
-        Eigen::BDCSVD<Eigen::MatrixXd> svd(kappa_mat, Eigen::ComputeThinU | Eigen::ComputeThinV);
+        Eigen::BDCSVD<Eigen::MatrixXd, Eigen::ComputeThinU | Eigen::ComputeThinV> svd(kappa_mat);
         const Eigen::VectorXd& sigma = svd.singularValues();
         const Eigen::MatrixXd& U_k = svd.matrixU(); 
         const Eigen::MatrixXd& V_k = svd.matrixV(); 
