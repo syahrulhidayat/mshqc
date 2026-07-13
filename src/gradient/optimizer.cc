@@ -199,17 +199,10 @@ bool GeometryOptimizer::check_convergence(const Eigen::VectorXd& step_vector) {
 // ============================================================================
 
 void GeometryOptimizer::steepest_descent_step() {
-    // Direction: d_k = -∇E_k
-    // REFERENCE: Nocedal & Wright (2006), Equation (3.1)
     search_direction_ = -current_gradient_;
 }
 
 void GeometryOptimizer::conjugate_gradient_step() {
-    // Polak-Ribière formula (more robust than Fletcher-Reeves)
-    // β_k = max(0, g_k·(g_k - g_{k-1}) / ||g_{k-1}||²)
-    // d_k = -g_k + β_k·d_{k-1}
-    //
-    // REFERENCE: Nocedal & Wright (2006), Equation (5.44)
     
     if (energy_history_.empty()) {
         // First iteration: steepest descent

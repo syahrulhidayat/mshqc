@@ -890,26 +890,13 @@ MP2Result OMP2::compute() {
         double e_mp2_corr = get_correlation_energy(); 
         double e_tot = e_scf + e_mp2_corr;
 
-      
-        if (macro_iter > 0 && e_tot > e_total_last + 1e-7) {
-            current_step *= 0.5; 
-
-            C_a_current_ = C_a_last; 
-            C_b_current_ = C_b_last;
-            
-            Eigen::VectorXd actual_step = last_kappa * current_step;
-            apply_orbital_rotation(actual_step);
-
-            scf_.P_alpha = C_a_current_.leftCols(na_) * C_a_current_.leftCols(na_).transpose();
-            if (!is_restricted && nb_ > 0) scf_.P_beta = C_b_current_.leftCols(nb_) * C_b_current_.leftCols(nb_).transpose();
-            else scf_.P_beta = scf_.P_alpha;
-
-            continue; 
-        }
-
+        // Pemulihan langkah untuk L-BFGS (SOSCF akan menangani batas radiusnya sendiri)
         current_step = std::min(1.0, current_step * 1.2);
 
-        if (e_tot < e_total_best) { e_total_best = e_tot; e_corr_best = e_mp2_corr; }
+        if (e_tot < e_total_best) { 
+            e_total_best = e_tot; 
+            e_corr_best = e_mp2_corr; 
+        }
 
         execute_macro_iterations(diis_alpha, diis_beta, macro_iter);
         double grad_norm = orbital_gradient_.norm();
@@ -935,7 +922,6 @@ MP2Result OMP2::compute() {
         double level_shift = (grad_norm > 0.1) ? 0.05 : 0.005;
         double spin_factor = is_restricted ? 4.0 : 2.0;
         
-       
         for (int a = 0; a < va_; ++a) {
             for (int i = 0; i < na_; ++i) {
                 double eps_diff = scf_.orbital_energies_alpha(na_ + a) - scf_.orbital_energies_alpha(i);
@@ -988,7 +974,6 @@ MP2Result OMP2::compute() {
                 int n_aux = (config_.eri_method != "exact") ? scf_.L_mat.cols() : 0;
 
                 if (config_.eri_method == "exact") {
-                    // ... [Bagian exact tetap sama] ...
                     auto* ptr_aa = g_aa_.get_block(0, 0, 0, 0);
                     if (ptr_aa && dim_a > 0) {
                         Eigen::Map<const Eigen::MatrixXd> kappa_a(p_vec.data(), na_, va_);
@@ -1039,7 +1024,6 @@ MP2Result OMP2::compute() {
                         Eigen::MatrixXd K_mat_T = K_mat.transpose(); 
                         Eigen::MatrixXd Hp_K_mat_a = Eigen::MatrixXd::Zero(va_, na_);
                         
-                        // --- PERBAIKAN OPENMP: Akumulasi Thread-Local Alpha ---
                         int n_threads = omp_get_max_threads();
                         std::vector<Eigen::MatrixXd> local_H_a(n_threads, Eigen::MatrixXd::Zero(va_, na_));
                         
@@ -1051,13 +1035,11 @@ MP2Result OMP2::compute() {
                             #pragma omp for schedule(dynamic)
                             for (int P = 0; P < n_aux; ++P) {
                                 Eigen::Map<const Eigen::MatrixXd> B_P(B_ia_P_alpha_.col(P).data(), va_, na_);
-                                
                                 M_p.noalias() = K_mat_T * B_P; 
                                 local_H_a[tid].noalias() += B_P * M_p;
                             }
                         }
                         
-                        // Reduksi serial
                         for(int t = 0; t < n_threads; ++t) {
                             Hp_K_mat_a += local_H_a[t];
                         }
@@ -1072,7 +1054,6 @@ MP2Result OMP2::compute() {
                         Eigen::MatrixXd K_mat_T_b = K_mat_b.transpose(); 
                         Eigen::MatrixXd Hp_K_mat_b = Eigen::MatrixXd::Zero(vb_, nb_);
                         
-                        // --- PERBAIKAN OPENMP: Akumulasi Thread-Local Beta ---
                         int n_threads = omp_get_max_threads();
                         std::vector<Eigen::MatrixXd> local_H_b(n_threads, Eigen::MatrixXd::Zero(vb_, nb_));
                         
@@ -1084,13 +1065,11 @@ MP2Result OMP2::compute() {
                             #pragma omp for schedule(dynamic)
                             for (int P = 0; P < n_aux; ++P) {
                                 Eigen::Map<const Eigen::MatrixXd> B_P_b(B_ia_P_beta_.col(P).data(), vb_, nb_);
-                                
                                 M_p_b.noalias() = K_mat_T_b * B_P_b;
                                 local_H_b[tid].noalias() += B_P_b * M_p_b;
                             }
                         }
                         
-                        // Reduksi serial
                         for(int t = 0; t < n_threads; ++t) {
                             Hp_K_mat_b += local_H_b[t];
                         }
@@ -1113,7 +1092,6 @@ MP2Result OMP2::compute() {
                 kappa = -orbital_gradient_.cwiseQuotient(diag_H); 
             }
 
-            // --- PERBAIKAN 3: Penghapusan limit absolut dan pemanfaatan line-search step ---
             actual_step = kappa * current_step; 
             lbfgs_engine.s_prev = actual_step;
         }
@@ -1144,8 +1122,9 @@ MP2Result OMP2::compute() {
 
     return res;
 }
+
 void OMP2::reset_diis() {}
 Eigen::MatrixXd OMP2::build_opdm() { return G_oo_alpha_ + G_oo_beta_; } 
 Eigen::MatrixXd OMP2::extrapolate_diis(std::vector<Eigen::MatrixXd>&, std::vector<Eigen::MatrixXd>&) { return Eigen::MatrixXd(); }
 
-} 
+} // namespace mshqc
