@@ -663,27 +663,38 @@ void OMP2::pseudocanonicalize() {
     Eigen::MatrixXd F_ao_a, F_ao_b;
     build_fock_fast(scf_.P_alpha, scf_.P_beta, F_ao_a, F_ao_b);
 
-    
-    bool use_sym = false; 
-
     auto diag_block = [&](const Eigen::MatrixXd& F_ao, Eigen::MatrixXd& C, Eigen::VectorXd& eps, int nocc, int nvir) {
-        Eigen::MatrixXd F_mo = C.transpose() * F_ao * C;
-        Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_o(F_mo.topLeftCorner(nocc, nocc));
-        Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_v(F_mo.bottomRightCorner(nvir, nvir));
-        Eigen::MatrixXd U = Eigen::MatrixXd::Zero(nbf_, nbf_);
-        U.topLeftCorner(nocc, nocc) = es_o.eigenvectors();
-        U.bottomRightCorner(nvir, nvir) = es_v.eigenvectors();
-        C = C * U;
-        eps.resize(nbf_);
+     
+        Eigen::MatrixXd C_occ = C.leftCols(nocc);
+        Eigen::MatrixXd C_vir = C.rightCols(nvir);
+
+        Eigen::MatrixXd F_oo(nocc, nocc);
+        Eigen::MatrixXd F_vv(nvir, nvir);
+        F_oo.noalias() = C_occ.transpose() * (F_ao * C_occ);
+        F_vv.noalias() = C_vir.transpose() * (F_ao * C_vir);
+
+        Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_o(F_oo);
+        Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_v(F_vv);
+        C.leftCols(nocc).noalias() = C_occ * es_o.eigenvectors();
+        C.rightCols(nvir).noalias() = C_vir * es_v.eigenvectors();
+
+        // 5. Pembaruan energi orbital
+        eps.resize(nocc + nvir);
         eps.head(nocc) = es_o.eigenvalues();
         eps.tail(nvir) = es_v.eigenvalues();
     };
 
+    // Eksekusi untuk Alpha
     diag_block(F_ao_a, scf_.C_alpha, scf_.orbital_energies_alpha, na_, va_);
-    if (nb_ > 0 && vb_ > 0) diag_block(F_ao_b, scf_.C_beta,  scf_.orbital_energies_beta,  nb_, vb_);
+    
+    // Pembaruan Densitas Alpha (In-place)
+    scf_.P_alpha.noalias() = scf_.C_alpha.leftCols(na_) * scf_.C_alpha.leftCols(na_).transpose();
 
-    scf_.P_alpha = scf_.C_alpha.leftCols(na_) * scf_.C_alpha.leftCols(na_).transpose();
-    if (nb_ > 0) scf_.P_beta  = scf_.C_beta.leftCols(nb_)  * scf_.C_beta.leftCols(nb_).transpose();
+    // Eksekusi untuk Beta (Jika Unrestricted)
+    if (nb_ > 0 && vb_ > 0) {
+        diag_block(F_ao_b, scf_.C_beta, scf_.orbital_energies_beta, nb_, vb_);
+        scf_.P_beta.noalias() = scf_.C_beta.leftCols(nb_) * scf_.C_beta.leftCols(nb_).transpose();
+    }
 }
 
 
