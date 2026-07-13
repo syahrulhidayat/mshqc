@@ -54,6 +54,7 @@ void BaseMP2::transform_3center_mo() {
     for (int P = 0; P < n_aux; ++P) {
         Eigen::Map<Eigen::MatrixXd> X_P(X_a.data() + P * nvir_a_ * nbf_, nvir_a_, nbf_);
         Eigen::MatrixXd B_MO_a = X_P * Ca_occ; 
+        
         for (int i = 0; i < nocc_a_; ++i) {
             for (int a = 0; a < nvir_a_; ++a) {
                 B_ia_P_alpha_(i * nvir_a_ + a, P) = B_MO_a(a, i);
@@ -71,7 +72,7 @@ void BaseMP2::transform_3center_mo() {
         for (int P = 0; P < n_aux; ++P) {
             Eigen::Map<Eigen::MatrixXd> X_P_b(X_b.data() + P * nvir_b_ * nbf_, nvir_b_, nbf_);
             Eigen::MatrixXd B_MO_b = X_P_b * Cb_occ;
-            
+
             for (int i = 0; i < nocc_b_; ++i) {
                 for (int a = 0; a < nvir_b_; ++a) {
                     B_ia_P_beta_(i * nvir_b_ + a, P) = B_MO_b(a, i);
@@ -851,10 +852,12 @@ MP2Result OMP2::compute() {
     double e_corr_best = 0.0;
     double e_total_last = 1e99;
 
-    double current_step = 1.0;
+    // Radius kepercayaan (Trust Radius) dinamis dan prediktor energi
+    double trust_radius = 0.15; 
+    double expected_change = -1e-6;
+
     Eigen::MatrixXd C_a_last = scf_.C_alpha;
     Eigen::MatrixXd C_b_last = scf_.C_beta;
-
     Eigen::VectorXd last_kappa; 
 
     OrbitalLBFGS lbfgs_engine;
@@ -891,13 +894,44 @@ MP2Result OMP2::compute() {
         double e_mp2_corr = get_correlation_energy(); 
         double e_tot = e_scf + e_mp2_corr;
 
-        // Pemulihan langkah untuk L-BFGS (SOSCF akan menangani batas radiusnya sendiri)
-        current_step = std::min(1.0, current_step * 1.2);
+        // === TRUST REGION STEP REJECTION (REM DARURAT) ===
+        if (macro_iter > 0) {
+            double actual_change = e_tot - e_total_last;
+            double rho = actual_change / expected_change; 
 
-        if (e_tot < e_total_best) { 
-            e_total_best = e_tot; 
-            e_corr_best = e_mp2_corr; 
+            if (actual_change > 1e-7) {
+                
+                C_a_current_ = C_a_last; 
+                C_b_current_ = C_b_last;
+                
+                trust_radius *= 0.25; 
+                if (trust_radius < 1e-4) trust_radius = 1e-4; 
+                
+             
+                Eigen::VectorXd scaled_step = last_kappa * 0.25;
+                apply_orbital_rotation(scaled_step);
+                last_kappa = scaled_step;
+                
+                scf_.P_alpha = C_a_current_.leftCols(na_) * C_a_current_.leftCols(na_).transpose();
+                if (!is_restricted && nb_ > 0) scf_.P_beta = C_b_current_.leftCols(nb_) * C_b_current_.leftCols(nb_).transpose();
+                else scf_.P_beta = scf_.P_alpha;
+
+                continue; 
+            } else {
+                if (rho > 0.75) {
+                    trust_radius = std::min(0.25, trust_radius * 1.5); 
+                } else if (rho < 0.25) {
+                    trust_radius *= 0.5;
+                }
+            }
         }
+      
+
+        if (e_tot < e_total_best) { e_total_best = e_tot; e_corr_best = e_mp2_corr; }
+        
+        e_total_last = e_tot;
+        C_a_last = C_a_current_; 
+        C_b_last = C_b_current_;
 
         execute_macro_iterations(diis_alpha, diis_beta, macro_iter);
         double grad_norm = orbital_gradient_.norm();
@@ -912,10 +946,6 @@ MP2Result OMP2::compute() {
         if (macro_iter > 0 && grad_norm < grad_thresh_ && std::abs(e_tot - e_total_last) < conv_thresh_) {
             is_converged = true; break;
         }
-
-        e_total_last = e_tot;
-        C_a_last = C_a_current_; 
-        C_b_last = C_b_current_;
 
         int n_params = orbital_gradient_.size();
         Eigen::VectorXd diag_H(n_params);
@@ -943,7 +973,7 @@ MP2Result OMP2::compute() {
             for (int a = 0; a < vb_; ++a) {
                 for (int i = 0; i < nb_; ++i) {
                     double eps_diff = scf_.orbital_energies_beta(nb_ + a) - scf_.orbital_energies_beta(i);
-                    double safe_diff = std::max(std::abs(eps_diff), 1e-4); // Batas dinamis minimal
+                    double safe_diff = std::max(std::abs(eps_diff), 1e-4);
                     double J_ia = 0.0;
                     
                     if (config_.eri_method != "exact") {
@@ -1015,7 +1045,6 @@ MP2Result OMP2::compute() {
                             }
                         }
                     }
-                    
                 } else {
                     if (dim_a > 0) {
                         Eigen::Map<const Eigen::VectorXd> kappa_a_vec(p_vec.data(), dim_a);
@@ -1040,11 +1069,7 @@ MP2Result OMP2::compute() {
                                 local_H_a[tid].noalias() += B_P * M_p;
                             }
                         }
-                        
-                        for(int t = 0; t < n_threads; ++t) {
-                            Hp_K_mat_a += local_H_a[t];
-                        }
-                        
+                        for(int t = 0; t < n_threads; ++t) Hp_K_mat_a += local_H_a[t];
                         Hp.head(dim_a) += spin_factor * Hp_J_a - ex_factor * Eigen::Map<Eigen::VectorXd>(Hp_K_mat_a.data(), dim_a);
                     }
                     if (!is_restricted && dim_b > 0) {
@@ -1070,31 +1095,26 @@ MP2Result OMP2::compute() {
                                 local_H_b[tid].noalias() += B_P_b * M_p_b;
                             }
                         }
-                        
-                        for(int t = 0; t < n_threads; ++t) {
-                            Hp_K_mat_b += local_H_b[t];
-                        }
-                        
+                        for(int t = 0; t < n_threads; ++t) Hp_K_mat_b += local_H_b[t];
                         Hp.tail(dim_b) += spin_factor * Hp_J_b - ex_factor * Eigen::Map<Eigen::VectorXd>(Hp_K_mat_b.data(), dim_b);
                     }
                 }
-
                 return Hp;
             };
-            double dynamic_trust = std::min(0.15, grad_norm * 0.5);
-            if (dynamic_trust < 0.05) dynamic_trust = 0.05;
-            mshqc::gradient::TrustRegionResult step_info = soscf_engine.solve(orbital_gradient_, diag_H, 0.50, compute_hessian_vector);
+            
+            mshqc::gradient::TrustRegionResult step_info = soscf_engine.solve(orbital_gradient_, diag_H, trust_radius, compute_hessian_vector);
             actual_step = step_info.step;
+            
+            expected_change = step_info.predicted_energy_change;    
+            if (expected_change >= 0.0) expected_change = -1e-6; 
 
         } else {
             Eigen::VectorXd kappa = lbfgs_engine.get_direction(orbital_gradient_, diag_H);
-
             if (kappa.dot(orbital_gradient_) > 0.0) {
                 lbfgs_engine.reset();
                 kappa = -orbital_gradient_.cwiseQuotient(diag_H); 
             }
-
-            actual_step = kappa * current_step; 
+            actual_step = kappa * 0.15;
             lbfgs_engine.s_prev = actual_step;
         }
 
@@ -1105,7 +1125,6 @@ MP2Result OMP2::compute() {
         else scf_.P_beta = scf_.P_alpha;
 
         last_kappa = actual_step;
-
         macro_iter++;
     }
 
@@ -1124,7 +1143,6 @@ MP2Result OMP2::compute() {
 
     return res;
 }
-
 void OMP2::reset_diis() {}
 Eigen::MatrixXd OMP2::build_opdm() { return G_oo_alpha_ + G_oo_beta_; } 
 Eigen::MatrixXd OMP2::extrapolate_diis(std::vector<Eigen::MatrixXd>&, std::vector<Eigen::MatrixXd>&) { return Eigen::MatrixXd(); }

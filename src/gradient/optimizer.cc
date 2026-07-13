@@ -575,11 +575,6 @@ double TrustRegionSOSCF::compute_boundary_intersection(const Eigen::VectorXd& z,
     return (-b + std::sqrt(discriminant)) / (2.0 * a);
 }
 
-double TrustRegionSOSCF::compute_model_energy(const Eigen::VectorXd& g, const Eigen::VectorXd& step, 
-                                              std::function<Eigen::VectorXd(const Eigen::VectorXd&)>& compute_H_vec) {
-
-    return g.dot(step) + 0.5 * step.dot(compute_H_vec(step));
-}
 
 } // namespace gradient
 } // namespace mshqc
