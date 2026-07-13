@@ -214,6 +214,9 @@ public:
     MP2Result compute() override;
     void transform_integrals() override;
     
+    void reset_diis();
+    Eigen::MatrixXd build_opdm();
+    Eigen::MatrixXd extrapolate_diis(std::vector<Eigen::MatrixXd>&, std::vector<Eigen::MatrixXd>&);
 
 // ======= PASTIKAN HANYA ADA SATU BLOK PROTECTED =======
 protected: 

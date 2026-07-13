@@ -51,6 +51,8 @@ public:
 
     void detect();
     CharacterTable get_character_table() const;
+    PointGroup(const Molecule& mol, double tolerance = 1e-6);
+    double get_tolerance() const { return tolerance_; }
     
 
     const std::vector<SymmetryOperation>& get_operations() const { return operations_; }

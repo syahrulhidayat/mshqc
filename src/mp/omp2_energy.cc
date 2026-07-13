@@ -82,8 +82,8 @@ void OMP2::compute_t2_amplitudes() {
                     for(int b=0; b<vb_; ++b) {
                         double den = den_a - scf_.orbital_energies_beta(nb_+b);
                         double val = (*g_bb_blk)(i, a, j, b) - (*g_bb_blk)(i, b, j, a);
-                        constexpr double sigma_sq = 1e-20;
-                        (*t_bb_blk)(i, j, a, b) = val * (den / (den * den + sigma_sq));
+                        double safe_den = (std::abs(den) < 1e-12) ? std::copysign(1e-12, den) : den;
+                        (*t_bb_blk)(i, j, a, b) = val / safe_den;
                     }
                 }
             }
@@ -101,8 +101,8 @@ void OMP2::compute_t2_amplitudes() {
                     double den_a = e_ij - scf_.orbital_energies_alpha(na_+a);
                     for(int b=0; b<vb_; ++b) {
                         double den = den_a - scf_.orbital_energies_beta(nb_+b);
-                        constexpr double sigma_sq = 1e-20;
-                        (*t_ab_blk)(i, j, a, b) = (*g_ab_blk)(i, a, j, b) * (den / (den * den + sigma_sq));
+                        double safe_den = (std::abs(den) < 1e-12) ? std::copysign(1e-12, den) : den;
+                        (*t_ab_blk)(i, j, a, b) = (*g_ab_blk)(i, a, j, b) / safe_den;
                     }
                 }
             }
@@ -304,11 +304,8 @@ void OMP2::compute_t2_and_energy_cholesky() {
 
                             double val_dir = g_ijab(a, b);
                             double val_ex  = g_ijab(b, a);
-
-                            constexpr double sigma_sq = 1e-20;
-                            double reg_den = den / (den * den + sigma_sq);
-                            
-                            double t_val = (val_dir - val_ex) * reg_den;
+                            double safe_den = (std::abs(den) < 1e-12) ? std::copysign(1e-12, den) : den;
+                            double t_val = (val_dir - val_ex) / safe_den;
                             E_ss_bb += t_val * (val_dir - val_ex);
                             
                             (*t_bb_blk)(i, j, a, b) = t_val; 
@@ -336,11 +333,9 @@ void OMP2::compute_t2_and_energy_cholesky() {
                             double den = den_a - scf_.orbital_energies_beta(nb_ + b);
 
                             double val_dir = g_ijab(a, b);
-
-                            constexpr double sigma_sq = 1e-20;
-                            double reg_den = den / (den * den + sigma_sq);
+                            double safe_den = (std::abs(den) < 1e-12) ? std::copysign(1e-12, den) : den;
                             
-                            double t_val = val_dir * reg_den;
+                            double t_val = val_dir / safe_den;
                             E_os += t_val * val_dir; 
                             
                             (*t_ab_blk)(i, j, a, b) = t_val;

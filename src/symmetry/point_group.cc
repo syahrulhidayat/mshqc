@@ -14,16 +14,13 @@
 
 namespace mshqc {
 
-PointGroup::PointGroup(const Molecule& mol) : original_mol_(mol) {
-    tolerance_ = 1e-4;
+PointGroup::PointGroup(const Molecule& mol, double tolerance) : original_mol_(mol) {
+    tolerance_ = tolerance;
     center_and_align();
 }
 
 void PointGroup::center_and_align() {
-    // ... (Bagian ini sama persis dengan kode Anda, tidak perlu diubah) ...
-    // Salin ulang logika center_and_align dari kode sebelumnya di sini
-    // Agar singkat, saya asumsikan Anda menyalinnya.
-    // ...
+
     int natoms = original_mol_.n_atoms();
     std::vector<Atom> temp_atoms;
     std::vector<double> masses(natoms);

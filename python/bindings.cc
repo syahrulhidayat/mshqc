@@ -274,7 +274,7 @@ NB_MODULE(_mshqc, m) {
         .def_rw("name", &SymmetryOperation::name);
 
     nb::class_<PointGroup>(m, "PointGroup")
-        .def(nb::init<const Molecule&>(), "Initialize and auto-detect symmetry")
+        .def(nb::init<const Molecule&>(), "Initialize and auto-detect symmetry", nb::arg("mol"), nb::arg("tolerance") = 1e-6)
         .def("detect", &PointGroup::detect)
         .def("get_symbol", &PointGroup::get_symbol)
         .def("get_order", &PointGroup::get_order)

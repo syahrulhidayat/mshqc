@@ -11,13 +11,11 @@ SalcBuilder::SalcBuilder(BasisSymmetrizer* sym) : sym_(sym) {}
 std::pair<Eigen::MatrixXd, std::vector<int>> SalcBuilder::build_salc(const Eigen::MatrixXd& S) {
     int nbf = S.rows();
     
-    std::mt19937 gen(42); 
-    std::uniform_real_distribution<double> dist(-1.0, 1.0);
     
     Eigen::MatrixXd M = Eigen::MatrixXd::Zero(nbf, nbf);
     for (int i = 0; i < nbf; ++i) {
         for (int j = 0; j <= i; ++j) {
-            double val = dist(gen);
+            double val = S(i, j) * (std::sin(i * 1.34 + j * 2.51) + 1.5);
             M(i, j) = val;
             M(j, i) = val;
         }

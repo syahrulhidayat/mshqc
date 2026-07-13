@@ -120,8 +120,11 @@ void BasisSymmetrizer::symmetrize(Eigen::MatrixXd& F) const {
     if (R_ao_.empty()) return; 
 
     Eigen::MatrixXd F_sym = Eigen::MatrixXd::Zero(F.rows(), F.cols());
+    Eigen::MatrixXd temp_FR(F.rows(), F.cols()); 
+
     for (const auto& R : R_ao_) {
-        F_sym += R.transpose() * F * R;
+        temp_FR.noalias() = F * R;
+        F_sym.noalias() += R.transpose() * temp_FR;
     }
     F = F_sym / static_cast<double>(R_ao_.size());
 }
