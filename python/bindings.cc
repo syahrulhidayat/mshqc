@@ -274,12 +274,14 @@ NB_MODULE(_mshqc, m) {
         .def_rw("name", &SymmetryOperation::name);
 
     nb::class_<PointGroup>(m, "PointGroup")
-        .def(nb::init<const Molecule&>(), "Initialize and auto-detect symmetry", nb::arg("mol"), nb::arg("tolerance") = 1e-6)
+        .def(nb::init<const Molecule&, double>(), "Initialize and auto-detect symmetry", 
+            nb::arg("mol"), nb::arg("tolerance") = 1e-6)
         .def("detect", &PointGroup::detect)
         .def("get_symbol", &PointGroup::get_symbol)
         .def("get_order", &PointGroup::get_order)
         .def("get_aligned_molecule", &PointGroup::get_aligned_molecule)
         .def("get_operations", &PointGroup::get_operations, nb::rv_policy::reference_internal);
+
 
     nb::class_<UniqueShellPair>(m, "UniqueShellPair")
         .def_rw("p", &UniqueShellPair::p)

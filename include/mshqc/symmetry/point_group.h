@@ -47,7 +47,6 @@ struct SymmetryOperation {
 
 class PointGroup {
 public:
-    PointGroup(const Molecule& mol);
 
     void detect();
     CharacterTable get_character_table() const;

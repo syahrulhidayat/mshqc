@@ -831,9 +831,6 @@ void OMP2::execute_macro_iterations(DIIS& diis_a, DIIS& diis_b, int macro_iter) 
         }
     }
 }
-
-
-
 MP2Result OMP2::compute() {
     auto start_time = std::chrono::high_resolution_clock::now();
 
@@ -938,10 +935,6 @@ MP2Result OMP2::compute() {
             is_converged = true; break;
         }
 
-        int n_params = orbital_gradient_.size();
-        Eigen::VectorXd diag_H(n_params);
-        int idx = 0;
-        double level_shift = (grad_norm > 0.1) ? 0.05 : 0.005;
         int n_params = orbital_gradient_.size();
         Eigen::VectorXd diag_H(n_params);
         int idx = 0;
