@@ -133,7 +133,7 @@ void OMP2::build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_
 void OMP2::build_opdm_alpha() {
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     
-    if (is_restricted && config_.eri_method == "exact") {
+    if (is_restricted) { 
         G_oo_alpha_ = Eigen::MatrixXd::Zero(na_, na_);
         G_vv_alpha_ = Eigen::MatrixXd::Zero(va_, va_);
         auto* t_blk = t2_aa_.get_block(0,0,0,0);
@@ -206,7 +206,8 @@ void OMP2::build_opdm_alpha() {
     }
 
     #pragma omp parallel
-    {   
+
+    {   ::tblis_set_num_threads(1);
         Eigen::MatrixXd G_vv_local = Eigen::MatrixXd::Zero(va_, va_);
         std::vector<double> gvv_buffer(va_ * va_, 0.0);
 
@@ -631,44 +632,24 @@ void OMP2::build_generalized_fock() {
         const Eigen::MatrixXd& Ca_o = scf_.C_alpha.leftCols(na_);
         const Eigen::MatrixXd& Ca_v = scf_.C_alpha.rightCols(va_);
 
-        #pragma omp parallel
-        {
-            Eigen::MatrixXd priv_oo_a = Eigen::MatrixXd::Zero(na_*na_, n_aux);
-            Eigen::MatrixXd priv_vv_a = Eigen::MatrixXd::Zero(va_*va_, n_aux);
+        // HAPUS OpenMP! Biarkan MKL menggunakan seluruh core untuk (B_AO * Ca_o)
+        for (int P = 0; P < n_aux; ++P) {
+            Eigen::Map<const Eigen::MatrixXd> B_AO(scf_.L_mat.col(P).data(), nbf_, nbf_);
+            Eigen::MatrixXd MO_oo_a = Ca_o.transpose() * (B_AO * Ca_o);
+            Eigen::MatrixXd MO_vv_a = Ca_v.transpose() * (B_AO * Ca_v);
 
-            #pragma omp for schedule(dynamic)
-            for (int P = 0; P < n_aux; ++P) {
-                Eigen::Map<const Eigen::MatrixXd> B_AO(scf_.L_mat.col(P).data(), nbf_, nbf_);
-                Eigen::MatrixXd MO_oo_a = Ca_o.transpose() * (B_AO * Ca_o);
-                Eigen::MatrixXd MO_vv_a = Ca_v.transpose() * (B_AO * Ca_v);
-
-                for(int i=0; i<na_; ++i) for(int j=0; j<na_; ++j) priv_oo_a(i*na_+j, P) = MO_oo_a(i, j);
-                for(int a=0; a<va_; ++a) for(int b=0; b<va_; ++b) priv_vv_a(a*va_+b, P) = MO_vv_a(a, b);
-            }
-            #pragma omp critical
-            {
-                B_oo_a += priv_oo_a; 
-                B_vv_a += priv_vv_a;
-            }
+            for(int i=0; i<na_; ++i) for(int j=0; j<na_; ++j) B_oo_a(i*na_+j, P) = MO_oo_a(i, j);
+            for(int a=0; a<va_; ++a) for(int b=0; b<va_; ++b) B_vv_a(a*va_+b, P) = MO_vv_a(a, b);
         }
 
         Z_mat_a.setZero();
 
-        #pragma omp parallel
-        {
-            Eigen::MatrixXd Z_loc_a = Eigen::MatrixXd::Zero(va_, na_);
-
-            #pragma omp for schedule(dynamic)
-            for (int P = 0; P < n_aux; ++P) {
-                Eigen::Map<const Eigen::MatrixXd> XT_a(X_a.col(P).data(), na_, va_); 
-                Eigen::Map<const Eigen::MatrixXd> V_a(B_vv_a.col(P).data(), va_, va_);
-                Eigen::Map<const Eigen::MatrixXd> O_a(B_oo_a.col(P).data(), na_, na_);
-                Z_loc_a.noalias() += V_a * XT_a.transpose() - XT_a.transpose() * O_a;
-            }
-            #pragma omp critical
-            {
-                Z_mat_a += Z_loc_a;
-            }
+        // HAPUS OpenMP!
+        for (int P = 0; P < n_aux; ++P) {
+            Eigen::Map<const Eigen::MatrixXd> XT_a(X_a.col(P).data(), na_, va_); 
+            Eigen::Map<const Eigen::MatrixXd> V_a(B_vv_a.col(P).data(), va_, va_);
+            Eigen::Map<const Eigen::MatrixXd> O_a(B_oo_a.col(P).data(), na_, na_);
+            Z_mat_a.noalias() += V_a * XT_a.transpose() - XT_a.transpose() * O_a;
         }
 
         if (is_restricted) {
@@ -714,43 +695,25 @@ void OMP2::build_generalized_fock() {
             const Eigen::MatrixXd& Cb_o = scf_.C_beta.leftCols(nb_);
             const Eigen::MatrixXd& Cb_v = scf_.C_beta.rightCols(vb_);
 
-            #pragma omp parallel
-            {
-                Eigen::MatrixXd priv_oo_b = Eigen::MatrixXd::Zero(nb_*nb_, n_aux);
-                Eigen::MatrixXd priv_vv_b = Eigen::MatrixXd::Zero(vb_*vb_, n_aux);
-
-                #pragma omp for schedule(dynamic)
-                for (int P = 0; P < n_aux; ++P) {
-                    Eigen::Map<const Eigen::MatrixXd> B_AO(scf_.L_mat.col(P).data(), nbf_, nbf_);
-                    Eigen::MatrixXd MO_oo_b = Cb_o.transpose() * (B_AO * Cb_o);
-                    Eigen::MatrixXd MO_vv_b = Cb_v.transpose() * (B_AO * Cb_v);
-                    for(int i=0; i<nb_; ++i) for(int j=0; j<nb_; ++j) priv_oo_b(i*nb_+j, P) = MO_oo_b(i, j);
-                    for(int a=0; a<vb_; ++a) for(int b=0; b<vb_; ++b) priv_vv_b(a*vb_+b, P) = MO_vv_b(a, b);
-                }
-                #pragma omp critical
-                {
-                    B_oo_b += priv_oo_b; 
-                    B_vv_b += priv_vv_b;
-                }
+   
+            for (int P = 0; P < n_aux; ++P) {
+                Eigen::Map<const Eigen::MatrixXd> B_AO(scf_.L_mat.col(P).data(), nbf_, nbf_);
+                Eigen::MatrixXd MO_oo_b = Cb_o.transpose() * (B_AO * Cb_o);
+                Eigen::MatrixXd MO_vv_b = Cb_v.transpose() * (B_AO * Cb_v);
+                for(int i=0; i<nb_; ++i) for(int j=0; j<nb_; ++j) B_oo_b(i*nb_+j, P) = MO_oo_b(i, j);
+                for(int a=0; a<vb_; ++a) for(int b=0; b<vb_; ++b) B_vv_b(a*vb_+b, P) = MO_vv_b(a, b);
             }
 
             Z_mat_b.setZero();
-            #pragma omp parallel
-            {
-                Eigen::MatrixXd Z_loc_b = Eigen::MatrixXd::Zero(vb_, nb_);
-                #pragma omp for schedule(dynamic)
-                for (int P = 0; P < n_aux; ++P) {
-                    Eigen::Map<const Eigen::MatrixXd> XT_b(X_b.col(P).data(), nb_, vb_); 
-                    Eigen::Map<const Eigen::MatrixXd> V_b(B_vv_b.col(P).data(), vb_, vb_);
-                    Eigen::Map<const Eigen::MatrixXd> O_b(B_oo_b.col(P).data(), nb_, nb_);
-                    Z_loc_b.noalias() += V_b * XT_b.transpose() - XT_b.transpose() * O_b;
-                }
-                #pragma omp critical
-                {
-                    Z_mat_b += Z_loc_b;
-                }
+           
+            for (int P = 0; P < n_aux; ++P) {
+                Eigen::Map<const Eigen::MatrixXd> XT_b(X_b.col(P).data(), nb_, vb_); 
+                Eigen::Map<const Eigen::MatrixXd> V_b(B_vv_b.col(P).data(), vb_, vb_);
+                Eigen::Map<const Eigen::MatrixXd> O_b(B_oo_b.col(P).data(), nb_, nb_);
+                Z_mat_b.noalias() += V_b * XT_b.transpose() - XT_b.transpose() * O_b;
             }
         }
+        
     }
     F_gen_a_ = F_HF_mo_a + G_gamma_mo_a;
     if (na_ > 0 && va_ > 0) {
