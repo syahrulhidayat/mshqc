@@ -891,7 +891,6 @@ MP2Result OMP2::compute() {
         double e_mp2_corr = get_correlation_energy(); 
         double e_tot = e_scf + e_mp2_corr;
 
-        // === TRUST REGION STEP REJECTION (REM DARURAT) ===
         if (macro_iter > 0) {
             double actual_change = e_tot - e_total_last;
             double rho = actual_change / expected_change; 
@@ -948,16 +947,25 @@ MP2Result OMP2::compute() {
         Eigen::VectorXd diag_H(n_params);
         int idx = 0;
         double level_shift = (grad_norm > 0.1) ? 0.05 : 0.005;
+        int n_params = orbital_gradient_.size();
+        Eigen::VectorXd diag_H(n_params);
+        int idx = 0;
+        double level_shift = (grad_norm > 0.1) ? 0.05 : 0.005;
         double spin_factor = is_restricted ? 4.0 : 2.0;
         
-        for (int a = 0; a < va_; ++a) {
-            for (int i = 0; i < na_; ++i) {
+        for (int i = 0; i < na_; ++i) {
+            for (int a = 0; a < va_; ++a) {
+                double eps_diff = scf_.orbital_energies_alpha(na_ + a) - scf_.orbital_energies_alpha(i);
+               
+        for (int i = 0; i < na_; ++i) {             
+            for (int a = 0; a < va_; ++a) {        
                 double eps_diff = scf_.orbital_energies_alpha(na_ + a) - scf_.orbital_energies_alpha(i);
                 double safe_diff = std::max(std::abs(eps_diff), 1e-4);
                 double J_ia = 0.0;
                 
                 if (config_.eri_method != "exact") {
-                    J_ia = B_ia_P_alpha_.row(a * na_ + i).squaredNorm(); 
+                   
+                    J_ia = B_ia_P_alpha_.row(i * va_ + a).squaredNorm(); 
                 } else {
                     auto* g_blk = g_aa_.get_block(0, 0, 0, 0);
                     if (g_blk) J_ia = std::abs((*g_blk)(i, a, i, a));
@@ -967,14 +975,15 @@ MP2Result OMP2::compute() {
         }
         
         if (!is_restricted && nb_ > 0) {
-            for (int a = 0; a < vb_; ++a) {
-                for (int i = 0; i < nb_; ++i) {
+            for (int i = 0; i < nb_; ++i) {         
+                for (int a = 0; a < vb_; ++a) {    
                     double eps_diff = scf_.orbital_energies_beta(nb_ + a) - scf_.orbital_energies_beta(i);
                     double safe_diff = std::max(std::abs(eps_diff), 1e-4);
                     double J_ia = 0.0;
                     
                     if (config_.eri_method != "exact") {
-                        J_ia = B_ia_P_beta_.row(a * nb_ + i).squaredNorm();
+                       
+                        J_ia = B_ia_P_beta_.row(i * vb_ + a).squaredNorm();
                     } else {
                         auto* g_blk = g_bb_.get_block(0, 0, 0, 0);
                         if (g_blk) J_ia = std::abs((*g_blk)(i, a, i, a));
@@ -1004,17 +1013,18 @@ MP2Result OMP2::compute() {
                 if (config_.eri_method == "exact") {
                     auto* ptr_aa = g_aa_.get_block(0, 0, 0, 0);
                     if (ptr_aa && dim_a > 0) {
-                        Eigen::Map<const Eigen::MatrixXd> kappa_a(p_vec.data(), na_, va_);
+                        Eigen::Map<const Eigen::MatrixXd> kappa_a(p_vec.data(), va_, na_);
                         int idx_h = 0;
-                        for (int a = 0; a < va_; ++a) {
-                            for (int i = 0; i < na_; ++i) {
+                        for (int i = 0; i < na_; ++i) {         
+                            for (int a = 0; a < va_; ++a) {       
                                 double off_diag = 0.0;
-                                for (int b = 0; b < va_; ++b) {
-                                    for (int j = 0; j < na_; ++j) {
+                                for (int j = 0; j < na_; ++j) {
+                                    for (int b = 0; b < va_; ++b) {
                                         if (i == j && a == b) continue; 
                                         double coulomb = (*ptr_aa)(i, a, j, b);
                                         double exchange = (*ptr_aa)(i, b, j, a);
-                                        off_diag += (spin_factor * coulomb - ex_factor * exchange) * kappa_a(j, b);
+                                       
+                                        off_diag += (spin_factor * coulomb - ex_factor * exchange) * kappa_a(b, j);
                                     }
                                 }
                                 Hp(idx_h++) += off_diag;
