@@ -801,9 +801,7 @@ void OMP2::execute_macro_iterations(DIIS& diis_a, DIIS& diis_b, int macro_iter) 
     build_generalized_fock();
 
     bool is_restricted = (na_ == nb_ && va_ == vb_);
-    if (is_restricted && nb_ > 0) {
-        F_gen_b_ = F_gen_a_; 
-    }
+    if (is_restricted && nb_ > 0) F_gen_b_ = F_gen_a_; 
 
     int dim_a = va_ * na_;
     int dim_b = (is_restricted) ? 0 : (nb_ > 0 ? vb_ * nb_ : 0);
@@ -812,18 +810,17 @@ void OMP2::execute_macro_iterations(DIIS& diis_a, DIIS& diis_b, int macro_iter) 
     if (orbital_gradient_.size() != n_params) orbital_gradient_.resize(n_params);
 
     int idx = 0;
-  
-
     if (!is_restricted && nb_ > 0) {
         Eigen::MatrixXd wa = 2.0 * F_gen_a_.block(na_, 0, va_, na_);
-        for (int a = 0; a < va_; ++a) {
-            for (int i = 0; i < na_; ++i) {
+       
+        for (int i = 0; i < na_; ++i) {
+            for (int a = 0; a < va_; ++a) {
                 orbital_gradient_(idx++) = wa(a, i);
             }
         }
         Eigen::MatrixXd wb = 2.0 * F_gen_b_.block(nb_, 0, vb_, nb_);
-        for (int b = 0; b < vb_; ++b) {
-            for (int i = 0; i < nb_; ++i) {
+        for (int i = 0; i < nb_; ++i) {
+            for (int b = 0; b < vb_; ++b) {
                 orbital_gradient_(idx++) = wb(b, i);
             }
         }
@@ -832,8 +829,8 @@ void OMP2::execute_macro_iterations(DIIS& diis_a, DIIS& diis_b, int macro_iter) 
         Eigen::MatrixXd wb = 2.0 * F_gen_b_.block(nb_, 0, vb_, nb_);
         Eigen::MatrixXd w_sym = 0.5 * (wa + wb);
 
-        for (int a = 0; a < va_; ++a) {
-            for (int i = 0; i < na_; ++i) {
+        for (int i = 0; i < na_; ++i) {
+            for (int a = 0; a < va_; ++a) {
                 orbital_gradient_(idx++) = w_sym(a, i);
             }
         }
