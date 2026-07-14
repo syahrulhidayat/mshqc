@@ -230,6 +230,10 @@ void OMP2::compute_t2_and_energy_cholesky() {
     double E_ss_aa = 0.0, E_ss_bb = 0.0, E_os = 0.0;
     int nf = n_frozen_;
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
+    
+    // Pindahkan konstanta ke atas agar digunakan seragam oleh semua blok
+    constexpr double sigma_sq = 1e-20; 
+
     t2_aa_.allocate_block(0, 0, 0, 0, na_, va_, na_, va_);
     auto* t_aa_blk = t2_aa_.get_block(0, 0, 0, 0);
 
@@ -239,7 +243,6 @@ void OMP2::compute_t2_and_energy_cholesky() {
             Eigen::MatrixXd g_ijab(va_, va_); 
 
             for (int j = nf; j < na_; ++j) {
-               
                 Eigen::MatrixXd Bia = B_ia_P_alpha_.middleRows(i * va_, va_);
                 Eigen::MatrixXd Bjb = B_ia_P_alpha_.middleRows(j * va_, va_);
                 g_ijab.noalias() = Bia * Bjb.transpose(); 
@@ -254,12 +257,10 @@ void OMP2::compute_t2_and_energy_cholesky() {
                         double val_dir = g_ijab(a, b);
                         double val_ex  = g_ijab(b, a); 
 
-                        
-                        constexpr double sigma_sq = 1e-20;
+                        // Regularisasi mulus (Smooth Regularization)
                         double reg_den = den / (den * den + sigma_sq);
                         double t_val = 0.0;
 
-                        
                         if (is_restricted) {
                             t_val = val_dir * reg_den;
                             E_ss_aa += t_val * (2.0 * val_dir - val_ex); 
@@ -274,14 +275,17 @@ void OMP2::compute_t2_and_energy_cholesky() {
             }
         }
     }
+    
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
-
         t2_bb_.allocate_block(0, 0, 0, 0, nb_, nb_, vb_, vb_);
         auto* t_bb_blk = t2_bb_.get_block(0, 0, 0, 0);
 
         t2_ab_.allocate_block(0, 0, 0, 0, na_, nb_, va_, vb_);
         auto* t_ab_blk = t2_ab_.get_block(0, 0, 0, 0);
 
+        // ========================================================
+        // BLOK BETA-BETA
+        // ========================================================
         if (t_bb_blk) {
             #pragma omp parallel for reduction(+:E_ss_bb) schedule(dynamic, 1)
             for (int i = nf; i < nb_; ++i) {
@@ -301,10 +305,12 @@ void OMP2::compute_t2_and_energy_cholesky() {
 
                             double val_dir = g_ijab(a, b);
                             double val_ex  = g_ijab(b, a);
-                            double safe_den = (std::abs(den) < 1e-12) ? std::copysign(1e-12, den) : den;
-                            double t_val = (val_dir - val_ex) / safe_den;
-                            E_ss_bb += t_val * (val_dir - val_ex);
                             
+                            // PERBAIKAN: Gunakan regularisasi sigma_sq, bukan std::copysign
+                            double reg_den = den / (den * den + sigma_sq);
+                            double t_val = (val_dir - val_ex) * reg_den;
+                            
+                            E_ss_bb += t_val * (val_dir - val_ex);
                             (*t_bb_blk)(i, j, a, b) = t_val; 
                         }
                     }
@@ -312,6 +318,9 @@ void OMP2::compute_t2_and_energy_cholesky() {
             }
         }
 
+        // ========================================================
+        // BLOK ALPHA-BETA (Opposite Spin)
+        // ========================================================
         if (t_ab_blk) {
             #pragma omp parallel for reduction(+:E_os) schedule(dynamic, 1)
             for (int i = nf; i < na_; ++i) {
@@ -330,11 +339,12 @@ void OMP2::compute_t2_and_energy_cholesky() {
                             double den = den_a - scf_.orbital_energies_beta(nb_ + b);
 
                             double val_dir = g_ijab(a, b);
-                            double safe_den = (std::abs(den) < 1e-12) ? std::copysign(1e-12, den) : den;
                             
-                            double t_val = val_dir / safe_den;
+                            // PERBAIKAN: Gunakan regularisasi sigma_sq, bukan std::copysign
+                            double reg_den = den / (den * den + sigma_sq);
+                            double t_val = val_dir * reg_den;
+                            
                             E_os += t_val * val_dir; 
-                            
                             (*t_ab_blk)(i, j, a, b) = t_val;
                         }
                     }
@@ -342,6 +352,7 @@ void OMP2::compute_t2_and_energy_cholesky() {
             }
         }
     }
+
     if (is_restricted) {
         e_ss_ = 0.0;
         e_os_ = E_ss_aa;
@@ -350,4 +361,4 @@ void OMP2::compute_t2_and_energy_cholesky() {
         e_os_ = E_os;
     }
 }
-} // namespace mshqc
+}
