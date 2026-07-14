@@ -17,8 +17,8 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
     auto* t_aa_blk = t2_aa_.get_block(0,0,0,0);
     auto* t_ab_blk = has_beta ? t2_ab_.get_block(0,0,0,0) : nullptr;
     auto* t_bb_blk = has_beta ? t2_bb_.get_block(0,0,0,0) : nullptr;
+    Eigen::MatrixXd T2_rmp2, T2_aa_mat, T2_ab_mat, T2_bb_mat;
     
-    Eigen::MatrixXd T2_rmp2;
     if (is_restricted && t_aa_blk) {
         T2_rmp2 = Eigen::MatrixXd::Zero(na_ * va_, na_ * va_);
         #pragma omp parallel for collapse(2)
@@ -32,10 +32,49 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
                 }
             }
         }
+    } else if (!is_restricted) {
+        if (t_aa_blk) {
+            T2_aa_mat = Eigen::MatrixXd::Zero(na_ * va_, na_ * va_);
+            #pragma omp parallel for collapse(2)
+            for (int i = 0; i < na_; ++i) {
+                for (int a = 0; a < va_; ++a) {
+                    for (int j = 0; j < na_; ++j) {
+                        for (int b = 0; b < va_; ++b) {
+                            T2_aa_mat(i * va_ + a, j * va_ + b) = (*t_aa_blk)(i, a, j, b);
+                        }
+                    }
+                }
+            }
+        }
+        if (t_ab_blk) {
+            T2_ab_mat = Eigen::MatrixXd::Zero(na_ * va_, nb_ * vb_);
+            #pragma omp parallel for collapse(2)
+            for (int i = 0; i < na_; ++i) {
+                for (int a = 0; a < va_; ++a) {
+                    for (int j = 0; j < nb_; ++j) {
+                        for (int b = 0; b < vb_; ++b) {
+                            T2_ab_mat(i * va_ + a, j * vb_ + b) = (*t_ab_blk)(i, j, a, b);
+                        }
+                    }
+                }
+            }
+        }
+        if (t_bb_blk) {
+            T2_bb_mat = Eigen::MatrixXd::Zero(nb_ * vb_, nb_ * vb_);
+            #pragma omp parallel for collapse(2)
+            for (int i = 0; i < nb_; ++i) {
+                for (int a = 0; a < vb_; ++a) {
+                    for (int j = 0; j < nb_; ++j) {
+                        for (int b = 0; b < vb_; ++b) {
+                            T2_bb_mat(i * vb_ + a, j * vb_ + b) = (*t_bb_blk)(i, j, a, b);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     const int CHUNK_SIZE = 128; 
-    using MatrixXdRowMajor = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
 
     #pragma omp parallel
     {
@@ -60,12 +99,13 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
             if (has_beta) X_b_chunk.setZero();
 
             Eigen::MatrixXd Bia_chunk = B_ia_P_alpha_.middleCols(P_start, P_len);
+            
             if (t_aa_blk) {
                 if (is_restricted) {
                     X_a_chunk.noalias() += T2_rmp2 * Bia_chunk;
                 } else {
-                    Eigen::Map<const MatrixXdRowMajor> T2_aa_map(t_aa_blk->data(), na_ * va_, na_ * va_);
-                    X_a_chunk.noalias() += T2_aa_map * Bia_chunk;
+
+                    X_a_chunk.noalias() += T2_aa_mat * Bia_chunk;
                 }
             }
 
@@ -73,14 +113,12 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
                 Eigen::MatrixXd Bib_chunk = B_ia_P_beta_.middleCols(P_start, P_len);
                 
                 if (t_ab_blk) {
-                    Eigen::Map<const MatrixXdRowMajor> T2_ab_map(t_ab_blk->data(), na_ * va_, nb_ * vb_);
-                    X_a_chunk.noalias() += T2_ab_map * Bib_chunk;
-                    X_b_chunk.noalias() += T2_ab_map.transpose() * Bia_chunk;
+                    X_a_chunk.noalias() += T2_ab_mat * Bib_chunk;
+                    X_b_chunk.noalias() += T2_ab_mat.transpose() * Bia_chunk;
                 }
 
                 if (t_bb_blk) {
-                    Eigen::Map<const MatrixXdRowMajor> T2_bb_map(t_bb_blk->data(), nb_ * vb_, nb_ * vb_);
-                    X_b_chunk.noalias() += T2_bb_map * Bib_chunk;
+                    X_b_chunk.noalias() += T2_bb_mat * Bib_chunk;
                 }
             }
 
