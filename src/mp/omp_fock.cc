@@ -585,7 +585,7 @@ void OMP2::build_generalized_fock() {
                             if (is_restricted) {
                                 L_ijab = 2.0 * (*t_aa_blk)(i, a, j, b) - 1.0 * (*t_aa_blk)(i, b, j, a);
                             } else {
-                                L_ijab = (*t_aa_blk)(i, a, j, b);
+                                L_ijab = 0.5 * (*t_aa_blk)(i, a, j, b);
                             }
                             T2_aa(i*va_+a, j*va_+b) = L_ijab; 
                         }
@@ -649,7 +649,7 @@ void OMP2::build_generalized_fock() {
                     for (int j = 0; j < nb_; ++j) {
                         for (int a = 0; a < vb_; ++a) {
                             for (int b = 0; b < vb_; ++b) {
-                                T2_bb(i*vb_+a, j*vb_+b) = (*t_bb_blk)(i, j, a, b);
+                                T2_bb(i*vb_+a, j*vb_+b) = 0.5 * (*t_bb_blk)(i, j, a, b);
                             }
                         }
                     }
