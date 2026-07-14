@@ -123,34 +123,29 @@ Eigen::VectorXd OMP2::compute_soscf_step() {
     
     double spin_factor = is_restricted ? 4.0 : 2.0;
     
-    // HARUS i di luar, a di dalam
     for (int i = 0; i < na_; ++i) {
         for (int a = 0; a < va_; ++a) {
             double eps_diff = scf_.orbital_energies_alpha(na_ + a) - scf_.orbital_energies_alpha(i);
+            double safe_diff = std::max(std::abs(eps_diff), 1e-4);
             double J_ia = 0.0;
+            
             if (config_.eri_method != "exact") {
                 J_ia = B_ia_P_alpha_.row(i * va_ + a).squaredNorm(); 
             } else {
                 auto* g_blk = g_aa_.get_block(0, 0, 0, 0);
                 if (g_blk) J_ia = std::abs((*g_blk)(i, a, i, a));
             }
-            hessian_diag_(idx++) = spin_factor * std::abs(eps_diff) + spin_factor * J_ia + level_shift; 
+            double diag_J_a = is_restricted ? (spin_factor * J_ia) : 0.0;
+            hessian_diag_(idx++) = spin_factor * safe_diff + diag_J_a + level_shift; 
         }
     }
 
     if (!is_restricted && nb_ > 0) {
-        // HARUS i di luar, a di dalam
         for (int i = 0; i < nb_; ++i) {
             for (int a = 0; a < vb_; ++a) {
                 double eps_diff = scf_.orbital_energies_beta(nb_ + a) - scf_.orbital_energies_beta(i);
-                double J_ia = 0.0;
-                if (config_.eri_method != "exact") {
-                    J_ia = B_ia_P_beta_.row(i * vb_ + a).squaredNorm();
-                } else {
-                    auto* g_blk = g_bb_.get_block(0, 0, 0, 0);
-                    if (g_blk) J_ia = std::abs((*g_blk)(i, a, i, a));
-                }
-                hessian_diag_(idx++) = 2.0 * std::abs(eps_diff) + 2.0 * J_ia + level_shift;
+                double safe_diff = std::max(std::abs(eps_diff), 1e-4);
+                hessian_diag_(idx++) = 2.0 * safe_diff + 0.0 + level_shift;
             }
         }
     }
@@ -160,12 +155,10 @@ Eigen::VectorXd OMP2::compute_soscf_step() {
     }
 
     Eigen::VectorXd kappa = -orbital_gradient_.cwiseQuotient(hessian_diag_);
-
     if (kappa.hasNaN() || !kappa.allFinite()) {
         std::cerr << "  [CRITICAL] Orbital gradient contains NaN/Inf! Fallback to zero rotation." << std::endl;
         kappa.setZero();
-    }
-    
+    } 
     double max_step = 0.15;
     double step_norm = kappa.norm(); 
     if (step_norm > max_step) kappa *= (max_step / step_norm); 

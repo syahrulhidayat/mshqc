@@ -958,13 +958,13 @@ MP2Result OMP2::compute() {
                 double J_ia = 0.0;
                 
                 if (config_.eri_method != "exact") {
-                  
                     J_ia = B_ia_P_alpha_.row(i * va_ + a).squaredNorm(); 
                 } else {
                     auto* g_blk = g_aa_.get_block(0, 0, 0, 0);
                     if (g_blk) J_ia = std::abs((*g_blk)(i, a, i, a));
                 }
-                diag_H(idx++) = spin_factor * safe_diff + spin_factor * J_ia + level_shift; 
+                double diag_J_a = is_restricted ? (spin_factor * J_ia) : 0.0;
+                diag_H(idx++) = spin_factor * safe_diff + diag_J_a + level_shift; 
             }
         }
         
@@ -975,14 +975,13 @@ MP2Result OMP2::compute() {
                     double eps_diff = scf_.orbital_energies_beta(nb_ + a) - scf_.orbital_energies_beta(i);
                     double safe_diff = std::max(std::abs(eps_diff), 1e-4);
                     double J_ia = 0.0;
-                    
                     if (config_.eri_method != "exact") {
                         J_ia = B_ia_P_beta_.row(i * vb_ + a).squaredNorm();
                     } else {
                         auto* g_blk = g_bb_.get_block(0, 0, 0, 0);
                         if (g_blk) J_ia = std::abs((*g_blk)(i, a, i, a));
                     }
-                    diag_H(idx++) = 2.0 * safe_diff + 2.0 * J_ia + level_shift;
+                    diag_H(idx++) = 2.0 * safe_diff + 0.0 + level_shift;
                 }
             }
         }
@@ -1001,13 +1000,11 @@ MP2Result OMP2::compute() {
                 int dim_a = va_ * na_;
                 int dim_b = (is_restricted) ? 0 : (vb_ * nb_);
                 double spin_factor = is_restricted ? 4.0 : 2.0;
-                double ex_factor   = is_restricted ? 2.0 : 1.0;
+                double ex_factor   = is_restricted ? 2.0 : 2.0;
                 int n_aux = (config_.eri_method != "exact") ? scf_.L_mat.cols() : 0;
 
                 if (config_.eri_method == "exact") {
-                    // ========================================================
-                    // 1. BLOK ALPHA-ALPHA (PTR_AA)
-                    // ========================================================
+
                     auto* ptr_aa = g_aa_.get_block(0, 0, 0, 0);
                     if (ptr_aa && dim_a > 0) {
                         Eigen::Map<const Eigen::MatrixXd> kappa_a(p_vec.data(), va_, na_);

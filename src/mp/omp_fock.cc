@@ -255,6 +255,7 @@ void OMP2::build_opdm_beta() {
         Eigen::Map<const Eigen::MatrixXd> T_mat(t_bb_blk->data(), nb_, vb_ * nb_ * vb_);
         G_oo_beta_.noalias() = -0.5 * (T_mat * T_mat.transpose());
         const double* base_bb = t_bb_blk->data();
+        
         #pragma omp parallel
         {
             Eigen::MatrixXd G_vv_local = Eigen::MatrixXd::Zero(vb_, vb_);
@@ -262,9 +263,10 @@ void OMP2::build_opdm_beta() {
             for (int jc = 0; jc < nb_ * vb_; ++jc) {
                 int j = jc % nb_;
                 int c = jc / nb_;
-                
-                size_t offset = j * (nb_ * vb_) + c * (nb_ * vb_ * nb_);
-                Eigen::Map<const Eigen::MatrixXd> M(base_bb + offset, nb_, vb_);
+                size_t offset = j * nb_ + c * (nb_ * nb_ * vb_);
+                Eigen::Map<const Eigen::MatrixXd, 0, Eigen::OuterStride<>> M(
+                    base_bb + offset, nb_, vb_, Eigen::OuterStride<>(nb_ * nb_)
+                );
                 
                 G_vv_local.noalias() += M.transpose() * M;
             }
