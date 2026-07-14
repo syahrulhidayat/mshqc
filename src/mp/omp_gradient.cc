@@ -111,7 +111,7 @@ Eigen::VectorXd OMP2::compute_soscf_step() {
             double J_ia = 0.0;
             
             if (config_.eri_method != "exact") {
-                J_ia = B_ia_P_alpha_.row(a * na_ + i).squaredNorm(); 
+                J_ia = B_ia_P_alpha_.row(i * va_ + a).squaredNorm(); 
             } else {
                 auto* g_blk = g_aa_.get_block(0, 0, 0, 0);
                 if (g_blk) J_ia = std::abs((*g_blk)(i, a, i, a));

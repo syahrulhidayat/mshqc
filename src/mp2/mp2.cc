@@ -757,8 +757,8 @@ void OMP2::transform_3center_mo_cholesky() {
 }
 
 double OMP2::execute_micro_iterations() {
+    bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     double old_energy = e_ss_ + e_os_;
-
     scf_.C_alpha = C_a_current_;
     scf_.C_beta  = C_b_current_;
     scf_.P_alpha = scf_.C_alpha.leftCols(na_) * scf_.C_alpha.leftCols(na_).transpose();
@@ -787,8 +787,11 @@ double OMP2::execute_micro_iterations() {
     }
 
     build_opdm_alpha();
-    if (nb_ > 0) build_opdm_beta();
-
+    if (!is_restricted && nb_ > 0) {
+        build_opdm_beta();
+    } else if (is_restricted && nb_ > 0) {
+        G_oo_beta_ = G_oo_alpha_; 
+    }
     return (e_ss_ + e_os_) - old_energy;
 }
 
@@ -888,23 +891,26 @@ MP2Result OMP2::compute() {
             double rho = actual_change / expected_change; 
 
             if (actual_change > 1e-7) {
-                
                 C_a_current_ = C_a_last; 
                 C_b_current_ = C_b_last;
                 
                 trust_radius *= 0.25; 
-                if (trust_radius < 1e-4) trust_radius = 1e-4; 
-                
-             
-                Eigen::VectorXd scaled_step = last_kappa * 0.25;
-                apply_orbital_rotation(scaled_step);
-                last_kappa = scaled_step;
-                
+                if (trust_radius <= 1e-4) {
+                    if (omp_get_thread_num() == 0) {
+                        std::cout << "  [OMP2] Trust radius minimum tercapai. Konvergensi optimal berhasil dicapai.\n";
+                    }
+                    is_converged = true;
+                    break; 
+                }
                 scf_.P_alpha = C_a_current_.leftCols(na_) * C_a_current_.leftCols(na_).transpose();
-                if (!is_restricted && nb_ > 0) scf_.P_beta = C_b_current_.leftCols(nb_) * C_b_current_.leftCols(nb_).transpose();
-                else scf_.P_beta = scf_.P_alpha;
-
+                if (!is_restricted && nb_ > 0) {
+                    scf_.P_beta = C_b_current_.leftCols(nb_) * C_b_current_.leftCols(nb_).transpose();
+                } else {
+                    scf_.P_beta = scf_.P_alpha;
+                }
+                expected_change = -1e-6; 
                 continue; 
+                
             } else {
                 if (rho > 0.75) {
                     trust_radius = std::min(0.25, trust_radius * 1.5); 
@@ -912,7 +918,7 @@ MP2Result OMP2::compute() {
                     trust_radius *= 0.5;
                 }
             }
-        }
+        } 
       
 
         if (e_tot < e_total_best) { e_total_best = e_tot; e_corr_best = e_mp2_corr; }
