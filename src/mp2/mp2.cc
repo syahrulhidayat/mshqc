@@ -808,6 +808,7 @@ void OMP2::execute_macro_iterations(DIIS& diis_a, DIIS& diis_b, int macro_iter) 
     if (orbital_gradient_.size() != n_params) orbital_gradient_.resize(n_params);
 
     int idx = 0;
+    bool use_sym = (!scf_.irreps_alpha.empty() && scf_.irreps_alpha[0] != -1);
     if (!is_restricted && nb_ > 0) {
         Eigen::MatrixXd wa = 2.0 * F_gen_a_.block(na_, 0, va_, na_);
        
@@ -825,11 +826,11 @@ void OMP2::execute_macro_iterations(DIIS& diis_a, DIIS& diis_b, int macro_iter) 
     } else {
         Eigen::MatrixXd wa = 2.0 * F_gen_a_.block(na_, 0, va_, na_);
         Eigen::MatrixXd wb = 2.0 * F_gen_b_.block(nb_, 0, vb_, nb_);
-        Eigen::MatrixXd w_sym = 0.5 * (wa + wb);
-
-        for (int i = 0; i < na_; ++i) {
-            for (int a = 0; a < va_; ++a) {
-                orbital_gradient_(idx++) = w_sym(a, i);
+        Eigen::MatrixXd w_sym = wa + wb;
+        for (int a = 0; a < va_; ++a) {
+            for (int i = 0; i < na_; ++i) {
+                if (use_sym && (scf_.irreps_alpha[i] ^ scf_.irreps_alpha[na_ + a]) != 0) orbital_gradient_(idx++) = 0.0;
+                else orbital_gradient_(idx++) = w_sym(a, i);
             }
         }
     }
