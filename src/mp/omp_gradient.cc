@@ -6,25 +6,42 @@
 
 namespace mshqc {
 
-// CUT dari mp2.cc dan PASTE ke sini:
 void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd& Z_mat_b) {
     int n_chol = scf_.L_mat.cols();
     Z_mat_a.setZero(va_, na_);
-    if (nb_ > 0) Z_mat_b.setZero(vb_, nb_);
+    bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
+    bool has_beta = (!is_restricted && nb_ > 0 && vb_ > 0);
+
+    if (has_beta) Z_mat_b.setZero(vb_, nb_);
 
     auto* t_aa_blk = t2_aa_.get_block(0,0,0,0);
-    auto* t_ab_blk = (nb_ > 0 && vb_ > 0) ? t2_ab_.get_block(0,0,0,0) : nullptr;
-    auto* t_bb_blk = (nb_ > 0 && vb_ > 0) ? t2_bb_.get_block(0,0,0,0) : nullptr;
+    auto* t_ab_blk = has_beta ? t2_ab_.get_block(0,0,0,0) : nullptr;
+    auto* t_bb_blk = has_beta ? t2_bb_.get_block(0,0,0,0) : nullptr;
+    
+    Eigen::MatrixXd T2_rmp2;
+    if (is_restricted && t_aa_blk) {
+        T2_rmp2 = Eigen::MatrixXd::Zero(na_ * va_, na_ * va_);
+        #pragma omp parallel for collapse(2)
+        for (int i = 0; i < na_; ++i) {
+            for (int a = 0; a < va_; ++a) {
+                for (int j = 0; j < na_; ++j) {
+                    for (int b = 0; b < va_; ++b) {
+                        T2_rmp2(i * va_ + a, j * va_ + b) = 
+                            2.0 * (*t_aa_blk)(i, a, j, b) - 1.0 * (*t_aa_blk)(i, b, j, a);
+                    }
+                }
+            }
+        }
+    }
 
     const int CHUNK_SIZE = 128; 
     using MatrixXdRowMajor = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>;
 
     #pragma omp parallel
     {
-        // PERBAIKAN: Pre-alokasi buffer maksimal di LUAR kalang untuk mencegah Heap Lock!
         Eigen::MatrixXd X_a_buf(na_ * va_, CHUNK_SIZE);
         Eigen::MatrixXd X_b_buf;
-        if (nb_ > 0 && vb_ > 0) X_b_buf.resize(nb_ * vb_, CHUNK_SIZE);
+        if (has_beta) X_b_buf.resize(nb_ * vb_, CHUNK_SIZE);
 
         Eigen::MatrixXd Z_loc_a = Eigen::MatrixXd::Zero(va_, na_);
         Eigen::MatrixXd Z_loc_b = Eigen::MatrixXd::Zero(vb_, nb_);
@@ -36,22 +53,23 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
         for (int P_start = 0; P_start < n_chol; P_start += CHUNK_SIZE) {
             int P_len = std::min(CHUNK_SIZE, n_chol - P_start);
 
-            // PERBAIKAN: Pemetaan dinamis Zero-Allocation menggunakan Eigen::Map
             Eigen::Map<Eigen::MatrixXd> X_a_chunk(X_a_buf.data(), na_ * va_, P_len);
             X_a_chunk.setZero();
             
-            Eigen::Map<Eigen::MatrixXd> X_b_chunk(X_b_buf.data(), (nb_ > 0 && vb_ > 0) ? nb_ * vb_ : 0, P_len);
-            if (nb_ > 0 && vb_ > 0) X_b_chunk.setZero();
+            Eigen::Map<Eigen::MatrixXd> X_b_chunk(X_b_buf.data(), has_beta ? nb_ * vb_ : 0, P_len);
+            if (has_beta) X_b_chunk.setZero();
 
             Eigen::MatrixXd Bia_chunk = B_ia_P_alpha_.middleCols(P_start, P_len);
-
-            // Kontraksi In-the-fly dengan BLAS DGEMM
             if (t_aa_blk) {
-                Eigen::Map<const MatrixXdRowMajor> T2_aa_map(t_aa_blk->data(), na_ * va_, na_ * va_);
-                X_a_chunk.noalias() += T2_aa_map * Bia_chunk;
+                if (is_restricted) {
+                    X_a_chunk.noalias() += T2_rmp2 * Bia_chunk;
+                } else {
+                    Eigen::Map<const MatrixXdRowMajor> T2_aa_map(t_aa_blk->data(), na_ * va_, na_ * va_);
+                    X_a_chunk.noalias() += T2_aa_map * Bia_chunk;
+                }
             }
 
-            if (nb_ > 0 && vb_ > 0) {
+            if (has_beta) {
                 Eigen::MatrixXd Bib_chunk = B_ia_P_beta_.middleCols(P_start, P_len);
                 
                 if (t_ab_blk) {
@@ -66,7 +84,6 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
                 }
             }
 
-            // (Lanjutkan transformasi matriks seperti biasa...)
             for (int p = 0; p < P_len; ++p) {
                 int P_global = P_start + p;
                 Eigen::Map<const Eigen::MatrixXd> B_AO(scf_.L_mat.col(P_global).data(), nbf_, nbf_);
@@ -77,7 +94,7 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
                 Eigen::Map<Eigen::MatrixXd> XT_a(X_a_chunk.col(p).data(), va_, na_);
                 Z_loc_a.noalias() += B_vv_a * XT_a - XT_a * B_oo_a;
 
-                if (nb_ > 0 && vb_ > 0) {
+                if (has_beta) {
                     B_oo_b.noalias() = scf_.C_beta.leftCols(nb_).transpose() * (B_AO * scf_.C_beta.leftCols(nb_));
                     B_vv_b.noalias() = scf_.C_beta.rightCols(vb_).transpose() * (B_AO * scf_.C_beta.rightCols(vb_));
 
@@ -89,7 +106,7 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
         #pragma omp critical
         { 
             Z_mat_a += Z_loc_a; 
-            if (nb_ > 0) Z_mat_b += Z_loc_b;
+            if (has_beta) Z_mat_b += Z_loc_b;
         }
     }
 }

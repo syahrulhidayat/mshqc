@@ -229,10 +229,7 @@ double OMP2::compute_mp2_energy() {
 void OMP2::compute_t2_and_energy_cholesky() {
     double E_ss_aa = 0.0, E_ss_bb = 0.0, E_os = 0.0;
     int nf = n_frozen_;
-    
-    // Deteksi mode Restricted vs Unrestricted
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
-
     t2_aa_.allocate_block(0, 0, 0, 0, na_, va_, na_, va_);
     auto* t_aa_blk = t2_aa_.get_block(0, 0, 0, 0);
 
