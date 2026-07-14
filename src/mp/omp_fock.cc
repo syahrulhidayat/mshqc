@@ -153,7 +153,7 @@ void OMP2::build_opdm_alpha() {
                             }
                         }
                     }
-                    G_oo_alpha_(i, j) = -2.0 * p_oo; 
+                    G_oo_alpha_(i, j) = -1.0 * p_oo;
                 }
             }
             #pragma omp parallel for
@@ -170,7 +170,7 @@ void OMP2::build_opdm_alpha() {
                             }
                         }
                     }
-                    G_vv_alpha_(a, b) = 2.0 * p_vv; 
+                    G_vv_alpha_(a, b) = 1.0 * p_vv;
                 }
             }
         }
@@ -362,19 +362,16 @@ void OMP2::build_generalized_fock() {
                         for (int j=0; j<na_; ++j) {
                             for (int c=0; c<va_; ++c) {
                                 for (int b=0; b<va_; ++b) {
-                                    // PERBAIKAN: Amplitudo spasial T(i,b,j,c) dan T(i,c,j,b)
                                     double tau = 2.0 * (*t_blk)(i, b, j, c) - (*t_blk)(i, c, j, b);
                                     z1 += tau * ovvv(j, c, a, b);
                                 }
                                 for (int k=0; k<na_; ++k) {
-                                    // PERBAIKAN: Amplitudo spasial T(j,a,k,c) dan T(j,c,k,a)
                                     double tau = 2.0 * (*t_blk)(j, a, k, c) - (*t_blk)(j, c, k, a);
                                     z2 += tau * ooov(j, i, k, c);
                                 }
                             }
                         }
-                        // PERBAIKAN: Kalikan dengan 4.0 untuk total spin Lagrangian
-                        Z_mat_a(a, i) = 4.0 * (z1 - z2);
+                        Z_mat_a(a, i) = 2.0 * (z1 - z2);
                     }
                 }
             }
