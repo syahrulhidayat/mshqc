@@ -808,26 +808,29 @@ void OMP2::execute_macro_iterations(DIIS& diis_a, DIIS& diis_b, int macro_iter) 
 
     int idx = 0;
     bool use_sym = (!scf_.irreps_alpha.empty() && scf_.irreps_alpha[0] != -1);
+    
     if (!is_restricted && nb_ > 0) {
         Eigen::MatrixXd wa = 2.0 * F_gen_a_.block(na_, 0, va_, na_);
-       
         for (int i = 0; i < na_; ++i) {
             for (int a = 0; a < va_; ++a) {
-                orbital_gradient_(idx++) = wa(a, i);
+                if (use_sym && (scf_.irreps_alpha[i] ^ scf_.irreps_alpha[na_ + a]) != 0) orbital_gradient_(idx++) = 0.0;
+                else orbital_gradient_(idx++) = wa(a, i);
             }
         }
         Eigen::MatrixXd wb = 2.0 * F_gen_b_.block(nb_, 0, vb_, nb_);
         for (int i = 0; i < nb_; ++i) {
             for (int b = 0; b < vb_; ++b) {
-                orbital_gradient_(idx++) = wb(b, i);
+                if (use_sym && (scf_.irreps_beta[i] ^ scf_.irreps_beta[nb_ + b]) != 0) orbital_gradient_(idx++) = 0.0;
+                else orbital_gradient_(idx++) = wb(b, i);
             }
         }
     } else {
         Eigen::MatrixXd wa = 2.0 * F_gen_a_.block(na_, 0, va_, na_);
         Eigen::MatrixXd wb = 2.0 * F_gen_b_.block(nb_, 0, vb_, nb_);
         Eigen::MatrixXd w_sym = wa + wb;
-        for (int a = 0; a < va_; ++a) {
-            for (int i = 0; i < na_; ++i) {
+        
+        for (int i = 0; i < na_; ++i) {
+            for (int a = 0; a < va_; ++a) {
                 if (use_sym && (scf_.irreps_alpha[i] ^ scf_.irreps_alpha[na_ + a]) != 0) orbital_gradient_(idx++) = 0.0;
                 else orbital_gradient_(idx++) = w_sym(a, i);
             }
