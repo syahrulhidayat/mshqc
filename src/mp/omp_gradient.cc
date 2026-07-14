@@ -173,7 +173,7 @@ Eigen::VectorXd OMP2::compute_soscf_step() {
                 auto* g_blk = g_aa_.get_block(0, 0, 0, 0);
                 if (g_blk) J_ia = std::abs((*g_blk)(i, a, i, a));
             }
-            double diag_J_a = is_restricted ? (spin_factor * J_ia) : 0.0;
+            double diag_J_a = spin_factor * J_ia;
             hessian_diag_(idx++) = spin_factor * safe_diff + diag_J_a + level_shift; 
         }
     }
