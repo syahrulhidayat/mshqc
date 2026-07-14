@@ -173,7 +173,7 @@ Eigen::VectorXd OMP2::compute_soscf_step() {
                 auto* g_blk = g_aa_.get_block(0, 0, 0, 0);
                 if (g_blk) J_ia = std::abs((*g_blk)(i, a, i, a));
             }
-            double diag_J_a = spin_factor * J_ia;
+            double diag_J_a = is_restricted ? (spin_factor * J_ia) : 0.0;
             hessian_diag_(idx++) = spin_factor * safe_diff + diag_J_a + level_shift; 
         }
     }
@@ -205,31 +205,38 @@ Eigen::VectorXd OMP2::compute_soscf_step() {
 }
 void OMP2::apply_orbital_rotation(const Eigen::VectorXd& kappa) {
     if (kappa.norm() < 1e-12) return;
-
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
+    int idx = 0;
 
-    auto compute_exact_unitary = [](const Eigen::VectorXd& k_vec, int n_occ, int n_vir) -> Eigen::MatrixXd {
-        int n_mo = n_occ + n_vir;
-        Eigen::MatrixXd K_full = Eigen::MatrixXd::Zero(n_mo, n_mo);
-        Eigen::Map<const Eigen::MatrixXd> kappa_mat(k_vec.data(), n_vir, n_occ);
-        K_full.block(n_occ, 0, n_vir, n_occ) = kappa_mat;
-        K_full.block(0, n_occ, n_occ, n_vir) = -kappa_mat.transpose();
-        return K_full.exp(); 
-    };
-    int len_a = na_ * va_;
-    Eigen::VectorXd kappa_a = kappa.head(len_a);
-    Eigen::MatrixXd U_a = compute_exact_unitary(kappa_a, na_, va_);
-    C_a_current_ = C_a_current_ * U_a;
+    int n_mo_a = na_ + va_;
+    Eigen::MatrixXd K_a = Eigen::MatrixXd::Zero(n_mo_a, n_mo_a);
 
-    if (nb_ > 0 && vb_ > 0) {
-        if (!is_restricted) {
-            int len_b = nb_ * vb_;
-            Eigen::VectorXd kappa_b = kappa.segment(len_a, len_b);
-            Eigen::MatrixXd U_b = compute_exact_unitary(kappa_b, nb_, vb_);
-            C_b_current_ = C_b_current_ * U_b;
-        } else {
-            C_b_current_ = C_b_current_ * U_a;
+    for (int i = 0; i < na_; ++i) {
+        for (int a = 0; a < va_; ++a) {
+            double val = kappa(idx++);
+            K_a(na_ + a, i) = val;
+            K_a(i, na_ + a) = -val;
         }
+    }
+    C_a_current_ = C_a_current_ * K_a.exp();
+
+    int n_mo_b = nb_ + vb_;
+    Eigen::MatrixXd K_b = Eigen::MatrixXd::Zero(n_mo_b, n_mo_b);
+
+    if (!is_restricted && nb_ > 0) {
+        for (int i = 0; i < nb_; ++i) {
+            for (int a = 0; a < vb_; ++a) {
+                double val = kappa(idx++);
+                K_b(nb_ + a, i) = val;
+                K_b(i, nb_ + a) = -val;
+            }
+        }
+    } else if (is_restricted && nb_ > 0) {
+        K_b = K_a; 
+    }
+
+    if (nb_ > 0) {
+        C_b_current_ = C_b_current_ * K_b.exp();
     }
 }
 } // namespace mshqc
