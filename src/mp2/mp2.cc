@@ -565,7 +565,6 @@ void OMP2::init_fast_integrals() {
     }
 }
 
-
 void OMP2::transform_integrals() {
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     scf_.irreps_alpha.assign(nbf_, 0);
