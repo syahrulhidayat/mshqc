@@ -682,6 +682,10 @@ void OMP2::build_generalized_fock() {
             }
         }
     }
+    if (!is_restricted) {
+        Z_mat_a *= 0.5;
+        Z_mat_b *= 0.5;
+    }
     F_gen_a_ = F_HF_mo_a + G_gamma_mo_a;
     if (na_ > 0 && va_ > 0) {
         Eigen::MatrixXd F_HF_vo_a = F_HF_mo_a.block(na_, 0, va_, na_); 
