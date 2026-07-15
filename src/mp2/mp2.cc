@@ -666,75 +666,34 @@ void OMP2::pseudocanonicalize() {
     Eigen::MatrixXd F_ao_a, F_ao_b;
     build_fock_fast(scf_.P_alpha, scf_.P_beta, F_ao_a, F_ao_b);
 
-    auto diag_block_by_irrep = [&](const Eigen::MatrixXd& F_ao, Eigen::MatrixXd& C, Eigen::VectorXd& eps, int nocc, int nvir, const std::vector<int>& irreps) {
+    auto diag_block = [&](const Eigen::MatrixXd& F_ao, Eigen::MatrixXd& C, Eigen::VectorXd& eps, int nocc, int nvir) {
+     
+        Eigen::MatrixXd C_occ = C.leftCols(nocc);
+        Eigen::MatrixXd C_vir = C.rightCols(nvir);
 
-        Eigen::MatrixXd F_mo = C.transpose() * F_ao * C;
-        Eigen::MatrixXd U = Eigen::MatrixXd::Zero(nbf_, nbf_);
-        
-        // Ekstraksi blok ruang orbital berdasarkan irrep
-        auto occ_spaces = get_irrep_spaces(irreps, 0, nocc);
-        auto vir_spaces = get_irrep_spaces(irreps, nocc, nvir);
+        Eigen::MatrixXd F_oo(nocc, nocc);
+        Eigen::MatrixXd F_vv(nvir, nvir);
+        F_oo.noalias() = C_occ.transpose() * (F_ao * C_occ);
+        F_vv.noalias() = C_vir.transpose() * (F_ao * C_vir);
 
-        // 1. Diagonalisasi per-blok irrep untuk ruang occupied
-        for (const auto& space : occ_spaces) {
-            if (space.size == 0) continue;
-            Eigen::MatrixXd F_sub = F_mo.block(space.offset, space.offset, space.size, space.size);
-            Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(F_sub);
-            
-            U.block(space.offset, space.offset, space.size, space.size) = es.eigenvectors();
-            eps.segment(space.offset, space.size) = es.eigenvalues();
-        }
-        
-       
-        for (const auto& space : vir_spaces) {
-            if (space.size == 0) continue;
-            int off = nocc + space.offset;
-            Eigen::MatrixXd F_sub = F_mo.block(off, off, space.size, space.size);
-            Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(F_sub);
-            
-            U.block(off, off, space.size, space.size) = es.eigenvectors();
-            eps.segment(off, space.size) = es.eigenvalues();
-        }
-        
-        C = C * U;
+        Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_o(F_oo);
+        Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_v(F_vv);
+        C.leftCols(nocc).noalias() = C_occ * es_o.eigenvectors();
+        C.rightCols(nvir).noalias() = C_vir * es_v.eigenvectors();
+
+        // 5. Pembaruan energi orbital
+        eps.resize(nocc + nvir);
+        eps.head(nocc) = es_o.eigenvalues();
+        eps.tail(nvir) = es_v.eigenvalues();
     };
-
-    bool use_sym = (!scf_.irreps_alpha.empty() && scf_.irreps_alpha[0] != -1);
-    
-    if (use_sym) {
-       
-        diag_block_by_irrep(F_ao_a, scf_.C_alpha, scf_.orbital_energies_alpha, na_, va_, scf_.irreps_alpha);
-        if (nb_ > 0 && vb_ > 0) {
-            diag_block_by_irrep(F_ao_b, scf_.C_beta, scf_.orbital_energies_beta, nb_, vb_, scf_.irreps_beta);
-        }
-    } else {
-        auto diag_block = [&](const Eigen::MatrixXd& F_ao, Eigen::MatrixXd& C, Eigen::VectorXd& eps, int nocc, int nvir) {
-            Eigen::MatrixXd F_mo = C.transpose() * F_ao * C;
-            Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_o(F_mo.topLeftCorner(nocc, nocc));
-            Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_v(F_mo.bottomRightCorner(nvir, nvir));
-            
-            Eigen::MatrixXd U = Eigen::MatrixXd::Zero(nbf_, nbf_);
-            U.topLeftCorner(nocc, nocc) = es_o.eigenvectors();
-            U.bottomRightCorner(nvir, nvir) = es_v.eigenvectors();
-            
-            C = C * U;
-            eps.resize(nbf_);
-            eps.head(nocc) = es_o.eigenvalues();
-            eps.tail(nvir) = es_v.eigenvalues();
-        };
-        
-        diag_block(F_ao_a, scf_.C_alpha, scf_.orbital_energies_alpha, na_, va_);
-        if (nb_ > 0 && vb_ > 0) {
-            diag_block(F_ao_b, scf_.C_beta, scf_.orbital_energies_beta, nb_, vb_);
-        }
-    }
-    
+    diag_block(F_ao_a, scf_.C_alpha, scf_.orbital_energies_alpha, na_, va_);
     scf_.P_alpha.noalias() = scf_.C_alpha.leftCols(na_) * scf_.C_alpha.leftCols(na_).transpose();
-    if (nb_ > 0) {
-        scf_.P_beta.noalias()  = scf_.C_beta.leftCols(nb_)  * scf_.C_beta.leftCols(nb_).transpose();
+
+    if (nb_ > 0 && vb_ > 0) {
+        diag_block(F_ao_b, scf_.C_beta, scf_.orbital_energies_beta, nb_, vb_);
+        scf_.P_beta.noalias() = scf_.C_beta.leftCols(nb_) * scf_.C_beta.leftCols(nb_).transpose();
     }
 }
-
 
 
 void OMP2::transform_3center_mo_cholesky() {
