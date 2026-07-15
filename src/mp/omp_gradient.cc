@@ -40,12 +40,13 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
                 for (int a = 0; a < va_; ++a) {
                     for (int j = 0; j < na_; ++j) {
                         for (int b = 0; b < va_; ++b) {
-                            T2_aa_mat(i * va_ + a, j * va_ + b) = 0.5 * (*t_aa_blk)(i, a, j, b);
+                            T2_aa_mat(i * va_ + a, j * va_ + b) = (*t_aa_blk)(i, a, j, b);
                         }
                     }
                 }
             }
         }
+        
         if (t_ab_blk) {
             T2_ab_mat = Eigen::MatrixXd::Zero(na_ * va_, nb_ * vb_);
             #pragma omp parallel for collapse(2)
@@ -59,6 +60,7 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
                 }
             }
         }
+        
         if (t_bb_blk) {
             T2_bb_mat = Eigen::MatrixXd::Zero(nb_ * vb_, nb_ * vb_);
             #pragma omp parallel for collapse(2)
@@ -66,14 +68,13 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
                 for (int a = 0; a < vb_; ++a) {
                     for (int j = 0; j < nb_; ++j) {
                         for (int b = 0; b < vb_; ++b) {
-                            T2_bb_mat(i * vb_ + a, j * vb_ + b) = 0.5 * (*t_bb_blk)(i, j, a, b);
+                            T2_bb_mat(i * vb_ + a, j * vb_ + b) = (*t_bb_blk)(i, j, a, b);
                         }
                     }
                 }
             }
         }
     }
-
     const int CHUNK_SIZE = 128; 
 
     #pragma omp parallel
