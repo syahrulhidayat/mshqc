@@ -1139,6 +1139,15 @@ MP2Result OMP2::compute() {
                             }
                         }
                         for(int t = 0; t < n_threads; ++t) Hp_K_mat_a += local_H_a[t];
+                        Eigen::VectorXd Hp_J_a_corrected = Hp_J_a;
+                        int idx_a = 0;
+                        for (int i = 0; i < na_; ++i) {
+                            for (int a = 0; a < va_; ++a) {
+                                double J_ia = B_ia_P_alpha_.row(i * va_ + a).squaredNorm();
+                                Hp_J_a_corrected(idx_a) -= J_ia * kappa_a_vec(idx_a);
+                                idx_a++;
+                            }
+                        }
                         Hp.head(dim_a) += spin_factor * Hp_J_a - ex_factor * Eigen::Map<Eigen::VectorXd>(Hp_K_mat_a.data(), dim_a);
                     }
                     
@@ -1165,6 +1174,15 @@ MP2Result OMP2::compute() {
                             }
                         }
                         for(int t = 0; t < n_threads; ++t) Hp_K_mat_b += local_H_b[t];
+                        Eigen::VectorXd Hp_J_b_corrected = Hp_J_b;
+                        int idx_b = 0;
+                        for (int i = 0; i < nb_; ++i) {
+                            for (int a = 0; a < vb_; ++a) {
+                                double J_ia = B_ia_P_beta_.row(i * vb_ + a).squaredNorm();
+                                Hp_J_b_corrected(idx_b) -= J_ia * kappa_b_vec(idx_b);
+                                idx_b++;
+                            }
+                        }
                         Hp.tail(dim_b) += spin_factor * Hp_J_b - ex_factor * Eigen::Map<Eigen::VectorXd>(Hp_K_mat_b.data(), dim_b);
                     }
                 }
@@ -1183,7 +1201,12 @@ MP2Result OMP2::compute() {
                 lbfgs_engine.reset();
                 kappa = -orbital_gradient_.cwiseQuotient(diag_H); 
             }
-            actual_step = kappa * 0.15;
+            double step_norm = kappa.norm();
+            if (step_norm > trust_radius) {
+                actual_step = kappa * (trust_radius / step_norm);
+            } else {
+                actual_step = kappa;
+            }
             lbfgs_engine.s_prev = actual_step;
         }
 
