@@ -114,12 +114,9 @@ jobs:
       shell: bash -el {0}
       run: |
         export CC="ccache $CONDA_PREFIX/bin/x86_64-conda-linux-gnu-cc"
-        export CXX="ccache $CONDA_PREFIX/bin/x86_64-conda-linux-gnu-c++"
-        
-        # Tambahkan instruksi include untuk libcint kustom
+        export CXX="ccache $CONDA_PREFIX/bin/x86_64-conda-linux-gnu-c++" 
         export CXXFLAGS="-std=c++17 -fopenmp -O3 -mavx2 -mfma -mno-avx512f -mtune=generic -DEIGEN_USE_MKL_ALL -DNDEBUG -I$HOME/tblis_install/include -I$HOME/libcint_install/include -I$CONDA_PREFIX/include"
-        
-        # Tambahkan path instalasi libcint agar ditemukan oleh CMake mshqc
+        export LDFLAGS="-lquadmath"   
         export CMAKE_PREFIX_PATH=$HOME/libcint_install:$HOME/tblis_install:$CONDA_PREFIX
         export TBLIS_DIR=$HOME/tblis_install
         
