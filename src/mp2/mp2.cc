@@ -1002,7 +1002,7 @@ MP2Result OMP2::compute() {
                     if (g_blk) J_ia = std::abs((*g_blk)(i, a, i, a));
                 }
                 double diag_J_a = is_restricted ? (spin_factor * J_ia) : 0.0;
-                diag_H(idx++) = 4.0 * spin_factor * 8.0 * safe_diff + diag_J_a + level_shift; 
+                diag_H(idx++) = spin_factor * safe_diff + diag_J_a + level_shift;  
             }
         }
         
@@ -1019,7 +1019,7 @@ MP2Result OMP2::compute() {
                         auto* g_blk = g_bb_.get_block(0, 0, 0, 0);
                         if (g_blk) J_ia = std::abs((*g_blk)(i, a, i, a));
                     }
-                    diag_H(idx++) = 4.0 * safe_diff + 8.0 * J_ia  + level_shift;
+                    diag_H(idx++) = 2.0 * safe_diff + 0.0  + level_shift;
                 }
             }
         }
