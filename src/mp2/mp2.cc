@@ -1019,7 +1019,7 @@ MP2Result OMP2::compute() {
                         auto* g_blk = g_bb_.get_block(0, 0, 0, 0);
                         if (g_blk) J_ia = std::abs((*g_blk)(i, a, i, a));
                     }
-                    diag_H(idx++) = 2.0 * safe_diff + 0.0 + level_shift;
+                    diag_H(idx++) = 2.0 * safe_diff + 2.0 * J_ia  + level_shift;
                 }
             }
         }
