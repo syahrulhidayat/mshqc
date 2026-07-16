@@ -567,10 +567,6 @@ void OMP2::init_fast_integrals() {
 
 void OMP2::transform_integrals() {
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
-    scf_.irreps_alpha.assign(nbf_, 0);
-    if (!is_restricted && nb_ > 0) {
-        scf_.irreps_beta.assign(nbf_, 0);
-    }
 
     if (config_.eri_method == "exact") {
         const auto& eri_ao = integrals_->compute_eri();
@@ -947,7 +943,6 @@ MP2Result OMP2::compute() {
         double level_shift = (grad_norm > 0.1) ? 0.05 : 0.005;
         double spin_factor = is_restricted ? 4.0 : 2.0;
         
-  
         for (int i = 0; i < na_; ++i) {             
             for (int a = 0; a < va_; ++a) {        
                 double eps_diff = scf_.orbital_energies_alpha(na_ + a) - scf_.orbital_energies_alpha(i);
@@ -960,12 +955,10 @@ MP2Result OMP2::compute() {
                     auto* g_blk = g_aa_.get_block(0, 0, 0, 0);
                     if (g_blk) J_ia = std::abs((*g_blk)(i, a, i, a));
                 }
-                double diag_J_a = is_restricted ? (spin_factor * J_ia) : 0.0;
+                double diag_J_a = spin_factor * J_ia;
                 diag_H(idx++) = spin_factor * safe_diff + diag_J_a + level_shift;  
             }
         }
-        
-      
         if (!is_restricted && nb_ > 0) {
             for (int i = 0; i < nb_; ++i) {         
                 for (int a = 0; a < vb_; ++a) {    
@@ -978,7 +971,7 @@ MP2Result OMP2::compute() {
                         auto* g_blk = g_bb_.get_block(0, 0, 0, 0);
                         if (g_blk) J_ia = std::abs((*g_blk)(i, a, i, a));
                     }
-                    diag_H(idx++) = 2.0 * safe_diff + 0.0  + level_shift;
+                    diag_H(idx++) = 2.0 * safe_diff + 2.0 * J_ia + level_shift; // Ubah 0.0 menjadi 2.0 * J_ia
                 }
             }
         }
@@ -1107,7 +1100,7 @@ MP2Result OMP2::compute() {
                                 idx_a++;
                             }
                         }
-                        Hp.head(dim_a) += spin_factor * Hp_J_a - ex_factor * Eigen::Map<Eigen::VectorXd>(Hp_K_mat_a.data(), dim_a);
+                        Hp.head(dim_a) += spin_factor * Hp_J_a_corrected - ex_factor * Eigen::Map<Eigen::VectorXd>(Hp_K_mat_a.data(), dim_a);
                     }
                     
                     if (!is_restricted && dim_b > 0) {
@@ -1142,7 +1135,7 @@ MP2Result OMP2::compute() {
                                 idx_b++;
                             }
                         }
-                        Hp.tail(dim_b) += spin_factor * Hp_J_b - ex_factor * Eigen::Map<Eigen::VectorXd>(Hp_K_mat_b.data(), dim_b);
+                        Hp.tail(dim_b) += spin_factor * Hp_J_b_corrected - ex_factor * Eigen::Map<Eigen::VectorXd>(Hp_K_mat_b.data(), dim_b);
                     }
                 }
                 return Hp;

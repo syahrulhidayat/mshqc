@@ -10,6 +10,7 @@ void OMP2::compute_t2_amplitudes() {
     t2_aa_.clear(); t2_bb_.clear(); t2_ab_.clear();
     int nf = n_frozen_;
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
+    constexpr double sigma_sq = 1e-20; 
 
     auto occ_spaces_a = get_irrep_spaces(scf_.irreps_alpha, 0, na_);
     auto vir_spaces_a = get_irrep_spaces(scf_.irreps_alpha, na_, va_);
@@ -50,12 +51,8 @@ void OMP2::compute_t2_amplitudes() {
                                                 
                                                 double val = (*g_blk)(di, da, dj, db);
                                                 if (!is_restricted) val -= (*g_blk_ex)(di, db, dj, da);
-
-                                                if (std::abs(den) < 1e-12) {
-                                                    (*t_blk)(di, da, dj, db) = 0.0; 
-                                                } else {
-                                                    (*t_blk)(di, da, dj, db) = val / den; 
-                                                }
+                                                double reg_den = den / (den * den + sigma_sq);
+                                                (*t_blk)(di, da, dj, db) = val * reg_den;
                                             }
                                         }
                                     }
@@ -75,15 +72,17 @@ void OMP2::compute_t2_amplitudes() {
             auto* t_bb_blk = t2_bb_.get_block(0,0,0,0);
             if (t_bb_blk) t_bb_blk->setZero();
 
-            for(int i = nf; i < nb_; ++i) for(int j = nf; j < nb_; ++j) {
-                double e_ij = scf_.orbital_energies_beta(i) + scf_.orbital_energies_beta(j);
-                for(int a=0; a<vb_; ++a) {
-                    double den_a = e_ij - scf_.orbital_energies_beta(nb_+a);
-                    for(int b=0; b<vb_; ++b) {
-                        double den = den_a - scf_.orbital_energies_beta(nb_+b);
-                        double val = (*g_bb_blk)(i, a, j, b) - (*g_bb_blk)(i, b, j, a);
-                        double safe_den = (std::abs(den) < 1e-12) ? std::copysign(1e-12, den) : den;
-                        (*t_bb_blk)(i, j, a, b) = val / safe_den;
+            for(int i = nf; i < nb_; ++i) {
+                for(int j = nf; j < nb_; ++j) {
+                    double e_ij = scf_.orbital_energies_beta(i) + scf_.orbital_energies_beta(j);
+                    for(int a=0; a<vb_; ++a) {
+                        double den_a = e_ij - scf_.orbital_energies_beta(nb_+a);
+                        for(int b=0; b<vb_; ++b) {
+                            double den = den_a - scf_.orbital_energies_beta(nb_+b);
+                            double val = (*g_bb_blk)(i, a, j, b) - (*g_bb_blk)(i, b, j, a);
+                            double reg_den = den / (den * den + sigma_sq);
+                            (*t_bb_blk)(i, j, a, b) = val * reg_den;
+                        }
                     }
                 }
             }
@@ -95,14 +94,16 @@ void OMP2::compute_t2_amplitudes() {
             auto* t_ab_blk = t2_ab_.get_block(0,0,0,0);
             if (t_ab_blk) t_ab_blk->setZero(); 
 
-            for(int i = nf; i < na_; ++i) for(int j = nf; j < nb_; ++j) {
-                double e_ij = scf_.orbital_energies_alpha(i) + scf_.orbital_energies_beta(j);
-                for(int a=0; a<va_; ++a) {
-                    double den_a = e_ij - scf_.orbital_energies_alpha(na_+a);
-                    for(int b=0; b<vb_; ++b) {
-                        double den = den_a - scf_.orbital_energies_beta(nb_+b);
-                        double safe_den = (std::abs(den) < 1e-12) ? std::copysign(1e-12, den) : den;
-                        (*t_ab_blk)(i, j, a, b) = (*g_ab_blk)(i, a, j, b) / safe_den;
+            for(int i = nf; i < na_; ++i) {
+                for(int j = nf; j < nb_; ++j) {
+                    double e_ij = scf_.orbital_energies_alpha(i) + scf_.orbital_energies_beta(j);
+                    for(int a=0; a<va_; ++a) {
+                        double den_a = e_ij - scf_.orbital_energies_alpha(na_+a);
+                        for(int b=0; b<vb_; ++b) {
+                            double den = den_a - scf_.orbital_energies_beta(nb_+b);
+                            double reg_den = den / (den * den + sigma_sq);
+                            (*t_ab_blk)(i, j, a, b) = (*g_ab_blk)(i, a, j, b) * reg_den;
+                        }
                     }
                 }
             }
