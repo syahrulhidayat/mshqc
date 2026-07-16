@@ -913,8 +913,15 @@ MP2Result OMP2::compute() {
                 } else if (rho < 0.25) {
                     trust_radius *= 0.5;
                 }
+                if (trust_radius <= 1e-5) {
+                    if (omp_get_thread_num() == 0) {
+                        std::cout << "  [OMP2] Trust radius minimum tercapai. Konvergensi optimal berhasil dicapai.\n";
+                    }
+                    is_converged = true;
+                    break;
+                }
             }
-        } 
+        }
       
 
         if (e_tot < e_total_best) { e_total_best = e_tot; e_corr_best = e_mp2_corr; }
@@ -1138,9 +1145,34 @@ MP2Result OMP2::compute() {
                         Hp.tail(dim_b) += spin_factor * Hp_J_b_corrected - ex_factor * Eigen::Map<Eigen::VectorXd>(Hp_K_mat_b.data(), dim_b);
                     }
                 }
+                bool use_sym = (!scf_.irreps_alpha.empty() && scf_.irreps_alpha[0] != -1);
+                if (use_sym) {
+                    int idx_sym = 0;
+                    if (!is_restricted && dim_b > 0) {
+                        for (int i = 0; i < na_; ++i) {
+                            for (int a = 0; a < va_; ++a) {
+                                if ((scf_.irreps_alpha[i] ^ scf_.irreps_alpha[na_ + a]) != 0) Hp(idx_sym) = 0.0;
+                                idx_sym++;
+                            }
+                        }
+                        for (int i = 0; i < nb_; ++i) {
+                            for (int b = 0; b < vb_; ++b) {
+                                if ((scf_.irreps_beta[i] ^ scf_.irreps_beta[nb_ + b]) != 0) Hp(idx_sym) = 0.0;
+                                idx_sym++;
+                            }
+                        }
+                    } else {
+                        for (int i = 0; i < na_; ++i) {
+                            for (int a = 0; a < va_; ++a) {
+                                if ((scf_.irreps_alpha[i] ^ scf_.irreps_alpha[na_ + a]) != 0) Hp(idx_sym) = 0.0;
+                                idx_sym++;
+                            }
+                        }
+                    }
+                }
+
                 return Hp;
             };
-            
             mshqc::gradient::TrustRegionResult step_info = soscf_engine.solve(orbital_gradient_, diag_H, trust_radius, compute_hessian_vector);
             actual_step = step_info.step;
             
