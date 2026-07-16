@@ -388,8 +388,9 @@ void OMP2::build_generalized_fock() {
             const Eigen::MatrixXd& Ca_o = scf_.C_alpha.leftCols(na_);
             const Eigen::MatrixXd& Ca_v = scf_.C_alpha.rightCols(va_);
 
-            auto occ_spaces_a = get_irrep_spaces(scf_.irreps_alpha, 0, na_);
-            auto vir_spaces_a = get_irrep_spaces(scf_.irreps_alpha, na_, va_);
+            std::vector<int> dummy_irreps(nbf_, 0);
+            auto occ_spaces_a = get_irrep_spaces(dummy_irreps, 0, na_);
+            auto vir_spaces_a = get_irrep_spaces(dummy_irreps, na_, va_);
 
             auto ovvv_blk = integrals::ERITransformer::transform_ovvv_blocked(eri_ao, Ca_o, Ca_v, occ_spaces_a, vir_spaces_a, nbf_);
             auto ooov_blk = integrals::ERITransformer::transform_ooov_blocked(eri_ao, Ca_o, Ca_v, occ_spaces_a, vir_spaces_a, nbf_);

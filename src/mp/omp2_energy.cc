@@ -12,8 +12,9 @@ void OMP2::compute_t2_amplitudes() {
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     constexpr double sigma_sq = 1e-20; 
 
-    auto occ_spaces_a = get_irrep_spaces(scf_.irreps_alpha, 0, na_);
-    auto vir_spaces_a = get_irrep_spaces(scf_.irreps_alpha, na_, va_);
+    std::vector<int> dummy_irreps(nbf_, 0);
+    auto occ_spaces_a = get_irrep_spaces(dummy_irreps, 0, na_);
+    auto vir_spaces_a = get_irrep_spaces(dummy_irreps, na_, va_);
 
     for (const auto& o1 : occ_spaces_a) {
         if (o1.size == 0) continue; 
@@ -115,8 +116,9 @@ double OMP2::compute_mp2_energy() {
     int nf = n_frozen_;
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
 
-    auto occ_spaces_a = get_irrep_spaces(scf_.irreps_alpha, 0, na_);
-    auto vir_spaces_a = get_irrep_spaces(scf_.irreps_alpha, na_, va_);
+    std::vector<int> dummy_irreps(nbf_, 0);
+    auto occ_spaces_a = get_irrep_spaces(dummy_irreps, 0, na_);
+    auto vir_spaces_a = get_irrep_spaces(dummy_irreps, na_, va_);
 
     if (is_restricted) {
         double E_corr = 0.0;
