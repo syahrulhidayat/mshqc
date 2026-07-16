@@ -1151,20 +1151,26 @@ MP2Result OMP2::compute() {
                     if (!is_restricted && dim_b > 0) {
                         for (int i = 0; i < na_; ++i) {
                             for (int a = 0; a < va_; ++a) {
-                                if ((scf_.irreps_alpha[i] ^ scf_.irreps_alpha[na_ + a]) != 0) Hp(idx_sym) = 0.0;
+                                if ((scf_.irreps_alpha[i] ^ scf_.irreps_alpha[na_ + a]) != 0) {
+                                    Hp(idx_sym) = diag_H(idx_sym) * p_vec(idx_sym);
+                                }
                                 idx_sym++;
                             }
                         }
                         for (int i = 0; i < nb_; ++i) {
                             for (int b = 0; b < vb_; ++b) {
-                                if ((scf_.irreps_beta[i] ^ scf_.irreps_beta[nb_ + b]) != 0) Hp(idx_sym) = 0.0;
+                                if ((scf_.irreps_beta[i] ^ scf_.irreps_beta[nb_ + b]) != 0) {
+                                    Hp(idx_sym) = diag_H(idx_sym) * p_vec(idx_sym);
+                                }
                                 idx_sym++;
                             }
                         }
                     } else {
                         for (int i = 0; i < na_; ++i) {
                             for (int a = 0; a < va_; ++a) {
-                                if ((scf_.irreps_alpha[i] ^ scf_.irreps_alpha[na_ + a]) != 0) Hp(idx_sym) = 0.0;
+                                if ((scf_.irreps_alpha[i] ^ scf_.irreps_alpha[na_ + a]) != 0) {
+                                    Hp(idx_sym) = diag_H(idx_sym) * p_vec(idx_sym);
+                                }
                                 idx_sym++;
                             }
                         }
