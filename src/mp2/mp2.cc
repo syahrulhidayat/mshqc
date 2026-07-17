@@ -871,6 +871,9 @@ MP2Result OMP2::compute() {
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     bool step_rejected = false;
 
+    // [TAMBAHAN 1]: Deklarasi flag tepat sebelum loop while
+    bool step_rejected = false; 
+
     while (macro_iter < config_.max_iterations) {
         scf_.C_alpha = C_a_current_;
         scf_.C_beta  = C_b_current_;
@@ -886,7 +889,8 @@ MP2Result OMP2::compute() {
         double e_mp2_corr = get_correlation_energy(); 
         double e_tot = e_scf + e_mp2_corr;
 
-        if (macro_iter > 0) {
+        // [MODIFIKASI]: Tambahkan && !step_rejected pada kondisi ini
+        if (macro_iter > 0 && !step_rejected) {
             double actual_change = e_tot - e_total_last;
             double rho = actual_change / expected_change; 
 
@@ -909,6 +913,9 @@ MP2Result OMP2::compute() {
                     scf_.P_beta = scf_.P_alpha;
                 }
                 expected_change = -1e-6; 
+
+                // [TAMBAHAN 2]: Set flag true sebelum perintah continue
+                step_rejected = true;
                 continue; 
                 
             } else {
@@ -926,6 +933,7 @@ MP2Result OMP2::compute() {
                 }
             }
         }
+        step_rejected = false;
 
         if (e_tot < e_total_best) { e_total_best = e_tot; e_corr_best = e_mp2_corr; }
         
