@@ -870,10 +870,6 @@ MP2Result OMP2::compute() {
     int macro_iter = 0;
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     bool step_rejected = false;
-
-    // [TAMBAHAN 1]: Deklarasi flag tepat sebelum loop while
-    bool step_rejected = false; 
-
     while (macro_iter < config_.max_iterations) {
         scf_.C_alpha = C_a_current_;
         scf_.C_beta  = C_b_current_;
