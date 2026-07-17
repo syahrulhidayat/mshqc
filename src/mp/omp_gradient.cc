@@ -162,8 +162,8 @@ Eigen::VectorXd OMP2::compute_soscf_step() {
     
     double spin_factor = is_restricted ? 4.0 : 2.0;
 
-    for (int i = 0; i < na_; ++i) {
-        for (int a = 0; a < va_; ++a) {
+    for (int a = 0; a < va_; ++a) {
+        for (int i = 0; i < na_; ++i) {
             double eps_diff = scf_.orbital_energies_alpha(na_ + a) - scf_.orbital_energies_alpha(i);
             double safe_diff = std::max(std::abs(eps_diff), 1e-4);
             double J_ia = 0.0;
@@ -174,17 +174,23 @@ Eigen::VectorXd OMP2::compute_soscf_step() {
                 auto* g_blk = g_aa_.get_block(0, 0, 0, 0);
                 if (g_blk) J_ia = std::abs((*g_blk)(i, a, i, a));
             }
-            double diag_J_a = (spin_factor - 2.0) * J_ia; 
-            hessian_diag_(idx++) = spin_factor * safe_diff + diag_J_a + level_shift; 
+            hessian_diag_(idx++) = spin_factor * safe_diff + 2.0 * spin_factor * J_ia + level_shift; 
         }
     }
 
     if (!is_restricted && nb_ > 0) {
-        for (int i = 0; i < nb_; ++i) {
-            for (int a = 0; a < vb_; ++a) {
+        for (int a = 0; a < vb_; ++a) {
+            for (int i = 0; i < nb_; ++i) {
                 double eps_diff = scf_.orbital_energies_beta(nb_ + a) - scf_.orbital_energies_beta(i);
                 double safe_diff = std::max(std::abs(eps_diff), 1e-4);
-                hessian_diag_(idx++) = 2.0 * safe_diff + 0.0 + level_shift;
+                double J_ia = 0.0;
+                if (config_.eri_method != "exact") {
+                    J_ia = B_ia_P_beta_.row(i * vb_ + a).squaredNorm();
+                } else {
+                    auto* g_blk = g_bb_.get_block(0, 0, 0, 0);
+                    if (g_blk) J_ia = std::abs((*g_blk)(i, a, i, a));
+                }
+                hessian_diag_(idx++) = 2.0 * safe_diff + 4.0 * J_ia + level_shift;
             }
         }
     }
