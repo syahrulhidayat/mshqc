@@ -952,36 +952,20 @@ MP2Result OMP2::compute() {
         int idx = 0;
         double level_shift = (grad_norm > 0.1) ? 0.05 : 0.005;
         double spin_factor = is_restricted ? 4.0 : 2.0;
-        
-        for (int a = 0; a < va_; ++a) {
-            for (int i = 0; i < na_; ++i) {             
+
+        // WAJIB: for (i) di luar, for (a) di dalam!
+        for (int i = 0; i < na_; ++i) {
+            for (int a = 0; a < va_; ++a) {
                 double eps_diff = scf_.orbital_energies_alpha(na_ + a) - scf_.orbital_energies_alpha(i);
-                double safe_diff = std::max(std::abs(eps_diff), 1e-4);
-                double J_ia = 0.0;
-                
-                if (config_.eri_method != "exact") {
-                    J_ia = B_ia_P_alpha_.row(i * va_ + a).squaredNorm(); 
-                } else {
-                    auto* g_blk = g_aa_.get_block(0, 0, 0, 0);
-                    if (g_blk) J_ia = std::abs((*g_blk)(i, a, i, a));
-                }
-                diag_H(idx++) = spin_factor * safe_diff + 2.0 * spin_factor * J_ia + level_shift;  
+                hessian_diag_(idx++) = spin_factor * std::max(std::abs(eps_diff), 1e-4) + level_shift; 
             }
         }
-        
+
         if (!is_restricted && nb_ > 0) {
-            for (int a = 0; a < vb_; ++a) {
-                for (int i = 0; i < nb_; ++i) {         
+            for (int i = 0; i < nb_; ++i) {
+                for (int a = 0; a < vb_; ++a) {
                     double eps_diff = scf_.orbital_energies_beta(nb_ + a) - scf_.orbital_energies_beta(i);
-                    double safe_diff = std::max(std::abs(eps_diff), 1e-4);
-                    double J_ia = 0.0;
-                    if (config_.eri_method != "exact") {
-                        J_ia = B_ia_P_beta_.row(i * vb_ + a).squaredNorm();
-                    } else {
-                        auto* g_blk = g_bb_.get_block(0, 0, 0, 0);
-                        if (g_blk) J_ia = std::abs((*g_blk)(i, a, i, a));
-                    }
-                    diag_H(idx++) = 2.0 * safe_diff + 4.0 * J_ia + level_shift;
+                    hessian_diag_(idx++) = 2.0 * std::max(std::abs(eps_diff), 1e-4) + level_shift;
                 }
             }
         }
@@ -993,37 +977,19 @@ MP2Result OMP2::compute() {
             tr_conf.micro_thresh = std::min(1e-4, grad_norm * 0.1); 
             mshqc::gradient::TrustRegionSOSCF soscf_engine(tr_conf);
 
+            // ========================================================
+            // EXACT HESSIAN-VECTOR PRODUCT (AO-DRIVEN)
+            // ========================================================
             auto compute_hessian_vector = [&](const Eigen::VectorXd& p_vec) -> Eigen::VectorXd {
-                Eigen::VectorXd Hp = Eigen::VectorXd::Zero(n_params);
-                
+                Eigen::VectorXd Hp = diag_H.cwiseProduct(p_vec);
                 int dim_a = va_ * na_;
                 int dim_b = (is_restricted) ? 0 : (vb_ * nb_);
-                double spin_factor = is_restricted ? 4.0 : 2.0;
                 
-                int temp_idx = 0;
-                for (int a = 0; a < va_; ++a) {
-                    for (int i = 0; i < na_; ++i) {
-                        double eps_diff = scf_.orbital_energies_alpha(na_ + a) - scf_.orbital_energies_alpha(i);
-                        Hp(temp_idx) = spin_factor * eps_diff * p_vec(temp_idx);
-                        temp_idx++;
-                    }
-                }
-                if (!is_restricted && dim_b > 0) {
-                    for (int a = 0; a < vb_; ++a) {
-                        for (int i = 0; i < nb_; ++i) {
-                            double eps_diff = scf_.orbital_energies_beta(nb_ + a) - scf_.orbital_energies_beta(i);
-                            Hp(temp_idx) = 2.0 * eps_diff * p_vec(temp_idx);
-                            temp_idx++;
-                        }
-                    }
-                }
-                
-                // 2. Petakan vektor p_vec ke matriks kappa dengan urutan for (a) lalu for (i)
                 Eigen::MatrixXd kappa_a = Eigen::MatrixXd::Zero(na_, va_);
                 if (dim_a > 0) {
                     int k_idx = 0;
-                    for (int a = 0; a < va_; ++a) {
-                        for (int i = 0; i < na_; ++i) {
+                    for (int i = 0; i < na_; ++i) {
+                        for (int a = 0; a < va_; ++a) {
                             kappa_a(i, a) = p_vec(k_idx++);
                         }
                     }
@@ -1032,14 +998,13 @@ MP2Result OMP2::compute() {
                 Eigen::MatrixXd kappa_b = Eigen::MatrixXd::Zero(nb_, vb_);
                 if (!is_restricted && dim_b > 0) {
                     int k_idx = dim_a;
-                    for (int a = 0; a < vb_; ++a) {
-                        for (int i = 0; i < nb_; ++i) {
+                    for (int i = 0; i < nb_; ++i) {
+                        for (int a = 0; a < vb_; ++a) {
                             kappa_b(i, a) = p_vec(k_idx++);
                         }
                     }
                 }
                 
-                // 3. Respon 2-Elektron (AO-Driven Fock)
                 Eigen::MatrixXd P1_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
                 if (dim_a > 0) {
                     P1_a = C_a_current_.leftCols(na_) * kappa_a * C_a_current_.rightCols(va_).transpose();
@@ -1062,8 +1027,8 @@ MP2Result OMP2::compute() {
                 if (dim_a > 0) {
                     Eigen::MatrixXd H_kappa_a = C_a_current_.leftCols(na_).transpose() * F1_a * C_a_current_.rightCols(va_);
                     int idx_h = 0;
-                    for (int a = 0; a < va_; ++a) {
-                        for (int i = 0; i < na_; ++i) {
+                    for (int i = 0; i < na_; ++i) {
+                        for (int a = 0; a < va_; ++a) {
                             Hp(idx_h++) += spin_factor * H_kappa_a(i, a); 
                         }
                     }
@@ -1072,35 +1037,9 @@ MP2Result OMP2::compute() {
                 if (!is_restricted && dim_b > 0) {
                     Eigen::MatrixXd H_kappa_b = C_b_current_.leftCols(nb_).transpose() * F1_b * C_b_current_.rightCols(vb_);
                     int idx_h = dim_a;
-                    for (int a = 0; a < vb_; ++a) {
-                        for (int i = 0; i < nb_; ++i) {
-                            Hp(idx_h++) += spin_factor * H_kappa_b(i, a);
-                        }
-                    }
-                }
-
-                bool use_sym = (!scf_.irreps_alpha.empty() && scf_.irreps_alpha[0] != -1);
-                if (use_sym) {
-                    int idx_sym = 0;
-                    if (!is_restricted && dim_b > 0) {
-                        for (int a = 0; a < va_; ++a) {
-                            for (int i = 0; i < na_; ++i) {
-                                if ((scf_.irreps_alpha[i] ^ scf_.irreps_alpha[na_ + a]) != 0) Hp(idx_sym) = diag_H(idx_sym) * p_vec(idx_sym);
-                                idx_sym++;
-                            }
-                        }
-                        for (int b = 0; b < vb_; ++b) {
-                            for (int i = 0; i < nb_; ++i) {
-                                if ((scf_.irreps_beta[i] ^ scf_.irreps_beta[nb_ + b]) != 0) Hp(idx_sym) = diag_H(idx_sym) * p_vec(idx_sym);
-                                idx_sym++;
-                            }
-                        }
-                    } else {
-                        for (int a = 0; a < va_; ++a) {
-                            for (int i = 0; i < na_; ++i) {
-                                if ((scf_.irreps_alpha[i] ^ scf_.irreps_alpha[na_ + a]) != 0) Hp(idx_sym) = diag_H(idx_sym) * p_vec(idx_sym);
-                                idx_sym++;
-                            }
+                    for (int i = 0; i < nb_; ++i) {
+                        for (int a = 0; a < vb_; ++a) {
+                            Hp(idx_h++) += 2.0 * H_kappa_b(i, a);
                         }
                     }
                 }
