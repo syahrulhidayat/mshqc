@@ -952,8 +952,9 @@ MP2Result OMP2::compute() {
         int idx = 0;
         double level_shift = (grad_norm > 0.1) ? 0.05 : 0.005;
         double spin_factor = is_restricted ? 4.0 : 2.0;
-        for (int i = 0; i < na_; ++i) {             
-            for (int a = 0; a < va_; ++a) {        
+        
+        for (int a = 0; a < va_; ++a) {
+            for (int i = 0; i < na_; ++i) {             
                 double eps_diff = scf_.orbital_energies_alpha(na_ + a) - scf_.orbital_energies_alpha(i);
                 double safe_diff = std::max(std::abs(eps_diff), 1e-4);
                 double J_ia = 0.0;
@@ -964,15 +965,14 @@ MP2Result OMP2::compute() {
                     auto* g_blk = g_aa_.get_block(0, 0, 0, 0);
                     if (g_blk) J_ia = std::abs((*g_blk)(i, a, i, a));
                 }
-                double diag_J_a = (spin_factor - 2.0) * J_ia; 
+                double diag_J_a = (spin_factor - 2.0) * J_ia;
                 diag_H(idx++) = spin_factor * safe_diff + diag_J_a + level_shift;  
             }
         }
         
-        // ==== BLOK BETA ====
         if (!is_restricted && nb_ > 0) {
-            for (int i = 0; i < nb_; ++i) {         
-                for (int a = 0; a < vb_; ++a) {    
+            for (int a = 0; a < vb_; ++a) {
+                for (int i = 0; i < nb_; ++i) {         
                     double eps_diff = scf_.orbital_energies_beta(nb_ + a) - scf_.orbital_energies_beta(i);
                     double safe_diff = std::max(std::abs(eps_diff), 1e-4);
                     diag_H(idx++) = 2.0 * safe_diff + 0.0 + level_shift;
@@ -987,157 +987,91 @@ MP2Result OMP2::compute() {
             tr_conf.micro_thresh = std::min(1e-4, grad_norm * 0.1); 
             mshqc::gradient::TrustRegionSOSCF soscf_engine(tr_conf);
 
+            // ========================================================
+            // 2. KEMBALIKAN LOGIKA JENIUS 'AO-DRIVEN FOCK' DARI KODE LAMPAU
+            // ========================================================
             auto compute_hessian_vector = [&](const Eigen::VectorXd& p_vec) -> Eigen::VectorXd {
-                bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
                 Eigen::VectorXd Hp = diag_H.cwiseProduct(p_vec);
-                
                 int dim_a = va_ * na_;
                 int dim_b = (is_restricted) ? 0 : (vb_ * nb_);
+                
+                Eigen::MatrixXd kappa_a = Eigen::MatrixXd::Zero(na_, va_);
+                if (dim_a > 0) kappa_a = Eigen::Map<const Eigen::MatrixXd>(p_vec.data(), na_, va_);
+                
+                Eigen::MatrixXd kappa_b = Eigen::MatrixXd::Zero(nb_, vb_);
+                if (!is_restricted && dim_b > 0) kappa_b = Eigen::Map<const Eigen::MatrixXd>(p_vec.data() + dim_a, nb_, vb_);
+                
+                Eigen::MatrixXd P1_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
+                if (dim_a > 0) {
+                    P1_a = C_a_current_.leftCols(na_) * kappa_a * C_a_current_.rightCols(va_).transpose();
+                    P1_a += P1_a.transpose(); 
+                }
+                
+                Eigen::MatrixXd P1_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
+                if (!is_restricted && dim_b > 0) {
+                    P1_b = C_b_current_.leftCols(nb_) * kappa_b * C_b_current_.rightCols(vb_).transpose();
+                    P1_b += P1_b.transpose();
+                } else if (is_restricted) {
+                    P1_b = P1_a; 
+                }
+            
+                Eigen::MatrixXd F1_a, F1_b;
+                build_fock_fast(P1_a, P1_b, F1_a, F1_b);
+                F1_a -= H_core_; 
+                if (!is_restricted || nb_ > 0) F1_b -= H_core_;
+            
                 double spin_factor = is_restricted ? 4.0 : 2.0;
-                double ex_factor   = is_restricted ? 2.0 : 2.0;
-                int n_aux = (config_.eri_method != "exact") ? scf_.L_mat.cols() : 0;
 
-                if (config_.eri_method == "exact") {
-                    auto* ptr_aa = g_aa_.get_block(0, 0, 0, 0);
-                    auto* ptr_ab = (!is_restricted && dim_b > 0) ? g_ab_.get_block(0, 0, 0, 0) : nullptr;
-                    Eigen::Map<const Eigen::MatrixXd> kappa_a(p_vec.data(), va_, na_);
-                    Eigen::Map<const Eigen::MatrixXd> kappa_b(p_vec.data() + dim_a, vb_, nb_); 
-                    // ========================================================
-                    // 1. BLOK ALPHA-ALPHA (DAN KOPLING DARI BETA)
-                    // ========================================================
-                    if (ptr_aa && dim_a > 0) {
-                        int idx_h = 0;
-                        for (int i = 0; i < na_; ++i) {          
-                            for (int a = 0; a < va_; ++a) {      
-                                double off_diag = 0.0;
-                                for (int j = 0; j < na_; ++j) {
-                                    for (int b = 0; b < va_; ++b) {
-                                        if (i == j && a == b) continue; 
-                                        double coulomb = (*ptr_aa)(i, a, j, b);
-                                        double exchange = (*ptr_aa)(i, b, j, a);
-                                        off_diag += (spin_factor * coulomb - ex_factor * exchange) * kappa_a(b, j);
-                                    }
-                                }
-                                if (ptr_ab) {
-                                    for (int j = 0; j < nb_; ++j) {
-                                        for (int b = 0; b < vb_; ++b) {
-                                            double coulomb = (*ptr_ab)(i, a, j, b);
-                                            off_diag += spin_factor * coulomb * kappa_b(b, j);
-                                        }
-                                    }
-                                }
-                                Hp(idx_h++) += off_diag;
-                            }
-                        }
-                    }
-
-                    // ========================================================
-                    // 2. BLOK BETA-BETA (DAN KOPLING DARI ALPHA)
-                    // ========================================================
-                    if (!is_restricted && dim_b > 0) {
-                        auto* ptr_bb = g_bb_.get_block(0, 0, 0, 0);
-                        if (ptr_bb) {
-                            int idx_h = dim_a; 
-                            for (int i = 0; i < nb_; ++i) {          
-                                for (int a = 0; a < vb_; ++a) {       
-                                    double off_diag = 0.0;
-                                    for (int j = 0; j < nb_; ++j) {
-                                        for (int b = 0; b < vb_; ++b) {
-                                            if (i == j && a == b) continue; 
-                                            double coulomb = (*ptr_bb)(i, a, j, b);
-                                            double exchange = (*ptr_bb)(i, b, j, a);
-                                            off_diag += (spin_factor * coulomb - ex_factor * exchange) * kappa_b(b, j);
-                                        }
-                                    }
-                                    if (ptr_ab) {
-                                        for (int j = 0; j < na_; ++j) {
-                                            for (int b = 0; b < va_; ++b) {
-                                                double coulomb = (*ptr_ab)(j, b, i, a); 
-                                                off_diag += spin_factor * coulomb * kappa_a(b, j);
-                                            }
-                                        }
-                                    }
-                                    Hp(idx_h++) += off_diag;
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    // ========================================================
-                    // 3. BLOK DENSITY FITTING (DF / CHOLESKY) - TOTAL DENSITY
-                    // ========================================================
-                    Eigen::Map<const Eigen::VectorXd> kappa_a_vec(p_vec.data(), dim_a);
-                    Eigen::VectorXd v_P_total = B_ia_P_alpha_.transpose() * kappa_a_vec;
-                    if (!is_restricted && dim_b > 0) {
-                        Eigen::Map<const Eigen::VectorXd> kappa_b_vec(p_vec.data() + dim_a, dim_b);
-                        v_P_total += B_ia_P_beta_.transpose() * kappa_b_vec;
-                    }
-
-                    if (dim_a > 0) {
-                        Eigen::VectorXd Hp_J_a = B_ia_P_alpha_ * v_P_total;  
-                        Eigen::Map<const Eigen::MatrixXd> K_mat(kappa_a_vec.data(), va_, na_);
-                        Eigen::MatrixXd K_mat_T = K_mat.transpose(); 
-                        Eigen::MatrixXd Hp_K_mat_a = Eigen::MatrixXd::Zero(va_, na_);
-                        
-                        int n_threads = omp_get_max_threads();
-                        std::vector<Eigen::MatrixXd> local_H_a(n_threads, Eigen::MatrixXd::Zero(va_, na_));
-                        
-                        #pragma omp parallel
-                       {
-                            int tid = omp_get_thread_num();
-                            Eigen::MatrixXd M_p(na_, na_); 
-                            
-                            #pragma omp for schedule(dynamic)
-                            for (int P = 0; P < n_aux; ++P) {
-                                Eigen::Map<const Eigen::MatrixXd> B_P(B_ia_P_alpha_.col(P).data(), va_, na_);
-                                M_p.noalias() = K_mat_T * B_P; 
-                                local_H_a[tid].noalias() += B_P * M_p;
-                            }
-                        }
-                        for(int t = 0; t < n_threads; ++t) Hp_K_mat_a += local_H_a[t];
-                        Hp.head(dim_a) += spin_factor * Hp_J_a - ex_factor * Eigen::Map<Eigen::VectorXd>(Hp_K_mat_a.data(), dim_a);
-                        int idx_a = 0;
+                if (dim_a > 0) {
+                    Eigen::MatrixXd H_kappa_a = C_a_current_.leftCols(na_).transpose() * F1_a * C_a_current_.rightCols(va_);
+                    int idx_h = 0;
+                    for (int a = 0; a < va_; ++a) {
                         for (int i = 0; i < na_; ++i) {
-                            for (int a = 0; a < va_; ++a) {
-                                double J_ia = B_ia_P_alpha_.row(i * va_ + a).squaredNorm();
-                                double added_diag = (spin_factor - ex_factor) * J_ia;
-                                Hp(idx_a) -= added_diag * kappa_a_vec(idx_a);
-                                idx_a++;
-                            }
+                            Hp(idx_h++) += spin_factor * H_kappa_a(i, a); 
                         }
                     }
-                    
+                }
+                
+                if (!is_restricted && dim_b > 0) {
+                    Eigen::MatrixXd H_kappa_b = C_b_current_.leftCols(nb_).transpose() * F1_b * C_b_current_.rightCols(vb_);
+                    int idx_h = dim_a;
+                    for (int a = 0; a < vb_; ++a) {
+                        for (int i = 0; i < nb_; ++i) {
+                            Hp(idx_h++) += spin_factor * H_kappa_b(i, a);
+                        }
+                    }
+                }
+                
+                // ========================================================
+                // 3. MASKING SIMETRI (Dengan urutan iterasi 'a' lalu 'i' yang benar)
+                // ========================================================
+                bool use_sym = (!scf_.irreps_alpha.empty() && scf_.irreps_alpha[0] != -1);
+                if (use_sym) {
+                    int idx_sym = 0;
                     if (!is_restricted && dim_b > 0) {
-                        Eigen::Map<const Eigen::VectorXd> kappa_b_vec(p_vec.data() + dim_a, dim_b);
-                        Eigen::VectorXd Hp_J_b = B_ia_P_beta_ * v_P_total;
-                        Eigen::Map<const Eigen::MatrixXd> K_mat_b(kappa_b_vec.data(), vb_, nb_);
-                        Eigen::MatrixXd K_mat_T_b = K_mat_b.transpose(); 
-                        Eigen::MatrixXd Hp_K_mat_b = Eigen::MatrixXd::Zero(vb_, nb_);
-                        
-                        int n_threads = omp_get_max_threads();
-                        std::vector<Eigen::MatrixXd> local_H_b(n_threads, Eigen::MatrixXd::Zero(vb_, nb_));
-                        
-                        #pragma omp parallel
-                        {
-                            int tid = omp_get_thread_num();
-                            Eigen::MatrixXd M_p_b(nb_, nb_);
-                            
-                            #pragma omp for schedule(dynamic)
-                            for (int P = 0; P < n_aux; ++P) {
-                                Eigen::Map<const Eigen::MatrixXd> B_P_b(B_ia_P_beta_.col(P).data(), vb_, nb_);
-                                M_p_b.noalias() = K_mat_T_b * B_P_b;
-                                local_H_b[tid].noalias() += B_P_b * M_p_b;
+                        for (int a = 0; a < va_; ++a) {
+                            for (int i = 0; i < na_; ++i) {
+                                if ((scf_.irreps_alpha[i] ^ scf_.irreps_alpha[na_ + a]) != 0) {
+                                    Hp(idx_sym) = diag_H(idx_sym) * p_vec(idx_sym);
+                                }
+                                idx_sym++;
                             }
                         }
-                        for(int t = 0; t < n_threads; ++t) Hp_K_mat_b += local_H_b[t];
-                        Hp.tail(dim_b) += spin_factor * Hp_J_b - ex_factor * Eigen::Map<Eigen::VectorXd>(Hp_K_mat_b.data(), dim_b);
-                        int idx_b = 0;
-                        for (int i = 0; i < nb_; ++i) {
-                            for (int a = 0; a < vb_; ++a) {
-                                double J_ia = B_ia_P_beta_.row(i * vb_ + a).squaredNorm();
-                                double added_diag = (2.0 - ex_factor) * J_ia;
-                                Hp(dim_a + idx_b) -= added_diag * kappa_b_vec(idx_b);
-                                idx_b++;
+                        for (int b = 0; b < vb_; ++b) {
+                            for (int i = 0; i < nb_; ++i) {
+                                if ((scf_.irreps_beta[i] ^ scf_.irreps_beta[nb_ + b]) != 0) {
+                                    Hp(idx_sym) = diag_H(idx_sym) * p_vec(idx_sym);
+                                }
+                                idx_sym++;
+                            }
+                        }
+                    } else {
+                        for (int a = 0; a < va_; ++a) {
+                            for (int i = 0; i < na_; ++i) {
+                                if ((scf_.irreps_alpha[i] ^ scf_.irreps_alpha[na_ + a]) != 0) {
+                                    Hp(idx_sym) = diag_H(idx_sym) * p_vec(idx_sym);
+                                }
+                                idx_sym++;
                             }
                         }
                     }
