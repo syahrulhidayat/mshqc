@@ -567,7 +567,10 @@ void OMP2::init_fast_integrals() {
 
 void OMP2::transform_integrals() {
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
-
+    scf_.irreps_alpha.assign(nbf_, 0);
+    if (!is_restricted && nb_ > 0) {
+        scf_.irreps_beta.assign(nbf_, 0);
+    }
     if (config_.eri_method == "exact") {
         const auto& eri_ao = integrals_->compute_eri();
         const Eigen::MatrixXd& Ca_o = scf_.C_alpha.leftCols(na_);
@@ -949,7 +952,6 @@ MP2Result OMP2::compute() {
         int idx = 0;
         double level_shift = (grad_norm > 0.1) ? 0.05 : 0.005;
         double spin_factor = is_restricted ? 4.0 : 2.0;
-        
         for (int i = 0; i < na_; ++i) {             
             for (int a = 0; a < va_; ++a) {        
                 double eps_diff = scf_.orbital_energies_alpha(na_ + a) - scf_.orbital_energies_alpha(i);
@@ -962,23 +964,18 @@ MP2Result OMP2::compute() {
                     auto* g_blk = g_aa_.get_block(0, 0, 0, 0);
                     if (g_blk) J_ia = std::abs((*g_blk)(i, a, i, a));
                 }
-                double diag_J_a = spin_factor * J_ia;
+                double diag_J_a = (spin_factor - 2.0) * J_ia; 
                 diag_H(idx++) = spin_factor * safe_diff + diag_J_a + level_shift;  
             }
         }
+        
+        // ==== BLOK BETA ====
         if (!is_restricted && nb_ > 0) {
             for (int i = 0; i < nb_; ++i) {         
                 for (int a = 0; a < vb_; ++a) {    
                     double eps_diff = scf_.orbital_energies_beta(nb_ + a) - scf_.orbital_energies_beta(i);
                     double safe_diff = std::max(std::abs(eps_diff), 1e-4);
-                    double J_ia = 0.0;
-                    if (config_.eri_method != "exact") {
-                        J_ia = B_ia_P_beta_.row(i * vb_ + a).squaredNorm();
-                    } else {
-                        auto* g_blk = g_bb_.get_block(0, 0, 0, 0);
-                        if (g_blk) J_ia = std::abs((*g_blk)(i, a, i, a));
-                    }
-                    diag_H(idx++) = 2.0 * safe_diff + 2.0 * J_ia + level_shift; // Ubah 0.0 menjadi 2.0 * J_ia
+                    diag_H(idx++) = 2.0 * safe_diff + 0.0 + level_shift;
                 }
             }
         }
@@ -1086,7 +1083,7 @@ MP2Result OMP2::compute() {
                         std::vector<Eigen::MatrixXd> local_H_a(n_threads, Eigen::MatrixXd::Zero(va_, na_));
                         
                         #pragma omp parallel
-                        {
+                       {
                             int tid = omp_get_thread_num();
                             Eigen::MatrixXd M_p(na_, na_); 
                             
@@ -1098,16 +1095,16 @@ MP2Result OMP2::compute() {
                             }
                         }
                         for(int t = 0; t < n_threads; ++t) Hp_K_mat_a += local_H_a[t];
-                        Eigen::VectorXd Hp_J_a_corrected = Hp_J_a;
+                        Hp.head(dim_a) += spin_factor * Hp_J_a - ex_factor * Eigen::Map<Eigen::VectorXd>(Hp_K_mat_a.data(), dim_a);
                         int idx_a = 0;
                         for (int i = 0; i < na_; ++i) {
                             for (int a = 0; a < va_; ++a) {
                                 double J_ia = B_ia_P_alpha_.row(i * va_ + a).squaredNorm();
-                                Hp_J_a_corrected(idx_a) -= J_ia * kappa_a_vec(idx_a);
+                                double added_diag = (spin_factor - ex_factor) * J_ia;
+                                Hp(idx_a) -= added_diag * kappa_a_vec(idx_a);
                                 idx_a++;
                             }
                         }
-                        Hp.head(dim_a) += spin_factor * Hp_J_a_corrected - ex_factor * Eigen::Map<Eigen::VectorXd>(Hp_K_mat_a.data(), dim_a);
                     }
                     
                     if (!is_restricted && dim_b > 0) {
@@ -1133,45 +1130,14 @@ MP2Result OMP2::compute() {
                             }
                         }
                         for(int t = 0; t < n_threads; ++t) Hp_K_mat_b += local_H_b[t];
-                        Eigen::VectorXd Hp_J_b_corrected = Hp_J_b;
+                        Hp.tail(dim_b) += spin_factor * Hp_J_b - ex_factor * Eigen::Map<Eigen::VectorXd>(Hp_K_mat_b.data(), dim_b);
                         int idx_b = 0;
                         for (int i = 0; i < nb_; ++i) {
                             for (int a = 0; a < vb_; ++a) {
                                 double J_ia = B_ia_P_beta_.row(i * vb_ + a).squaredNorm();
-                                Hp_J_b_corrected(idx_b) -= J_ia * kappa_b_vec(idx_b);
+                                double added_diag = (2.0 - ex_factor) * J_ia;
+                                Hp(dim_a + idx_b) -= added_diag * kappa_b_vec(idx_b);
                                 idx_b++;
-                            }
-                        }
-                        Hp.tail(dim_b) += spin_factor * Hp_J_b_corrected - ex_factor * Eigen::Map<Eigen::VectorXd>(Hp_K_mat_b.data(), dim_b);
-                    }
-                }
-                bool use_sym = (!scf_.irreps_alpha.empty() && scf_.irreps_alpha[0] != -1);
-                if (use_sym) {
-                    int idx_sym = 0;
-                    if (!is_restricted && dim_b > 0) {
-                        for (int i = 0; i < na_; ++i) {
-                            for (int a = 0; a < va_; ++a) {
-                                if ((scf_.irreps_alpha[i] ^ scf_.irreps_alpha[na_ + a]) != 0) {
-                                    Hp(idx_sym) = diag_H(idx_sym) * p_vec(idx_sym);
-                                }
-                                idx_sym++;
-                            }
-                        }
-                        for (int i = 0; i < nb_; ++i) {
-                            for (int b = 0; b < vb_; ++b) {
-                                if ((scf_.irreps_beta[i] ^ scf_.irreps_beta[nb_ + b]) != 0) {
-                                    Hp(idx_sym) = diag_H(idx_sym) * p_vec(idx_sym);
-                                }
-                                idx_sym++;
-                            }
-                        }
-                    } else {
-                        for (int i = 0; i < na_; ++i) {
-                            for (int a = 0; a < va_; ++a) {
-                                if ((scf_.irreps_alpha[i] ^ scf_.irreps_alpha[na_ + a]) != 0) {
-                                    Hp(idx_sym) = diag_H(idx_sym) * p_vec(idx_sym);
-                                }
-                                idx_sym++;
                             }
                         }
                     }
