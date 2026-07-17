@@ -239,12 +239,18 @@ double OMP3::execute_micro_iterations() {
     
     compute_mp3_correction(); 
     
-    bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1); // Tambahkan ini
+    bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1); 
     
     L2_aa_ = t2_3rd_aa_;
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
         L2_bb_ = t2_3rd_bb_;
         L2_ab_ = t2_3rd_ab_;
+    }
+    build_opdm_alpha();
+    if (!is_restricted && nb_ > 0) {
+        build_opdm_beta();
+    } else if (is_restricted && nb_ > 0) {
+        G_oo_beta_ = G_oo_alpha_;
     }
 
     return get_correlation_energy();
@@ -521,6 +527,10 @@ void OMP3::compute_mp3_correction() {
 }
 
 void OMP3::build_opdm_alpha() {
+    if (L2_aa_.size() == 0) {
+        OMP2::build_opdm_alpha();
+        return;
+    }
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     G_oo_alpha_ = Eigen::MatrixXd::Zero(na_, na_);
     G_vv_alpha_ = Eigen::MatrixXd::Zero(va_, va_);
@@ -558,6 +568,10 @@ void OMP3::build_opdm_alpha() {
 }
 
 void OMP3::build_opdm_beta() {
+    if (L2_bb_.size() == 0 && L2_ab_.size() == 0) {
+        OMP2::build_opdm_beta(); 
+        return;
+    }
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     G_oo_beta_ = Eigen::MatrixXd::Zero(nb_, nb_);
     G_vv_beta_ = Eigen::MatrixXd::Zero(vb_, vb_);
