@@ -595,6 +595,8 @@ void OMP3::build_opdm_beta() {
 }
 
 void OMP3::build_generalized_fock() {
+   
+    bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     
     Eigen::MatrixXd G_full_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
     G_full_a.block(0, 0, na_, na_) = G_oo_alpha_; 
@@ -603,26 +605,36 @@ void OMP3::build_generalized_fock() {
     
     Eigen::MatrixXd G_full_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
     Eigen::MatrixXd P_corr_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
-    if (nb_ > 0) {
+    
+    if (!is_restricted && nb_ > 0) {
         G_full_b.block(0, 0, nb_, nb_) = G_oo_beta_;
         G_full_b.block(nb_, nb_, vb_, vb_) = G_vv_beta_;
         P_corr_b = scf_.C_beta * G_full_b * scf_.C_beta.transpose();
+    } else if (is_restricted) {
+        P_corr_b = P_corr_a; 
     }
 
     Eigen::MatrixXd F_HF_ao_a, F_HF_ao_b;
     build_fock_fast(scf_.P_alpha, scf_.P_beta, F_HF_ao_a, F_HF_ao_b);
+    
     Eigen::MatrixXd F_HF_mo_a = scf_.C_alpha.transpose() * F_HF_ao_a * scf_.C_alpha;
     Eigen::MatrixXd F_HF_mo_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
-    if (nb_ > 0) F_HF_mo_b = scf_.C_beta.transpose() * F_HF_ao_b * scf_.C_beta;
+    
+    if (!is_restricted && nb_ > 0) F_HF_mo_b = scf_.C_beta.transpose() * F_HF_ao_b * scf_.C_beta;
+    else if (is_restricted) F_HF_mo_b = F_HF_mo_a;
 
     Eigen::MatrixXd G_gamma_ao_a, G_gamma_ao_b;
     build_fock_fast(P_corr_a, P_corr_b, G_gamma_ao_a, G_gamma_ao_b);
+    
     G_gamma_ao_a -= H_core_;
-    if (nb_ > 0) G_gamma_ao_b -= H_core_;
+    if (!is_restricted && nb_ > 0) G_gamma_ao_b -= H_core_;
+    else if (is_restricted) G_gamma_ao_b = G_gamma_ao_a;
     
     Eigen::MatrixXd G_gamma_mo_a = scf_.C_alpha.transpose() * G_gamma_ao_a * scf_.C_alpha;
     Eigen::MatrixXd G_gamma_mo_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
-    if (nb_ > 0) G_gamma_mo_b = scf_.C_beta.transpose() * G_gamma_ao_b * scf_.C_beta;
+    
+    if (!is_restricted && nb_ > 0) G_gamma_mo_b = scf_.C_beta.transpose() * G_gamma_ao_b * scf_.C_beta;
+    else if (is_restricted) G_gamma_mo_b = G_gamma_mo_a;
 
     F_gen_a_ = F_HF_mo_a + G_gamma_mo_a;
     if (na_ > 0 && va_ > 0) {
@@ -632,20 +644,25 @@ void OMP3::build_generalized_fock() {
         F_gen_a_.block(0, na_, na_, va_) += L_sep_a.transpose();
     }
 
-    F_gen_b_ = F_HF_mo_b + G_gamma_mo_b;
-    if (nb_ > 0 && vb_ > 0) {
+    if (!is_restricted && nb_ > 0 && vb_ > 0) {
+        F_gen_b_ = F_HF_mo_b + G_gamma_mo_b;
         Eigen::MatrixXd F_vo_b = F_gen_b_.block(nb_, 0, vb_, nb_);
         Eigen::MatrixXd L_sep_b = G_vv_beta_ * F_vo_b - F_vo_b * G_oo_beta_;
         F_gen_b_.block(nb_, 0, vb_, nb_) += L_sep_b;
         F_gen_b_.block(0, nb_, nb_, vb_) += L_sep_b.transpose();
+    } else if (is_restricted) {
+        F_gen_b_ = F_gen_a_; 
     }
 
-    
     int n_aux = scf_.L_mat.cols();
     Eigen::MatrixXd B_oo_a = Eigen::MatrixXd::Zero(na_*na_, n_aux);
     Eigen::MatrixXd B_vv_a = Eigen::MatrixXd::Zero(va_*va_, n_aux);
     Eigen::MatrixXd B_oo_b, B_vv_b;
-    if (nb_ > 0 && vb_ > 0) { B_oo_b = Eigen::MatrixXd::Zero(nb_*nb_, n_aux); B_vv_b = Eigen::MatrixXd::Zero(vb_*vb_, n_aux); }
+    
+    if (!is_restricted && nb_ > 0 && vb_ > 0) { 
+        B_oo_b = Eigen::MatrixXd::Zero(nb_*nb_, n_aux); 
+        B_vv_b = Eigen::MatrixXd::Zero(vb_*vb_, n_aux); 
+    }
     
     const Eigen::MatrixXd& Ca_o = scf_.C_alpha.leftCols(na_);
     const Eigen::MatrixXd& Ca_v = scf_.C_alpha.rightCols(va_);
@@ -656,8 +673,12 @@ void OMP3::build_generalized_fock() {
     {
         Eigen::MatrixXd priv_oo_a = Eigen::MatrixXd::Zero(na_*na_, n_aux);
         Eigen::MatrixXd priv_vv_a = Eigen::MatrixXd::Zero(va_*va_, n_aux);
-        Eigen::MatrixXd priv_oo_b = Eigen::MatrixXd::Zero(nb_*nb_, n_aux);
-        Eigen::MatrixXd priv_vv_b = Eigen::MatrixXd::Zero(vb_*vb_, n_aux);
+        Eigen::MatrixXd priv_oo_b, priv_vv_b;
+        
+        if (!is_restricted && nb_ > 0) {
+            priv_oo_b = Eigen::MatrixXd::Zero(nb_*nb_, n_aux);
+            priv_vv_b = Eigen::MatrixXd::Zero(vb_*vb_, n_aux);
+        }
         
         #pragma omp for schedule(dynamic)
         for (int P = 0; P < n_aux; ++P) {
@@ -667,7 +688,7 @@ void OMP3::build_generalized_fock() {
             for(int i=0; i<na_; ++i) for(int j=0; j<na_; ++j) priv_oo_a(i*na_+j, P) = MO_oo_a(i, j);
             for(int a=0; a<va_; ++a) for(int b=0; b<va_; ++b) priv_vv_a(a*va_+b, P) = MO_vv_a(a, b);
             
-            if (nb_ > 0 && vb_ > 0) {
+            if (!is_restricted && nb_ > 0 && vb_ > 0) {
                 Eigen::MatrixXd MO_oo_b = Cb_o.transpose() * (B_AO * Cb_o);
                 Eigen::MatrixXd MO_vv_b = Cb_v.transpose() * (B_AO * Cb_v);
                 for(int i=0; i<nb_; ++i) for(int j=0; j<nb_; ++j) priv_oo_b(i*nb_+j, P) = MO_oo_b(i, j);
@@ -677,17 +698,16 @@ void OMP3::build_generalized_fock() {
         #pragma omp critical
         {
             B_oo_a += priv_oo_a; B_vv_a += priv_vv_a;
-            if (nb_ > 0) { B_oo_b += priv_oo_b; B_vv_b += priv_vv_b; }
+            if (!is_restricted && nb_ > 0) { B_oo_b += priv_oo_b; B_vv_b += priv_vv_b; }
         }
     }
 
-    
     Eigen::Tensor<double, 4> Gamma_vvvv_aa(va_, va_, va_, va_); Gamma_vvvv_aa.setZero();
     Eigen::Tensor<double, 4> Gamma_oooo_aa(na_, na_, na_, na_); Gamma_oooo_aa.setZero();
     Eigen::Tensor<double, 4> Gamma_ovov_aa(na_, va_, na_, va_); Gamma_ovov_aa.setZero();
 
     Eigen::Tensor<double, 4> Gamma_vvvv_bb, Gamma_oooo_bb, Gamma_ovov_bb, Gamma_ovov_ab;
-    if (nb_ > 0 && vb_ > 0) {
+    if (!is_restricted && nb_ > 0 && vb_ > 0) {
         Gamma_vvvv_bb = Eigen::Tensor<double, 4>(vb_, vb_, vb_, vb_); Gamma_vvvv_bb.setZero();
         Gamma_oooo_bb = Eigen::Tensor<double, 4>(nb_, nb_, nb_, nb_); Gamma_oooo_bb.setZero();
         Gamma_ovov_bb = Eigen::Tensor<double, 4>(nb_, vb_, nb_, vb_); Gamma_ovov_bb.setZero();
@@ -719,7 +739,8 @@ void OMP3::build_generalized_fock() {
     }
 
     Eigen::MatrixXd Teff_ab, Teff_bb;
-    if (nb_ > 0 && vb_ > 0) {
+    if (!is_restricted && nb_ > 0 && vb_ > 0) {
+       
         auto* t2_bb_dense = t2_bb_.get_block(0,0,0,0);
         auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
 
@@ -767,14 +788,14 @@ void OMP3::build_generalized_fock() {
     }
 
     Eigen::MatrixXd X_a = Teff_aa * B_ia_P_alpha_;
-    if (nb_ > 0 && vb_ > 0) X_a += Teff_ab * B_ia_P_beta_;
+    if (!is_restricted && nb_ > 0 && vb_ > 0) X_a += Teff_ab * B_ia_P_beta_;
 
     Eigen::MatrixXd X_b;
-    if (nb_ > 0 && vb_ > 0) X_b = Teff_bb * B_ia_P_beta_ + Teff_ab.transpose() * B_ia_P_alpha_;
+    if (!is_restricted && nb_ > 0 && vb_ > 0) X_b = Teff_bb * B_ia_P_beta_ + Teff_ab.transpose() * B_ia_P_alpha_;
 
     Eigen::MatrixXd Z_mat_a = Eigen::MatrixXd::Zero(va_, na_);
     Eigen::MatrixXd Z_mat_b;
-    if (nb_ > 0 && vb_ > 0) Z_mat_b = Eigen::MatrixXd::Zero(vb_, nb_);
+    if (!is_restricted && nb_ > 0 && vb_ > 0) Z_mat_b = Eigen::MatrixXd::Zero(vb_, nb_);
 
     TBLIS_VIEW_3D(t_Bvv_a, B_vv_a.data(), va_, va_, n_aux);
     TBLIS_VIEW_3D(t_Xa, X_a.data(), va_, na_, n_aux);
@@ -785,18 +806,17 @@ void OMP3::build_generalized_fock() {
     tblis::mult<double>(1.0, t_Bvv_a, "baP", t_Xa, "biP", 1.0, t_Za, "ai");
     tblis::mult<double>(-1.0, t_Xa, "ajP", t_Boo_a, "jiP", 1.0, t_Za, "ai");
 
-   
     Eigen::MatrixXd X_vv_a = Eigen::MatrixXd::Zero(va_ * va_, n_aux);
     TBLIS_VIEW_3D(t_Xvv_a, X_vv_a.data(), va_, va_, n_aux);
     tblis::mult<double>(1.0, t_Gvvvv_aa, "abcd", t_Bvv_a, "dcP", 0.0, t_Xvv_a, "baP"); 
     tblis::mult<double>(1.0, t_Xvv_a, "baP", t_Bia_a, "biP", 1.0, t_Za, "ai");        
+    
     Eigen::MatrixXd X_oo_a = Eigen::MatrixXd::Zero(na_ * na_, n_aux);
     TBLIS_VIEW_3D(t_Xoo_a, X_oo_a.data(), na_, na_, n_aux);
     tblis::mult<double>(1.0, t_Goooo_aa, "ijkl", t_Boo_a, "lkP", 0.0, t_Xoo_a, "jiP"); 
     tblis::mult<double>(-1.0, t_Xoo_a, "jiP", t_Bia_a, "ajP", 1.0, t_Za, "ai");
 
-    
-    if (nb_ > 0 && vb_ > 0) {
+    if (!is_restricted && nb_ > 0 && vb_ > 0) {
         TBLIS_VIEW_3D(t_Bvv_b, B_vv_b.data(), vb_, vb_, n_aux);
         TBLIS_VIEW_3D(t_Xb, X_b.data(), vb_, nb_, n_aux);
         TBLIS_VIEW_3D(t_Boo_b, B_oo_b.data(), nb_, nb_, n_aux);
@@ -807,6 +827,7 @@ void OMP3::build_generalized_fock() {
 
         tblis::mult<double>(1.0, t_Bvv_b, "baP", t_Xb, "biP", 1.0, t_Zb, "ai");
         tblis::mult<double>(-1.0, t_Xb, "ajP", t_Boo_b, "jiP", 1.0, t_Zb, "ai");
+        
         Eigen::MatrixXd X_vv_b = Eigen::MatrixXd::Zero(vb_ * vb_, n_aux);
         TBLIS_VIEW_3D(t_Xvv_b, X_vv_b.data(), vb_, vb_, n_aux);
         tblis::mult<double>(1.0, t_Gvvvv_bb, "abcd", t_Bvv_b, "dcP", 0.0, t_Xvv_b, "baP"); 
@@ -820,12 +841,14 @@ void OMP3::build_generalized_fock() {
 
     F_gen_a_.block(na_, 0, va_, na_) += Z_mat_a;
     F_gen_a_.block(0, na_, na_, va_) += Z_mat_a.transpose();
-    if (nb_ > 0 && vb_ > 0) {
+    
+    if (!is_restricted && nb_ > 0 && vb_ > 0) {
         F_gen_b_.block(nb_, 0, vb_, nb_) += Z_mat_b;
         F_gen_b_.block(0, nb_, nb_, vb_) += Z_mat_b.transpose();
+    } else if (is_restricted) {
+        F_gen_b_ = F_gen_a_; 
     }
 }
-
 MP3Result OMP3::compute_omp3() {
     if(omp_get_thread_num() == 0) {
         std::cout << "\n========================================================\n";
