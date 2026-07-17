@@ -164,8 +164,8 @@ Eigen::VectorXd OMP2::compute_soscf_step() {
     
     double spin_factor = is_restricted ? 4.0 : 2.0;
 
-    for (int a = 0; a < va_; ++a) {
-        for (int i = 0; i < na_; ++i) {
+    for (int i = 0; i < na_; ++i) {
+        for (int a = 0; a < va_; ++a) {
             double eps_diff = scf_.orbital_energies_alpha(na_ + a) - scf_.orbital_energies_alpha(i);
             double safe_diff = std::max(std::abs(eps_diff), 1e-4);
             double J_ia = 0.0;
@@ -181,8 +181,9 @@ Eigen::VectorXd OMP2::compute_soscf_step() {
     }
 
     if (!is_restricted && nb_ > 0) {
-        for (int a = 0; a < vb_; ++a) {
-            for (int i = 0; i < nb_; ++i) {
+      
+        for (int i = 0; i < nb_; ++i) {
+            for (int a = 0; a < vb_; ++a) {
                 double eps_diff = scf_.orbital_energies_beta(nb_ + a) - scf_.orbital_energies_beta(i);
                 double safe_diff = std::max(std::abs(eps_diff), 1e-4);
                 double J_ia = 0.0;
