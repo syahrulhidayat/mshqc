@@ -235,15 +235,14 @@ double OMP3::get_correlation_energy() const {
 }
 
 double OMP3::execute_micro_iterations() {
-    
     OMP2::execute_micro_iterations();
-
     
     compute_mp3_correction(); 
     
- 
+    bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1); // Tambahkan ini
+    
     L2_aa_ = t2_3rd_aa_;
-    if (nb_ > 0 && vb_ > 0) {
+    if (!is_restricted && nb_ > 0 && vb_ > 0) {
         L2_bb_ = t2_3rd_bb_;
         L2_ab_ = t2_3rd_ab_;
     }
