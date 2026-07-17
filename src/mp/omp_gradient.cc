@@ -106,7 +106,7 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
                     X_a_chunk.noalias() += T2_rmp2 * Bia_chunk;
                 } else {
                     // [MODIFIKASI] Kalikan 0.5 untuk koreksi perhitungan ganda spin-sejenis
-                    X_a_chunk.noalias() += 0.5 * T2_aa_mat * Bia_chunk; 
+                    X_a_chunk.noalias() += T2_aa_mat * Bia_chunk; 
                 }
             }
 
@@ -121,7 +121,7 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
 
                 if (t_bb_blk) {
                     // [MODIFIKASI] Kalikan 0.5 untuk koreksi perhitungan ganda spin-sejenis
-                    X_b_chunk.noalias() += 0.5 * T2_bb_mat * Bib_chunk; 
+                    X_b_chunk.noalias() +=  T2_bb_mat * Bib_chunk; 
                 }
             }
 
