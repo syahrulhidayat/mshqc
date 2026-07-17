@@ -868,7 +868,7 @@ MP2Result OMP2::compute() {
 
     bool is_converged = false;
     int macro_iter = 0;
-    bool is_restricted = (na_ == nb_ && va_ == vb_);
+    bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
 
     while (macro_iter < config_.max_iterations) {
         scf_.C_alpha = C_a_current_;
@@ -925,7 +925,6 @@ MP2Result OMP2::compute() {
                 }
             }
         }
-      
 
         if (e_tot < e_total_best) { e_total_best = e_tot; e_corr_best = e_mp2_corr; }
         
@@ -952,20 +951,36 @@ MP2Result OMP2::compute() {
         int idx = 0;
         double level_shift = (grad_norm > 0.1) ? 0.05 : 0.005;
         double spin_factor = is_restricted ? 4.0 : 2.0;
-
-        // WAJIB: for (i) di luar, for (a) di dalam!
-        for (int i = 0; i < na_; ++i) {
-            for (int a = 0; a < va_; ++a) {
+        
+        // 1. SUSUN PRECONDITIONER KUAT (Mencegah H2O / sistem lain meloncat)
+        for (int i = 0; i < na_; ++i) {             
+            for (int a = 0; a < va_; ++a) {        
                 double eps_diff = scf_.orbital_energies_alpha(na_ + a) - scf_.orbital_energies_alpha(i);
-                hessian_diag_(idx++) = spin_factor * std::max(std::abs(eps_diff), 1e-4) + level_shift; 
+                double safe_diff = std::max(std::abs(eps_diff), 1e-4);
+                double J_ia = 0.0;
+                if (config_.eri_method != "exact") {
+                    J_ia = B_ia_P_alpha_.row(i * va_ + a).squaredNorm(); 
+                } else {
+                    auto* g_blk = g_aa_.get_block(0, 0, 0, 0);
+                    if (g_blk) J_ia = std::abs((*g_blk)(i, a, i, a));
+                }
+                diag_H(idx++) = spin_factor * safe_diff + 2.0 * spin_factor * J_ia + level_shift;  
             }
         }
-
+        
         if (!is_restricted && nb_ > 0) {
-            for (int i = 0; i < nb_; ++i) {
-                for (int a = 0; a < vb_; ++a) {
+            for (int i = 0; i < nb_; ++i) {         
+                for (int a = 0; a < vb_; ++a) {    
                     double eps_diff = scf_.orbital_energies_beta(nb_ + a) - scf_.orbital_energies_beta(i);
-                    hessian_diag_(idx++) = 2.0 * std::max(std::abs(eps_diff), 1e-4) + level_shift;
+                    double safe_diff = std::max(std::abs(eps_diff), 1e-4);
+                    double J_ia = 0.0;
+                    if (config_.eri_method != "exact") {
+                        J_ia = B_ia_P_beta_.row(i * vb_ + a).squaredNorm();
+                    } else {
+                        auto* g_blk = g_bb_.get_block(0, 0, 0, 0);
+                        if (g_blk) J_ia = std::abs((*g_blk)(i, a, i, a));
+                    }
+                    diag_H(idx++) = 2.0 * safe_diff + 4.0 * J_ia + level_shift;
                 }
             }
         }
@@ -977,13 +992,30 @@ MP2Result OMP2::compute() {
             tr_conf.micro_thresh = std::min(1e-4, grad_norm * 0.1); 
             mshqc::gradient::TrustRegionSOSCF soscf_engine(tr_conf);
 
-            // ========================================================
-            // EXACT HESSIAN-VECTOR PRODUCT (AO-DRIVEN)
-            // ========================================================
             auto compute_hessian_vector = [&](const Eigen::VectorXd& p_vec) -> Eigen::VectorXd {
-                Eigen::VectorXd Hp = diag_H.cwiseProduct(p_vec);
+                // 2. MURNI HESSIAN ANALITIK: Bebas kontaminasi diag_H agar kurvatur presisi
+                Eigen::VectorXd Hp = Eigen::VectorXd::Zero(n_params);
                 int dim_a = va_ * na_;
                 int dim_b = (is_restricted) ? 0 : (vb_ * nb_);
+                
+                // Masukkan komponen Energi Orbital saja
+                int temp_idx = 0;
+                for (int i = 0; i < na_; ++i) {
+                    for (int a = 0; a < va_; ++a) {
+                        double eps_diff = scf_.orbital_energies_alpha(na_ + a) - scf_.orbital_energies_alpha(i);
+                        Hp(temp_idx) = spin_factor * std::max(std::abs(eps_diff), 1e-4) * p_vec(temp_idx);
+                        temp_idx++;
+                    }
+                }
+                if (!is_restricted && dim_b > 0) {
+                    for (int i = 0; i < nb_; ++i) {
+                        for (int a = 0; a < vb_; ++a) {
+                            double eps_diff = scf_.orbital_energies_beta(nb_ + a) - scf_.orbital_energies_beta(i);
+                            Hp(temp_idx) = 2.0 * std::max(std::abs(eps_diff), 1e-4) * p_vec(temp_idx);
+                            temp_idx++;
+                        }
+                    }
+                }
                 
                 Eigen::MatrixXd kappa_a = Eigen::MatrixXd::Zero(na_, va_);
                 if (dim_a > 0) {
@@ -1008,13 +1040,14 @@ MP2Result OMP2::compute() {
                 Eigen::MatrixXd P1_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
                 if (dim_a > 0) {
                     P1_a = C_a_current_.leftCols(na_) * kappa_a * C_a_current_.rightCols(va_).transpose();
-                    P1_a += P1_a.transpose(); 
+                    // PERBAIKAN FATAL: Memakai .eval() agar operasi aman dari memory segfault (Aliasing)
+                    P1_a = (P1_a + P1_a.transpose()).eval(); 
                 }
                 
                 Eigen::MatrixXd P1_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
                 if (!is_restricted && dim_b > 0) {
                     P1_b = C_b_current_.leftCols(nb_) * kappa_b * C_b_current_.rightCols(vb_).transpose();
-                    P1_b += P1_b.transpose();
+                    P1_b = (P1_b + P1_b.transpose()).eval();
                 } else if (is_restricted) {
                     P1_b = P1_a; 
                 }
@@ -1024,6 +1057,7 @@ MP2Result OMP2::compute() {
                 F1_a -= H_core_; 
                 if (!is_restricted || nb_ > 0) F1_b -= H_core_;
             
+                // Masukkan respon 2-elektron analitik
                 if (dim_a > 0) {
                     Eigen::MatrixXd H_kappa_a = C_a_current_.leftCols(na_).transpose() * F1_a * C_a_current_.rightCols(va_);
                     int idx_h = 0;
@@ -1044,13 +1078,44 @@ MP2Result OMP2::compute() {
                     }
                 }
 
+                // Masking simetri untuk memagari rotasi terlarang
+                bool use_sym = (!scf_.irreps_alpha.empty() && scf_.irreps_alpha[0] != -1);
+                if (use_sym) {
+                    int idx_sym = 0;
+                    if (!is_restricted && dim_b > 0) {
+                        for (int i = 0; i < na_; ++i) {
+                            for (int a = 0; a < va_; ++a) {
+                                if ((scf_.irreps_alpha[i] ^ scf_.irreps_alpha[na_ + a]) != 0) {
+                                    Hp(idx_sym) = diag_H(idx_sym) * p_vec(idx_sym);
+                                }
+                                idx_sym++;
+                            }
+                        }
+                        for (int i = 0; i < nb_; ++i) {
+                            for (int b = 0; b < vb_; ++b) {
+                                if ((scf_.irreps_beta[i] ^ scf_.irreps_beta[nb_ + b]) != 0) {
+                                    Hp(idx_sym) = diag_H(idx_sym) * p_vec(idx_sym);
+                                }
+                                idx_sym++;
+                            }
+                        }
+                    } else {
+                        for (int i = 0; i < na_; ++i) {
+                            for (int a = 0; a < va_; ++a) {
+                                if ((scf_.irreps_alpha[i] ^ scf_.irreps_alpha[na_ + a]) != 0) {
+                                    Hp(idx_sym) = diag_H(idx_sym) * p_vec(idx_sym);
+                                }
+                                idx_sym++;
+                            }
+                        }
+                    }
+                }
+
                 return Hp;
             };
+            
             mshqc::gradient::TrustRegionResult step_info = soscf_engine.solve(orbital_gradient_, diag_H, trust_radius, compute_hessian_vector);
             actual_step = step_info.step;
-            
-            expected_change = step_info.predicted_energy_change;    
-            if (expected_change >= 0.0) expected_change = -1e-6; 
 
         } else {
             Eigen::VectorXd kappa = lbfgs_engine.get_direction(orbital_gradient_, diag_H);
