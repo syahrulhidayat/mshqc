@@ -754,7 +754,9 @@ void OMP3::build_generalized_fock() {
         tblis::mult<double>(0.5, t_Tbb, "ijab", t_Tbb, "ijcd", 1.0, t_Gvvvv_bb, "abcd");
         tblis::mult<double>(0.5, t_Tbb, "ijab", t_Tbb, "klab", 1.0, t_Goooo_bb, "ijkl");
         tblis::mult<double>(1.0, t_Tbb, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_bb, "iajb");
-        tblis::mult<double>(1.0, t_Tab, "ikac", t_Tab, "kjcb", 1.0, t_Govov_ab, "iajb");
+        tblis::mult<double>(1.0, t_Taa, "ikac", t_Tab, "kjcb", 1.0, t_Govov_ab, "iajb");
+        tblis::mult<double>(1.0, t_Tab, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_ab, "iajb");
+
 
         Teff_ab = Eigen::MatrixXd::Zero(na_*va_, nb_*vb_);
         Teff_bb = Eigen::MatrixXd::Zero(nb_*vb_, nb_*vb_);
