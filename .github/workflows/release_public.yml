@@ -2,7 +2,7 @@ name: Compile and Release Wheel to Public Repoo
 
 on:
   push:
-    branches: [ "mshqc-1.0.0" ]
+    branches: [ "debug2-mshqc" ]
 
 jobs:
   build-and-deploy:
@@ -143,7 +143,7 @@ jobs:
           echo "Tidak ada perubahan biner baru untuk disimpan di repo privat."
         else
           git commit -m "CI-Bot: Update biner terkompilasi (.whl) [skip ci]"
-          git push origin mshqc-1.0.0
+          git push origin debug2-mshqc
         fi
 
     # =========================================================================
