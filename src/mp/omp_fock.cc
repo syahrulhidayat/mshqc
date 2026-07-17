@@ -586,8 +586,8 @@ void OMP2::build_generalized_fock() {
                             if (is_restricted) {
                                 L_ijab = 2.0 * (*t_aa_blk)(i, a, j, b) - 1.0 * (*t_aa_blk)(i, b, j, a);
                             } else {
-                                L_ijab = 2.0 *(*t_aa_blk)(i, a, j, b);
-                            }
+                                L_ijab = (*t_aa_blk)(i, a, j, b);
+                            } 
                             T2_aa(i*va_+a, j*va_+b) = L_ijab; 
                         }
                     }

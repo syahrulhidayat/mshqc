@@ -1117,6 +1117,7 @@ MP2Result OMP2::compute() {
             
             mshqc::gradient::TrustRegionResult step_info = soscf_engine.solve(orbital_gradient_, diag_H, trust_radius, compute_hessian_vector);
             actual_step = step_info.step;
+            expected_change = step_info.predicted_energy_change;
 
         } else {
             Eigen::VectorXd kappa = lbfgs_engine.get_direction(orbital_gradient_, diag_H);
