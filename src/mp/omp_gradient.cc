@@ -184,7 +184,6 @@ Eigen::VectorXd OMP2::compute_soscf_step() {
             for (int a = 0; a < vb_; ++a) {
                 double eps_diff = scf_.orbital_energies_beta(nb_ + a) - scf_.orbital_energies_beta(i);
                 double safe_diff = std::max(std::abs(eps_diff), 1e-4);
-                // Matriks J murni di UMP2 bernilai 0
                 hessian_diag_(idx++) = 2.0 * safe_diff + 0.0 + level_shift;
             }
         }
