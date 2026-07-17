@@ -509,41 +509,46 @@ TrustRegionResult TrustRegionSOSCF::solve(
 {
     int n = gradient.size();
     Eigen::VectorXd z = Eigen::VectorXd::Zero(n); 
+    Eigen::VectorXd Hz = Eigen::VectorXd::Zero(n); // PERBAIKAN: Pelacak nilai (H * z) 
     Eigen::VectorXd r = gradient;
-    
-    Eigen::VectorXd M_inv = diag_hessian.cwiseAbs().cwiseMax(1e-12).cwiseInverse();
+  
+    Eigen::VectorXd M_inv = diag_hessian.cwiseMax(config_.precond_shift).cwiseInverse();    
     Eigen::VectorXd p = -M_inv.cwiseProduct(r);
     
     double r_norm = r.norm();
     if (r_norm < config_.micro_thresh) return {z, 0.0, false};
 
-    double r_M_r_old = r.dot(-p); // sama dengan r.dot(M_inv * r)
+    double r_M_r_old = r.dot(-p); 
     
     for (int iter = 0; iter < config_.max_micro_iter; ++iter) {
         Eigen::VectorXd Hp = compute_hessian_vector(p);
-        
         double kappa = p.dot(Hp);
         if (kappa <= 0.0) {
             double tau = compute_boundary_intersection(z, p, trust_radius);
             Eigen::VectorXd step = z + tau * p;
-            return {step, compute_model_energy(gradient, step, compute_hessian_vector), true};
+            Eigen::VectorXd H_step = Hz + tau * Hp; 
+            double m_energy = gradient.dot(step) + 0.5 * step.dot(H_step);
+            return {step, m_energy, true};
         }
         
         double alpha = r_M_r_old / kappa;
         Eigen::VectorXd z_next = z + alpha * p;
-        
         if (z_next.norm() >= trust_radius) {
             double tau = compute_boundary_intersection(z, p, trust_radius);
             Eigen::VectorXd step = z + tau * p;
-            return {step, compute_model_energy(gradient, step, compute_hessian_vector), true};
+            
+            Eigen::VectorXd H_step = Hz + tau * Hp;
+            double m_energy = gradient.dot(step) + 0.5 * step.dot(H_step);
+            return {step, m_energy, true};
         }
-        
-        // Update langkah dan residual
+    
         z = z_next;
+        Hz += alpha * Hp;
         r += alpha * Hp;
         
         if (r.norm() < config_.micro_thresh) {
-            return {z, compute_model_energy(gradient, z, compute_hessian_vector), false};
+            double m_energy = gradient.dot(z) + 0.5 * z.dot(Hz);
+            return {z, m_energy, false};
         }
         
         Eigen::VectorXd z_M_inv = M_inv.cwiseProduct(r);
@@ -554,7 +559,8 @@ TrustRegionResult TrustRegionSOSCF::solve(
         r_M_r_old = r_M_r_new;
     }
     
-    return {z, compute_model_energy(gradient, z, compute_hessian_vector), false};
+    double final_m_energy = gradient.dot(z) + 0.5 * z.dot(Hz);
+    return {z, final_m_energy, false};
 }
 
 double TrustRegionSOSCF::compute_boundary_intersection(const Eigen::VectorXd& z, const Eigen::VectorXd& p, double R) {
@@ -564,13 +570,7 @@ double TrustRegionSOSCF::compute_boundary_intersection(const Eigen::VectorXd& z,
     
     double discriminant = (b * b) - (4.0 * a * c);
     if (discriminant < 0.0) return 0.0; 
-
     return (-b + std::sqrt(discriminant)) / (2.0 * a);
-}
-
-double TrustRegionSOSCF::compute_model_energy(const Eigen::VectorXd& g, const Eigen::VectorXd& step, 
-                                              std::function<Eigen::VectorXd(const Eigen::VectorXd&)>& compute_H_vec) {
-    return g.dot(step) + 0.5 * step.dot(compute_H_vec(step));
 }
 
 

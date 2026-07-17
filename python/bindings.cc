@@ -5,10 +5,6 @@
 #include <nanobind/stl/tuple.h>
 #include <nanobind/stl/array.h>
 #include <nanobind/eigen/dense.h>
-
-
-
-
 #include <thread>
 #include <omp.h>
 #include <cstdlib>
