@@ -869,6 +869,7 @@ MP2Result OMP2::compute() {
     bool is_converged = false;
     int macro_iter = 0;
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
+    bool step_rejected = false;
 
     while (macro_iter < config_.max_iterations) {
         scf_.C_alpha = C_a_current_;

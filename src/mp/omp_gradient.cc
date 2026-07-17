@@ -105,8 +105,8 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
                 if (is_restricted) {
                     X_a_chunk.noalias() += T2_rmp2 * Bia_chunk;
                 } else {
-
-                    X_a_chunk.noalias() += T2_aa_mat * Bia_chunk;
+                    // [MODIFIKASI] Kalikan 0.5 untuk koreksi perhitungan ganda spin-sejenis
+                    X_a_chunk.noalias() += 0.5 * T2_aa_mat * Bia_chunk; 
                 }
             }
 
@@ -114,12 +114,14 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
                 Eigen::MatrixXd Bib_chunk = B_ia_P_beta_.middleCols(P_start, P_len);
                 
                 if (t_ab_blk) {
+                    // Blok alpha-beta (beda-spin) TIDAK butuh faktor 0.5
                     X_a_chunk.noalias() += T2_ab_mat * Bib_chunk;
                     X_b_chunk.noalias() += T2_ab_mat.transpose() * Bia_chunk;
                 }
 
                 if (t_bb_blk) {
-                    X_b_chunk.noalias() += T2_bb_mat * Bib_chunk;
+                    // [MODIFIKASI] Kalikan 0.5 untuk koreksi perhitungan ganda spin-sejenis
+                    X_b_chunk.noalias() += 0.5 * T2_bb_mat * Bib_chunk; 
                 }
             }
 
