@@ -220,25 +220,29 @@ void OMP2::build_opdm_alpha() {
             Eigen::Map<const Eigen::MatrixXd> Tab_mat(t_ab_blk->data(), na_, nb_ * va_ * vb_);
             G_oo_alpha_.noalias() -= Tab_mat * Tab_mat.transpose();
 
-            const double* base_ab = t_ab_blk->data();
+            const double* base_ptr = t_aa_blk->data();
+            int max_threads = omp_get_max_threads();
+            std::vector<Eigen::MatrixXd> thread_local_Gvv(max_threads, Eigen::MatrixXd::Zero(va_, va_));
             
             #pragma omp parallel
             {
-                Eigen::MatrixXd G_vv_local = Eigen::MatrixXd::Zero(va_, va_);
+                int tid = omp_get_thread_num();
                 
                 #pragma omp for schedule(dynamic)
-                for (int b = 0; b < vb_; ++b) {
-                    size_t offset = b * (na_ * nb_ * va_);
+                for (int jc = 0; jc < na_ * va_; ++jc) {
+                    int j = jc % na_;
+                    int c = jc / na_;
                     
-                    Eigen::Map<const Eigen::MatrixXd> M(base_ab + offset, na_ * nb_, va_);
-                    G_vv_local.noalias() += M.transpose() * M;
-                }
-                
-                #pragma omp critical
-                {
-                    G_vv_alpha_ += G_vv_local;
+                    size_t offset = j * (na_ * va_) + c * (na_ * va_ * na_);
+                    Eigen::Map<const Eigen::MatrixXd> M(base_ptr + offset, na_, va_);
+                    thread_local_Gvv[tid].noalias() += M.transpose() * M;
                 }
             }
+            for (int t = 0; t < max_threads; ++t) {
+                G_vv_alpha_ += 0.5 * thread_local_Gvv[t];
+
+            }
+            
         }
     }
 }

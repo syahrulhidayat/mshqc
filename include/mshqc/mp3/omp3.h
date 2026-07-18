@@ -34,7 +34,7 @@ protected:
     // OVERRIDE: Membangun Matriks Densitas Satu-Partikel (OPDM) khusus MP3
     void build_opdm_alpha() override;
     void build_opdm_beta() override;
-    
+
     void build_hessian_diagonal(Eigen::VectorXd& diag_H, double grad_norm) override;
 
     // Penyimpanan Internal Khusus Orde-3 (Energi)
@@ -46,6 +46,8 @@ protected:
     // Penyimpanan Amplitudo Orde-3 dan Amplitudo Lagrangian (Lambda)
     Eigen::Tensor<double, 4> t2_3rd_aa_, t2_3rd_bb_, t2_3rd_ab_;
     Eigen::Tensor<double, 4> L2_aa_, L2_bb_, L2_ab_;
+    Eigen::Tensor<double, 4> Waa_ladder_;
+    Eigen::Tensor<double, 4> Waa_ring_;
 
     // Evaluasi Energi Koreksi MP3
     void compute_mp3_correction();

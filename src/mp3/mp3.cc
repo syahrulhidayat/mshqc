@@ -241,10 +241,25 @@ double OMP3::execute_micro_iterations() {
     
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1); 
     
-    L2_aa_ = t2_3rd_aa_;
+    auto* t2_aa_dense = t2_aa_.get_block(0,0,0,0);
+    L2_aa_ = Eigen::Tensor<double, 4>(na_, na_, va_, va_);
+    Eigen::Map<Eigen::VectorXd>(L2_aa_.data(), L2_aa_.size()) = 
+        Eigen::Map<const Eigen::VectorXd>(t2_aa_dense->data(), t2_aa_dense->size()) + 
+        Eigen::Map<const Eigen::VectorXd>(t2_3rd_aa_.data(), t2_3rd_aa_.size());
+
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
-        L2_bb_ = t2_3rd_bb_;
-        L2_ab_ = t2_3rd_ab_;
+        auto* t2_bb_dense = t2_bb_.get_block(0,0,0,0);
+        auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
+        
+        L2_bb_ = Eigen::Tensor<double, 4>(nb_, nb_, vb_, vb_);
+        Eigen::Map<Eigen::VectorXd>(L2_bb_.data(), L2_bb_.size()) = 
+            Eigen::Map<const Eigen::VectorXd>(t2_bb_dense->data(), t2_bb_dense->size()) + 
+            Eigen::Map<const Eigen::VectorXd>(t2_3rd_bb_.data(), t2_3rd_bb_.size());
+            
+        L2_ab_ = Eigen::Tensor<double, 4>(na_, nb_, va_, vb_);
+        Eigen::Map<Eigen::VectorXd>(L2_ab_.data(), L2_ab_.size()) = 
+            Eigen::Map<const Eigen::VectorXd>(t2_ab_dense->data(), t2_ab_dense->size()) + 
+            Eigen::Map<const Eigen::VectorXd>(t2_3rd_ab_.data(), t2_3rd_ab_.size());
     }
     build_opdm_alpha();
     if (!is_restricted && nb_ > 0) {
@@ -367,17 +382,28 @@ void OMP3::compute_mp3_correction() {
 
 
     {
-        Eigen::Tensor<double, 4> Waa_ladder(na_, na_, va_, va_); Waa_ladder.setZero();
-        Eigen::Tensor<double, 4> Waa_ring(na_, na_, va_, va_); Waa_ring.setZero();
-        TBLIS_VIEW_4D(t_Waa_ladder, Waa_ladder, na_, na_, va_, va_);
-        TBLIS_VIEW_4D(t_Waa_ring, Waa_ring, na_, na_, va_, va_);
+        if (Waa_ladder_.size() == 0) Waa_ladder_.resize(na_, na_, va_, va_);
+        if (Waa_ring_.size() == 0) Waa_ring_.resize(na_, na_, va_, va_);
+        
+        Waa_ladder_.setZero();
+        Waa_ring_.setZero();
+        TBLIS_VIEW_4D(t_Waa_ladder, Waa_ladder_, na_, na_, va_, va_);
+        TBLIS_VIEW_4D(t_Waa_ring, Waa_ring_, na_, na_, va_, va_);
 
-      
-        auto Vvvvv_aa = ERITransformer::get_mo_tensor(config_.use_df, n_aux, Cav, Cav, Cav, Cav, integrals_);
-        TBLIS_VIEW_4D(t_Vvvvv_aa, Vvvvv_aa, va_, va_, va_, va_);
-
-        tblis::mult<double>(0.5, t_Taa, "ijef", t_Vvvvv_aa, "eafb", 1.0, t_Waa_ladder, "ijab");
-        tblis::mult<double>(-0.5, t_Taa, "ijef", t_Vvvvv_aa, "ebfa", 1.0, t_Waa_ladder, "ijab");
+        Eigen::MatrixXd T_tilde = Eigen::MatrixXd::Zero(na_ * na_, n_aux);
+        Eigen::Map<Eigen::MatrixXd> T_mat(T2_aa_ijab.data(), na_ * na_, va_ * va_);
+        T_tilde.noalias() = T_mat * B_vv_a; 
+        Eigen::Map<Eigen::MatrixXd> W_mat(Waa_ladder_.data(), na_ * na_, va_ * va_);
+        W_mat.noalias() = T_tilde * B_vv_a.transpose();
+        for(int i=0; i<na_; ++i) {
+            for(int j=0; j<na_; ++j) {
+                for(int a=0; a<va_; ++a) {
+                    for(int b=0; b<va_; ++b) {
+                        Waa_ladder_(i,j,a,b) = 0.5 * (Waa_ladder_(i,j,a,b) - Waa_ladder_(i,j,b,a));
+                    }
+                }
+            }
+        }
 
         auto V_oooo = ERITransformer::get_mo_tensor(config_.use_df, n_aux, Cao, Cao, Cao, Cao, integrals_);
         TBLIS_VIEW_4D(t_Voooo, V_oooo, na_, na_, na_, na_);
@@ -405,8 +431,8 @@ void OMP3::compute_mp3_correction() {
             for(int j=0; j<na_; ++j) {
                 for(int a=0; a<va_; ++a) {
                     for(int b=0; b<va_; ++b) {
-                        double r_asym = Waa_ring(i,j,a,b) - Waa_ring(j,i,a,b) - Waa_ring(i,j,b,a) + Waa_ring(j,i,b,a);
-                        double w_tot = Waa_ladder(i,j,a,b) + r_asym;
+                        double r_asym = Waa_ring_(i,j,a,b) - Waa_ring_(j,i,a,b) - Waa_ring_(i,j,b,a) + Waa_ring_(j,i,b,a);
+                        double w_tot = Waa_ladder_(i,j,a,b) + r_asym;
                         double D = ea(i) + ea(j) - ea(na_+a) - ea(na_+b);
                         double reg_den = D / (D * D + 1e-20);
                         t2_3rd_aa_(i,j,a,b) = w_tot * reg_den;
