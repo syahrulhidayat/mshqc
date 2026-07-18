@@ -984,7 +984,7 @@ MP2Result OMP2::compute() {
                 }
             }
         }
-
+        build_hessian_diagonal(diag_H, grad_norm);
         Eigen::VectorXd actual_step;
 
         if (config_.opt_method == "soscf") {
