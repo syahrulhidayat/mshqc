@@ -388,24 +388,15 @@ void OMP3::compute_mp3_correction() {
     {
         Eigen::Tensor<double, 4> Waa_ladder(na_, na_, va_, va_); Waa_ladder.setZero();
         Eigen::Tensor<double, 4> Waa_ring(na_, na_, va_, va_); Waa_ring.setZero();
-        Eigen::Map<const Eigen::MatrixXd> T2_flat(T2_aa_ijab.data(), na_*na_, va_*va_);
-        Eigen::MatrixXd W_flat = (T2_flat * B_vv_a) * B_vv_a.transpose(); 
-
-        #pragma omp parallel for collapse(2)
-        for (int i = 0; i < na_; ++i) {
-            for (int j = 0; j < na_; ++j) {
-                int ij = i + j * na_; 
-                for (int a = 0; a < va_; ++a) {
-                    for (int b = 0; b < va_; ++b) {
-                        int ab = a + b * va_; 
-                        int ba = b + a * va_; 
-                        Waa_ladder(i,j,a,b) = 0.5 * (W_flat(ij, ab) - W_flat(ij, ba));
-                    }
-                }
-            }
-        }
         TBLIS_VIEW_4D(t_Waa_ladder, Waa_ladder, na_, na_, va_, va_);
         TBLIS_VIEW_4D(t_Waa_ring, Waa_ring, na_, na_, va_, va_);
+
+      
+        auto Vvvvv_aa = ERITransformer::get_mo_tensor(config_.use_df, n_aux, Cav, Cav, Cav, Cav, integrals_);
+        TBLIS_VIEW_4D(t_Vvvvv_aa, Vvvvv_aa, va_, va_, va_, va_);
+
+        tblis::mult<double>(0.5, t_Taa, "ijef", t_Vvvvv_aa, "eafb", 1.0, t_Waa_ladder, "ijab");
+        tblis::mult<double>(-0.5, t_Taa, "ijef", t_Vvvvv_aa, "ebfa", 1.0, t_Waa_ladder, "ijab");
 
         auto V_oooo = ERITransformer::get_mo_tensor(config_.use_df, n_aux, Cao, Cao, Cao, Cao, integrals_);
         TBLIS_VIEW_4D(t_Voooo, V_oooo, na_, na_, na_, na_);
@@ -643,8 +634,8 @@ void OMP3::build_opdm_alpha() {
                             double t3_jk_ex = L2_aa_(j, b, k, a); 
 
                             p_oo -= 1.0 * t2_ik * (2.0 * t2_jk - t2_jk_ex);
-                            p_oo += 1.0 * t2_ik * (2.0 * t3_jk - t3_jk_ex); // MP3 Sign Flipped!
-                            p_oo += 1.0 * t3_ik * (2.0 * t2_jk - t2_jk_ex);
+                            p_oo -= 1.0 * t2_ik * (2.0 * t3_jk - t3_jk_ex); 
+                            p_oo -= 1.0 * t3_ik * (2.0 * t2_jk - t2_jk_ex); 
                         }
                     }
                 }
@@ -667,8 +658,8 @@ void OMP3::build_opdm_alpha() {
                             double t3_cb = L2_aa_(i, c, j, b);
 
                             p_vv += 1.0 * t2_ac * (2.0 * t2_bc - t2_cb);
-                            p_vv -= 1.0 * t2_ac * (2.0 * t3_bc - t3_cb); // MP3 Sign Flipped!
-                            p_vv -= 1.0 * t3_ac * (2.0 * t2_bc - t2_cb);
+                            p_vv += 1.0 * t2_ac * (2.0 * t3_bc - t3_cb); 
+                            p_vv += 1.0 * t3_ac * (2.0 * t2_bc - t2_cb);
                         }
                     }
                 }
@@ -684,11 +675,11 @@ void OMP3::build_opdm_alpha() {
     TBLIS_VIEW_2D(t_Gvv_a, G_vv_alpha_.data(), va_, va_);
 
     tblis::mult<double>(-0.5, t_T2aa, "ikab", t_T2aa, "jkab", 1.0, t_Goo_a, "ij");
-    tblis::mult<double>(0.5, t_T2aa, "ikab", t_T3aa, "jkab", 1.0, t_Goo_a, "ij"); 
-    tblis::mult<double>(0.5, t_T3aa, "ikab", t_T2aa, "jkab", 1.0, t_Goo_a, "ij"); 
+    tblis::mult<double>(-0.5, t_T2aa, "ikab", t_T3aa, "jkab", 1.0, t_Goo_a, "ij"); 
+    tblis::mult<double>(-0.5, t_T3aa, "ikab", t_T2aa, "jkab", 1.0, t_Goo_a, "ij"); 
     tblis::mult<double>(0.5, t_T2aa, "ijac", t_T2aa, "ijbc", 1.0, t_Gvv_a, "ab");
-    tblis::mult<double>(-0.5, t_T2aa, "ijac", t_T3aa, "ijbc", 1.0, t_Gvv_a, "ab"); 
-    tblis::mult<double>(-0.5, t_T3aa, "ijac", t_T2aa, "ijbc", 1.0, t_Gvv_a, "ab"); 
+    tblis::mult<double>(0.5, t_T2aa, "ijac", t_T3aa, "ijbc", 1.0, t_Gvv_a, "ab"); 
+    tblis::mult<double>(0.5, t_T3aa, "ijac", t_T2aa, "ijbc", 1.0, t_Gvv_a, "ab");
 
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
         auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
@@ -892,9 +883,8 @@ void OMP3::build_generalized_fock() {
         for (int a = 0; a < va_; ++a) {
             for (int j = 0; j < na_; ++j) {
                 for (int b = 0; b < va_; ++b) {
-                    // PERBAIKAN Z-VECTOR AMP EKSITASI (2.0 * L2)
-                    double dir = T2_aa_ijab(i, j, a, b) + 2.0 * L2_aa_(i, j, a, b) + 1.0 * Gamma_ovov_aa(i, a, j, b);
-                    double ex  = T2_aa_ijab(i, j, b, a) + 2.0 * L2_aa_(i, j, b, a) + 1.0 * Gamma_ovov_aa(i, b, j, a);
+                    double dir = T2_aa_ijab(i, j, a, b) + L2_aa_(i, j, a, b);
+                    double ex  = T2_aa_ijab(i, j, b, a) + L2_aa_(i, j, b, a);
                     if (is_restricted) {
                         Teff_aa(i*va_+a, j*va_+b) = 2.0 * dir - 1.0 * ex;
                     } else {
@@ -933,7 +923,7 @@ void OMP3::build_generalized_fock() {
             for (int a = 0; a < va_; ++a) {
                 for (int j = 0; j < nb_; ++j) {
                     for (int b = 0; b < vb_; ++b) {
-                        Teff_ab(i*va_+a, j*vb_+b) = (*t2_ab_dense)(i, j, a, b) + 2.0 * L2_ab_(i, j, a, b) + 1.0 * Gamma_ovov_ab(i, a, j, b);
+                        Teff_ab(i*va_+a, j*vb_+b) = (*t2_ab_dense)(i, j, a, b) + L2_ab_(i, j, a, b);
                     }
                 }
             }
@@ -944,8 +934,8 @@ void OMP3::build_generalized_fock() {
             for (int a = 0; a < vb_; ++a) {
                 for (int j = 0; j < nb_; ++j) {
                     for (int b = 0; b < vb_; ++b) {
-                        double dir = (*t2_bb_dense)(i, j, a, b) + 2.0 * L2_bb_(i, j, a, b) + 1.0 * Gamma_ovov_bb(i, a, j, b);
-                        double ex  = (*t2_bb_dense)(i, j, b, a) + 2.0 * L2_bb_(i, j, b, a) + 1.0 * Gamma_ovov_bb(i, b, j, a);
+                        double dir = (*t2_bb_dense)(i, j, a, b) + L2_bb_(i, j, a, b);
+                        double ex  = (*t2_bb_dense)(i, j, b, a) + L2_bb_(i, j, b, a);
                         Teff_bb(i*vb_+a, j*vb_+b) = dir - ex;
                     }
                 }
