@@ -363,10 +363,9 @@ void OMP3::compute_mp3_correction() {
                         double r_asym = Waa_ring(i,j,a,b) - Waa_ring(j,i,a,b) - Waa_ring(i,j,b,a) + Waa_ring(j,i,b,a);
                         double w_tot = Waa_ladder(i,j,a,b) + r_asym;
                         double D = ea(i) + ea(j) - ea(na_+a) - ea(na_+b);
-                        if (std::abs(D) > 1e-12) {
-                            t2_3rd_aa_(i,j,a,b) = w_tot / D;
-                            e3_aa += 0.25 * (*t2_aa_dense)(i,j,a,b) * w_tot; 
-                        }
+                        double reg_den = D / (D * D + 1e-20);
+                        t2_3rd_aa_(i,j,a,b) = w_tot * reg_den;
+                        e3_aa += 0.25 * (*t2_aa_dense)(i,j,a,b) * w_tot;
                     }
                 }
             }
@@ -435,10 +434,9 @@ void OMP3::compute_mp3_correction() {
                             double r_asym = Wbb_ring(i,j,a,b) - Wbb_ring(j,i,a,b) - Wbb_ring(i,j,b,a) + Wbb_ring(j,i,b,a);
                             double w_tot = Wbb_ladder(i,j,a,b) + r_asym;
                             double D = eb(i) + eb(j) - eb(nb_+a) - eb(nb_+b);
-                            if (std::abs(D) > 1e-12) {
-                                t2_3rd_bb_(i,j,a,b) = w_tot / D;
-                                e3_bb += 0.25 * (*t2_bb_dense)(i,j,a,b) * w_tot;
-                            }
+                            double reg_den = D / (D * D + 1e-20);
+                            t2_3rd_bb_(i,j,a,b) = w_tot * reg_den;
+                            e3_bb += 0.25 * (*t2_bb_dense)(i,j,a,b) * w_tot;
                         }
                     }
                 }
@@ -512,10 +510,9 @@ void OMP3::compute_mp3_correction() {
                         for(int b=0; b<vb_; ++b) {
                             double w_tot = Wab_ladder(i,j,a,b) + Wab_ring(i,j,a,b); 
                             double D = ea(i) + eb(j) - ea(na_+a) - eb(nb_+b);
-                            if (std::abs(D) > 1e-12) {
-                                t2_3rd_ab_(i,j,a,b) = w_tot / D;
-                                e3_ab += 1.0 * (*t2_ab_dense)(i,j,a,b) * w_tot;
-                            }
+                            double reg_den = D / (D * D + 1e-20);
+                            t2_3rd_ab_(i,j,a,b) = w_tot * reg_den;
+                            e3_ab += 1.0 * (*t2_ab_dense)(i,j,a,b) * w_tot;
                         }
                     }
                 }
@@ -651,16 +648,16 @@ void OMP3::build_generalized_fock() {
 
     F_gen_a_ = F_HF_mo_a + G_gamma_mo_a;
     if (na_ > 0 && va_ > 0) {
-        Eigen::MatrixXd F_vo_a = F_gen_a_.block(na_, 0, va_, na_);
-        Eigen::MatrixXd L_sep_a = G_vv_alpha_ * F_vo_a - F_vo_a * G_oo_alpha_;
+        Eigen::MatrixXd F_HF_vo_a = F_HF_mo_a.block(na_, 0, va_, na_);
+        Eigen::MatrixXd L_sep_a = G_vv_alpha_ * F_HF_vo_a - F_HF_vo_a * G_oo_alpha_;
         F_gen_a_.block(na_, 0, va_, na_) += L_sep_a;
         F_gen_a_.block(0, na_, na_, va_) += L_sep_a.transpose();
     }
 
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
         F_gen_b_ = F_HF_mo_b + G_gamma_mo_b;
-        Eigen::MatrixXd F_vo_b = F_gen_b_.block(nb_, 0, vb_, nb_);
-        Eigen::MatrixXd L_sep_b = G_vv_beta_ * F_vo_b - F_vo_b * G_oo_beta_;
+        Eigen::MatrixXd F_HF_vo_b = F_HF_mo_b.block(nb_, 0, vb_, nb_);
+        Eigen::MatrixXd L_sep_b = G_vv_beta_ * F_HF_vo_b - F_HF_vo_b * G_oo_beta_;
         F_gen_b_.block(nb_, 0, vb_, nb_) += L_sep_b;
         F_gen_b_.block(0, nb_, nb_, vb_) += L_sep_b.transpose();
     } else if (is_restricted) {
