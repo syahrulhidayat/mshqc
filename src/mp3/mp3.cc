@@ -769,13 +769,13 @@ void OMP3::build_generalized_fock() {
     tblis::mult<double>(1.0, t_Taa, "ikac", t_Taa, "kjcb", 1.0, t_Govov_aa, "iajb"); 
 
     Eigen::MatrixXd Teff_aa = Eigen::MatrixXd::Zero(na_*va_, na_*va_);
-    #pragma omp parallel for collapse(2)
+    #pragma omp parallel for collapse(2) schedule(static)
     for (int i = 0; i < na_; ++i) {
         for (int a = 0; a < va_; ++a) {
             for (int j = 0; j < na_; ++j) {
                 for (int b = 0; b < va_; ++b) {
                     Teff_aa(i*va_+a, j*va_+b) = T2_aa_ijab(i, j, a, b) 
-                                            + 0.5 * L2_aa_(i, j, a, b) 
+                                            + 1.0 * L2_aa_(i, j, a, b) 
                                             + 0.5 * Gamma_ovov_aa(i, a, j, b);
                 }
             }
@@ -806,7 +806,7 @@ void OMP3::build_generalized_fock() {
         Teff_ab = Eigen::MatrixXd::Zero(na_*va_, nb_*vb_);
         Teff_bb = Eigen::MatrixXd::Zero(nb_*vb_, nb_*vb_);
         
-        #pragma omp parallel for collapse(2)
+        #pragma omp parallel for collapse(2) schedule(static)
         for (int i = 0; i < na_; ++i) {
             for (int a = 0; a < va_; ++a) {
                 for (int j = 0; j < nb_; ++j) {
@@ -819,13 +819,13 @@ void OMP3::build_generalized_fock() {
             }
         }
                 
-        #pragma omp parallel for collapse(2)
+        #pragma omp parallel for collapse(2) schedule(static)
         for (int i = 0; i < nb_; ++i) {
             for (int a = 0; a < vb_; ++a) {
                 for (int j = 0; j < nb_; ++j) {
                     for (int b = 0; b < vb_; ++b) {
                         Teff_bb(i*vb_+a, j*vb_+b) = (*t2_bb_dense)(i, j, a, b) 
-                                                + 0.5 * L2_bb_(i, j, a, b) 
+                                                + 1.0 * L2_bb_(i, j, a, b) 
                                                 + 0.5 * Gamma_ovov_bb(i, a, j, b);
                     }
                 }
@@ -893,6 +893,30 @@ void OMP3::build_generalized_fock() {
         F_gen_b_.block(0, nb_, nb_, vb_) += Z_mat_b.transpose();
     } else if (is_restricted) {
         F_gen_b_ = F_gen_a_; 
+    }
+}
+void OMP3::build_hessian_diagonal(Eigen::VectorXd& diag_H, double grad_norm) {
+    OMP2::build_hessian_diagonal(diag_H, grad_norm);
+    int idx = 0;
+    bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
+    double spin_factor = is_restricted ? 4.0 : 2.0;
+
+    for (int i = 0; i < na_; ++i) {
+        for (int a = 0; a < va_; ++a) {
+            double delta_density = std::abs(G_vv_alpha_(a, a)) + std::abs(G_oo_alpha_(i, i));
+            diag_H(idx) += spin_factor * 1.5 * delta_density; 
+            idx++;
+        }
+    }
+
+    if (!is_restricted && nb_ > 0) {
+        for (int i = 0; i < nb_; ++i) {
+            for (int a = 0; a < vb_; ++a) {
+                double delta_density = std::abs(G_vv_beta_(a, a)) + std::abs(G_oo_beta_(i, i));
+                diag_H(idx) += 2.0 * 1.5 * delta_density;
+                idx++;
+            }
+        }
     }
 }
 MP3Result OMP3::compute_omp3() {

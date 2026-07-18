@@ -34,6 +34,8 @@ protected:
     // OVERRIDE: Membangun Matriks Densitas Satu-Partikel (OPDM) khusus MP3
     void build_opdm_alpha() override;
     void build_opdm_beta() override;
+    
+    void build_hessian_diagonal(Eigen::VectorXd& diag_H, double grad_norm) override;
 
     // Penyimpanan Internal Khusus Orde-3 (Energi)
     double e_mp3_aa_ = 0.0;

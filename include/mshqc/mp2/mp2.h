@@ -259,6 +259,8 @@ protected:
     virtual void build_opdm_alpha();
     virtual void build_opdm_beta();
 
+    virtual void build_hessian_diagonal(Eigen::VectorXd& diag_H, double grad_norm);
+
     // Sisa fungsi private/protected...
     void execute_macro_iterations();
     void execute_macro_iterations(DIIS& diis_a, DIIS& diis_b, int macro_iter);

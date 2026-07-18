@@ -148,39 +148,34 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
         }
     }
 }
-Eigen::VectorXd OMP2::compute_soscf_step() {
+// 1. TAMBAHKAN FUNGSI INI UNTUK MENANGANI HESSIAN (DAPAT DI-OVERRIDE OLEH OMP3)
+void OMP2::build_hessian_diagonal(Eigen::VectorXd& diag_H, double grad_norm) {
     int n_params = orbital_gradient_.size();
-    if (n_params == 0) return Eigen::VectorXd::Zero(0);
-
-    if (hessian_diag_.size() != n_params) hessian_diag_.resize(n_params);
+    if (diag_H.size() != n_params) diag_H.resize(n_params);
+    
     int idx = 0;
-    double grad_norm = orbital_gradient_.norm(); 
-    
-    double level_shift = (grad_norm > 0.1) ? 0.05 : 0.005; 
+    double level_shift = (grad_norm > 0.1) ? 0.05 : 0.005;
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
-    
     double spin_factor = is_restricted ? 4.0 : 2.0;
-
-    for (int i = 0; i < na_; ++i) {
-        for (int a = 0; a < va_; ++a) {
+    
+    for (int i = 0; i < na_; ++i) {             
+        for (int a = 0; a < va_; ++a) {        
             double eps_diff = scf_.orbital_energies_alpha(na_ + a) - scf_.orbital_energies_alpha(i);
             double safe_diff = std::max(std::abs(eps_diff), 1e-4);
             double J_ia = 0.0;
-            
             if (config_.eri_method != "exact") {
                 J_ia = B_ia_P_alpha_.row(i * va_ + a).squaredNorm(); 
             } else {
                 auto* g_blk = g_aa_.get_block(0, 0, 0, 0);
                 if (g_blk) J_ia = std::abs((*g_blk)(i, a, i, a));
             }
-            hessian_diag_(idx++) = spin_factor * safe_diff + 2.0 * spin_factor * J_ia + level_shift; 
+            diag_H(idx++) = spin_factor * safe_diff + 2.0 * spin_factor * J_ia + level_shift;  
         }
     }
-
+    
     if (!is_restricted && nb_ > 0) {
-      
-        for (int i = 0; i < nb_; ++i) {
-            for (int a = 0; a < vb_; ++a) {
+        for (int i = 0; i < nb_; ++i) {         
+            for (int a = 0; a < vb_; ++a) {    
                 double eps_diff = scf_.orbital_energies_beta(nb_ + a) - scf_.orbital_energies_beta(i);
                 double safe_diff = std::max(std::abs(eps_diff), 1e-4);
                 double J_ia = 0.0;
@@ -190,10 +185,21 @@ Eigen::VectorXd OMP2::compute_soscf_step() {
                     auto* g_blk = g_bb_.get_block(0, 0, 0, 0);
                     if (g_blk) J_ia = std::abs((*g_blk)(i, a, i, a));
                 }
-                hessian_diag_(idx++) = 2.0 * safe_diff + 4.0 * J_ia + level_shift;
+                diag_H(idx++) = 2.0 * safe_diff + 4.0 * J_ia + level_shift;
             }
         }
     }
+}
+
+// 2. VERSI REFAKTORISASI DARI compute_soscf_step
+Eigen::VectorXd OMP2::compute_soscf_step() {
+    int n_params = orbital_gradient_.size();
+    if (n_params == 0) return Eigen::VectorXd::Zero(0);
+
+    double grad_norm = orbital_gradient_.norm(); 
+
+    // DELEGASI KRITIKAL: Memanggil fungsi virtual yang merespons injeksi orde-3 jika dijalankan via OMP3
+    build_hessian_diagonal(hessian_diag_, grad_norm);
 
     for(int i = 0; i < hessian_diag_.size(); ++i) {
         if(std::abs(hessian_diag_(i)) < 1e-12) hessian_diag_(i) = 1e-12; 
