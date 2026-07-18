@@ -760,13 +760,25 @@ void OMP3::build_generalized_fock() {
         }
     }
     TBLIS_VIEW_4D(t_Taa, T2_aa_ijab, na_, na_, va_, va_);
+    TBLIS_VIEW_4D(t_T3aa, L2_aa_, na_, na_, va_, va_);
     TBLIS_VIEW_4D(t_Gvvvv_aa, Gamma_vvvv_aa, va_, va_, va_, va_);
     TBLIS_VIEW_4D(t_Goooo_aa, Gamma_oooo_aa, na_, na_, na_, na_);
     TBLIS_VIEW_4D(t_Govov_aa, Gamma_ovov_aa, na_, va_, na_, va_);
 
+    // 1. Matriks Densitas MP2 Murni (T1 * T1)
     tblis::mult<double>(0.5, t_Taa, "ijab", t_Taa, "ijcd", 1.0, t_Gvvvv_aa, "abcd");
     tblis::mult<double>(0.5, t_Taa, "ijab", t_Taa, "klab", 1.0, t_Goooo_aa, "ijkl");
     tblis::mult<double>(1.0, t_Taa, "ikac", t_Taa, "kjcb", 1.0, t_Govov_aa, "iajb"); 
+
+    // 2. Koreksi Densitas Orde-3 (T1 * T2 + T2 * T1)
+    tblis::mult<double>(0.5, t_Taa, "ijab", t_T3aa, "ijcd", 1.0, t_Gvvvv_aa, "abcd");
+    tblis::mult<double>(0.5, t_T3aa, "ijab", t_Taa, "ijcd", 1.0, t_Gvvvv_aa, "abcd");
+
+    tblis::mult<double>(0.5, t_Taa, "ijab", t_T3aa, "klab", 1.0, t_Goooo_aa, "ijkl");
+    tblis::mult<double>(0.5, t_T3aa, "ijab", t_Taa, "klab", 1.0, t_Goooo_aa, "ijkl");
+
+    tblis::mult<double>(1.0, t_Taa, "ikac", t_T3aa, "kjcb", 1.0, t_Govov_aa, "iajb");
+    tblis::mult<double>(1.0, t_T3aa, "ikac", t_Taa, "kjcb", 1.0, t_Govov_aa, "iajb");
 
     Eigen::MatrixXd Teff_aa = Eigen::MatrixXd::Zero(na_*va_, na_*va_);
     #pragma omp parallel for collapse(2) schedule(static)
@@ -789,18 +801,39 @@ void OMP3::build_generalized_fock() {
         auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
 
         TBLIS_VIEW_4D(t_Tbb, (*t2_bb_dense), nb_, nb_, vb_, vb_);
+        TBLIS_VIEW_4D(t_T3bb, L2_bb_, nb_, nb_, vb_, vb_); 
         TBLIS_VIEW_4D(t_Gvvvv_bb, Gamma_vvvv_bb, vb_, vb_, vb_, vb_);
         TBLIS_VIEW_4D(t_Goooo_bb, Gamma_oooo_bb, nb_, nb_, nb_, nb_);
         TBLIS_VIEW_4D(t_Govov_bb, Gamma_ovov_bb, nb_, vb_, nb_, vb_);
         
         TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
+        TBLIS_VIEW_4D(t_T3ab, L2_ab_, na_, nb_, va_, vb_);
         TBLIS_VIEW_4D(t_Govov_ab, Gamma_ovov_ab, na_, va_, nb_, vb_);
 
+        // 1. Matriks Densitas MP2 Murni
         tblis::mult<double>(0.5, t_Tbb, "ijab", t_Tbb, "ijcd", 1.0, t_Gvvvv_bb, "abcd");
         tblis::mult<double>(0.5, t_Tbb, "ijab", t_Tbb, "klab", 1.0, t_Goooo_bb, "ijkl");
         tblis::mult<double>(1.0, t_Tbb, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_bb, "iajb");
+        
         tblis::mult<double>(1.0, t_Taa, "ikac", t_Tab, "kjcb", 1.0, t_Govov_ab, "iajb");
         tblis::mult<double>(1.0, t_Tab, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_ab, "iajb");
+
+        // 2. Koreksi Densitas Orde-3 (Beta-Beta)
+        tblis::mult<double>(0.5, t_Tbb, "ijab", t_T3bb, "ijcd", 1.0, t_Gvvvv_bb, "abcd");
+        tblis::mult<double>(0.5, t_T3bb, "ijab", t_Tbb, "ijcd", 1.0, t_Gvvvv_bb, "abcd");
+        
+        tblis::mult<double>(0.5, t_Tbb, "ijab", t_T3bb, "klab", 1.0, t_Goooo_bb, "ijkl");
+        tblis::mult<double>(0.5, t_T3bb, "ijab", t_Tbb, "klab", 1.0, t_Goooo_bb, "ijkl");
+        
+        tblis::mult<double>(1.0, t_Tbb, "ikac", t_T3bb, "kjcb", 1.0, t_Govov_bb, "iajb");
+        tblis::mult<double>(1.0, t_T3bb, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_bb, "iajb");
+
+        // 3. Koreksi Densitas Orde-3 (Alpha-Beta Cross Terms)
+        tblis::mult<double>(1.0, t_T3aa, "ikac", t_Tab, "kjcb", 1.0, t_Govov_ab, "iajb");
+        tblis::mult<double>(1.0, t_Taa, "ikac", t_T3ab, "kjcb", 1.0, t_Govov_ab, "iajb");
+        
+        tblis::mult<double>(1.0, t_T3ab, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_ab, "iajb");
+        tblis::mult<double>(1.0, t_Tab, "ikac", t_T3bb, "kjcb", 1.0, t_Govov_ab, "iajb");
 
 
         Teff_ab = Eigen::MatrixXd::Zero(na_*va_, nb_*vb_);
