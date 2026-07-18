@@ -267,6 +267,7 @@ void OMP3::compute_mp3_correction() {
     const Eigen::MatrixXd& Cao = scf_.C_alpha.leftCols(na_); 
     const Eigen::MatrixXd& Cav = scf_.C_alpha.rightCols(va_);
     const auto& ea = scf_.orbital_energies_alpha;
+    
 
     auto* t2_aa_dense = t2_aa_.get_block(0,0,0,0);
     if(!t2_aa_dense) throw std::runtime_error("OMP3 missing T2 dense block.");
@@ -335,24 +336,8 @@ void OMP3::compute_mp3_correction() {
         t2_3rd_ab_ = Eigen::Tensor<double, 4>(na_, nb_, va_, vb_); t2_3rd_ab_.setZero();
     }
 
-    const Eigen::MatrixXd& Cao = scf_.C_alpha.leftCols(na_); 
-    const Eigen::MatrixXd& Cav = scf_.C_alpha.rightCols(va_);
-    const auto& ea = scf_.orbital_energies_alpha;
     double e3_aa = 0.0, e3_bb = 0.0, e3_ab = 0.0;
-
-    auto* t2_aa_dense = t2_aa_.get_block(0,0,0,0);
-    if(!t2_aa_dense) throw std::runtime_error("OMP3 missing T2 dense block.");
-    Eigen::Tensor<double, 4> T2_aa_ijab(na_, na_, va_, va_);
-    #pragma omp parallel for collapse(4)
-    for(int i=0; i<na_; ++i) {
-        for(int j=0; j<na_; ++j) {
-            for(int a=0; a<va_; ++a) {
-                for(int b=0; b<va_; ++b) {
-                    T2_aa_ijab(i,j,a,b) = (*t2_aa_dense)(i,a,j,b);
-                }
-            }
-        }
-    }
+    double e3_aa_ump3 = 0.0; 
     TBLIS_VIEW_4D(t_Taa, T2_aa_ijab, na_, na_, va_, va_);
 
     int n_aux = scf_.L_mat.cols();
