@@ -564,12 +564,11 @@ void OMP3::build_opdm_alpha() {
     TBLIS_VIEW_2D(t_Gvv_a, G_vv_alpha_.data(), va_, va_);
 
     tblis::mult<double>(-0.5, t_T2aa, "ikab", t_T2aa, "jkab", 1.0, t_Goo_a, "ij");
-    tblis::mult<double>(-0.5, t_T2aa, "ikab", t_T3aa, "jkab", 1.0, t_Goo_a, "ij");
-    tblis::mult<double>(-0.5, t_T3aa, "ikab", t_T2aa, "jkab", 1.0, t_Goo_a, "ij");
-
+    tblis::mult<double>(-0.25, t_T2aa, "ikab", t_T3aa, "jkab", 1.0, t_Goo_a, "ij"); 
+    tblis::mult<double>(-0.25, t_T3aa, "ikab", t_T2aa, "jkab", 1.0, t_Goo_a, "ij"); 
     tblis::mult<double>(0.5, t_T2aa, "ijac", t_T2aa, "ijbc", 1.0, t_Gvv_a, "ab");
-    tblis::mult<double>(0.5, t_T2aa, "ijac", t_T3aa, "ijbc", 1.0, t_Gvv_a, "ab");
-    tblis::mult<double>(0.5, t_T3aa, "ijac", t_T2aa, "ijbc", 1.0, t_Gvv_a, "ab");
+    tblis::mult<double>(0.25, t_T2aa, "ijac", t_T3aa, "ijbc", 1.0, t_Gvv_a, "ab"); 
+    tblis::mult<double>(0.25, t_T3aa, "ijac", t_T2aa, "ijbc", 1.0, t_Gvv_a, "ab"); 
 
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
         auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
@@ -577,12 +576,12 @@ void OMP3::build_opdm_alpha() {
         TBLIS_VIEW_4D(t_T3ab, L2_ab_, na_, nb_, va_, vb_);
 
         tblis::mult<double>(-1.0, t_T2ab, "ikab", t_T2ab, "jkab", 1.0, t_Goo_a, "ij");
-        tblis::mult<double>(-1.0, t_T2ab, "ikab", t_T3ab, "jkab", 1.0, t_Goo_a, "ij");
-        tblis::mult<double>(-1.0, t_T3ab, "ikab", t_T2ab, "jkab", 1.0, t_Goo_a, "ij");
+        tblis::mult<double>(-0.5, t_T2ab, "ikab", t_T3ab, "jkab", 1.0, t_Goo_a, "ij"); 
+        tblis::mult<double>(-0.5, t_T3ab, "ikab", t_T2ab, "jkab", 1.0, t_Goo_a, "ij"); 
 
         tblis::mult<double>(1.0, t_T2ab, "ijac", t_T2ab, "ijbc", 1.0, t_Gvv_a, "ab");
-        tblis::mult<double>(1.0, t_T2ab, "ijac", t_T3ab, "ijbc", 1.0, t_Gvv_a, "ab");
-        tblis::mult<double>(1.0, t_T3ab, "ijac", t_T2ab, "ijbc", 1.0, t_Gvv_a, "ab");
+        tblis::mult<double>(0.5, t_T2ab, "ijac", t_T3ab, "ijbc", 1.0, t_Gvv_a, "ab"); 
+        tblis::mult<double>(0.5, t_T3ab, "ijac", t_T2ab, "ijbc", 1.0, t_Gvv_a, "ab"); 
     }
 }
 
@@ -595,7 +594,6 @@ void OMP3::build_opdm_beta() {
     G_oo_beta_ = Eigen::MatrixXd::Zero(nb_, nb_);
     G_vv_beta_ = Eigen::MatrixXd::Zero(vb_, vb_);
     
-    // HENTIKAN eksekusi jika Restricted (Menghemat ~70% beban komputasi tak berguna!)
     if (is_restricted || nb_ == 0 || vb_ == 0) return; 
 
     auto* t2_bb_dense = t2_bb_.get_block(0,0,0,0);
@@ -610,20 +608,20 @@ void OMP3::build_opdm_beta() {
     TBLIS_VIEW_2D(t_Gvv_b, G_vv_beta_.data(), vb_, vb_);
 
     tblis::mult<double>(-0.5, t_T2bb, "ikab", t_T2bb, "jkab", 1.0, t_Goo_b, "ij");
-    tblis::mult<double>(-0.5, t_T2bb, "ikab", t_T3bb, "jkab", 1.0, t_Goo_b, "ij");
-    tblis::mult<double>(-0.5, t_T3bb, "ikab", t_T2bb, "jkab", 1.0, t_Goo_b, "ij");
+    tblis::mult<double>(-0.25, t_T2bb, "ikab", t_T3bb, "jkab", 1.0, t_Goo_b, "ij"); 
+    tblis::mult<double>(-0.25, t_T3bb, "ikab", t_T2bb, "jkab", 1.0, t_Goo_b, "ij"); 
 
     tblis::mult<double>(0.5, t_T2bb, "ijac", t_T2bb, "ijbc", 1.0, t_Gvv_b, "ab");
-    tblis::mult<double>(0.5, t_T2bb, "ijac", t_T3bb, "ijbc", 1.0, t_Gvv_b, "ab");
-    tblis::mult<double>(0.5, t_T3bb, "ijac", t_T2bb, "ijbc", 1.0, t_Gvv_b, "ab");
+    tblis::mult<double>(0.25, t_T2bb, "ijac", t_T3bb, "ijbc", 1.0, t_Gvv_b, "ab"); 
+    tblis::mult<double>(0.25, t_T3bb, "ijac", t_T2bb, "ijbc", 1.0, t_Gvv_b, "ab"); 
 
     tblis::mult<double>(-1.0, t_T2ab, "kiab", t_T2ab, "kjab", 1.0, t_Goo_b, "ij");
-    tblis::mult<double>(-1.0, t_T2ab, "kiab", t_T3ab, "kjab", 1.0, t_Goo_b, "ij");
-    tblis::mult<double>(-1.0, t_T3ab, "kiab", t_T2ab, "kjab", 1.0, t_Goo_b, "ij");
+    tblis::mult<double>(-0.5, t_T2ab, "kiab", t_T3ab, "kjab", 1.0, t_Goo_b, "ij");
+    tblis::mult<double>(-0.5, t_T3ab, "kiab", t_T2ab, "kjab", 1.0, t_Goo_b, "ij"); 
 
     tblis::mult<double>(1.0, t_T2ab, "ijca", t_T2ab, "ijcb", 1.0, t_Gvv_b, "ab");
-    tblis::mult<double>(1.0, t_T2ab, "ijca", t_T3ab, "ijcb", 1.0, t_Gvv_b, "ab");
-    tblis::mult<double>(1.0, t_T3ab, "ijca", t_T2ab, "ijcb", 1.0, t_Gvv_b, "ab");
+    tblis::mult<double>(0.5, t_T2ab, "ijca", t_T3ab, "ijcb", 1.0, t_Gvv_b, "ab"); 
+    tblis::mult<double>(0.5, t_T3ab, "ijca", t_T2ab, "ijcb", 1.0, t_Gvv_b, "ab"); 
 }
 
 void OMP3::build_generalized_fock() {
@@ -770,16 +768,6 @@ void OMP3::build_generalized_fock() {
     tblis::mult<double>(0.5, t_Taa, "ijab", t_Taa, "klab", 1.0, t_Goooo_aa, "ijkl");
     tblis::mult<double>(1.0, t_Taa, "ikac", t_Taa, "kjcb", 1.0, t_Govov_aa, "iajb"); 
 
-    // 2. Koreksi Densitas Orde-3 (T1 * T2 + T2 * T1)
-    tblis::mult<double>(0.5, t_Taa, "ijab", t_T3aa, "ijcd", 1.0, t_Gvvvv_aa, "abcd");
-    tblis::mult<double>(0.5, t_T3aa, "ijab", t_Taa, "ijcd", 1.0, t_Gvvvv_aa, "abcd");
-
-    tblis::mult<double>(0.5, t_Taa, "ijab", t_T3aa, "klab", 1.0, t_Goooo_aa, "ijkl");
-    tblis::mult<double>(0.5, t_T3aa, "ijab", t_Taa, "klab", 1.0, t_Goooo_aa, "ijkl");
-
-    tblis::mult<double>(1.0, t_Taa, "ikac", t_T3aa, "kjcb", 1.0, t_Govov_aa, "iajb");
-    tblis::mult<double>(1.0, t_T3aa, "ikac", t_Taa, "kjcb", 1.0, t_Govov_aa, "iajb");
-
     Eigen::MatrixXd Teff_aa = Eigen::MatrixXd::Zero(na_*va_, na_*va_);
     #pragma omp parallel for collapse(2) schedule(static)
     for (int i = 0; i < na_; ++i) {
@@ -817,23 +805,6 @@ void OMP3::build_generalized_fock() {
         
         tblis::mult<double>(1.0, t_Taa, "ikac", t_Tab, "kjcb", 1.0, t_Govov_ab, "iajb");
         tblis::mult<double>(1.0, t_Tab, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_ab, "iajb");
-
-        // 2. Koreksi Densitas Orde-3 (Beta-Beta)
-        tblis::mult<double>(0.5, t_Tbb, "ijab", t_T3bb, "ijcd", 1.0, t_Gvvvv_bb, "abcd");
-        tblis::mult<double>(0.5, t_T3bb, "ijab", t_Tbb, "ijcd", 1.0, t_Gvvvv_bb, "abcd");
-        
-        tblis::mult<double>(0.5, t_Tbb, "ijab", t_T3bb, "klab", 1.0, t_Goooo_bb, "ijkl");
-        tblis::mult<double>(0.5, t_T3bb, "ijab", t_Tbb, "klab", 1.0, t_Goooo_bb, "ijkl");
-        
-        tblis::mult<double>(1.0, t_Tbb, "ikac", t_T3bb, "kjcb", 1.0, t_Govov_bb, "iajb");
-        tblis::mult<double>(1.0, t_T3bb, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_bb, "iajb");
-
-        // 3. Koreksi Densitas Orde-3 (Alpha-Beta Cross Terms)
-        tblis::mult<double>(1.0, t_T3aa, "ikac", t_Tab, "kjcb", 1.0, t_Govov_ab, "iajb");
-        tblis::mult<double>(1.0, t_Taa, "ikac", t_T3ab, "kjcb", 1.0, t_Govov_ab, "iajb");
-        
-        tblis::mult<double>(1.0, t_T3ab, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_ab, "iajb");
-        tblis::mult<double>(1.0, t_Tab, "ikac", t_T3bb, "kjcb", 1.0, t_Govov_ab, "iajb");
 
 
         Teff_ab = Eigen::MatrixXd::Zero(na_*va_, nb_*vb_);
