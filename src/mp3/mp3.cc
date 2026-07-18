@@ -291,28 +291,9 @@ void OMP3::compute_mp3_correction() {
         TBLIS_VIEW_4D(t_W, W, na_, na_, va_, va_);
       
         int n_aux = scf_.L_mat.cols();
-        Eigen::MatrixXd B_vv_a = Eigen::MatrixXd::Zero(va_ * va_, n_aux);
-        Eigen::Map<const Eigen::MatrixXd> L_flat(scf_.L_mat.data(), nbf_, nbf_ * n_aux);
-        Eigen::MatrixXd X_a = Cav.transpose() * L_flat;
-        #pragma omp parallel for schedule(static)
-        for (int P = 0; P < n_aux; ++P) {
-            Eigen::Map<Eigen::MatrixXd> X_P(X_a.data() + P * va_ * nbf_, va_, nbf_);
-            Eigen::MatrixXd B_MO = X_P * Cav;
-            std::copy(B_MO.data(), B_MO.data() + va_ * va_, B_vv_a.col(P).data());
-        }
-        
-        Eigen::Map<const Eigen::MatrixXd> T2_flat(T2_aa_ijab.data(), na_*na_, va_*va_);
-        Eigen::MatrixXd W_flat = (T2_flat * B_vv_a) * B_vv_a.transpose(); 
-        #pragma omp parallel for collapse(4)
-        for (int i = 0; i < na_; ++i) {
-            for (int j = 0; j < na_; ++j) {
-                for (int a = 0; a < va_; ++a) {
-                    for (int b = 0; b < va_; ++b) {
-                        W(i,j,a,b) = W_flat(i + j*na_, a + b*va_);
-                    }
-                }
-            }
-        }
+        auto V_vvvv = ERITransformer::get_mo_tensor(config_.use_df, n_aux, Cav, Cav, Cav, Cav, integrals_);
+        TBLIS_VIEW_4D(t_Vvvvv, V_vvvv, va_, va_, va_, va_);
+        tblis::mult<double>(1.0, t_T, "ijef", t_Vvvvv, "eafb", 1.0, t_W, "ijab");
 
         auto V_oooo = ERITransformer::get_mo_tensor(config_.use_df, n_aux, Cao, Cao, Cao, Cao, integrals_);
         auto V_ovov = ERITransformer::get_mo_tensor(config_.use_df, n_aux, Cao, Cav, Cao, Cav, integrals_);
@@ -456,24 +437,14 @@ void OMP3::compute_mp3_correction() {
             Eigen::Tensor<double, 4> Wbb_ladder(nb_, nb_, vb_, vb_); Wbb_ladder.setZero();
             Eigen::Tensor<double, 4> Wbb_ring(nb_, nb_, vb_, vb_); Wbb_ring.setZero();
            
-            Eigen::Map<const Eigen::MatrixXd> T2bb_flat(t2_bb_dense->data(), nb_*nb_, vb_*vb_);
-            Eigen::MatrixXd Wbb_flat = (T2bb_flat * B_vv_b) * B_vv_b.transpose();
-
-            #pragma omp parallel for collapse(2)
-            for (int i = 0; i < nb_; ++i) {
-                for (int j = 0; j < nb_; ++j) {
-                    int ij = i + j * nb_;
-                    for (int a = 0; a < vb_; ++a) {
-                        for (int b = 0; b < vb_; ++b) {
-                            int ab = a + b * vb_; 
-                            int ba = b + a * vb_;
-                            Wbb_ladder(i,j,a,b) = 0.5 * (Wbb_flat(ij, ab) - Wbb_flat(ij, ba));
-                        }
-                    }
-                }
-            }
             TBLIS_VIEW_4D(t_Wbb_ladder, Wbb_ladder, nb_, nb_, vb_, vb_);
             TBLIS_VIEW_4D(t_Wbb_ring, Wbb_ring, nb_, nb_, vb_, vb_);
+
+            auto Vvvvv_bb = ERITransformer::get_mo_tensor(config_.use_df, n_aux, Cbv, Cbv, Cbv, Cbv, integrals_);
+            TBLIS_VIEW_4D(t_Vvvvv_bb, Vvvvv_bb, vb_, vb_, vb_, vb_);
+
+            tblis::mult<double>(0.5, t_Tbb, "ijef", t_Vvvvv_bb, "eafb", 1.0, t_Wbb_ladder, "ijab");
+            tblis::mult<double>(-0.5, t_Tbb, "ijef", t_Vvvvv_bb, "ebfa", 1.0, t_Wbb_ladder, "ijab");
 
             auto V_oooo = ERITransformer::get_mo_tensor(config_.use_df, n_aux, Cbo, Cbo, Cbo, Cbo, integrals_);
             TBLIS_VIEW_4D(t_Voooo, V_oooo, nb_, nb_, nb_, nb_);
@@ -514,26 +485,13 @@ void OMP3::compute_mp3_correction() {
             Eigen::Tensor<double, 4> Wab_ladder(na_, nb_, va_, vb_); Wab_ladder.setZero();
             Eigen::Tensor<double, 4> Wab_ring(na_, nb_, va_, vb_); Wab_ring.setZero();
             
-            #pragma omp parallel for collapse(2)
-            for (int i = 0; i < na_; ++i) {
-                for (int j = 0; j < nb_; ++j) {
-                    Eigen::MatrixXd T_ij(va_, vb_);
-                    for(int a=0; a<va_; ++a) for(int b=0; b<vb_; ++b) T_ij(a,b) = (*t2_ab_dense)(i,j,a,b);
-                    
-                    Eigen::MatrixXd W_ij = Eigen::MatrixXd::Zero(va_, vb_);
-                    for (int P = 0; P < n_aux; ++P) {
-                        Eigen::Map<const Eigen::MatrixXd> B_Pa(B_vv_a.col(P).data(), va_, va_);
-                        Eigen::Map<const Eigen::MatrixXd> B_Pb(B_vv_b.col(P).data(), vb_, vb_);
-                        W_ij.noalias() += B_Pa * T_ij * B_Pb; 
-                    }
-                    for(int a=0; a<va_; ++a) for(int b=0; b<vb_; ++b) {
-                        Wab_ladder(i,j,a,b) = W_ij(a,b); 
-                    }
-                }
-            }
-
             TBLIS_VIEW_4D(t_Wab_ladder, Wab_ladder, na_, nb_, va_, vb_);
             TBLIS_VIEW_4D(t_Wab_ring, Wab_ring, na_, nb_, va_, vb_);
+
+            auto Vvvvv_ab = ERITransformer::get_mo_tensor(config_.use_df, n_aux, Cav, Cav, Cbv, Cbv, integrals_);
+            TBLIS_VIEW_4D(t_Vvvvv_ab, Vvvvv_ab, va_, va_, vb_, vb_);
+
+            tblis::mult<double>(1.0, t_Tab, "ijef", t_Vvvvv_ab, "eafb", 1.0, t_Wab_ladder, "ijab");
 
             auto V_oooo_ab = ERITransformer::get_mo_tensor(config_.use_df, n_aux, Cao, Cao, Cbo, Cbo, integrals_);
             TBLIS_VIEW_4D(t_Voooo_ab, V_oooo_ab, na_, na_, nb_, nb_);
@@ -625,13 +583,13 @@ void OMP3::build_opdm_alpha() {
                 for (int k = 0; k < na_; ++k) {
                     for (int a = 0; a < va_; ++a) {
                         for (int b = 0; b < va_; ++b) {
-                            double t2_ik = T2_aa_ijab(i, a, k, b);
-                            double t2_jk = T2_aa_ijab(j, a, k, b);
-                            double t2_jk_ex = T2_aa_ijab(j, b, k, a); 
-                            
-                            double t3_ik = L2_aa_(i, a, k, b);
-                            double t3_jk = L2_aa_(j, a, k, b);
-                            double t3_jk_ex = L2_aa_(j, b, k, a); 
+                            double t2_ik = T2_aa_ijab(i, k, a, b);
+                            double t2_jk = T2_aa_ijab(j, k, a, b);
+                            double t2_jk_ex = T2_aa_ijab(j, k, b, a); 
+
+                            double t3_ik = L2_aa_(i, k, a, b);
+                            double t3_jk = L2_aa_(j, k, a, b);
+                            double t3_jk_ex = L2_aa_(j, k, b, a);
 
                             p_oo -= 1.0 * t2_ik * (2.0 * t2_jk - t2_jk_ex);
                             p_oo -= 1.0 * t2_ik * (2.0 * t3_jk - t3_jk_ex); 
@@ -649,13 +607,13 @@ void OMP3::build_opdm_alpha() {
                 for (int i = 0; i < na_; ++i) {
                     for (int j = 0; j < na_; ++j) {
                         for (int c = 0; c < va_; ++c) {
-                            double t2_ac = T2_aa_ijab(i, a, j, c);
-                            double t2_bc = T2_aa_ijab(i, b, j, c);
-                            double t2_cb = T2_aa_ijab(i, c, j, b);
-                            
-                            double t3_ac = L2_aa_(i, a, j, c);
-                            double t3_bc = L2_aa_(i, b, j, c);
-                            double t3_cb = L2_aa_(i, c, j, b);
+                            double t2_ac = T2_aa_ijab(i, j, a, c);
+                            double t2_bc = T2_aa_ijab(i, j, b, c);
+                            double t2_cb = T2_aa_ijab(i, j, c, b);
+
+                            double t3_ac = L2_aa_(i, j, a, c);
+                            double t3_bc = L2_aa_(i, j, b, c);
+                            double t3_cb = L2_aa_(i, j, c, b);
 
                             p_vv += 1.0 * t2_ac * (2.0 * t2_bc - t2_cb);
                             p_vv += 1.0 * t2_ac * (2.0 * t3_bc - t3_cb); 
