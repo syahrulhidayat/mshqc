@@ -330,16 +330,16 @@ void OMP3::compute_mp3_correction() {
         #pragma omp parallel for collapse(2)
         for (int i = 0; i < na_; ++i) {
             for (int j = 0; j < na_; ++j) {
-                int ij = i * na_ + j;
+                int ij = i + j * na_; 
                 for (int a = 0; a < va_; ++a) {
                     for (int b = 0; b < va_; ++b) {
-                        // Injeksi kembali ke struktur Tensor untuk TBLIS
-                        Waa_ladder(i,j,a,b) = 0.5 * (W_flat(ij, a*va_+b) - W_flat(ij, b*va_+a));
+                        int ab = a + b * va_; 
+                        int ba = b + a * va_; 
+                        Waa_ladder(i,j,a,b) = 0.5 * (W_flat(ij, ab) - W_flat(ij, ba));
                     }
                 }
             }
         }
-
         TBLIS_VIEW_4D(t_Waa_ladder, Waa_ladder, na_, na_, va_, va_);
         TBLIS_VIEW_4D(t_Waa_ring, Waa_ring, na_, na_, va_, va_);
 
@@ -392,18 +392,7 @@ void OMP3::compute_mp3_correction() {
         auto* t2_bb_dense = t2_bb_.get_block(0,0,0,0);
         auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
 
-        Eigen::Tensor<double, 4> T2_bb_ijab(nb_, nb_, vb_, vb_);
-        #pragma omp parallel for collapse(4)
-        for(int i=0; i<nb_; ++i) {
-            for(int j=0; j<nb_; ++j) {
-                for(int a=0; a<vb_; ++a) {
-                    for(int b=0; b<vb_; ++b) {
-                        T2_bb_ijab(i,j,a,b) = (*t2_bb_dense)(i,a,j,b);
-                    }
-                }
-            }
-        }
-        TBLIS_VIEW_4D(t_Tbb, T2_bb_ijab, nb_, nb_, vb_, vb_);
+        TBLIS_VIEW_4D(t_Tbb, (*t2_bb_dense), nb_, nb_, vb_, vb_);
         TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
 
         // ----- BETA-BETA BLOCK -----
@@ -411,21 +400,22 @@ void OMP3::compute_mp3_correction() {
             Eigen::Tensor<double, 4> Wbb_ladder(nb_, nb_, vb_, vb_); Wbb_ladder.setZero();
             Eigen::Tensor<double, 4> Wbb_ring(nb_, nb_, vb_, vb_); Wbb_ring.setZero();
            
-            Eigen::Map<const Eigen::MatrixXd> T2bb_flat(T2_bb_ijab.data(), nb_*nb_, vb_*vb_);
+            Eigen::Map<const Eigen::MatrixXd> T2bb_flat(t2_bb_dense->data(), nb_*nb_, vb_*vb_);
             Eigen::MatrixXd Wbb_flat = (T2bb_flat * B_vv_b) * B_vv_b.transpose();
 
             #pragma omp parallel for collapse(2)
             for (int i = 0; i < nb_; ++i) {
                 for (int j = 0; j < nb_; ++j) {
-                    int ij = i * nb_ + j;
+                    int ij = i + j * nb_;
                     for (int a = 0; a < vb_; ++a) {
                         for (int b = 0; b < vb_; ++b) {
-                            Wbb_ladder(i,j,a,b) = 0.5 * (Wbb_flat(ij, a*vb_+b) - Wbb_flat(ij, b*vb_+a));
+                            int ab = a + b * vb_; 
+                            int ba = b + a * vb_;
+                            Wbb_ladder(i,j,a,b) = 0.5 * (Wbb_flat(ij, ab) - Wbb_flat(ij, ba));
                         }
                     }
                 }
             }
-
             TBLIS_VIEW_4D(t_Wbb_ladder, Wbb_ladder, nb_, nb_, vb_, vb_);
             TBLIS_VIEW_4D(t_Wbb_ring, Wbb_ring, nb_, nb_, vb_, vb_);
 
@@ -456,7 +446,7 @@ void OMP3::compute_mp3_correction() {
                             double D = eb(i) + eb(j) - eb(nb_+a) - eb(nb_+b);
                             double reg_den = D / (D * D + 1e-20);
                             t2_3rd_bb_(i,j,a,b) = w_tot * reg_den;
-                            e3_bb += 0.25 * T2_bb_ijab(i,j,a,b) * w_tot;
+                            e3_bb += 0.25 * (*t2_bb_dense)(i,j,a,b) * w_tot;
                         }
                     }
                 }
@@ -612,19 +602,7 @@ void OMP3::build_opdm_beta() {
     auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
     if(!t2_bb_dense || !t2_ab_dense) return;
 
-    Eigen::Tensor<double, 4> T2_bb_ijab(nb_, nb_, vb_, vb_);
-    #pragma omp parallel for collapse(4)
-    for(int i=0; i<nb_; ++i) {
-        for(int j=0; j<nb_; ++j) {
-            for(int a=0; a<vb_; ++a) {
-                for(int b=0; b<vb_; ++b) {
-                    T2_bb_ijab(i,j,a,b) = (*t2_bb_dense)(i,a,j,b);
-                }
-            }
-        }
-    }
-
-    TBLIS_VIEW_4D(t_T2bb, T2_bb_ijab, nb_, nb_, vb_, vb_);
+    TBLIS_VIEW_4D(t_T2bb, (*t2_bb_dense), nb_, nb_, vb_, vb_);
     TBLIS_VIEW_4D(t_T3bb, L2_bb_, nb_, nb_, vb_, vb_);
     TBLIS_VIEW_4D(t_T2ab, (*t2_ab_dense), na_, nb_, va_, vb_);
     TBLIS_VIEW_4D(t_T3ab, L2_ab_, na_, nb_, va_, vb_);
@@ -810,19 +788,7 @@ void OMP3::build_generalized_fock() {
         auto* t2_bb_dense = t2_bb_.get_block(0,0,0,0);
         auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
 
-        Eigen::Tensor<double, 4> T2_bb_ijab(nb_, nb_, vb_, vb_);
-        #pragma omp parallel for collapse(4)
-        for(int i=0; i<nb_; ++i) {
-            for(int j=0; j<nb_; ++j) {
-                for(int a=0; a<vb_; ++a) {
-                    for(int b=0; b<vb_; ++b) {
-                        T2_bb_ijab(i,j,a,b) = (*t2_bb_dense)(i,a,j,b);
-                    }
-                }
-            }
-        }
-
-        TBLIS_VIEW_4D(t_Tbb, T2_bb_ijab, nb_, nb_, vb_, vb_);
+        TBLIS_VIEW_4D(t_Tbb, (*t2_bb_dense), nb_, nb_, vb_, vb_);
         TBLIS_VIEW_4D(t_Gvvvv_bb, Gamma_vvvv_bb, vb_, vb_, vb_, vb_);
         TBLIS_VIEW_4D(t_Goooo_bb, Gamma_oooo_bb, nb_, nb_, nb_, nb_);
         TBLIS_VIEW_4D(t_Govov_bb, Gamma_ovov_bb, nb_, vb_, nb_, vb_);
@@ -858,7 +824,7 @@ void OMP3::build_generalized_fock() {
             for (int a = 0; a < vb_; ++a) {
                 for (int j = 0; j < nb_; ++j) {
                     for (int b = 0; b < vb_; ++b) {
-                        Teff_bb(i*vb_+a, j*vb_+b) = (*t2_bb_dense)(i, a, j, b) 
+                        Teff_bb(i*vb_+a, j*vb_+b) = (*t2_bb_dense)(i, j, a, b) 
                                                 + 0.5 * L2_bb_(i, j, a, b) 
                                                 + 0.5 * Gamma_ovov_bb(i, a, j, b);
                     }
