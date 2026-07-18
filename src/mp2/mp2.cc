@@ -884,16 +884,13 @@ MP2Result OMP2::compute() {
 
         double e_mp2_corr = get_correlation_energy(); 
         double e_tot = e_scf + e_mp2_corr;
-
-        // [MODIFIKASI]: Tambahkan && !step_rejected pada kondisi ini
         if (macro_iter > 0 && !step_rejected) {
             double actual_change = e_tot - e_total_last;
             double rho = actual_change / expected_change; 
 
-            if (actual_change > 1e-7) {
+            if (actual_change > 1e-7 || actual_change < -5.0 || std::isnan(e_tot) || std::isinf(e_tot)) {
                 C_a_current_ = C_a_last; 
                 C_b_current_ = C_b_last;
-                
                 trust_radius *= 0.25; 
                 if (trust_radius <= 1e-4) {
                     if (omp_get_thread_num() == 0) {
@@ -910,7 +907,6 @@ MP2Result OMP2::compute() {
                 }
                 expected_change = -1e-6; 
 
-                // [TAMBAHAN 2]: Set flag true sebelum perintah continue
                 step_rejected = true;
                 continue; 
                 
@@ -957,7 +953,6 @@ MP2Result OMP2::compute() {
         double level_shift = (grad_norm > 0.1) ? 0.05 : 0.005;
         double spin_factor = is_restricted ? 4.0 : 2.0;
         
-        // 1. SUSUN PRECONDITIONER KUAT (Mencegah H2O / sistem lain meloncat)
         for (int i = 0; i < na_; ++i) {             
             for (int a = 0; a < va_; ++a) {        
                 double eps_diff = scf_.orbital_energies_alpha(na_ + a) - scf_.orbital_energies_alpha(i);
@@ -998,12 +993,9 @@ MP2Result OMP2::compute() {
             mshqc::gradient::TrustRegionSOSCF soscf_engine(tr_conf);
 
             auto compute_hessian_vector = [&](const Eigen::VectorXd& p_vec) -> Eigen::VectorXd {
-                // 2. MURNI HESSIAN ANALITIK: Bebas kontaminasi diag_H agar kurvatur presisi
                 Eigen::VectorXd Hp = Eigen::VectorXd::Zero(n_params);
                 int dim_a = va_ * na_;
                 int dim_b = (is_restricted) ? 0 : (vb_ * nb_);
-                
-                // Masukkan komponen Energi Orbital saja
                 int temp_idx = 0;
                 for (int i = 0; i < na_; ++i) {
                     for (int a = 0; a < va_; ++a) {
