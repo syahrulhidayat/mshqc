@@ -573,57 +573,40 @@ void OMP3::build_opdm_alpha() {
     }
 
     // ====================================================================
-    // PERBAIKAN: Kontraksi Spasial Khusus Restricted
+    // PERBAIKAN: Kontraksi Spasial Khusus Restricted via TBLIS
     // ====================================================================
     if (is_restricted) {
-        #pragma omp parallel for
-        for (int i = 0; i < na_; ++i) {
-            for (int j = 0; j < na_; ++j) {
-                double p_oo = 0.0;
-                for (int k = 0; k < na_; ++k) {
-                    for (int a = 0; a < va_; ++a) {
-                        for (int b = 0; b < va_; ++b) {
-                            double t2_ik = T2_aa_ijab(i, k, a, b);
-                            double t2_jk = T2_aa_ijab(j, k, a, b);
-                            double t2_jk_ex = T2_aa_ijab(j, k, b, a); 
-
-                            double t3_ik = L2_aa_(i, k, a, b);
-                            double t3_jk = L2_aa_(j, k, a, b);
-                            double t3_jk_ex = L2_aa_(j, k, b, a);
-
-                            p_oo -= 1.0 * t2_ik * (2.0 * t2_jk - t2_jk_ex);
-                            p_oo -= 1.0 * t2_ik * (2.0 * t3_jk - t3_jk_ex); 
-                            p_oo -= 1.0 * t3_ik * (2.0 * t2_jk - t2_jk_ex); 
-                        }
+        Eigen::Tensor<double, 4> T2_tilde(na_, na_, va_, va_);
+        Eigen::Tensor<double, 4> L2_tilde(na_, na_, va_, va_);
+        #pragma omp parallel for collapse(4)
+        for (int i=0; i<na_; ++i) {
+            for (int j=0; j<na_; ++j) {
+                for (int a=0; a<va_; ++a) {
+                    for (int b=0; b<va_; ++b) {
+                        T2_tilde(i,j,a,b) = 2.0 * T2_aa_ijab(i,j,a,b) - T2_aa_ijab(i,j,b,a);
+                        L2_tilde(i,j,a,b) = 2.0 * L2_aa_(i,j,a,b) - L2_aa_(i,j,b,a);
                     }
                 }
-                G_oo_alpha_(i, j) = p_oo;
             }
         }
-        #pragma omp parallel for
-        for (int a = 0; a < va_; ++a) {
-            for (int b = 0; b < va_; ++b) {
-                double p_vv = 0.0;
-                for (int i = 0; i < na_; ++i) {
-                    for (int j = 0; j < na_; ++j) {
-                        for (int c = 0; c < va_; ++c) {
-                            double t2_ac = T2_aa_ijab(i, j, a, c);
-                            double t2_bc = T2_aa_ijab(i, j, b, c);
-                            double t2_cb = T2_aa_ijab(i, j, c, b);
+        
+        TBLIS_VIEW_4D(t_T2, T2_aa_ijab, na_, na_, va_, va_);
+        TBLIS_VIEW_4D(t_L2, L2_aa_, na_, na_, va_, va_);
+        TBLIS_VIEW_4D(t_T2t, T2_tilde, na_, na_, va_, va_);
+        TBLIS_VIEW_4D(t_L2t, L2_tilde, na_, na_, va_, va_);
+        TBLIS_VIEW_2D(t_Goo, G_oo_alpha_.data(), na_, na_);
+        TBLIS_VIEW_2D(t_Gvv, G_vv_alpha_.data(), va_, va_);
 
-                            double t3_ac = L2_aa_(i, j, a, c);
-                            double t3_bc = L2_aa_(i, j, b, c);
-                            double t3_cb = L2_aa_(i, j, c, b);
+        // Blok G_oo (Mutlak Negatif)
+        tblis::mult<double>(-1.0, t_T2, "ikab", t_T2t, "jkab", 0.0, t_Goo, "ij");
+        tblis::mult<double>(-1.0, t_T2, "ikab", t_L2t, "jkab", 1.0, t_Goo, "ij");
+        tblis::mult<double>(-1.0, t_L2, "ikab", t_T2t, "jkab", 1.0, t_Goo, "ij");
 
-                            p_vv += 1.0 * t2_ac * (2.0 * t2_bc - t2_cb);
-                            p_vv += 1.0 * t2_ac * (2.0 * t3_bc - t3_cb); 
-                            p_vv += 1.0 * t3_ac * (2.0 * t2_bc - t2_cb);
-                        }
-                    }
-                }
-                G_vv_alpha_(a, b) = p_vv;
-            }
-        }
+        // Blok G_vv (Mutlak Positif)
+        tblis::mult<double>(1.0, t_T2, "ijac", t_T2t, "ijbc", 0.0, t_Gvv, "ab");
+        tblis::mult<double>(1.0, t_T2, "ijac", t_L2t, "ijbc", 1.0, t_Gvv, "ab");
+        tblis::mult<double>(1.0, t_L2, "ijac", t_T2t, "ijbc", 1.0, t_Gvv, "ab");
+        
         return;
     }
 
@@ -841,8 +824,8 @@ void OMP3::build_generalized_fock() {
         for (int a = 0; a < va_; ++a) {
             for (int j = 0; j < na_; ++j) {
                 for (int b = 0; b < va_; ++b) {
-                    double dir = T2_aa_ijab(i, j, a, b) + L2_aa_(i, j, a, b);
-                    double ex  = T2_aa_ijab(i, j, b, a) + L2_aa_(i, j, b, a);
+                    double dir = T2_aa_ijab(i, j, a, b) + L2_aa_(i, j, a, b) + Gamma_ovov_aa(i, a, j, b);
+                    double ex  = T2_aa_ijab(i, j, b, a) + L2_aa_(i, j, b, a) + Gamma_ovov_aa(i, b, j, a);
                     if (is_restricted) {
                         Teff_aa(i*va_+a, j*va_+b) = 2.0 * dir - 1.0 * ex;
                     } else {
@@ -881,7 +864,7 @@ void OMP3::build_generalized_fock() {
             for (int a = 0; a < va_; ++a) {
                 for (int j = 0; j < nb_; ++j) {
                     for (int b = 0; b < vb_; ++b) {
-                        Teff_ab(i*va_+a, j*vb_+b) = (*t2_ab_dense)(i, j, a, b) + L2_ab_(i, j, a, b);
+                        Teff_ab(i*va_+a, j*vb_+b) = (*t2_ab_dense)(i, j, a, b) + L2_ab_(i, j, a, b) + Gamma_ovov_ab(i, a, j, b);
                     }
                 }
             }
@@ -892,8 +875,8 @@ void OMP3::build_generalized_fock() {
             for (int a = 0; a < vb_; ++a) {
                 for (int j = 0; j < nb_; ++j) {
                     for (int b = 0; b < vb_; ++b) {
-                        double dir = (*t2_bb_dense)(i, j, a, b) + L2_bb_(i, j, a, b);
-                        double ex  = (*t2_bb_dense)(i, j, b, a) + L2_bb_(i, j, b, a);
+                        double dir = (*t2_bb_dense)(i, j, a, b) + L2_bb_(i, j, a, b) + Gamma_ovov_bb(i, a, j, b);
+                        double ex  = (*t2_bb_dense)(i, j, b, a) + L2_bb_(i, j, b, a) + Gamma_ovov_bb(i, b, j, a);
                         Teff_bb(i*vb_+a, j*vb_+b) = dir - ex;
                     }
                 }
