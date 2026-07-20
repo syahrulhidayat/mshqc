@@ -294,10 +294,26 @@ void OMP3::compute_mp3_correction() {
         TBLIS_VIEW_4D(t_W, W, na_, na_, va_, va_);
       
         int n_aux = scf_.L_mat.cols();
-        auto V_vvvv = ERITransformer::get_mo_tensor(config_.use_df, n_aux, Cav, Cav, Cav, Cav, integrals_);
-        TBLIS_VIEW_4D(t_Vvvvv, V_vvvv, va_, va_, va_, va_);
-        tblis::mult<double>(1.0, t_T, "ijef", t_Vvvvv, "eafb", 1.0, t_W, "ijab");
+        Eigen::MatrixXd B_vv_a = Eigen::MatrixXd::Zero(va_ * va_, n_aux);
+        Eigen::Map<const Eigen::MatrixXd> L_flat(scf_.L_mat.data(), nbf_, nbf_ * n_aux);
+        Eigen::MatrixXd X_a = Cav.transpose() * L_flat;
+        
+        #pragma omp parallel for schedule(static)
+        for (int P = 0; P < n_aux; ++P) {
+            Eigen::Map<Eigen::MatrixXd> X_P(X_a.data() + P * va_ * nbf_, va_, nbf_);
+            Eigen::MatrixXd B_MO = X_P * Cav;
+            std::copy(B_MO.data(), B_MO.data() + va_ * va_, B_vv_a.col(P).data());
+        }
 
+        // Kontraksi intermediat (O^2 V^2 N_aux) dan reproyeksi langsung ke W
+        Eigen::MatrixXd T_tilde = Eigen::MatrixXd::Zero(na_ * na_, n_aux);
+        Eigen::Map<Eigen::MatrixXd> T_mat(T2_aa_ijab.data(), na_ * na_, va_ * va_);
+        T_tilde.noalias() = T_mat * B_vv_a; 
+        
+        Eigen::Map<Eigen::MatrixXd> W_mat(W.data(), na_ * na_, va_ * va_);
+        W_mat.noalias() = T_tilde * B_vv_a.transpose();
+
+        // [KOREKSI]: Sisa tensor OOOO, OVOV, OOVV tetap dipertahankan karena secara asimtotik murah (O(O^4) dsb.)
         auto V_oooo = ERITransformer::get_mo_tensor(config_.use_df, n_aux, Cao, Cao, Cao, Cao, integrals_);
         auto V_ovov = ERITransformer::get_mo_tensor(config_.use_df, n_aux, Cao, Cav, Cao, Cav, integrals_);
         auto V_oovv = ERITransformer::get_mo_tensor(config_.use_df, n_aux, Cao, Cao, Cav, Cav, integrals_);
@@ -595,6 +611,7 @@ void OMP3::build_opdm_alpha() {
                 for (int a=0; a<va_; ++a) {
                     for (int b=0; b<va_; ++b) {
                         T2_tilde(i,j,a,b) = 2.0 * T2_aa_ijab(i,j,a,b) - T2_aa_ijab(i,j,b,a);
+                        L2_tilde(i,j,a,b) = 2.0 * L2_aa_(i,j,a,b) - L2_aa_(i,j,b,a);
                     }
                 }
             }
