@@ -887,12 +887,15 @@ void OMP3::build_generalized_fock() {
         for (int a = 0; a < va_; ++a) {
             for (int j = 0; j < na_; ++j) {
                 for (int b = 0; b < va_; ++b) {
-                    double dir = T2_aa_ijab(i, j, a, b) + L2_aa_(i, j, a, b) + Gamma_ovov_aa(i, a, j, b);
-                    double ex  = T2_aa_ijab(i, j, b, a) + L2_aa_(i, j, b, a) + Gamma_ovov_aa(i, b, j, a);
+                    double t2_dir = T2_aa_ijab(i, j, a, b) + L2_aa_(i, j, a, b);
+                    double t2_ex  = T2_aa_ijab(i, j, b, a) + L2_aa_(i, j, b, a);
+                    
                     if (is_restricted) {
-                        Teff_aa(i*va_+a, j*va_+b) = 2.0 * dir - 1.0 * ex;
+                        Teff_aa(i*va_+a, j*va_+b) = (2.0 * t2_dir - 1.0 * t2_ex) + Gamma_ovov_aa(i, a, j, b);
                     } else {
-                        Teff_aa(i*va_+a, j*va_+b) = dir - ex;
+                        double g_dir = Gamma_ovov_aa(i, a, j, b);
+                        double g_ex  = Gamma_ovov_aa(i, b, j, a);
+                        Teff_aa(i*va_+a, j*va_+b) = (t2_dir + g_dir) - (t2_ex + g_ex);
                     }
                 }
             }
