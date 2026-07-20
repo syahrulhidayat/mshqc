@@ -851,7 +851,7 @@ void OMP3::build_generalized_fock() {
         // ========================================================
         tblis::mult<double>(1.0, t_T2t, "ijab", t_Taa, "ijcd", 1.0, t_Gvvvv_aa, "abcd");
         tblis::mult<double>(1.0, t_T2t, "ijab", t_Taa, "klab", 1.0, t_Goooo_aa, "ijkl");
-        tblis::mult<double>(1.0, t_T2t, "ikac", t_Taa, "kjcb", 1.0, t_Govov_aa, "iajb");
+        tblis::mult<double>(1.0, t_Taa, "ikac", t_Taa, "kjcb", 1.0, t_Govov_aa, "iajb");
 
         // ========================================================
         // 2. Kontribusi Silang MP3 (T2 x L2 + L2 x T2)
@@ -862,8 +862,10 @@ void OMP3::build_generalized_fock() {
         tblis::mult<double>(1.0, t_T2t, "ijab", t_T3aa, "klab", 1.0, t_Goooo_aa, "ijkl");
         tblis::mult<double>(1.0, t_L2t, "ijab", t_Taa,  "klab", 1.0, t_Goooo_aa, "ijkl");
 
-        tblis::mult<double>(1.0, t_T2t, "ikac", t_T3aa, "kjcb", 1.0, t_Govov_aa, "iajb");
-        tblis::mult<double>(1.0, t_L2t, "ikac", t_Taa,  "kjcb", 1.0, t_Govov_aa, "iajb");
+        
+        tblis::mult<double>(1.0, t_Taa,  "ikac", t_T3aa, "kjcb", 1.0, t_Govov_aa, "iajb");
+        tblis::mult<double>(1.0, t_T3aa, "ikac", t_Taa,  "kjcb", 1.0, t_Govov_aa, "iajb");
+    
 
     } else {
         tblis::mult<double>(0.25, t_Taa, "ijab", t_Taa, "ijcd", 1.0, t_Gvvvv_aa, "abcd");
