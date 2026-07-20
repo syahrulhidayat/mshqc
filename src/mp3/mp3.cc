@@ -808,7 +808,6 @@ void OMP3::build_generalized_fock() {
         Gamma_ovov_ab = Eigen::Tensor<double, 4>(na_, va_, nb_, vb_); Gamma_ovov_ab.setZero();
     }
 
-    // Zero-Allocation Initialization
     Gamma_vvvv_aa.resize(va_, va_, va_, va_); Gamma_vvvv_aa.setZero();
     Gamma_oooo_aa.resize(na_, na_, na_, na_); Gamma_oooo_aa.setZero();
     Gamma_ovov_aa.resize(na_, va_, na_, va_); Gamma_ovov_aa.setZero();
@@ -832,54 +831,20 @@ void OMP3::build_generalized_fock() {
     TBLIS_VIEW_4D(t_Goooo_aa, Gamma_oooo_aa, na_, na_, na_, na_);
     TBLIS_VIEW_4D(t_Govov_aa, Gamma_ovov_aa, na_, va_, na_, va_);
 
-    if (is_restricted) {
-        T2_tilde_aa.resize(na_, na_, va_, va_); T2_tilde_aa.setZero();
-        L2_tilde_aa.resize(na_, na_, va_, va_); L2_tilde_aa.setZero();
-        #pragma omp parallel for collapse(4) schedule(static)
-        for(int i=0; i<na_; ++i) {
-            for(int j=0; j<na_; ++j) {
-                for(int a=0; a<va_; ++a) {
-                    for(int b=0; b<va_; ++b) {
-                        T2_tilde_aa(i,j,a,b) = 2.0 * T2_aa_ijab(i,j,a,b) - T2_aa_ijab(i,j,b,a);
-                        L2_tilde_aa(i,j,a,b) = 2.0 * L2_aa_(i,j,a,b) - L2_aa_(i,j,b,a);
-                    }
-                }
-            }
-        }
-        TBLIS_VIEW_4D(t_T2t, T2_tilde_aa, na_, na_, va_, va_);
-        TBLIS_VIEW_4D(t_L2t, L2_tilde_aa, na_, na_, va_, va_);
+    // 1. Kontribusi MP2 Murni (Sama persis dengan koefisien OMP2)
+    tblis::mult<double>(0.5, t_Taa, "ijab", t_Taa, "ijcd", 1.0, t_Gvvvv_aa, "abcd");
+    tblis::mult<double>(0.5, t_Taa, "ijab", t_Taa, "klab", 1.0, t_Goooo_aa, "ijkl");
+    tblis::mult<double>(1.0, t_Taa, "ikac", t_Taa, "kjcb", 1.0, t_Govov_aa, "iajb");
 
-        // MP2 Part (Koefisien eksak OMP2)
-        tblis::mult<double>(1.0, t_T2t, "ijab", t_Taa, "ijcd", 1.0, t_Gvvvv_aa, "abcd");
-        tblis::mult<double>(1.0, t_T2t, "ijab", t_Taa, "klab", 1.0, t_Goooo_aa, "ijkl");
-        tblis::mult<double>(1.0, t_Taa, "ikac", t_Taa, "kjcb", 1.0, t_Govov_aa, "iajb");
+    // 2. Kontribusi Silang MP3 (Dibagi dua untuk menjaga simetri riil)
+    tblis::mult<double>(0.25, t_Taa, "ijab", t_T3aa, "ijcd", 1.0, t_Gvvvv_aa, "abcd");
+    tblis::mult<double>(0.25, t_T3aa, "ijab", t_Taa, "ijcd", 1.0, t_Gvvvv_aa, "abcd");
 
-        // MP3 Part (Symmetrized Half-Coefficients untuk 2-RDM)
-        tblis::mult<double>(0.5, t_T2t, "ijab", t_T3aa, "ijcd", 1.0, t_Gvvvv_aa, "abcd");
-        tblis::mult<double>(0.5, t_L2t, "ijab", t_Taa,  "ijcd", 1.0, t_Gvvvv_aa, "abcd");
+    tblis::mult<double>(0.25, t_Taa, "ijab", t_T3aa, "klab", 1.0, t_Goooo_aa, "ijkl");
+    tblis::mult<double>(0.25, t_T3aa, "ijab", t_Taa, "klab", 1.0, t_Goooo_aa, "ijkl");
 
-        tblis::mult<double>(0.5, t_T2t, "ijab", t_T3aa, "klab", 1.0, t_Goooo_aa, "ijkl");
-        tblis::mult<double>(0.5, t_L2t, "ijab", t_Taa,  "klab", 1.0, t_Goooo_aa, "ijkl");
-
-        tblis::mult<double>(0.5, t_Taa,  "ikac", t_T3aa, "kjcb", 1.0, t_Govov_aa, "iajb");
-        tblis::mult<double>(0.5, t_T3aa, "ikac", t_Taa,  "kjcb", 1.0, t_Govov_aa, "iajb");
-
-    } else {
-        // MP2 Part Unrestricted
-        tblis::mult<double>(0.25, t_Taa, "ijab", t_Taa, "ijcd", 1.0, t_Gvvvv_aa, "abcd");
-        tblis::mult<double>(0.25, t_Taa, "ijab", t_Taa, "klab", 1.0, t_Goooo_aa, "ijkl");
-        tblis::mult<double>(0.50, t_Taa, "ikac", t_Taa, "kjcb", 1.0, t_Govov_aa, "iajb");
-
-        // MP3 Part Unrestricted (Symmetrized Half-Coefficients)
-        tblis::mult<double>(0.125, t_Taa, "ijab", t_T3aa, "ijcd", 1.0, t_Gvvvv_aa, "abcd");
-        tblis::mult<double>(0.125, t_T3aa, "ijab", t_Taa, "ijcd", 1.0, t_Gvvvv_aa, "abcd");
-
-        tblis::mult<double>(0.125, t_Taa, "ijab", t_T3aa, "klab", 1.0, t_Goooo_aa, "ijkl");
-        tblis::mult<double>(0.125, t_T3aa, "ijab", t_Taa, "klab", 1.0, t_Goooo_aa, "ijkl");
-
-        tblis::mult<double>(0.25, t_Taa, "ikac", t_T3aa, "kjcb", 1.0, t_Govov_aa, "iajb");
-        tblis::mult<double>(0.25, t_T3aa, "ikac", t_Taa, "kjcb", 1.0, t_Govov_aa, "iajb");
-    }
+    tblis::mult<double>(0.5, t_Taa, "ikac", t_T3aa, "kjcb", 1.0, t_Govov_aa, "iajb");
+    tblis::mult<double>(0.5, t_T3aa, "ikac", t_Taa, "kjcb", 1.0, t_Govov_aa, "iajb");
 
     Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> Teff_aa(na_*va_, na_*va_);
     
@@ -920,31 +885,29 @@ void OMP3::build_generalized_fock() {
         TBLIS_VIEW_4D(t_T3ab, L2_ab_, na_, nb_, va_, vb_);
         TBLIS_VIEW_4D(t_Govov_ab, Gamma_ovov_ab, na_, va_, nb_, vb_);
 
-        // Blok Beta-Beta MP2
-        tblis::mult<double>(0.25, t_Tbb, "ijab", t_Tbb, "ijcd", 1.0, t_Gvvvv_bb, "abcd");
-        tblis::mult<double>(0.25, t_Tbb, "ijab", t_Tbb, "klab", 1.0, t_Goooo_bb, "ijkl");
-        tblis::mult<double>(0.50, t_Tbb, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_bb, "iajb");
+        // Blok Beta-Beta
+        tblis::mult<double>(0.5, t_Tbb, "ijab", t_Tbb, "ijcd", 1.0, t_Gvvvv_bb, "abcd");
+        tblis::mult<double>(0.5, t_Tbb, "ijab", t_Tbb, "klab", 1.0, t_Goooo_bb, "ijkl");
+        tblis::mult<double>(1.0, t_Tbb, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_bb, "iajb");
 
-        // Blok Beta-Beta MP3 (Symmetrized Half-Coefficients)
-        tblis::mult<double>(0.125, t_Tbb,  "ijab", t_T3bb, "ijcd", 1.0, t_Gvvvv_bb, "abcd");
-        tblis::mult<double>(0.125, t_T3bb, "ijab", t_Tbb,  "ijcd", 1.0, t_Gvvvv_bb, "abcd");
+        tblis::mult<double>(0.25, t_Tbb, "ijab", t_T3bb, "ijcd", 1.0, t_Gvvvv_bb, "abcd");
+        tblis::mult<double>(0.25, t_T3bb, "ijab", t_Tbb, "ijcd", 1.0, t_Gvvvv_bb, "abcd");
 
-        tblis::mult<double>(0.125, t_Tbb,  "ijab", t_T3bb, "klab", 1.0, t_Goooo_bb, "ijkl");
-        tblis::mult<double>(0.125, t_T3bb, "ijab", t_Tbb,  "klab", 1.0, t_Goooo_bb, "ijkl");
+        tblis::mult<double>(0.25, t_Tbb, "ijab", t_T3bb, "klab", 1.0, t_Goooo_bb, "ijkl");
+        tblis::mult<double>(0.25, t_T3bb, "ijab", t_Tbb, "klab", 1.0, t_Goooo_bb, "ijkl");
 
-        tblis::mult<double>(0.25, t_Tbb,  "ikac", t_T3bb, "kjcb", 1.0, t_Govov_bb, "iajb");
-        tblis::mult<double>(0.25, t_T3bb, "ikac", t_Tbb,  "kjcb", 1.0, t_Govov_bb, "iajb");
+        tblis::mult<double>(0.5, t_Tbb, "ikac", t_T3bb, "kjcb", 1.0, t_Govov_bb, "iajb");
+        tblis::mult<double>(0.5, t_T3bb, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_bb, "iajb");
 
-        // Blok Alpha-Beta MP2
+        // Blok Alpha-Beta
         tblis::mult<double>(1.0, t_Taa, "ikac", t_Tab, "kjcb", 1.0, t_Govov_ab, "iajb");
         tblis::mult<double>(1.0, t_Tab, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_ab, "iajb");
 
-        // Blok Alpha-Beta MP3 (Symmetrized Half-Coefficients)
-        tblis::mult<double>(0.5, t_T3aa, "ikac", t_Tab,  "kjcb", 1.0, t_Govov_ab, "iajb");
-        tblis::mult<double>(0.5, t_Taa,  "ikac", t_T3ab, "kjcb", 1.0, t_Govov_ab, "iajb");
-        tblis::mult<double>(0.5, t_T3ab, "ikac", t_Tbb,  "kjcb", 1.0, t_Govov_ab, "iajb");
-        tblis::mult<double>(0.5, t_Tab,  "ikac", t_T3bb, "kjcb", 1.0, t_Govov_ab, "iajb");
-        
+        tblis::mult<double>(0.5, t_T3aa, "ikac", t_Tab, "kjcb", 1.0, t_Govov_ab, "iajb");
+        tblis::mult<double>(0.5, t_Taa, "ikac", t_T3ab, "kjcb", 1.0, t_Govov_ab, "iajb");
+        tblis::mult<double>(0.5, t_T3ab, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_ab, "iajb");
+        tblis::mult<double>(0.5, t_Tab, "ikac", t_T3bb, "kjcb", 1.0, t_Govov_ab, "iajb");
+
         Teff_ab.resize(na_*va_, nb_*vb_);
         Teff_bb.resize(nb_*vb_, nb_*vb_);
         
