@@ -241,26 +241,14 @@ double OMP3::execute_micro_iterations() {
     
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1); 
     
-    auto* t2_aa_dense = t2_aa_.get_block(0,0,0,0);
-    L2_aa_ = Eigen::Tensor<double, 4>(na_, na_, va_, va_);
-    Eigen::Map<Eigen::VectorXd>(L2_aa_.data(), L2_aa_.size()) = 
-        Eigen::Map<const Eigen::VectorXd>(t2_aa_dense->data(), t2_aa_dense->size()) + 
-        Eigen::Map<const Eigen::VectorXd>(t2_3rd_aa_.data(), t2_3rd_aa_.size());
+  
+    L2_aa_ = t2_3rd_aa_;
 
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
-        auto* t2_bb_dense = t2_bb_.get_block(0,0,0,0);
-        auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
-        
-        L2_bb_ = Eigen::Tensor<double, 4>(nb_, nb_, vb_, vb_);
-        Eigen::Map<Eigen::VectorXd>(L2_bb_.data(), L2_bb_.size()) = 
-            Eigen::Map<const Eigen::VectorXd>(t2_bb_dense->data(), t2_bb_dense->size()) + 
-            Eigen::Map<const Eigen::VectorXd>(t2_3rd_bb_.data(), t2_3rd_bb_.size());
-            
-        L2_ab_ = Eigen::Tensor<double, 4>(na_, nb_, va_, vb_);
-        Eigen::Map<Eigen::VectorXd>(L2_ab_.data(), L2_ab_.size()) = 
-            Eigen::Map<const Eigen::VectorXd>(t2_ab_dense->data(), t2_ab_dense->size()) + 
-            Eigen::Map<const Eigen::VectorXd>(t2_3rd_ab_.data(), t2_3rd_ab_.size());
+        L2_bb_ = t2_3rd_bb_;
+        L2_ab_ = t2_3rd_ab_;
     }
+    
     build_opdm_alpha();
     if (!is_restricted && nb_ > 0) {
         build_opdm_beta();
