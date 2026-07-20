@@ -806,8 +806,9 @@ void OMP3::build_generalized_fock() {
         Gamma_ovov_ab = Eigen::Tensor<double, 4>(na_, va_, nb_, vb_); Gamma_ovov_ab.setZero();
     }
 
-    
-    Gamma_vvvv_aa.setZero(); Gamma_oooo_aa.setZero(); Gamma_ovov_aa.setZero();
+    Gamma_vvvv_aa.resize(va_, va_, va_, va_); Gamma_vvvv_aa.setZero();
+    Gamma_oooo_aa.resize(na_, na_, na_, na_); Gamma_oooo_aa.setZero();
+    Gamma_ovov_aa.resize(na_, va_, na_, va_); Gamma_ovov_aa.setZero();
     
     auto* t2_aa_dense = t2_aa_.get_block(0,0,0,0);
     Eigen::Tensor<double, 4> T2_aa_ijab(na_, na_, va_, va_);
@@ -829,8 +830,8 @@ void OMP3::build_generalized_fock() {
     TBLIS_VIEW_4D(t_Govov_aa, Gamma_ovov_aa, na_, va_, na_, va_);
 
     if (is_restricted) {
-        T2_tilde_aa.setZero();
-        L2_tilde_aa.setZero();
+        T2_tilde_aa.resize(na_, na_, va_, va_); T2_tilde_aa.setZero();
+        L2_tilde_aa.resize(na_, na_, va_, va_); L2_tilde_aa.setZero();
         #pragma omp parallel for collapse(4) schedule(static)
         for(int i=0; i<na_; ++i) {
             for(int j=0; j<na_; ++j) {
@@ -900,7 +901,10 @@ void OMP3::build_generalized_fock() {
 
     Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> Teff_ab, Teff_bb;
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
-        Gamma_vvvv_bb.setZero(); Gamma_oooo_bb.setZero(); Gamma_ovov_bb.setZero(); Gamma_ovov_ab.setZero();
+        Gamma_vvvv_bb.resize(vb_, vb_, vb_, vb_); Gamma_vvvv_bb.setZero();
+        Gamma_oooo_bb.resize(nb_, nb_, nb_, nb_); Gamma_oooo_bb.setZero();
+        Gamma_ovov_bb.resize(nb_, vb_, nb_, vb_); Gamma_ovov_bb.setZero();
+        Gamma_ovov_ab.resize(na_, va_, nb_, vb_); Gamma_ovov_ab.setZero();
         
         auto* t2_bb_dense = t2_bb_.get_block(0,0,0,0);
         auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
