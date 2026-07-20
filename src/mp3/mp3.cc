@@ -806,6 +806,7 @@ void OMP3::build_generalized_fock() {
         Gamma_ovov_ab = Eigen::Tensor<double, 4>(na_, va_, nb_, vb_); Gamma_ovov_ab.setZero();
     }
 
+    // Zero-Allocation Initialization
     Gamma_vvvv_aa.resize(va_, va_, va_, va_); Gamma_vvvv_aa.setZero();
     Gamma_oooo_aa.resize(na_, na_, na_, na_); Gamma_oooo_aa.setZero();
     Gamma_ovov_aa.resize(na_, va_, na_, va_); Gamma_ovov_aa.setZero();
@@ -824,63 +825,37 @@ void OMP3::build_generalized_fock() {
     }
 
     TBLIS_VIEW_4D(t_Taa, T2_aa_ijab, na_, na_, va_, va_);
-    TBLIS_VIEW_4D(t_T3aa, L2_aa_, na_, na_, va_, va_);
+    TBLIS_VIEW_4D(t_T3aa, L2_aa_, na_, na_, va_, va_); // T3aa HANYA dipakai untuk Teff_aa nanti
     TBLIS_VIEW_4D(t_Gvvvv_aa, Gamma_vvvv_aa, va_, va_, va_, va_);
     TBLIS_VIEW_4D(t_Goooo_aa, Gamma_oooo_aa, na_, na_, na_, na_);
     TBLIS_VIEW_4D(t_Govov_aa, Gamma_ovov_aa, na_, va_, na_, va_);
 
     if (is_restricted) {
         T2_tilde_aa.resize(na_, na_, va_, va_); T2_tilde_aa.setZero();
-        L2_tilde_aa.resize(na_, na_, va_, va_); L2_tilde_aa.setZero();
         #pragma omp parallel for collapse(4) schedule(static)
         for(int i=0; i<na_; ++i) {
             for(int j=0; j<na_; ++j) {
                 for(int a=0; a<va_; ++a) {
                     for(int b=0; b<va_; ++b) {
                         T2_tilde_aa(i,j,a,b) = 2.0 * T2_aa_ijab(i,j,a,b) - T2_aa_ijab(i,j,b,a);
-                        L2_tilde_aa(i,j,a,b) = 2.0 * L2_aa_(i,j,a,b) - L2_aa_(i,j,b,a);
                     }
                 }
             }
         }
         TBLIS_VIEW_4D(t_T2t, T2_tilde_aa, na_, na_, va_, va_);
-        TBLIS_VIEW_4D(t_L2t, L2_tilde_aa, na_, na_, va_, va_);
 
         // ========================================================
-        // 1. Kontribusi MP2 Murni (T2 x T2)
+        // 2-RDM MP3 Murni HANYA T1 x T1 (Hellmann-Feynman Exact)
         // ========================================================
-        // PERBAIKAN FATAL: Gvvvv dan Goooo WAJIB dikali 2.0!
-        tblis::mult<double>(2.0, t_T2t, "ijab", t_Taa, "ijcd", 1.0, t_Gvvvv_aa, "abcd");
-        tblis::mult<double>(2.0, t_T2t, "ijab", t_Taa, "klab", 1.0, t_Goooo_aa, "ijkl");
-        // Kembalikan Govov_aa ke t_T2t (Spin-adaptasi internal)
-        tblis::mult<double>(1.0, t_T2t, "ikac", t_Taa, "kjcb", 1.0, t_Govov_aa, "iajb"); 
-
-        // ========================================================
-        // 2. Kontribusi Silang MP3 (T2 x L2 + L2 x T2)
-        // ========================================================
-        tblis::mult<double>(2.0, t_T2t, "ijab", t_T3aa, "ijcd", 1.0, t_Gvvvv_aa, "abcd");
-        tblis::mult<double>(2.0, t_L2t, "ijab", t_Taa,  "ijcd", 1.0, t_Gvvvv_aa, "abcd");
-
-        tblis::mult<double>(2.0, t_T2t, "ijab", t_T3aa, "klab", 1.0, t_Goooo_aa, "ijkl");
-        tblis::mult<double>(2.0, t_L2t, "ijab", t_Taa,  "klab", 1.0, t_Goooo_aa, "ijkl");
-
-        tblis::mult<double>(1.0, t_T2t, "ikac", t_T3aa, "kjcb", 1.0, t_Govov_aa, "iajb");
-        tblis::mult<double>(1.0, t_L2t, "ikac", t_Taa,  "kjcb", 1.0, t_Govov_aa, "iajb");
+        tblis::mult<double>(1.0, t_T2t, "ijab", t_Taa, "ijcd", 1.0, t_Gvvvv_aa, "abcd");
+        tblis::mult<double>(1.0, t_T2t, "ijab", t_Taa, "klab", 1.0, t_Goooo_aa, "ijkl");
+        tblis::mult<double>(1.0, t_T2t, "ikac", t_Taa, "kjcb", 1.0, t_Govov_aa, "iajb");
 
     } else {
-        // PERBAIKAN FATAL UNRESTRICTED: Gvvvv dan Goooo dikali 2 (0.25 -> 0.5)
-        tblis::mult<double>(0.5, t_Taa, "ijab", t_Taa, "ijcd", 1.0, t_Gvvvv_aa, "abcd");
-        tblis::mult<double>(0.5, t_Taa, "ijab", t_Taa, "klab", 1.0, t_Goooo_aa, "ijkl");
-        tblis::mult<double>(0.5, t_Taa, "ikac", t_Taa, "kjcb", 1.0, t_Govov_aa, "iajb");
-
-        tblis::mult<double>(0.5, t_Taa, "ijab", t_T3aa, "ijcd", 1.0, t_Gvvvv_aa, "abcd");
-        tblis::mult<double>(0.5, t_T3aa, "ijab", t_Taa, "ijcd", 1.0, t_Gvvvv_aa, "abcd");
-
-        tblis::mult<double>(0.5, t_Taa, "ijab", t_T3aa, "klab", 1.0, t_Goooo_aa, "ijkl");
-        tblis::mult<double>(0.5, t_T3aa, "ijab", t_Taa, "klab", 1.0, t_Goooo_aa, "ijkl");
-
-        tblis::mult<double>(0.5, t_Taa, "ikac", t_T3aa, "kjcb", 1.0, t_Govov_aa, "iajb");
-        tblis::mult<double>(0.5, t_T3aa, "ikac", t_Taa, "kjcb", 1.0, t_Govov_aa, "iajb");
+        // Unrestricted 2-RDM MP3 Murni T1 x T1
+        tblis::mult<double>(0.25, t_Taa, "ijab", t_Taa, "ijcd", 1.0, t_Gvvvv_aa, "abcd");
+        tblis::mult<double>(0.25, t_Taa, "ijab", t_Taa, "klab", 1.0, t_Goooo_aa, "ijkl");
+        tblis::mult<double>(0.50, t_Taa, "ikac", t_Taa, "kjcb", 1.0, t_Govov_aa, "iajb");
     }
 
     Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> Teff_aa(na_*va_, na_*va_);
@@ -890,15 +865,15 @@ void OMP3::build_generalized_fock() {
         for (int a = 0; a < va_; ++a) {
             for (int j = 0; j < na_; ++j) {
                 for (int b = 0; b < va_; ++b) {
-                    // Masukkan Gamma_ovov secara inklusif (Logika original MSHQC)
-                    double t2_dir = T2_aa_ijab(i, j, a, b) + L2_aa_(i, j, a, b) + Gamma_ovov_aa(i, a, j, b);
-                    double t2_ex  = T2_aa_ijab(i, j, b, a) + L2_aa_(i, j, b, a) + Gamma_ovov_aa(i, b, j, a);
+                    double t2_dir = T2_aa_ijab(i, j, a, b) + L2_aa_(i, j, a, b);
+                    double t2_ex  = T2_aa_ijab(i, j, b, a) + L2_aa_(i, j, b, a);
                     
                     if (is_restricted) {
-                        // Spin-adaptasi eksternal dilakukan DI SINI
-                        Teff_aa(i*va_+a, j*va_+b) = 2.0 * t2_dir - 1.0 * t2_ex;
+                        Teff_aa(i*va_+a, j*va_+b) = (2.0 * t2_dir - 1.0 * t2_ex) + Gamma_ovov_aa(i, a, j, b);
                     } else {
-                        Teff_aa(i*va_+a, j*va_+b) = t2_dir - t2_ex;
+                        double g_dir = Gamma_ovov_aa(i, a, j, b);
+                        double g_ex  = Gamma_ovov_aa(i, b, j, a);
+                        Teff_aa(i*va_+a, j*va_+b) = (t2_dir + g_dir) - (t2_ex + g_ex);
                     }
                 }
             }
@@ -916,35 +891,21 @@ void OMP3::build_generalized_fock() {
         auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
         
         TBLIS_VIEW_4D(t_Tbb, (*t2_bb_dense), nb_, nb_, vb_, vb_);
-        TBLIS_VIEW_4D(t_T3bb, L2_bb_, nb_, nb_, vb_, vb_);
         TBLIS_VIEW_4D(t_Gvvvv_bb, Gamma_vvvv_bb, vb_, vb_, vb_, vb_);
         TBLIS_VIEW_4D(t_Goooo_bb, Gamma_oooo_bb, nb_, nb_, nb_, nb_);
         TBLIS_VIEW_4D(t_Govov_bb, Gamma_ovov_bb, nb_, vb_, nb_, vb_);
         
         TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
-        TBLIS_VIEW_4D(t_T3ab, L2_ab_, na_, nb_, va_, vb_);
         TBLIS_VIEW_4D(t_Govov_ab, Gamma_ovov_ab, na_, va_, nb_, vb_);
 
-        tblis::mult<double>(0.5, t_Tbb, "ijab", t_Tbb, "ijcd", 1.0, t_Gvvvv_bb, "abcd");
-        tblis::mult<double>(0.5, t_Tbb, "ijab", t_T3bb, "ijcd", 1.0, t_Gvvvv_bb, "abcd");
-        tblis::mult<double>(0.5, t_T3bb, "ijab", t_Tbb, "ijcd", 1.0, t_Gvvvv_bb, "abcd");
-
-        tblis::mult<double>(0.5, t_Tbb, "ijab", t_Tbb, "klab", 1.0, t_Goooo_bb, "ijkl");
-        tblis::mult<double>(0.5, t_Tbb, "ijab", t_T3bb, "klab", 1.0, t_Goooo_bb, "ijkl");
-        tblis::mult<double>(0.5, t_T3bb, "ijab", t_Tbb, "klab", 1.0, t_Goooo_bb, "ijkl");
-
-        // Govov tetap 0.5
-        tblis::mult<double>(0.5, t_Tbb, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_bb, "iajb");
-        tblis::mult<double>(0.5, t_Tbb, "ikac", t_T3bb, "kjcb", 1.0, t_Govov_bb, "iajb");
-        tblis::mult<double>(0.5, t_T3bb, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_bb, "iajb");
+        // Blok UMP3 Beta-Beta HANYA T1 x T1
+        tblis::mult<double>(0.25, t_Tbb, "ijab", t_Tbb, "ijcd", 1.0, t_Gvvvv_bb, "abcd");
+        tblis::mult<double>(0.25, t_Tbb, "ijab", t_Tbb, "klab", 1.0, t_Goooo_bb, "ijkl");
+        tblis::mult<double>(0.50, t_Tbb, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_bb, "iajb");
         
+        // Blok UMP3 Alpha-Beta HANYA T1 x T1
         tblis::mult<double>(1.0, t_Taa, "ikac", t_Tab, "kjcb", 1.0, t_Govov_ab, "iajb");
-        tblis::mult<double>(1.0, t_T3aa, "ikac", t_Tab, "kjcb", 1.0, t_Govov_ab, "iajb");
-        tblis::mult<double>(1.0, t_Taa, "ikac", t_T3ab, "kjcb", 1.0, t_Govov_ab, "iajb");
-
         tblis::mult<double>(1.0, t_Tab, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_ab, "iajb");
-        tblis::mult<double>(1.0, t_T3ab, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_ab, "iajb");
-        tblis::mult<double>(1.0, t_Tab, "ikac", t_T3bb, "kjcb", 1.0, t_Govov_ab, "iajb");
 
         Teff_ab.resize(na_*va_, nb_*vb_);
         Teff_bb.resize(nb_*vb_, nb_*vb_);
