@@ -29,6 +29,7 @@ protected:
     void build_opdm_beta() override;
 
     void build_hessian_diagonal(Eigen::VectorXd& diag_H, double grad_norm) override;
+    void debug_gradient_fd(int i_target, int a_target);
 
     double e_mp3_aa_ = 0.0;
     double e_mp3_bb_ = 0.0;
@@ -42,7 +43,7 @@ protected:
 
     Eigen::Tensor<double, 4> Gamma_vvvv_aa, Gamma_oooo_aa, Gamma_ovov_aa;
     Eigen::Tensor<double, 4> Gamma_vvvv_bb, Gamma_oooo_bb, Gamma_ovov_bb, Gamma_ovov_ab;
-     Eigen::Tensor<double, 4> T2_tilde_aa, L2_tilde_aa;
+    Eigen::Tensor<double, 4> T2_tilde_aa, L2_tilde_aa;
 
     void compute_mp3_correction();
 };

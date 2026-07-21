@@ -1043,12 +1043,109 @@ void OMP3::build_hessian_diagonal(Eigen::VectorXd& diag_H, double grad_norm) {
         }
     }
 }
+void OMP3::debug_gradient_fd(int i_target, int a_target) {
+    std::cout << "\n--- [DEBUG] Memulai Uji Finite-Difference OMP3 (Total Energy) ---\n";
+    double theta = 1e-5;
+    bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
+    
+    // 1. Simpan state asli sebelum diganggu
+    Eigen::MatrixXd C_a_orig = scf_.C_alpha;
+    Eigen::MatrixXd C_b_orig = scf_.C_beta;
+    Eigen::MatrixXd P_a_orig = scf_.P_alpha;
+    Eigen::MatrixXd P_b_orig = scf_.P_beta;
+    
+    // Fungsi lambda untuk menghitung total energi dengan orbital yang dirotasi
+    auto calc_total_energy = [&](double t) -> double {
+        // Rotasi matriks C
+        Eigen::MatrixXd U = Eigen::MatrixXd::Identity(nbf_, nbf_);
+        U(i_target, na_ + a_target) = t;
+        U(na_ + a_target, i_target) = -t;
+        
+        scf_.C_alpha = C_a_orig * U;
+        if (!is_restricted) scf_.C_beta = C_b_orig * U; // Asumsi rotasi sama untuk UHF sementara
+        else scf_.C_beta = scf_.C_alpha;
+        
+        scf_.P_alpha = scf_.C_alpha.leftCols(na_) * scf_.C_alpha.leftCols(na_).transpose();
+        if (!is_restricted) scf_.P_beta = scf_.C_beta.leftCols(nb_) * scf_.C_beta.leftCols(nb_).transpose();
+        else scf_.P_beta = scf_.P_alpha;
+        
+        // A. Hitung Energi SCF dengan orbital baru
+        Eigen::MatrixXd F_ao_a, F_ao_b;
+        build_fock_fast(scf_.P_alpha, scf_.P_beta, F_ao_a, F_ao_b);
+        double e_scf = 0.5 * (scf_.P_alpha.cwiseProduct(H_core_ + F_ao_a).sum() + 
+                              scf_.P_beta.cwiseProduct(H_core_ + F_ao_b).sum()) 
+                       + mol_.nuclear_repulsion_energy();
+                       
+        // B. Re-transform integral DF dengan orbital baru
+        transform_3center_mo(); 
+        
+        // C. Hitung Energi Korelasi MP2
+        compute_t2_amplitudes();
+        double e_mp2 = compute_mp2_energy();
+        
+        // D. Hitung Energi Korelasi MP3
+        compute_mp3_correction();
+        
+        return e_scf + e_ss_ + e_os_ + e_mp3_tot_;
+    };
+
+    // 2. Evaluasi energi maju (+theta) dan mundur (-theta)
+    double E_plus = calc_total_energy(theta);
+    double E_minus = calc_total_energy(-theta);
+    
+    // 3. Kembalikan state ke posisi semula secara absolut
+    scf_.C_alpha = C_a_orig;
+    scf_.C_beta = C_b_orig;
+    scf_.P_alpha = P_a_orig;
+    scf_.P_beta = P_b_orig;
+    
+   
+    transform_3center_mo();
+    compute_t2_amplitudes();
+    compute_mp2_energy();
+    compute_mp3_correction();
+    L2_aa_ = t2_3rd_aa_; 
+    build_opdm_alpha();
+    if (!is_restricted && nb_ > 0) build_opdm_beta();
+    else if (is_restricted) G_oo_beta_ = G_oo_alpha_;
+    build_generalized_fock();
+    double grad_num = (E_plus - E_minus) / (2.0 * theta);
+    double grad_ana = 0.0;
+    if (is_restricted) {
+        grad_ana = 4.0 * F_gen_a_(na_ + a_target, i_target);
+    } else {
+        grad_ana = 2.0 * F_gen_a_(na_ + a_target, i_target); // Khusus Alpha
+    }
+    
+    std::cout << std::fixed << std::setprecision(10);
+    std::cout << "Target Rotasi        : (i=" << i_target << " [Occ], a=" << a_target << " [Vir])\n";
+    std::cout << "Energi (+theta)      : " << E_plus << " Ha\n";
+    std::cout << "Energi (-theta)      : " << E_minus << " Ha\n";
+    std::cout << "Gradien Numerik (FD) : " << std::scientific << grad_num << "\n";
+    std::cout << "Gradien Analitik     : " << std::scientific << grad_ana << "\n";
+    
+    double selisih = std::abs(grad_num - grad_ana);
+    std::cout << "Selisih Absolut      : " << selisih << "\n";
+    
+    if (selisih > 1e-6) {
+        std::cout << ">>> KESIMPULAN: FATAL! Faktor turunan analitik MP3 Anda salah.\n";
+    } else {
+        std::cout << ">>> KESIMPULAN: AMAN! Turunan MP3 cocok.\n";
+    }
+    std::cout << "-------------------------------------------------------------------\n";
+}
 MP3Result OMP3::compute_omp3() {
     if(omp_get_thread_num() == 0) {
         std::cout << "\n========================================================\n";
         std::cout << "      Orbital-Optimized MP3 (OMP3 - Professional)\n";
         std::cout << "========================================================\n";
-    }    
+    }
+    
+    if(omp_get_thread_num() == 0) {
+        if (na_ > 0 && va_ > 0) {
+            debug_gradient_fd(na_ - 1, 0); 
+        }
+    }
     MP2Result res2 = OMP2::compute();
 
     MP3Result res3;
