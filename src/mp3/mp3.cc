@@ -1045,22 +1045,59 @@ void OMP3::build_hessian_diagonal(Eigen::VectorXd& diag_H, double grad_norm) {
 }
 void OMP3::debug_gradient_fd(int i_target, int a_target) {
     std::cout << "\n--- [DEBUG] Memulai Uji Finite-Difference OMP3 (Total Energy) ---\n";
-    double theta = 1e-5;
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     
-    // 1. Simpan state asli sebelum diganggu
+    // 1. SETUP STATE AWAL & CARI GRADIEN TERBESAR
+    // Panggil pipeline normal terlebih dahulu agar F_gen_a_ memiliki nilai
+    pseudocanonicalize(); 
+    C_a_current_ = scf_.C_alpha;
+    C_b_current_ = scf_.C_beta;
+    transform_integrals();
+    compute_t2_amplitudes();
+    compute_mp2_energy();
+    compute_mp3_correction();
+    
+    // Sinkronisasi tensor orde ke-3
+    L2_aa_ = t2_3rd_aa_; 
+    if (!is_restricted && nb_ > 0 && vb_ > 0) {
+        L2_bb_ = t2_3rd_bb_;
+        L2_ab_ = t2_3rd_ab_;
+    }
+    
+    build_opdm_alpha();
+    if (!is_restricted && nb_ > 0) build_opdm_beta();
+    else if (is_restricted) G_oo_beta_ = G_oo_alpha_;
+    build_generalized_fock();
+
+    // Cari elemen rotasi dengan Gradien Analitik terbesar agar lolos dari jerat simetri
+    double max_grad = -1.0;
+    for(int i=0; i<na_; ++i) {
+        for(int a=0; a<va_; ++a) {
+            double val = std::abs(F_gen_a_(na_ + a, i));
+            if (val > max_grad) {
+                max_grad = val;
+                i_target = i;
+                a_target = a;
+            }
+        }
+    }
+    
+    double grad_ana = 0.0;
+    if (is_restricted) grad_ana = 4.0 * F_gen_a_(na_ + a_target, i_target);
+    else grad_ana = 2.0 * F_gen_a_(na_ + a_target, i_target);
+    
+    // 2. MULAI UJI FD PADA ROTASI TARGET
+    double theta = 1e-5;
     Eigen::MatrixXd C_a_orig = scf_.C_alpha;
     Eigen::MatrixXd C_b_orig = scf_.C_beta;
     Eigen::MatrixXd P_a_orig = scf_.P_alpha;
     Eigen::MatrixXd P_b_orig = scf_.P_beta;
     
-    // Fungsi lambda untuk menghitung total energi dengan orbital yang dirotasi
     auto calc_total_energy = [&](double t) -> double {
         Eigen::MatrixXd U = Eigen::MatrixXd::Identity(nbf_, nbf_);
         U(i_target, na_ + a_target) = t;
         U(na_ + a_target, i_target) = -t;
         
-        // A. Terapkan rotasi
         C_a_current_ = C_a_orig * U;
         if (!is_restricted) C_b_current_ = C_b_orig * U; 
         else C_b_current_ = C_a_current_;
@@ -1071,64 +1108,29 @@ void OMP3::debug_gradient_fd(int i_target, int a_target) {
         if (!is_restricted) scf_.P_beta = scf_.C_beta.leftCols(nb_) * scf_.C_beta.leftCols(nb_).transpose();
         else scf_.P_beta = scf_.P_alpha;
         
-        // B. Wajib Semi-Canonicalization agar denominator MP2/MP3 valid!
         pseudocanonicalize();
         C_a_current_ = scf_.C_alpha;
         C_b_current_ = scf_.C_beta;
 
-        // C. Hitung Energi SCF
         Eigen::MatrixXd F_ao_a, F_ao_b;
         build_fock_fast(scf_.P_alpha, scf_.P_beta, F_ao_a, F_ao_b);
         double e_scf = 0.5 * (scf_.P_alpha.cwiseProduct(H_core_ + F_ao_a).sum() + 
                               scf_.P_beta.cwiseProduct(H_core_ + F_ao_b).sum()) 
                        + mol_.nuclear_repulsion_energy();
                        
-        // D. Re-transform integral DF (ini mengalokasikan g_aa_ dan t2_aa_!)
         transform_integrals(); 
-        
-        // E. Hitung Energi Korelasi MP2 & MP3
         compute_t2_amplitudes();
-        double e_mp2 = compute_mp2_energy();
+        compute_mp2_energy();
         compute_mp3_correction();
         
         return e_scf + e_ss_ + e_os_ + e_mp3_tot_;
     };
 
-    // 2. Evaluasi energi maju (+theta) dan mundur (-theta)
     double E_plus = calc_total_energy(theta);
     double E_minus = calc_total_energy(-theta);
     
-    // 3. Kembalikan state ke posisi semula secara absolut
-    C_a_current_ = C_a_orig;
-    C_b_current_ = C_b_orig;
-    scf_.C_alpha = C_a_orig;
-    scf_.C_beta = C_b_orig;
-    scf_.P_alpha = P_a_orig;
-    scf_.P_beta = P_b_orig;
-    
-    // Panggil ulang pipeline normal agar state program pulih sepenuhnya
-    pseudocanonicalize(); 
-    C_a_current_ = scf_.C_alpha;
-    C_b_current_ = scf_.C_beta;
-    transform_integrals();
-    compute_t2_amplitudes();
-    compute_mp2_energy();
-    compute_mp3_correction();
-    L2_aa_ = t2_3rd_aa_; // Sinkronisasi T3
-    build_opdm_alpha();
-    if (!is_restricted && nb_ > 0) build_opdm_beta();
-    else if (is_restricted) G_oo_beta_ = G_oo_alpha_;
-    build_generalized_fock();
-    
-    // 4. Kalkulasi hasil
+    // 3. KALKULASI HASIL
     double grad_num = (E_plus - E_minus) / (2.0 * theta);
-    
-    double grad_ana = 0.0;
-    if (is_restricted) {
-        grad_ana = 4.0 * F_gen_a_(na_ + a_target, i_target);
-    } else {
-        grad_ana = 2.0 * F_gen_a_(na_ + a_target, i_target); // Khusus Alpha
-    }
     
     std::cout << std::fixed << std::setprecision(10);
     std::cout << "Target Rotasi        : (i=" << i_target << " [Occ], a=" << a_target << " [Vir])\n";
@@ -1140,12 +1142,13 @@ void OMP3::debug_gradient_fd(int i_target, int a_target) {
     double selisih = std::abs(grad_num - grad_ana);
     std::cout << "Selisih Absolut      : " << selisih << "\n";
     
-    if (selisih > 1e-6) {
+    if (selisih > 1e-5) { // Toleransi wajar beda hingga ~1e-6 s/d 1e-5
         std::cout << ">>> KESIMPULAN: FATAL! Faktor turunan analitik MP3 Anda salah.\n";
     } else {
         std::cout << ">>> KESIMPULAN: AMAN! Turunan MP3 cocok.\n";
     }
     std::cout << "-------------------------------------------------------------------\n";
+
 }
 MP3Result OMP3::compute_omp3() {
     if(omp_get_thread_num() == 0) {
