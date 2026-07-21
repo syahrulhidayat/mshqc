@@ -892,34 +892,25 @@ MP2Result OMP2::compute() {
                 C_a_current_ = C_a_last; 
                 C_b_current_ = C_b_last;
                 trust_radius *= 0.25; 
-                if (trust_radius <= 1e-4) {
-                    if (omp_get_thread_num() == 0) {
-                        std::cout << "  [OMP2] Trust radius minimum tercapai. Konvergensi optimal berhasil dicapai.\n";
-                    }
+                if (trust_radius <= 1e-5) {
+                    if (omp_get_thread_num() == 0) std::cout << "  [OMP2] Trust radius minimum tercapai.\n";
                     is_converged = true;
                     break; 
                 }
                 scf_.P_alpha = C_a_current_.leftCols(na_) * C_a_current_.leftCols(na_).transpose();
-                if (!is_restricted && nb_ > 0) {
-                    scf_.P_beta = C_b_current_.leftCols(nb_) * C_b_current_.leftCols(nb_).transpose();
-                } else {
-                    scf_.P_beta = scf_.P_alpha;
-                }
+                if (!is_restricted && nb_ > 0) scf_.P_beta = C_b_current_.leftCols(nb_) * C_b_current_.leftCols(nb_).transpose();
+                else scf_.P_beta = scf_.P_alpha;
+                
                 expected_change = -1e-6; 
-
                 step_rejected = true;
                 continue; 
                 
             } else {
-                if (rho > 0.75) {
-                    trust_radius = std::min(0.25, trust_radius * 1.5); 
-                } else if (rho < 0.25) {
-                    trust_radius *= 0.5;
-                }
+                if (rho > 0.75) trust_radius = std::min(0.25, trust_radius * 1.5); 
+                else if (rho < 0.25) trust_radius *= 0.5;
+                
                 if (trust_radius <= 1e-5) {
-                    if (omp_get_thread_num() == 0) {
-                        std::cout << "  [OMP2] Trust radius minimum tercapai. Konvergensi optimal berhasil dicapai.\n";
-                    }
+                    if (omp_get_thread_num() == 0) std::cout << "  [OMP2] Trust radius minimum tercapai.\n";
                     is_converged = true;
                     break;
                 }

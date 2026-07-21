@@ -369,8 +369,7 @@ void OMP3::compute_mp3_correction() {
                 for (int a = 0; a < va_; ++a) {
                     for (int b = 0; b < va_; ++b) {
                         double D = ea(i) + ea(j) - ea(na_+a) - ea(na_+b);
-                        double safe_den = (std::abs(D) < config_.level_shift) ? std::copysign(config_.level_shift, D) : D;
-                        t2_3rd_aa_(i,j,a,b) = W(i,j,a,b) / safe_den; 
+                        t2_3rd_aa_(i,j,a,b) = W(i,j,a,b) / D; 
                         e3_aa += W(i, j, a, b) * (2.0 * T2_aa_ijab(i, j, a, b) - T2_aa_ijab(i, j, b, a));
                     }
                 }
@@ -439,8 +438,7 @@ void OMP3::compute_mp3_correction() {
                         double r_asym = Waa_ring_(i,j,a,b) - Waa_ring_(j,i,a,b) - Waa_ring_(i,j,b,a) + Waa_ring_(j,i,b,a);
                         double w_tot = Waa_ladder_(i,j,a,b) + r_asym;
                         double D = ea(i) + ea(j) - ea(na_+a) - ea(na_+b);
-                        double safe_den = (std::abs(D) < config_.level_shift) ? std::copysign(config_.level_shift, D) : D;
-                        t2_3rd_aa_(i,j,a,b) = w_tot / safe_den;
+                        t2_3rd_aa_(i,j,a,b) = w_tot / D;
                         e3_aa += 0.25 * T2_aa_ijab(i,j,a,b) * w_tot;
                     }
                 }
@@ -506,8 +504,7 @@ void OMP3::compute_mp3_correction() {
                             double r_asym = Wbb_ring(i,j,a,b) - Wbb_ring(j,i,a,b) - Wbb_ring(i,j,b,a) + Wbb_ring(j,i,b,a);
                             double w_tot = Wbb_ladder(i,j,a,b) + r_asym;
                             double D = eb(i) + eb(j) - eb(nb_+a) - eb(nb_+b);
-                            double safe_den = (std::abs(D) < config_.level_shift) ? std::copysign(config_.level_shift, D) : D;
-                            t2_3rd_bb_(i,j,a,b) = w_tot / safe_den;
+                            t2_3rd_bb_(i,j,a,b) = w_tot / D;
                             e3_bb += 0.25 * (*t2_bb_dense)(i,j,a,b) * w_tot;
                         }
                     }
@@ -575,8 +572,7 @@ void OMP3::compute_mp3_correction() {
                         for(int b=0; b<vb_; ++b) {
                             double w_tot = Wab_ladder(i,j,a,b) + Wab_ring(i,j,a,b); 
                             double D = ea(i) + eb(j) - ea(na_+a) - eb(nb_+b);
-                            double safe_den = (std::abs(D) < config_.level_shift) ? std::copysign(config_.level_shift, D) : D;
-                            t2_3rd_ab_(i,j,a,b) = w_tot / safe_den;
+                            t2_3rd_ab_(i,j,a,b) = w_tot / D;
                             e3_ab += 1.0 * (*t2_ab_dense)(i,j,a,b) * w_tot;
                         }
                     }

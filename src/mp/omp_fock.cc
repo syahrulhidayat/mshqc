@@ -265,9 +265,9 @@ void OMP2::build_opdm_beta() {
                 int j = jc % nb_;
                 int c = jc / nb_;
                 size_t offset = j * nb_ + c * (nb_ * nb_ * vb_);
-                Eigen::Map<const Eigen::MatrixXd, 0, Eigen::OuterStride<>> M(
-                    base_bb + offset, nb_, vb_, Eigen::OuterStride<>(nb_ * nb_)
-                );
+                Eigen::Map<const Eigen::MatrixXd, 0, Eigen::OuterStride<Eigen::Dynamic>> M(
+                base_bb + offset, nb_, vb_, Eigen::OuterStride<Eigen::Dynamic>(nb_ * nb_)
+            );
                 
                 G_vv_local.noalias() += M.transpose() * M;
             }
