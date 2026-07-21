@@ -831,10 +831,6 @@ void OMP3::build_generalized_fock() {
         Gamma_ovov_ab = Eigen::Tensor<double, 4>(na_, va_, nb_, vb_); Gamma_ovov_ab.setZero();
     }
 
-    Gamma_vvvv_aa.resize(va_, va_, va_, va_); Gamma_vvvv_aa.setZero();
-    Gamma_oooo_aa.resize(na_, na_, na_, na_); Gamma_oooo_aa.setZero();
-    Gamma_ovov_aa.resize(na_, va_, na_, va_); Gamma_ovov_aa.setZero();
-    
     auto* t2_aa_dense = t2_aa_.get_block(0,0,0,0);
     Eigen::Tensor<double, 4> T2_aa_ijab(na_, na_, va_, va_);
     #pragma omp parallel for collapse(4) schedule(static)
@@ -849,25 +845,14 @@ void OMP3::build_generalized_fock() {
     }
 
     TBLIS_VIEW_4D(t_Taa, T2_aa_ijab, na_, na_, va_, va_);
-    TBLIS_VIEW_4D(t_T3aa, L2_aa_, na_, na_, va_, va_);
     TBLIS_VIEW_4D(t_Gvvvv_aa, Gamma_vvvv_aa, va_, va_, va_, va_);
     TBLIS_VIEW_4D(t_Goooo_aa, Gamma_oooo_aa, na_, na_, na_, na_);
     TBLIS_VIEW_4D(t_Govov_aa, Gamma_ovov_aa, na_, va_, na_, va_);
 
-    // 1. Kontribusi MP2 Murni (Sama persis dengan koefisien OMP2)
+    // 1. KONTRIBUSI EKSPLISIT E^(3): HANYA T2 * T2 (TIDAK ADA T3!)
     tblis::mult<double>(0.5, t_Taa, "ijab", t_Taa, "ijcd", 1.0, t_Gvvvv_aa, "abcd");
     tblis::mult<double>(0.5, t_Taa, "ijab", t_Taa, "klab", 1.0, t_Goooo_aa, "ijkl");
     tblis::mult<double>(1.0, t_Taa, "ikac", t_Taa, "kjcb", 1.0, t_Govov_aa, "iajb");
-
-    // 2. Kontribusi Silang MP3 ALPHA-ALPHA
-    tblis::mult<double>(0.25, t_Taa, "ijab", t_T3aa, "ijcd", 1.0, t_Gvvvv_aa, "abcd"); 
-    tblis::mult<double>(0.25, t_T3aa, "ijab", t_Taa, "ijcd", 1.0, t_Gvvvv_aa, "abcd"); 
-
-    tblis::mult<double>(0.25, t_Taa, "ijab", t_T3aa, "klab", 1.0, t_Goooo_aa, "ijkl"); 
-    tblis::mult<double>(0.25, t_T3aa, "ijab", t_Taa, "klab", 1.0, t_Goooo_aa, "ijkl"); 
-
-    tblis::mult<double>(0.5, t_Taa, "ikac", t_T3aa, "kjcb", 1.0, t_Govov_aa, "iajb");
-    tblis::mult<double>(0.5, t_T3aa, "ikac", t_Taa, "kjcb", 1.0, t_Govov_aa, "iajb"); 
 
     Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> Teff_aa(na_*va_, na_*va_);
     
@@ -876,6 +861,7 @@ void OMP3::build_generalized_fock() {
         for (int a = 0; a < va_; ++a) {
             for (int j = 0; j < na_; ++j) {
                 for (int b = 0; b < va_; ++b) {
+                    // L2_aa_ = T3. T3 murni bertindak sebagai Lagrange Multiplier di sini
                     double t2_dir = T2_aa_ijab(i, j, a, b) + L2_aa_(i, j, a, b) + Gamma_ovov_aa(i, a, j, b);
                     double t2_ex  = T2_aa_ijab(i, j, b, a) + L2_aa_(i, j, b, a) + Gamma_ovov_aa(i, b, j, a);
                     if (is_restricted) {
@@ -890,42 +876,25 @@ void OMP3::build_generalized_fock() {
 
     Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> Teff_ab, Teff_bb;
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
-        Gamma_vvvv_bb.resize(vb_, vb_, vb_, vb_); Gamma_vvvv_bb.setZero();
-        Gamma_oooo_bb.resize(nb_, nb_, nb_, nb_); Gamma_oooo_bb.setZero();
-        Gamma_ovov_bb.resize(nb_, vb_, nb_, vb_); Gamma_ovov_bb.setZero();
-        Gamma_ovov_ab.resize(na_, va_, nb_, vb_); Gamma_ovov_ab.setZero();
-        
         auto* t2_bb_dense = t2_bb_.get_block(0,0,0,0);
         auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
         
         TBLIS_VIEW_4D(t_Tbb, (*t2_bb_dense), nb_, nb_, vb_, vb_);
-        TBLIS_VIEW_4D(t_T3bb, L2_bb_, nb_, nb_, vb_, vb_);
         TBLIS_VIEW_4D(t_Gvvvv_bb, Gamma_vvvv_bb, vb_, vb_, vb_, vb_);
         TBLIS_VIEW_4D(t_Goooo_bb, Gamma_oooo_bb, nb_, nb_, nb_, nb_);
         TBLIS_VIEW_4D(t_Govov_bb, Gamma_ovov_bb, nb_, vb_, nb_, vb_);
         
         TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
-        TBLIS_VIEW_4D(t_T3ab, L2_ab_, na_, nb_, va_, vb_);
         TBLIS_VIEW_4D(t_Govov_ab, Gamma_ovov_ab, na_, va_, nb_, vb_);
 
-        // Blok Beta-Beta
-        tblis::mult<double>(0.25, t_Tbb, "ijab", t_T3bb, "ijcd", 1.0, t_Gvvvv_bb, "abcd");
-        tblis::mult<double>(0.25, t_T3bb, "ijab", t_Tbb, "ijcd", 1.0, t_Gvvvv_bb, "abcd"); 
+        // Blok Beta-Beta (Hanya T2 * T2)
+        tblis::mult<double>(0.5, t_Tbb, "ijab", t_Tbb, "ijcd", 1.0, t_Gvvvv_bb, "abcd");
+        tblis::mult<double>(0.5, t_Tbb, "ijab", t_Tbb, "klab", 1.0, t_Goooo_bb, "ijkl");
+        tblis::mult<double>(1.0, t_Tbb, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_bb, "iajb");
 
-        tblis::mult<double>(0.25, t_Tbb, "ijab", t_T3bb, "klab", 1.0, t_Goooo_bb, "ijkl"); 
-        tblis::mult<double>(0.25, t_T3bb, "ijab", t_Tbb, "klab", 1.0, t_Goooo_bb, "ijkl"); 
-
-        tblis::mult<double>(0.5, t_Tbb, "ikac", t_T3bb, "kjcb", 1.0, t_Govov_bb, "iajb"); 
-        tblis::mult<double>(0.5, t_T3bb, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_bb, "iajb"); 
-
-        // Blok Alpha-Beta
+        // Blok Alpha-Beta (Hanya T2 * T2)
         tblis::mult<double>(1.0, t_Taa, "ikac", t_Tab, "kjcb", 1.0, t_Govov_ab, "iajb");
         tblis::mult<double>(1.0, t_Tab, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_ab, "iajb");
-
-        tblis::mult<double>(0.5, t_T3aa, "ikac", t_Tab, "kjcb", 1.0, t_Govov_ab, "iajb"); 
-        tblis::mult<double>(0.5, t_Taa, "ikac", t_T3ab, "kjcb", 1.0, t_Govov_ab, "iajb");
-        tblis::mult<double>(0.5, t_T3ab, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_ab, "iajb"); 
-        tblis::mult<double>(0.5, t_Tab, "ikac", t_T3bb, "kjcb", 1.0, t_Govov_ab, "iajb"); 
 
         Teff_ab.resize(na_*va_, nb_*vb_);
         Teff_bb.resize(nb_*vb_, nb_*vb_);
