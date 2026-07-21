@@ -861,13 +861,12 @@ void OMP3::build_generalized_fock() {
         for (int a = 0; a < va_; ++a) {
             for (int j = 0; j < na_; ++j) {
                 for (int b = 0; b < va_; ++b) {
-                    // L2_aa_ = T3. T3 murni bertindak sebagai Lagrange Multiplier di sini
                     double t2_dir = T2_aa_ijab(i, j, a, b) + L2_aa_(i, j, a, b) + Gamma_ovov_aa(i, a, j, b);
-                    double t2_ex  = T2_aa_ijab(i, j, b, a) + L2_aa_(i, j, b, a) + Gamma_ovov_aa(i, b, j, a);
                     if (is_restricted) {
+                        double t2_ex  = T2_aa_ijab(i, j, b, a) + L2_aa_(i, j, b, a) + Gamma_ovov_aa(i, b, j, a);
                         Teff_aa(i*va_+a, j*va_+b) = 2.0 * t2_dir - 1.0 * t2_ex;
                     } else {
-                        Teff_aa(i*va_+a, j*va_+b) = t2_dir - t2_ex;
+                        Teff_aa(i*va_+a, j*va_+b) = t2_dir; 
                     }
                 }
             }
@@ -916,8 +915,7 @@ void OMP3::build_generalized_fock() {
                 for (int j = 0; j < nb_; ++j) {
                     for (int b = 0; b < vb_; ++b) {
                         double dir = (*t2_bb_dense)(i, j, a, b) + L2_bb_(i, j, a, b) + Gamma_ovov_bb(i, a, j, b);
-                        double ex  = (*t2_bb_dense)(i, j, b, a) + L2_bb_(i, j, b, a) + Gamma_ovov_bb(i, b, j, a);
-                        Teff_bb(i*vb_+a, j*vb_+b) = dir - ex;
+                        Teff_bb(i*vb_+a, j*vb_+b) = dir; 
                     }
                 }
             }
