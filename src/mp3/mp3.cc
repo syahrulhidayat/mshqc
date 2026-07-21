@@ -843,13 +843,28 @@ void OMP3::build_generalized_fock() {
     }
 
     TBLIS_VIEW_4D(t_Taa, T2_aa_ijab, na_, na_, va_, va_);
+    TBLIS_VIEW_4D(t_T3aa, L2_aa_, na_, na_, va_, va_);
     TBLIS_VIEW_4D(t_Gvvvv_aa, Gamma_vvvv_aa, va_, va_, va_, va_);
     TBLIS_VIEW_4D(t_Goooo_aa, Gamma_oooo_aa, na_, na_, na_, na_);
     TBLIS_VIEW_4D(t_Govov_aa, Gamma_ovov_aa, na_, va_, na_, va_);
 
-    tblis::mult<double>(0.5, t_Taa, "ijab", t_Taa, "ijcd", 1.0, t_Gvvvv_aa, "abcd");
-    tblis::mult<double>(0.5, t_Taa, "ijab", t_Taa, "klab", 1.0, t_Goooo_aa, "ijkl");
-    tblis::mult<double>(1.0, t_Taa, "ikac", t_Taa, "kjcb", 1.0, t_Govov_aa, "iajb");
+    // =========================================================================
+    // KOREKSI FINAL MATEMATIKA: 
+    // MSHQC OMP3 Gamma Matrices (Menggunakan turunan CPHF eksak T2 dan T3)
+    // =========================================================================
+    
+    // 1. Explicit MP3 (T2 * T2) -> Koefisien dikali 2.0 dibandingkan MP2 murni
+    tblis::mult<double>(1.0, t_Taa, "ijab", t_Taa, "ijcd", 1.0, t_Gvvvv_aa, "abcd");
+    tblis::mult<double>(1.0, t_Taa, "ijab", t_Taa, "klab", 1.0, t_Goooo_aa, "ijkl");
+    tblis::mult<double>(2.0, t_Taa, "ikac", t_Taa, "kjcb", 1.0, t_Govov_aa, "iajb");
+
+    // 2. MP3 Response (T2 * T3 + T3 * T2)
+    tblis::mult<double>(0.5, t_Taa, "ijab", t_T3aa, "ijcd", 1.0, t_Gvvvv_aa, "abcd"); 
+    tblis::mult<double>(0.5, t_T3aa, "ijab", t_Taa, "ijcd", 1.0, t_Gvvvv_aa, "abcd"); 
+    tblis::mult<double>(0.5, t_Taa, "ijab", t_T3aa, "klab", 1.0, t_Goooo_aa, "ijkl"); 
+    tblis::mult<double>(0.5, t_T3aa, "ijab", t_Taa, "klab", 1.0, t_Goooo_aa, "ijkl"); 
+    tblis::mult<double>(1.0, t_Taa, "ikac", t_T3aa, "kjcb", 1.0, t_Govov_aa, "iajb");
+    tblis::mult<double>(1.0, t_T3aa, "ikac", t_Taa, "kjcb", 1.0, t_Govov_aa, "iajb"); 
 
     Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> Teff_aa(na_*va_, na_*va_);
     
@@ -858,7 +873,6 @@ void OMP3::build_generalized_fock() {
         for (int a = 0; a < va_; ++a) {
             for (int j = 0; j < na_; ++j) {
                 for (int b = 0; b < va_; ++b) {
-                    // MATEMATIKA FINAL OMP3: Pengali 2.0 untuk L2 karena E(3) = T2 * V * T2 (Kuadratik)
                     double t2_dir = T2_aa_ijab(i, j, a, b) + 2.0 * L2_aa_(i, j, a, b) + Gamma_ovov_aa(i, a, j, b);
                     if (is_restricted) {
                         double t2_ex  = T2_aa_ijab(i, j, b, a) + 2.0 * L2_aa_(i, j, b, a) + Gamma_ovov_aa(i, b, j, a);
@@ -877,19 +891,37 @@ void OMP3::build_generalized_fock() {
         auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
         
         TBLIS_VIEW_4D(t_Tbb, (*t2_bb_dense), nb_, nb_, vb_, vb_);
+        TBLIS_VIEW_4D(t_T3bb, L2_bb_, nb_, nb_, vb_, vb_);
         TBLIS_VIEW_4D(t_Gvvvv_bb, Gamma_vvvv_bb, vb_, vb_, vb_, vb_);
         TBLIS_VIEW_4D(t_Goooo_bb, Gamma_oooo_bb, nb_, nb_, nb_, nb_);
         TBLIS_VIEW_4D(t_Govov_bb, Gamma_ovov_bb, nb_, vb_, nb_, vb_);
         
         TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
+        TBLIS_VIEW_4D(t_T3ab, L2_ab_, na_, nb_, va_, vb_);
         TBLIS_VIEW_4D(t_Govov_ab, Gamma_ovov_ab, na_, va_, nb_, vb_);
 
-        tblis::mult<double>(0.5, t_Tbb, "ijab", t_Tbb, "ijcd", 1.0, t_Gvvvv_bb, "abcd");
-        tblis::mult<double>(0.5, t_Tbb, "ijab", t_Tbb, "klab", 1.0, t_Goooo_bb, "ijkl");
-        tblis::mult<double>(1.0, t_Tbb, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_bb, "iajb");
+        // Blok Beta-Beta (MP2 + Explicit MP3)
+        tblis::mult<double>(1.0, t_Tbb, "ijab", t_Tbb, "ijcd", 1.0, t_Gvvvv_bb, "abcd");
+        tblis::mult<double>(1.0, t_Tbb, "ijab", t_Tbb, "klab", 1.0, t_Goooo_bb, "ijkl");
+        tblis::mult<double>(2.0, t_Tbb, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_bb, "iajb");
 
-        tblis::mult<double>(1.0, t_Taa, "ikac", t_Tab, "kjcb", 1.0, t_Govov_ab, "iajb");
-        tblis::mult<double>(1.0, t_Tab, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_ab, "iajb");
+        // Blok Beta-Beta (MP3 Response)
+        tblis::mult<double>(0.5, t_Tbb, "ijab", t_T3bb, "ijcd", 1.0, t_Gvvvv_bb, "abcd"); 
+        tblis::mult<double>(0.5, t_T3bb, "ijab", t_Tbb, "ijcd", 1.0, t_Gvvvv_bb, "abcd"); 
+        tblis::mult<double>(0.5, t_Tbb, "ijab", t_T3bb, "klab", 1.0, t_Goooo_bb, "ijkl"); 
+        tblis::mult<double>(0.5, t_T3bb, "ijab", t_Tbb, "klab", 1.0, t_Goooo_bb, "ijkl"); 
+        tblis::mult<double>(1.0, t_Tbb, "ikac", t_T3bb, "kjcb", 1.0, t_Govov_bb, "iajb"); 
+        tblis::mult<double>(1.0, t_T3bb, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_bb, "iajb"); 
+
+        // Blok Alpha-Beta (MP2 + Explicit MP3)
+        tblis::mult<double>(2.0, t_Taa, "ikac", t_Tab, "kjcb", 1.0, t_Govov_ab, "iajb");
+        tblis::mult<double>(2.0, t_Tab, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_ab, "iajb");
+
+        // Blok Alpha-Beta (MP3 Response)
+        tblis::mult<double>(1.0, t_T3aa, "ikac", t_Tab, "kjcb", 1.0, t_Govov_ab, "iajb"); 
+        tblis::mult<double>(1.0, t_Taa, "ikac", t_T3ab, "kjcb", 1.0, t_Govov_ab, "iajb");
+        tblis::mult<double>(1.0, t_T3ab, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_ab, "iajb"); 
+        tblis::mult<double>(1.0, t_Tab, "ikac", t_T3bb, "kjcb", 1.0, t_Govov_ab, "iajb"); 
 
         Teff_ab.resize(na_*va_, nb_*vb_);
         Teff_bb.resize(nb_*vb_, nb_*vb_);
@@ -985,6 +1017,7 @@ void OMP3::build_generalized_fock() {
         F_gen_b_ = F_gen_a_; 
     }
 }
+
 void OMP3::build_hessian_diagonal(Eigen::VectorXd& diag_H, double grad_norm) {
     OMP2::build_hessian_diagonal(diag_H, grad_norm);
     int idx = 0;
