@@ -146,31 +146,3 @@ jobs:
           git push origin mshqc-1.0.0
         fi
 
-    # =========================================================================
-    # 5. DEPLOY KE REPO PUBLIK
-    # =========================================================================
-    - name: Deploy Wheel to Public Repository (Closed-Source Mode)
-      shell: bash -el {0}
-      env:
-        API_TOKEN_GITHUB: ${{ secrets.MY_GITHUB_TOKEN }} 
-      run: |
-        git config --global user.name "MSHQC Automation"
-        git config --global user.email "automation@mshqc.internal"
-
-        git clone https://x-access-token:${API_TOKEN_GITHUB}@github.com/mshqc/mshqc-public.git public_repo
-
-        mkdir -p public_repo/releases
-        rm -f public_repo/releases/*.whl
-        
-        cp dist/*.whl public_repo/releases/ 2>/dev/null || true
-        cp -r data public_repo/ 2>/dev/null || true
-
-        cd public_repo
-        git add -A
-        
-        if git diff-index --quiet HEAD --; then
-          echo "Tidak ada pembaruan pada biner mshqc."
-        else
-          git commit -m "Auto-Deploy: Rilis MSHQC Wheel (.whl) Aman"
-          git push origin main
-        fi
