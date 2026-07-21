@@ -274,7 +274,7 @@ void OMP3::compute_mp3_correction() {
     auto* t2_aa_dense = t2_aa_.get_block(0,0,0,0);
     if(!t2_aa_dense) throw std::runtime_error("OMP3 missing T2 dense block.");
     Eigen::Tensor<double, 4> T2_aa_ijab(na_, na_, va_, va_);
-    #pragma omp parallel for collapse(4)
+    #pragma omp parallel for collapse(4) schedule(static)
     for(int i=0; i<na_; ++i) {
         for(int j=0; j<na_; ++j) {
             for(int a=0; a<va_; ++a) {
@@ -287,6 +287,42 @@ void OMP3::compute_mp3_correction() {
 
     int n_aux = scf_.L_mat.cols();
 
+    // =========================================================================
+    //   PRE-COMPUTE INTERMEDIATE DF (B_ab^P) UNTUK ELIMINASI TENSOR V_vvvv
+    // =========================================================================
+    Eigen::Map<const Eigen::MatrixXd> L_flat(scf_.L_mat.data(), nbf_, nbf_ * n_aux);
+    
+    Eigen::MatrixXd B_ab_P_alpha = Eigen::MatrixXd::Zero(va_ * va_, n_aux);
+    Eigen::MatrixXd X_a = Cav.transpose() * L_flat; 
+    #pragma omp parallel for schedule(static)
+    for (int P = 0; P < n_aux; ++P) {
+        Eigen::Map<Eigen::MatrixXd> X_P(X_a.data() + P * va_ * nbf_, va_, nbf_);
+        Eigen::MatrixXd B_MO_a = X_P * Cav; 
+        for (int a = 0; a < va_; ++a) {
+            for (int b = 0; b < va_; ++b) {
+                B_ab_P_alpha(a * va_ + b, P) = B_MO_a(a, b);
+            }
+        }
+    }
+
+    Eigen::MatrixXd B_ab_P_beta;
+    if (!is_restricted && nb_ > 0 && vb_ > 0) {
+        const Eigen::MatrixXd& Cbv = scf_.C_beta.rightCols(vb_);
+        B_ab_P_beta = Eigen::MatrixXd::Zero(vb_ * vb_, n_aux);
+        Eigen::MatrixXd X_b = Cbv.transpose() * L_flat;
+        #pragma omp parallel for schedule(static)
+        for (int P = 0; P < n_aux; ++P) {
+            Eigen::Map<Eigen::MatrixXd> X_P(X_b.data() + P * vb_ * nbf_, vb_, nbf_);
+            Eigen::MatrixXd B_MO_b = X_P * Cbv; 
+            for (int a = 0; a < vb_; ++a) {
+                for (int b = 0; b < vb_; ++b) {
+                    B_ab_P_beta(a * vb_ + b, P) = B_MO_b(a, b);
+                }
+            }
+        }
+    }
+    // =========================================================================
+
     // ================= RMP3 BLOCK ================= //
     if (is_restricted) {
         t2_3rd_aa_ = Eigen::Tensor<double, 4>(na_, na_, va_, va_);
@@ -295,17 +331,14 @@ void OMP3::compute_mp3_correction() {
         TBLIS_VIEW_4D(t_T, T2_aa_ijab, na_, na_, va_, va_);
         TBLIS_VIEW_4D(t_W, W, na_, na_, va_, va_);
       
-        auto V_vvvv = ERITransformer::get_mo_tensor(config_.use_df, n_aux, Cav, Cav, Cav, Cav, integrals_);
         auto V_oooo = ERITransformer::get_mo_tensor(config_.use_df, n_aux, Cao, Cao, Cao, Cao, integrals_);
         auto V_ovov = ERITransformer::get_mo_tensor(config_.use_df, n_aux, Cao, Cav, Cao, Cav, integrals_);
         auto V_oovv = ERITransformer::get_mo_tensor(config_.use_df, n_aux, Cao, Cao, Cav, Cav, integrals_);
         
-        TBLIS_VIEW_4D(t_Vvvvv, V_vvvv, va_, va_, va_, va_);
         TBLIS_VIEW_4D(t_Voooo, V_oooo, na_, na_, na_, na_);
         TBLIS_VIEW_4D(t_Vovov, V_ovov, na_, va_, na_, va_);
         TBLIS_VIEW_4D(t_Voovv, V_oovv, na_, na_, va_, va_);
 
-        tblis::mult<double>(1.0, t_T, "ijef", t_Vvvvv, "eafb", 1.0, t_W, "ijab");
         tblis::mult<double>(1.0, t_T, "mnab", t_Voooo, "minj", 1.0, t_W, "ijab");
         tblis::mult<double>(2.0,  t_Vovov, "iakc", t_T, "kjcb", 1.0, t_W, "ijab");
         tblis::mult<double>(-1.0, t_Voovv, "ikac", t_T, "kjcb", 1.0, t_W, "ijab");
@@ -316,15 +349,28 @@ void OMP3::compute_mp3_correction() {
         tblis::mult<double>(-1.0, t_Voovv, "ikbc", t_T, "kjac", 1.0, t_W, "ijab");
         tblis::mult<double>(-1.0, t_T, "ikcb", t_Voovv, "jkac", 1.0, t_W, "ijab"); 
 
+        // Particle-Ladder DF O(N^5) Factored
+        Eigen::Tensor<double, 4> X_temp(na_, na_, va_, va_);
+        TBLIS_VIEW_4D(t_Xtemp, X_temp, na_, na_, va_, va_);
+        
+        for (int P = 0; P < n_aux; ++P) {
+            TBLIS_VIEW_2D(t_B_P, B_ab_P_alpha.col(P).data(), va_, va_); // FIX: .data() solves the error
+            
+            X_temp.setZero();
+            tblis::mult<double>(1.0, t_T, "ijef", t_B_P, "fb", 0.0, t_Xtemp, "ijeb");
+            tblis::mult<double>(1.0, t_Xtemp, "ijeb", t_B_P, "ea", 1.0, t_W, "ijab");
+        }
+
         double e3_aa = 0.0;
-        #pragma omp parallel for collapse(4) reduction(+:e3_aa)
+        #pragma omp parallel for collapse(4) reduction(+:e3_aa) schedule(static)
         for (int i = 0; i < na_; ++i) {
             for (int j = 0; j < na_; ++j) {
                 for (int a = 0; a < va_; ++a) {
                     for (int b = 0; b < va_; ++b) {
                         double D = ea(i) + ea(j) - ea(na_+a) - ea(na_+b);
-                        double reg_den = D / (D * D + 1e-20);
-                        t2_3rd_aa_(i,j,a,b) = W(i,j,a,b) * reg_den; 
+                        double safe_den = (std::abs(D) < config_.level_shift) ? std::copysign(config_.level_shift, D) : D;
+                        
+                        t2_3rd_aa_(i,j,a,b) = W(i,j,a,b) / safe_den; 
                         e3_aa += W(i, j, a, b) * (2.0 * T2_aa_ijab(i, j, a, b) - T2_aa_ijab(i, j, b, a));
                     }
                 }
@@ -349,15 +395,9 @@ void OMP3::compute_mp3_correction() {
         if (Waa_ladder_.size() == 0) Waa_ladder_.resize(na_, na_, va_, va_);
         if (Waa_ring_.size() == 0) Waa_ring_.resize(na_, na_, va_, va_);
         
-        Waa_ladder_.setZero();
-        Waa_ring_.setZero();
+        Waa_ladder_.setZero(); Waa_ring_.setZero();
         TBLIS_VIEW_4D(t_Waa_ladder, Waa_ladder_, na_, na_, va_, va_);
         TBLIS_VIEW_4D(t_Waa_ring, Waa_ring_, na_, na_, va_, va_);
-
-        auto V_vvvv = ERITransformer::get_mo_tensor(config_.use_df, n_aux, Cav, Cav, Cav, Cav, integrals_);
-        TBLIS_VIEW_4D(t_Vvvvv, V_vvvv, va_, va_, va_, va_);
-        tblis::mult<double>(0.5, t_Taa, "ijef", t_Vvvvv, "eafb", 1.0, t_Waa_ladder, "ijab");
-        tblis::mult<double>(-0.5, t_Taa, "ijef", t_Vvvvv, "ebfa", 1.0, t_Waa_ladder, "ijab");
 
         auto V_oooo = ERITransformer::get_mo_tensor(config_.use_df, n_aux, Cao, Cao, Cao, Cao, integrals_);
         TBLIS_VIEW_4D(t_Voooo, V_oooo, na_, na_, na_, na_);
@@ -377,11 +417,21 @@ void OMP3::compute_mp3_correction() {
             TBLIS_VIEW_4D(t_Vovov_ab, V_ovov_ab, na_, va_, nb_, vb_);
             auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
             TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
-            
             tblis::mult<double>(1.0, t_Vovov_ab, "iakc", t_Tab, "jkbc", 1.0, t_Waa_ring, "ijab");
         }
 
-        #pragma omp parallel for collapse(4) reduction(+:e3_aa)
+        // Particle-Ladder DF O(N^5) Factored
+        Eigen::Tensor<double, 4> X_temp_aa(na_, na_, va_, va_);
+        TBLIS_VIEW_4D(t_Xtemp_aa, X_temp_aa, na_, na_, va_, va_);
+        for (int P = 0; P < n_aux; ++P) {
+            TBLIS_VIEW_2D(t_B_P_a, B_ab_P_alpha.col(P).data(), va_, va_);
+            X_temp_aa.setZero();
+            tblis::mult<double>(1.0, t_Taa, "ijef", t_B_P_a, "fb", 0.0, t_Xtemp_aa, "ijeb");
+            tblis::mult<double>(0.5, t_Xtemp_aa, "ijeb", t_B_P_a, "ea", 1.0, t_Waa_ladder, "ijab");
+            tblis::mult<double>(-0.5, t_Xtemp_aa, "ijea", t_B_P_a, "eb", 1.0, t_Waa_ladder, "ijab");
+        }
+
+        #pragma omp parallel for collapse(4) reduction(+:e3_aa) schedule(static)
         for(int i=0; i<na_; ++i) {
             for(int j=0; j<na_; ++j) {
                 for(int a=0; a<va_; ++a) {
@@ -389,14 +439,9 @@ void OMP3::compute_mp3_correction() {
                         double r_asym = Waa_ring_(i,j,a,b) - Waa_ring_(j,i,a,b) - Waa_ring_(i,j,b,a) + Waa_ring_(j,i,b,a);
                         double w_tot = Waa_ladder_(i,j,a,b) + r_asym;
                         double D = ea(i) + ea(j) - ea(na_+a) - ea(na_+b);
-                        double reg_den = D / (D * D + 1e-20);
-                        t2_3rd_aa_(i,j,a,b) = w_tot * reg_den;
-                        
-                        if (is_restricted) {
-                            e3_aa += w_tot * (2.0 * T2_aa_ijab(i,j,a,b) - T2_aa_ijab(i,j,b,a));
-                        } else {
-                            e3_aa += 0.25 * T2_aa_ijab(i,j,a,b) * w_tot;
-                        }
+                        double safe_den = (std::abs(D) < config_.level_shift) ? std::copysign(config_.level_shift, D) : D;
+                        t2_3rd_aa_(i,j,a,b) = w_tot / safe_den;
+                        e3_aa += 0.25 * T2_aa_ijab(i,j,a,b) * w_tot;
                     }
                 }
             }
@@ -422,11 +467,6 @@ void OMP3::compute_mp3_correction() {
             TBLIS_VIEW_4D(t_Wbb_ladder, Wbb_ladder, nb_, nb_, vb_, vb_);
             TBLIS_VIEW_4D(t_Wbb_ring, Wbb_ring, nb_, nb_, vb_, vb_);
 
-            auto V_vvvv = ERITransformer::get_mo_tensor(config_.use_df, n_aux, Cbv, Cbv, Cbv, Cbv, integrals_);
-            TBLIS_VIEW_4D(t_Vvvvv_bb, V_vvvv, vb_, vb_, vb_, vb_);
-            tblis::mult<double>(0.5, t_Tbb, "ijef", t_Vvvvv_bb, "eafb", 1.0, t_Wbb_ladder, "ijab");
-            tblis::mult<double>(-0.5, t_Tbb, "ijef", t_Vvvvv_bb, "ebfa", 1.0, t_Wbb_ladder, "ijab");
-    
             auto V_oooo = ERITransformer::get_mo_tensor(config_.use_df, n_aux, Cbo, Cbo, Cbo, Cbo, integrals_);
             TBLIS_VIEW_4D(t_Voooo, V_oooo, nb_, nb_, nb_, nb_);
             tblis::mult<double>(0.5, t_Tbb, "mnab", t_Voooo, "minj", 1.0, t_Wbb_ladder, "ijab");
@@ -444,7 +484,17 @@ void OMP3::compute_mp3_correction() {
             TBLIS_VIEW_4D(t_Vovov_ab, V_ovov_ab, na_, va_, nb_, vb_);
             tblis::mult<double>(1.0, t_Vovov_ab, "kcia", t_Tab, "kjcb", 1.0, t_Wbb_ring, "ijab"); 
 
-            #pragma omp parallel for collapse(4) reduction(+:e3_bb)
+            Eigen::Tensor<double, 4> X_temp_bb(nb_, nb_, vb_, vb_);
+            TBLIS_VIEW_4D(t_Xtemp_bb, X_temp_bb, nb_, nb_, vb_, vb_);
+            for (int P = 0; P < n_aux; ++P) {
+                TBLIS_VIEW_2D(t_B_P_b, B_ab_P_beta.col(P).data(), vb_, vb_);
+                X_temp_bb.setZero();
+                tblis::mult<double>(1.0, t_Tbb, "ijef", t_B_P_b, "fb", 0.0, t_Xtemp_bb, "ijeb");
+                tblis::mult<double>(0.5, t_Xtemp_bb, "ijeb", t_B_P_b, "ea", 1.0, t_Wbb_ladder, "ijab");
+                tblis::mult<double>(-0.5, t_Xtemp_bb, "ijea", t_B_P_b, "eb", 1.0, t_Wbb_ladder, "ijab");
+            }
+
+            #pragma omp parallel for collapse(4) reduction(+:e3_bb) schedule(static)
             for(int i=0; i<nb_; ++i) {
                 for(int j=0; j<nb_; ++j) {
                     for(int a=0; a<vb_; ++a) {
@@ -452,8 +502,8 @@ void OMP3::compute_mp3_correction() {
                             double r_asym = Wbb_ring(i,j,a,b) - Wbb_ring(j,i,a,b) - Wbb_ring(i,j,b,a) + Wbb_ring(j,i,b,a);
                             double w_tot = Wbb_ladder(i,j,a,b) + r_asym;
                             double D = eb(i) + eb(j) - eb(nb_+a) - eb(nb_+b);
-                            double reg_den = D / (D * D + 1e-20);
-                            t2_3rd_bb_(i,j,a,b) = w_tot * reg_den;
+                            double safe_den = (std::abs(D) < config_.level_shift) ? std::copysign(config_.level_shift, D) : D;
+                            t2_3rd_bb_(i,j,a,b) = w_tot / safe_den;
                             e3_bb += 0.25 * (*t2_bb_dense)(i,j,a,b) * w_tot;
                         }
                     }
@@ -468,10 +518,6 @@ void OMP3::compute_mp3_correction() {
             
             TBLIS_VIEW_4D(t_Wab_ladder, Wab_ladder, na_, nb_, va_, vb_);
             TBLIS_VIEW_4D(t_Wab_ring, Wab_ring, na_, nb_, va_, vb_);
-
-            auto Vvvvv_ab = ERITransformer::get_mo_tensor(config_.use_df, n_aux, Cav, Cav, Cbv, Cbv, integrals_);
-            TBLIS_VIEW_4D(t_Vvvvv_ab, Vvvvv_ab, va_, va_, vb_, vb_);
-            tblis::mult<double>(1.0, t_Tab, "ijef", t_Vvvvv_ab, "eafb", 1.0, t_Wab_ladder, "ijab");
 
             auto V_oooo_ab = ERITransformer::get_mo_tensor(config_.use_df, n_aux, Cao, Cao, Cbo, Cbo, integrals_);
             TBLIS_VIEW_4D(t_Voooo_ab, V_oooo_ab, na_, na_, nb_, nb_);
@@ -506,16 +552,27 @@ void OMP3::compute_mp3_correction() {
 
             tblis::mult<double>(-1.0, t_Voovv_ab_ex, "ikbc", t_Tab, "kjac", 1.0, t_Wab_ring, "ijab");
             tblis::mult<double>(-1.0, t_Tab, "ikcb", t_Voovv_ba_ex, "jkac", 1.0, t_Wab_ring, "ijab");
-            
-            #pragma omp parallel for collapse(4) reduction(+:e3_ab)
+          
+            Eigen::Tensor<double, 4> X_temp_ab(na_, nb_, va_, vb_);
+            TBLIS_VIEW_4D(t_Xtemp_ab, X_temp_ab, na_, nb_, va_, vb_);
+            for (int P = 0; P < n_aux; ++P) {
+                TBLIS_VIEW_2D(t_B_P_a, B_ab_P_alpha.col(P).data(), va_, va_);
+                TBLIS_VIEW_2D(t_B_P_b, B_ab_P_beta.col(P).data(), vb_, vb_);
+                
+                X_temp_ab.setZero();
+                tblis::mult<double>(1.0, t_Tab, "ijef", t_B_P_b, "fb", 0.0, t_Xtemp_ab, "ijeb");
+                tblis::mult<double>(1.0, t_Xtemp_ab, "ijeb", t_B_P_a, "ea", 1.0, t_Wab_ladder, "ijab");
+            }
+
+            #pragma omp parallel for collapse(4) reduction(+:e3_ab) schedule(static)
             for(int i=0; i<na_; ++i) {
                 for(int j=0; j<nb_; ++j) {
                     for(int a=0; a<va_; ++a) {
                         for(int b=0; b<vb_; ++b) {
                             double w_tot = Wab_ladder(i,j,a,b) + Wab_ring(i,j,a,b); 
                             double D = ea(i) + eb(j) - ea(na_+a) - eb(nb_+b);
-                            double reg_den = D / (D * D + 1e-20);
-                            t2_3rd_ab_(i,j,a,b) = w_tot * reg_den;
+                            double safe_den = (std::abs(D) < config_.level_shift) ? std::copysign(config_.level_shift, D) : D;
+                            t2_3rd_ab_(i,j,a,b) = w_tot / safe_den;
                             e3_ab += 1.0 * (*t2_ab_dense)(i,j,a,b) * w_tot;
                         }
                     }
