@@ -52,7 +52,7 @@ void OMP2::compute_t2_amplitudes() {
                                                 
                                                 double val = (*g_blk)(di, da, dj, db);
                                                 if (!is_restricted) val -= (*g_blk_ex)(di, db, dj, da);
-                                                double reg_den = den / (den * den + sigma_sq);
+                                                double reg_den = (std::abs(den) > 1e-12) ? (1.0 / den) : 0.0;
                                                 (*t_blk)(di, da, dj, db) = val * reg_den;
                                             }
                                         }
@@ -81,7 +81,7 @@ void OMP2::compute_t2_amplitudes() {
                         for(int b=0; b<vb_; ++b) {
                             double den = den_a - scf_.orbital_energies_beta(nb_+b);
                             double val = (*g_bb_blk)(i, a, j, b) - (*g_bb_blk)(i, b, j, a);
-                            double reg_den = den / (den * den + sigma_sq);
+                            double reg_den = (std::abs(den) > 1e-12) ? (1.0 / den) : 0.0;
                             (*t_bb_blk)(i, j, a, b) = val * reg_den;
                         }
                     }
@@ -102,7 +102,7 @@ void OMP2::compute_t2_amplitudes() {
                         double den_a = e_ij - scf_.orbital_energies_alpha(na_+a);
                         for(int b=0; b<vb_; ++b) {
                             double den = den_a - scf_.orbital_energies_beta(nb_+b);
-                            double reg_den = den / (den * den + sigma_sq);
+                            double reg_den = (std::abs(den) > 1e-12) ? (1.0 / den) : 0.0;
                             (*t_ab_blk)(i, j, a, b) = (*g_ab_blk)(i, a, j, b) * reg_den;
                         }
                     }
@@ -261,7 +261,7 @@ void OMP2::compute_t2_and_energy_cholesky() {
                         double val_ex  = g_ijab(b, a); 
 
                         // Regularisasi mulus (Smooth Regularization)
-                        double reg_den = den / (den * den + sigma_sq);
+                        double reg_den = (std::abs(den) > 1e-12) ? (1.0 / den) : 0.0;
                         double t_val = 0.0;
 
                         if (is_restricted) {
@@ -310,7 +310,7 @@ void OMP2::compute_t2_and_energy_cholesky() {
                             double val_ex  = g_ijab(b, a);
                             
                             // PERBAIKAN: Gunakan regularisasi sigma_sq, bukan std::copysign
-                            double reg_den = den / (den * den + sigma_sq);
+                            double reg_den = (std::abs(den) > 1e-12) ? (1.0 / den) : 0.0;
                             double t_val = (val_dir - val_ex) * reg_den;
                             
                             E_ss_bb += t_val * (val_dir - val_ex);
@@ -344,7 +344,7 @@ void OMP2::compute_t2_and_energy_cholesky() {
                             double val_dir = g_ijab(a, b);
                             
                             // PERBAIKAN: Gunakan regularisasi sigma_sq, bukan std::copysign
-                            double reg_den = den / (den * den + sigma_sq);
+                            double reg_den = (std::abs(den) > 1e-12) ? (1.0 / den) : 0.0;
                             double t_val = val_dir * reg_den;
                             
                             E_os += t_val * val_dir; 

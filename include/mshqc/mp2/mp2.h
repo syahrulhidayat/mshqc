@@ -264,7 +264,7 @@ protected:
     // Sisa fungsi private/protected...
     void execute_macro_iterations();
     void execute_macro_iterations(DIIS& diis_a, DIIS& diis_b, int macro_iter);
-    Eigen::VectorXd compute_soscf_step();
+    Eigen::VectorXd compute_soscf_step(double trust_radius, double& expected_change);
     void apply_orbital_rotation(const Eigen::VectorXd& kappa);
     void init_fast_integrals(); 
     void pseudocanonicalize();
