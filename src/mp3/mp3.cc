@@ -405,13 +405,6 @@ void OMP3::compute_mp3_correction() {
             }
         }
 
-        
-        auto V_oooo = ERITransformer::get_mo_tensor(config_.use_df, n_aux, Cao, Cao, Cao, Cao, integrals_);
-        TBLIS_VIEW_4D(t_Voooo, V_oooo, na_, na_, na_, na_);
-        tblis::mult<double>(0.5, t_Taa, "mnab", t_Voooo, "ijmn", 1.0, t_Waa_ladder, "ijab");
-        tblis::mult<double>(-0.5, t_Taa, "mnab", t_Voooo, "jimn", 1.0, t_Waa_ladder, "ijab");
-
-       
         auto V_oooo = ERITransformer::get_mo_tensor(config_.use_df, n_aux, Cao, Cao, Cao, Cao, integrals_);
         TBLIS_VIEW_4D(t_Voooo, V_oooo, na_, na_, na_, na_);
         tblis::mult<double>(0.5, t_Taa, "mnab", t_Voooo, "ijmn", 1.0, t_Waa_ladder, "ijab");
