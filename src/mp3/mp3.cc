@@ -844,9 +844,9 @@ void OMP3::build_generalized_fock() {
     TBLIS_VIEW_4D(t_Govov_aa, Gamma_ovov_aa, na_, va_, na_, va_);
 
     // 1. Explicit MP3 (T2 * T2)
-    tblis::mult<double>(1.0, t_Taa, "ijab", t_Taa, "ijcd", 1.0, t_Gvvvv_aa, "abcd");
-    tblis::mult<double>(1.0, t_Taa, "ijab", t_Taa, "klab", 1.0, t_Goooo_aa, "ijkl");
-    tblis::mult<double>(2.0, t_Taa, "ikac", t_Taa, "kjcb", 1.0, t_Govov_aa, "iajb");
+    tblis::mult<double>(0.5, t_Taa, "ijab", t_Taa, "ijcd", 1.0, t_Gvvvv_aa, "abcd");
+    tblis::mult<double>(0.5, t_Taa, "ijab", t_Taa, "klab", 1.0, t_Goooo_aa, "ijkl");
+    tblis::mult<double>(1.0, t_Taa, "ikac", t_Taa, "kjcb", 1.0, t_Govov_aa, "iajb");
 
     
 
@@ -860,7 +860,7 @@ void OMP3::build_generalized_fock() {
                     double t3_part = 1.0 * L2_aa_(i, j, a, b);
                     double t2_dir = T2_aa_ijab(i, j, a, b) + t3_part + Gamma_ovov_aa(i, a, j, b);
                     if (is_restricted) {
-                        double t3_ex = 2.0 * L2_aa_(i, j, b, a);
+                        double t3_ex = 1.0 * L2_aa_(i, j, b, a);
                         double t2_ex = T2_aa_ijab(i, j, b, a) + t3_ex + Gamma_ovov_aa(i, b, j, a);
                         Teff_aa(i*va_+a, j*va_+b) = 2.0 * t2_dir - 1.0 * t2_ex;
                     } else {
@@ -890,17 +890,17 @@ void OMP3::build_generalized_fock() {
         TBLIS_VIEW_4D(t_Goooo_ab, Gamma_oooo_ab, na_, na_, nb_, nb_);
 
         // Blok Beta-Beta (MP2 + Explicit MP3)
-        tblis::mult<double>(1.0, t_Tbb, "ijab", t_Tbb, "ijcd", 1.0, t_Gvvvv_bb, "abcd");
-        tblis::mult<double>(1.0, t_Tbb, "ijab", t_Tbb, "klab", 1.0, t_Goooo_bb, "ijkl");
-        tblis::mult<double>(2.0, t_Tbb, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_bb, "iajb");
+        tblis::mult<double>(0.5, t_Tbb, "ijab", t_Tbb, "ijcd", 1.0, t_Gvvvv_bb, "abcd");
+        tblis::mult<double>(0.5, t_Tbb, "ijab", t_Tbb, "klab", 1.0, t_Goooo_bb, "ijkl");
+        tblis::mult<double>(1.0, t_Tbb, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_bb, "iajb");
 
         // Blok Alpha-Beta (MP2 + Explicit MP3)
-        tblis::mult<double>(2.0, t_Taa, "ikac", t_Tab, "kjcb", 1.0, t_Govov_ab, "iajb");
-        tblis::mult<double>(2.0, t_Tab, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_ab, "iajb");
+        tblis::mult<double>(1.0, t_Taa, "ikac", t_Tab, "kjcb", 1.0, t_Govov_ab, "iajb");
+        tblis::mult<double>(1.0, t_Tab, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_ab, "iajb");
 
         // SUKU SILANG SPIN UMP3
-        tblis::mult<double>(1.0, t_Tab, "ijab", t_Tab, "ijcd", 1.0, t_Gvvvv_ab, "abcd");
-        tblis::mult<double>(1.0, t_Tab, "ijab", t_Tab, "klab", 1.0, t_Goooo_ab, "ijkl");
+        tblis::mult<double>(1.0, t_Tab, "ijac", t_Tab, "ijbd", 1.0, t_Gvvvv_ab, "abcd");
+        tblis::mult<double>(1.0, t_Tab, "ikab", t_Tab, "jlab", 1.0, t_Goooo_ab, "ijkl");
         tblis::mult<double>(1.0, t_Tab, "ikac", t_Tab, "jkbc", 1.0, t_Govov_aa, "iajb");
         tblis::mult<double>(1.0, t_Tab, "kica", t_Tab, "kjcb", 1.0, t_Govov_bb, "iajb");
 
