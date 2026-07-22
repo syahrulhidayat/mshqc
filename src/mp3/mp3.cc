@@ -644,12 +644,12 @@ void OMP3::build_opdm_alpha() {
     TBLIS_VIEW_2D(t_Gvv_a, G_vv_alpha_.data(), va_, va_);
 
     tblis::mult<double>(-0.5,   t_T2aa, "ikab", t_T2aa, "jkab", 1.0, t_Goo_a, "ij");
-    tblis::mult<double>(-0.25, t_T2aa, "ikab", t_T3aa, "jkab", 1.0, t_Goo_a, "ij"); 
-    tblis::mult<double>(-0.25, t_T3aa, "ikab", t_T2aa, "jkab", 1.0, t_Goo_a, "ij");
+    tblis::mult<double>(-0.5, t_T2aa, "ikab", t_T3aa, "jkab", 1.0, t_Goo_a, "ij");
+    tblis::mult<double>(-0.5, t_T3aa, "ikab", t_T2aa, "jkab", 1.0, t_Goo_a, "ij"); 
     
     tblis::mult<double>(0.5,   t_T2aa, "ijac", t_T2aa, "ijbc", 1.0, t_Gvv_a, "ab");
-    tblis::mult<double>(0.25, t_T2aa, "ijac", t_T3aa, "ijbc", 1.0, t_Gvv_a, "ab");
-    tblis::mult<double>(0.25, t_T3aa, "ijac", t_T2aa, "ijbc", 1.0, t_Gvv_a, "ab");
+    tblis::mult<double>(0.5, t_T2aa, "ijac", t_T3aa, "ijbc", 1.0, t_Gvv_a, "ab"); 
+    tblis::mult<double>(0.5, t_T3aa, "ijac", t_T2aa, "ijbc", 1.0, t_Gvv_a, "ab"); 
 
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
         auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
@@ -861,7 +861,7 @@ void OMP3::build_generalized_fock() {
         // --- ORIGINAL MP2 2-RDM TERMS (HANYA T1 * T1 ATAU T2 * T2) ---
         tblis::mult<double>(1.0, t_T2t, "ijab", t_Taa, "ijcd", 1.0, t_Gvvvv_aa, "abcd");
         tblis::mult<double>(1.0, t_T2t, "ijab", t_Taa, "klab", 1.0, t_Goooo_aa, "ijkl");
-        tblis::mult<double>(2.0, t_Taa, "ikac", t_Taa, "kjcb", 1.0, t_Govov_aa, "iajb"); 
+        tblis::mult<double>(2.0, t_T2t, "ikac", t_Taa, "kjcb", 1.0, t_Govov_aa, "iajb");
 
     } else {
         // --- UMP3 ORIGINAL TERMS ---
@@ -872,12 +872,13 @@ void OMP3::build_generalized_fock() {
 
     Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> Teff_aa(na_*va_, na_*va_);
     
+    // 1. Teff_aa Block
     #pragma omp parallel for collapse(2) schedule(static)
     for (int i = 0; i < na_; ++i) {
         for (int a = 0; a < va_; ++a) {
             for (int j = 0; j < na_; ++j) {
                 for (int b = 0; b < va_; ++b) {
-                    double t3_part = 1.0 * L2_aa_(i, j, a, b);
+                    double t3_part = 1.0 * L2_aa_(i, j, a, b); 
                     double t2_dir = T2_aa_ijab(i, j, a, b) + t3_part + Gamma_ovov_aa(i, a, j, b);
                     if (is_restricted) {
                         double t3_ex = 1.0 * L2_aa_(i, j, b, a);
@@ -930,7 +931,7 @@ void OMP3::build_generalized_fock() {
                 for (int j = 0; j < nb_; ++j) {
                     for (int b = 0; b < vb_; ++b) {
                         double t3_part = 1.0 * L2_ab_(i, j, a, b); 
-                        Teff_ab(i*va_+a, j*vb_+b) = 2.0 * ((*t2_ab_dense)(i, j, a, b) + t3_part + Gamma_ovov_ab(i, a, j, b)); // WAJIB ADA 2.0
+                        Teff_ab(i*va_+a, j*vb_+b) = 2.0 * ((*t2_ab_dense)(i, j, a, b) + t3_part + Gamma_ovov_ab(i, a, j, b));
                     }
                 }
             }
@@ -942,7 +943,7 @@ void OMP3::build_generalized_fock() {
                 for (int j = 0; j < nb_; ++j) {
                     for (int b = 0; b < vb_; ++b) {
                         double t3_part = 1.0 * L2_bb_(i, j, a, b);
-                        Teff_bb(i*vb_+a, j*vb_+b) = 2.0 * ((*t2_bb_dense)(i, j, a, b) + t3_part + Gamma_ovov_bb(i, a, j, b)); // WAJIB ADA 2.0
+                        Teff_bb(i*vb_+a, j*vb_+b) = 2.0 * ((*t2_bb_dense)(i, j, a, b) + t3_part + Gamma_ovov_bb(i, a, j, b));
                     }
                 }
             }
