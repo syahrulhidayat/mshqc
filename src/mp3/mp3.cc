@@ -846,7 +846,7 @@ void OMP3::build_generalized_fock() {
     // 1. Explicit MP3 (T2 * T2)
     tblis::mult<double>(0.5, t_Taa, "ijab", t_Taa, "ijcd", 1.0, t_Gvvvv_aa, "abcd");
     tblis::mult<double>(0.5, t_Taa, "ijab", t_Taa, "klab", 1.0, t_Goooo_aa, "ijkl");
-    tblis::mult<double>(1.0, t_Taa, "ikac", t_Taa, "kjcb", 1.0, t_Govov_aa, "iajb");
+    tblis::mult<double>(2.0, t_Taa, "ikac", t_Taa, "kjcb", 1.0, t_Govov_aa, "iajb");
 
     
 
@@ -892,11 +892,11 @@ void OMP3::build_generalized_fock() {
         // Blok Beta-Beta (MP2 + Explicit MP3)
         tblis::mult<double>(0.5, t_Tbb, "ijab", t_Tbb, "ijcd", 1.0, t_Gvvvv_bb, "abcd");
         tblis::mult<double>(0.5, t_Tbb, "ijab", t_Tbb, "klab", 1.0, t_Goooo_bb, "ijkl");
-        tblis::mult<double>(1.0, t_Tbb, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_bb, "iajb");
+        tblis::mult<double>(2.0, t_Tbb, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_bb, "iajb");
 
         // Blok Alpha-Beta (MP2 + Explicit MP3)
-        tblis::mult<double>(1.0, t_Taa, "ikac", t_Tab, "kjcb", 1.0, t_Govov_ab, "iajb");
-        tblis::mult<double>(1.0, t_Tab, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_ab, "iajb");
+        tblis::mult<double>(2.0, t_Taa, "ikac", t_Tab, "kjcb", 1.0, t_Govov_ab, "iajb");
+        tblis::mult<double>(2.0, t_Tab, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_ab, "iajb");
 
         // SUKU SILANG SPIN UMP3
         tblis::mult<double>(1.0, t_Tab, "ijac", t_Tab, "ijbd", 1.0, t_Gvvvv_ab, "abcd");
@@ -1075,8 +1075,8 @@ void OMP3::debug_gradient_fd(int i_target, int a_target) {
     }
     
     double grad_ana = 0.0;
-    if (is_restricted) grad_ana = 4.0 * F_gen_a_(na_ + a_target, i_target);
-    else grad_ana = 2.0 * F_gen_a_(na_ + a_target, i_target);
+    if (is_restricted) grad_ana = -4.0 * F_gen_a_(na_ + a_target, i_target);
+    else grad_ana = -2.0 * F_gen_a_(na_ + a_target, i_target);
     
     double theta = 1e-5;
     Eigen::MatrixXd C_a_orig = scf_.C_alpha;
