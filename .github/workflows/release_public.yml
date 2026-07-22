@@ -15,9 +15,9 @@ jobs:
         token: ${{ secrets.MY_GITHUB_TOKEN }} 
         fetch-depth: 0 
 
-    # =========================================================================
-    # 1. SETUP CONDA (Python 3.14 + MKL)
     # ==========================================================================
+    # 1. SETUP CONDA (Python 3.14 + MKL)
+    # ===========================================================================
     - name: Setup Conda Environment (Python 3.14)
       uses: conda-incubator/setup-miniconda@v3
       with:
