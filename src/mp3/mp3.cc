@@ -837,27 +837,43 @@ void OMP3::build_generalized_fock() {
     TBLIS_VIEW_4D(t_Goooo_aa, Gamma_oooo_aa, na_, na_, na_, na_);
     TBLIS_VIEW_4D(t_Govov_aa, Gamma_ovov_aa, na_, va_, na_, va_);
 
-    // 1. Explicit 2-PDM: HARUS HANYA BERISI T2 * T2
-    tblis::mult<double>(1.0, t_Taa, "ijab", t_Taa, "ijcd", 1.0, t_Gvvvv_aa, "abcd");
-    tblis::mult<double>(1.0, t_Taa, "ijab", t_Taa, "klab", 1.0, t_Goooo_aa, "ijkl");
+    if (is_restricted) {
+        Eigen::Tensor<double, 4> T2_tilde(na_, na_, va_, va_);
+        #pragma omp parallel for collapse(4) schedule(static)
+        for (int i=0; i<na_; ++i)
+            for (int j=0; j<na_; ++j)
+                for (int a=0; a<va_; ++a)
+                    for (int b=0; b<va_; ++b)
+                        T2_tilde(i,j,a,b) = 2.0 * T2_aa_ijab(i,j,a,b) - T2_aa_ijab(i,j,b,a);
+        
+        TBLIS_VIEW_4D(t_T2t, T2_tilde, na_, na_, va_, va_);
+
+        tblis::mult<double>(0.5, t_T2t, "ijab", t_Taa, "ijcd", 0.0, t_Gvvvv_aa, "abcd");
+        tblis::mult<double>(0.5, t_T2t, "ijab", t_Taa, "klab", 0.0, t_Goooo_aa, "ijkl");
+        tblis::mult<double>(-1.0, t_T2t, "ikac", t_Taa, "jkbc", 0.0, t_Govov_aa, "iajb");
+    } else {
+        
+        tblis::mult<double>(0.5, t_Taa, "ijab", t_Taa, "ijcd", 0.0, t_Gvvvv_aa, "abcd");
+        tblis::mult<double>(0.5, t_Taa, "ijab", t_Taa, "klab", 0.0, t_Goooo_aa, "ijkl");
+        tblis::mult<double>(-1.0, t_Taa, "ikac", t_Taa, "jkbc", 0.0, t_Govov_aa, "iajb");
+        
     
-    // Konstanta Ring RMP3 = 2.0, UMP3 = 1.0
-    double c_ring_aa = is_restricted ? 2.0 : 1.0; 
-    tblis::mult<double>(c_ring_aa, t_Taa, "ikac", t_Taa, "kjcb", 1.0, t_Govov_aa, "iajb");
+        if (nb_ > 0 && vb_ > 0) {
+            auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
+            TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
+            tblis::mult<double>(-1.0, t_Tab, "ikac", t_Tab, "jkbc", 1.0, t_Govov_aa, "iajb");
+        }
+    }
 
     Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> Teff_aa(na_*va_, na_*va_);
-    
     #pragma omp parallel for collapse(2) schedule(static)
     for (int i = 0; i < na_; ++i) {
         for (int a = 0; a < va_; ++a) {
             for (int j = 0; j < na_; ++j) {
                 for (int b = 0; b < va_; ++b) {
-                    // Respons T3 ada di sini, jangan dimasukkan ke Gamma!
-                    double t3_part = 2.0 * L2_aa_(i, j, a, b); 
-                    double t2_dir = T2_aa_ijab(i, j, a, b) + t3_part + Gamma_ovov_aa(i, a, j, b);
+                    double t2_dir = T2_aa_ijab(i, j, a, b) + Gamma_ovov_aa(i, a, j, b);
                     if (is_restricted) {
-                        double t3_ex = 2.0 * L2_aa_(i, j, b, a);
-                        double t2_ex = T2_aa_ijab(i, j, b, a) + t3_ex + Gamma_ovov_aa(i, b, j, a);
+                        double t2_ex = T2_aa_ijab(i, j, b, a) + Gamma_ovov_aa(i, b, j, a);
                         Teff_aa(i*va_+a, j*va_+b) = 2.0 * t2_dir - 1.0 * t2_ex;
                     } else {
                         Teff_aa(i*va_+a, j*va_+b) = t2_dir;
@@ -880,14 +896,15 @@ void OMP3::build_generalized_fock() {
         TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
         TBLIS_VIEW_4D(t_Govov_ab, Gamma_ovov_ab, na_, va_, nb_, vb_);
 
-        // Blok Beta-Beta Explicit 2-PDM
-        tblis::mult<double>(1.0, t_Tbb, "ijab", t_Tbb, "ijcd", 1.0, t_Gvvvv_bb, "abcd");
-        tblis::mult<double>(1.0, t_Tbb, "ijab", t_Tbb, "klab", 1.0, t_Goooo_bb, "ijkl");
-        tblis::mult<double>(1.0, t_Tbb, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_bb, "iajb"); // Fix 2.0 -> 1.0
+        // UMP3: Beta-Beta Blok
+        tblis::mult<double>(0.5, t_Tbb, "ijab", t_Tbb, "ijcd", 0.0, t_Gvvvv_bb, "abcd");
+        tblis::mult<double>(0.5, t_Tbb, "ijab", t_Tbb, "klab", 0.0, t_Goooo_bb, "ijkl");
+        tblis::mult<double>(-1.0, t_Tbb, "ikac", t_Tbb, "jkbc", 0.0, t_Govov_bb, "iajb"); 
+        tblis::mult<double>(-1.0, t_Tab, "kica", t_Tab, "kjcb", 1.0, t_Govov_bb, "iajb"); 
 
-        // Blok Alpha-Beta Explicit 2-PDM
-        tblis::mult<double>(1.0, t_Taa, "ikac", t_Tab, "kjcb", 1.0, t_Govov_ab, "iajb"); // Fix 2.0 -> 1.0
-        tblis::mult<double>(1.0, t_Tab, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_ab, "iajb"); // Fix 2.0 -> 1.0
+        // UMP3: Alpha-Beta Blok
+        tblis::mult<double>(-1.0, t_Taa, "ikac", t_Tab, "kjcb", 0.0, t_Govov_ab, "iajb"); 
+        tblis::mult<double>(-1.0, t_Tab, "ikac", t_Tbb, "jkbc", 1.0, t_Govov_ab, "iajb"); 
 
         Teff_ab.resize(na_*va_, nb_*vb_);
         Teff_bb.resize(nb_*vb_, nb_*vb_);
@@ -897,8 +914,7 @@ void OMP3::build_generalized_fock() {
             for (int a = 0; a < va_; ++a) {
                 for (int j = 0; j < nb_; ++j) {
                     for (int b = 0; b < vb_; ++b) {
-                        double t3_part = 2.0 * L2_ab_(i, j, a, b);
-                        Teff_ab(i*va_+a, j*vb_+b) = (*t2_ab_dense)(i, j, a, b) + t3_part + Gamma_ovov_ab(i, a, j, b);
+                        Teff_ab(i*va_+a, j*vb_+b) = (*t2_ab_dense)(i, j, a, b) + Gamma_ovov_ab(i, a, j, b);
                     }
                 }
             }
@@ -909,8 +925,7 @@ void OMP3::build_generalized_fock() {
             for (int a = 0; a < vb_; ++a) {
                 for (int j = 0; j < nb_; ++j) {
                     for (int b = 0; b < vb_; ++b) {
-                        double t3_part = 2.0 * L2_bb_(i, j, a, b);
-                        Teff_bb(i*vb_+a, j*vb_+b) = (*t2_bb_dense)(i, j, a, b) + t3_part + Gamma_ovov_bb(i, a, j, b);
+                        Teff_bb(i*vb_+a, j*vb_+b) = (*t2_bb_dense)(i, j, a, b) + Gamma_ovov_bb(i, a, j, b);
                     }
                 }
             }
