@@ -1168,7 +1168,7 @@ void OMP3::debug_gradient_fd(int i_target, int a_target) {
         std::cout << ">>> KESIMPULAN: AMAN! Turunan MP3 cocok.\n";
     }
     std::cout << "-------------------------------------------------------------------\n";
-    exit(0);
+ 
 }
 
 MP3Result OMP3::compute_omp3() {
