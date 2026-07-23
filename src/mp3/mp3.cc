@@ -858,24 +858,23 @@ void OMP3::build_generalized_fock() {
                     
         TBLIS_VIEW_4D(t_T2t, T2_tilde, na_, na_, va_, va_);
 
-        // KOREKSI 1: Indeks silang yang benar untuk turunan VVVV dan OOOO
-        tblis::mult<double>(1.0, t_T2t, "ijbd", t_Taa, "ijac", 1.0, t_Gvvvv_aa, "abcd");
-        tblis::mult<double>(1.0, t_T2t, "jlab", t_Taa, "ikab", 1.0, t_Goooo_aa, "ijkl");
+        tblis::mult<double>(1.0, t_T2t, "ijab", t_Taa, "ijcd", 1.0, t_Gvvvv_aa, "abcd");
+        tblis::mult<double>(1.0, t_T2t, "ijab", t_Taa, "klab", 1.0, t_Goooo_aa, "ijkl");
         
-        // KOREKSI 2: Menambahkan suku Exchange (tukar) yang hilang untuk OVOV
-        tblis::mult<double>(2.0, t_T2t, "ikac", t_Taa, "kjcb", 1.0, t_Govov_aa, "iajb"); 
+        // KOREKSI RMP3: Menambahkan kembali suku Exchange untuk Gamma_OVOV
+        tblis::mult<double>(2.0, t_T2t, "ikac", t_Taa, "jkbc", 1.0, t_Govov_aa, "iajb"); 
         tblis::mult<double>(-1.0, t_T2t, "ikcb", t_Taa, "jkac", 1.0, t_Govov_aa, "iajb"); 
 
     } else {
-        // KOREKSI 3: Perbaikan Indeks Silang untuk UMP3 (Unrestricted)
-        tblis::mult<double>(0.5, t_Taa, "ijbd", t_Taa, "ijac", 1.0, t_Gvvvv_aa, "abcd");
-        tblis::mult<double>(0.5, t_Taa, "jlab", t_Taa, "ikab", 1.0, t_Goooo_aa, "ijkl");
+        tblis::mult<double>(0.5, t_Taa, "ijab", t_Taa, "ijcd", 1.0, t_Gvvvv_aa, "abcd");
+        tblis::mult<double>(0.5, t_Taa, "ijab", t_Taa, "klab", 1.0, t_Goooo_aa, "ijkl");
         
-        tblis::mult<double>(1.0, t_Taa, "ikac", t_Taa, "kjcb", 1.0, t_Govov_aa, "iajb");
+        // KOREKSI UMP3: Menggunakan "jkbc" untuk menghindari Crash Dimensi
+        tblis::mult<double>(1.0, t_Taa, "ikac", t_Taa, "jkbc", 1.0, t_Govov_aa, "iajb");
         if (nb_ > 0 && vb_ > 0) {
             auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
             TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
-            tblis::mult<double>(1.0, t_Tab, "ikac", t_Tab, "kjcb", 1.0, t_Govov_aa, "iajb");
+            tblis::mult<double>(1.0, t_Tab, "ikac", t_Tab, "jkbc", 1.0, t_Govov_aa, "iajb");
         }
     }
 
@@ -918,17 +917,16 @@ void OMP3::build_generalized_fock() {
         TBLIS_VIEW_4D(t_Gvvvv_ab, Gamma_vvvv_ab, va_, va_, vb_, vb_);
         TBLIS_VIEW_4D(t_Goooo_ab, Gamma_oooo_ab, na_, na_, nb_, nb_);
 
-        // KOREKSI 3: Perbaikan Indeks Silang untuk UMP3 (Lanjutan blok bb dan ab)
-        tblis::mult<double>(0.5, t_Tbb, "ijbd", t_Tbb, "ijac", 1.0, t_Gvvvv_bb, "abcd");
-        tblis::mult<double>(0.5, t_Tbb, "jlab", t_Tbb, "ikab", 1.0, t_Goooo_bb, "ijkl");
-        tblis::mult<double>(1.0, t_Tbb, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_bb, "iajb");
-        tblis::mult<double>(1.0, t_Tab, "kica", t_Tab, "kjcb", 1.0, t_Govov_bb, "iajb");
+        tblis::mult<double>(0.5, t_Tbb, "ijab", t_Tbb, "ijcd", 1.0, t_Gvvvv_bb, "abcd");
+        tblis::mult<double>(0.5, t_Tbb, "ijab", t_Tbb, "klab", 1.0, t_Goooo_bb, "ijkl");
+        tblis::mult<double>(1.0, t_Tbb, "ikac", t_Tbb, "jkbc", 1.0, t_Govov_bb, "iajb"); // jkbc
+        tblis::mult<double>(1.0, t_Tab, "kica", t_Tab, "kjcb", 1.0, t_Govov_bb, "iajb"); // kjcb is valid here (dim mapping matches)
 
-        tblis::mult<double>(1.0, t_Taa, "ikac", t_Tab, "kjcb", 1.0, t_Govov_ab, "iajb");
-        tblis::mult<double>(1.0, t_Tab, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_ab, "iajb");
+        tblis::mult<double>(1.0, t_Taa, "ikac", t_Tab, "kjcb", 1.0, t_Govov_ab, "iajb"); // kjcb valid here
+        tblis::mult<double>(1.0, t_Tab, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_ab, "iajb"); // kjcb valid here
 
-        tblis::mult<double>(1.0, t_Tab, "ijbd", t_Tab, "ijac", 1.0, t_Gvvvv_ab, "abcd");
-        tblis::mult<double>(1.0, t_Tab, "jlab", t_Tab, "ikab", 1.0, t_Goooo_ab, "ijkl");
+        tblis::mult<double>(1.0, t_Tab, "ijac", t_Tab, "ijbd", 1.0, t_Gvvvv_ab, "abcd"); // Corrected shape mapping
+        tblis::mult<double>(1.0, t_Tab, "ikab", t_Tab, "jlab", 1.0, t_Goooo_ab, "ijkl"); // Corrected shape mapping
 
         Teff_ab.resize(na_*va_, nb_*vb_);
         Teff_bb.resize(nb_*vb_, nb_*vb_);
@@ -970,6 +968,7 @@ void OMP3::build_generalized_fock() {
         X_b.noalias() = Teff_bb * B_ia_P_beta_;
         X_b.noalias() += Teff_ab.transpose() * B_ia_P_alpha_;
     }
+    
     Eigen::MatrixXd Z_mat_a = Eigen::MatrixXd::Zero(va_, na_);
     Eigen::MatrixXd Z_mat_b;
     if (!is_restricted && nb_ > 0 && vb_ > 0) Z_mat_b = Eigen::MatrixXd::Zero(vb_, nb_);
@@ -980,7 +979,7 @@ void OMP3::build_generalized_fock() {
     TBLIS_VIEW_2D(t_Za, Z_mat_a.data(), va_, na_);
     TBLIS_VIEW_3D(t_Bia_a, B_ia_P_alpha_.data(), va_, na_, n_aux); 
 
-    // KOREKSI 4: MENGGUNAKAN LABEL "abcd" DAN "ijkl"
+    // BLOK X_vv_a
     Eigen::MatrixXd X_vv_a = Eigen::MatrixXd::Zero(va_ * va_, n_aux);
     TBLIS_VIEW_3D(t_Xvv_a, X_vv_a.data(), va_, va_, n_aux);
     tblis::mult<double>(1.0, t_Gvvvv_aa, "abcd", t_Bvv_a, "cdP", 0.0, t_Xvv_a, "abP"); 
@@ -992,6 +991,7 @@ void OMP3::build_generalized_fock() {
     }
     tblis::mult<double>(1.0, t_Xvv_a, "abP", t_Bia_a, "biP", 1.0, t_Za, "ai");        
     
+    // BLOK X_oo_a
     Eigen::MatrixXd X_oo_a = Eigen::MatrixXd::Zero(na_ * na_, n_aux);
     TBLIS_VIEW_3D(t_Xoo_a, X_oo_a.data(), na_, na_, n_aux);
     tblis::mult<double>(1.0, t_Goooo_aa, "ijkl", t_Boo_a, "klP", 0.0, t_Xoo_a, "ijP"); 
@@ -1006,7 +1006,9 @@ void OMP3::build_generalized_fock() {
     tblis::mult<double>(1.0, t_Bvv_a, "baP", t_Xa, "biP", 1.0, t_Za, "ai");
     tblis::mult<double>(-1.0, t_Xa, "ajP", t_Boo_a, "jiP", 1.0, t_Za, "ai");
 
+    // BLOK BETA
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
+        // Deklarasi VIEW diletakkan di dalam scope yang tepat untuk menghilangkan error
         TBLIS_VIEW_3D(t_Bvv_b, B_vv_b.data(), vb_, vb_, n_aux);
         TBLIS_VIEW_3D(t_Xb, X_b.data(), vb_, nb_, n_aux);
         TBLIS_VIEW_3D(t_Boo_b, B_oo_b.data(), nb_, nb_, n_aux);
@@ -1018,7 +1020,6 @@ void OMP3::build_generalized_fock() {
         TBLIS_VIEW_4D(t_Gvvvv_ab, Gamma_vvvv_ab, va_, va_, vb_, vb_); 
         TBLIS_VIEW_4D(t_Goooo_ab, Gamma_oooo_ab, na_, na_, nb_, nb_);
         
-        // KOREKSI 5: Label "abcd" dan "ijkl" untuk blok beta
         Eigen::MatrixXd X_vv_b = Eigen::MatrixXd::Zero(vb_ * vb_, n_aux);
         TBLIS_VIEW_3D(t_Xvv_b, X_vv_b.data(), vb_, vb_, n_aux);
         tblis::mult<double>(1.0, t_Gvvvv_bb, "abcd", t_Bvv_b, "cdP", 0.0, t_Xvv_b, "abP"); 
