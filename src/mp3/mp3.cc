@@ -861,9 +861,7 @@ void OMP3::build_generalized_fock() {
         tblis::mult<double>(1.0, t_T2t, "ijab", t_Taa, "ijcd", 1.0, t_Gvvvv_aa, "abcd");
         tblis::mult<double>(1.0, t_T2t, "ijab", t_Taa, "klab", 1.0, t_Goooo_aa, "ijkl");
         
-        // KOREKSI RMP3: Menambahkan kembali suku Exchange untuk Gamma_OVOV
-        tblis::mult<double>(2.0, t_T2t, "ikac", t_Taa, "jkbc", 1.0, t_Govov_aa, "iajb"); 
-        tblis::mult<double>(-1.0, t_T2t, "ikcb", t_Taa, "jkac", 1.0, t_Govov_aa, "iajb"); 
+        tblis::mult<double>(1.0, t_T2t, "ikac", t_Taa, "jkbc", 1.0, t_Govov_aa, "iajb");
 
     } else {
         tblis::mult<double>(0.5, t_Taa, "ijab", t_Taa, "ijcd", 1.0, t_Gvvvv_aa, "abcd");
@@ -871,6 +869,7 @@ void OMP3::build_generalized_fock() {
         
         // KOREKSI UMP3: Menggunakan "jkbc" untuk menghindari Crash Dimensi
         tblis::mult<double>(1.0, t_Taa, "ikac", t_Taa, "jkbc", 1.0, t_Govov_aa, "iajb");
+
         if (nb_ > 0 && vb_ > 0) {
             auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
             TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
@@ -886,10 +885,10 @@ void OMP3::build_generalized_fock() {
             for (int j = 0; j < na_; ++j) {
                 for (int b = 0; b < va_; ++b) {
                     double t3_part = 1.0 * L2_aa_(i, j, a, b); 
-                    double t2_dir = T2_aa_ijab(i, j, a, b) + t3_part + 0.5 * Gamma_ovov_aa(i, a, j, b); 
+                    double t2_dir = T2_aa_ijab(i, j, a, b) + t3_part + 1.0 * Gamma_ovov_aa(i, a, j, b); 
                     if (is_restricted) {
                         double t3_ex = 1.0 * L2_aa_(i, j, b, a); 
-                        double t2_ex = T2_aa_ijab(i, j, b, a) + t3_ex + 0.5 * Gamma_ovov_aa(i, b, j, a); 
+                        double t2_ex = T2_aa_ijab(i, j, b, a) + t3_ex + 1.0 * Gamma_ovov_aa(i, b, j, a); 
                         Teff_aa(i*va_+a, j*va_+b) = 2.0 * t2_dir - 1.0 * t2_ex;
                     } else {
                         Teff_aa(i*va_+a, j*va_+b) = 2.0 * t2_dir; 
@@ -937,7 +936,7 @@ void OMP3::build_generalized_fock() {
                 for (int j = 0; j < nb_; ++j) {
                     for (int b = 0; b < vb_; ++b) {
                         double t3_part = 1.0 * L2_ab_(i, j, a, b); 
-                        Teff_ab(i*va_+a, j*vb_+b) = 2.0 * ((*t2_ab_dense)(i, j, a, b) + t3_part + 0.5 * Gamma_ovov_ab(i, a, j, b)); 
+                        Teff_ab(i*va_+a, j*vb_+b) = 2.0 * ((*t2_ab_dense)(i, j, a, b) + t3_part + 1.0 * Gamma_ovov_ab(i, a, j, b)); 
                     }
                 }
             }
@@ -949,7 +948,7 @@ void OMP3::build_generalized_fock() {
                 for (int j = 0; j < nb_; ++j) {
                     for (int b = 0; b < vb_; ++b) {
                         double t3_part = 1.0 * L2_bb_(i, j, a, b); 
-                        Teff_bb(i*vb_+a, j*vb_+b) = 2.0 * ((*t2_bb_dense)(i, j, a, b) + t3_part + 0.5 * Gamma_ovov_bb(i, a, j, b)); 
+                        Teff_bb(i*vb_+a, j*vb_+b) = 2.0 * ((*t2_bb_dense)(i, j, a, b) + t3_part + 1.0 * Gamma_ovov_bb(i, a, j, b)); 
                     }
                 }
             }
