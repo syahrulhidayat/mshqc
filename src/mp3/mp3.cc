@@ -628,12 +628,12 @@ void OMP3::build_opdm_alpha() {
         TBLIS_VIEW_2D(t_Gvv, G_vv_alpha_.data(), va_, va_);
 
         tblis::mult<double>(-1.0,  t_T2, "ikab", t_T2t, "jkab", 0.0, t_Goo, "ij");
-        tblis::mult<double>(1.5, t_T2, "ikab", t_L2t, "jkab", 1.0, t_Goo, "ij"); 
-        tblis::mult<double>(1.5, t_L2, "ikab", t_T2t, "jkab", 1.0, t_Goo, "ij");
+        tblis::mult<double>(1.25, t_T2, "ikab", t_L2t, "jkab", 1.0, t_Goo, "ij"); 
+        tblis::mult<double>(1.25, t_L2, "ikab", t_T2t, "jkab", 1.0, t_Goo, "ij");
 
         tblis::mult<double>(1.0,  t_T2, "ijac", t_T2t, "ijbc", 0.0, t_Gvv, "ab");
-        tblis::mult<double>(-1.5, t_T2, "ijac", t_L2t, "ijbc", 1.0, t_Gvv, "ab"); 
-        tblis::mult<double>(-1.5, t_L2, "ijac", t_T2t, "ijbc", 1.0, t_Gvv, "ab"); 
+        tblis::mult<double>(-1.25, t_T2, "ijac", t_L2t, "ijbc", 1.0, t_Gvv, "ab"); 
+        tblis::mult<double>(-1.25, t_L2, "ijac", t_T2t, "ijbc", 1.0, t_Gvv, "ab"); 
         
         return;
     }
@@ -696,12 +696,12 @@ void OMP3::build_opdm_beta() {
     tblis::mult<double>(-0.75, t_T3bb, "ijac", t_T2bb, "ijbc", 1.0, t_Gvv_b, "ab");
     
     tblis::mult<double>(-1.0,  t_T2ab, "kiab", t_T2ab, "kjab", 1.0, t_Goo_b, "ij");
-    tblis::mult<double>(1.5, t_T2ab, "kiab", t_T3ab, "kjab", 1.0, t_Goo_b, "ij"); 
-    tblis::mult<double>(1.5, t_T3ab, "kiab", t_T2ab, "kjab", 1.0, t_Goo_b, "ij"); 
+    tblis::mult<double>(1.25, t_T2ab, "kiab", t_T3ab, "kjab", 1.0, t_Goo_b, "ij"); 
+    tblis::mult<double>(1.25, t_T3ab, "kiab", t_T2ab, "kjab", 1.0, t_Goo_b, "ij"); 
     
     tblis::mult<double>(1.0,  t_T2ab, "ijca", t_T2ab, "ijcb", 1.0, t_Gvv_b, "ab");
-    tblis::mult<double>(-1.5, t_T2ab, "ijca", t_T3ab, "ijcb", 1.0, t_Gvv_b, "ab");
-    tblis::mult<double>(-1.5, t_T3ab, "ijca", t_T2ab, "ijcb", 1.0, t_Gvv_b, "ab");
+    tblis::mult<double>(-1.25, t_T2ab, "ijca", t_T3ab, "ijcb", 1.0, t_Gvv_b, "ab");
+    tblis::mult<double>(-1.25, t_T3ab, "ijca", t_T2ab, "ijcb", 1.0, t_Gvv_b, "ab");
 }
 
 void OMP3::build_generalized_fock() {
