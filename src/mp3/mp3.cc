@@ -970,23 +970,23 @@ void OMP3::build_generalized_fock() {
 
     Eigen::MatrixXd X_vv_a = Eigen::MatrixXd::Zero(va_ * va_, n_aux);
     TBLIS_VIEW_3D(t_Xvv_a, X_vv_a.data(), va_, va_, n_aux);
-    tblis::mult<double>(1.0, t_Gvvvv_aa, "abcd", t_Bvv_a, "cdP", 0.0, t_Xvv_a, "abP"); 
+    tblis::mult<double>(1.0, t_Gvvvv_aa, "abcd", t_Bvv_a, "cdP", 0.0, t_Xvv_a, "abP"); // "abcd" BUKAN "acdb"
     
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
         TBLIS_VIEW_3D(t_Bvv_b, B_vv_b.data(), vb_, vb_, n_aux); 
         TBLIS_VIEW_4D(t_Gvvvv_ab, Gamma_vvvv_ab, va_, va_, vb_, vb_); 
-        tblis::mult<double>(1.0, t_Gvvvv_ab, "abcd", t_Bvv_b, "cdP", 1.0, t_Xvv_a, "abP");
+        tblis::mult<double>(1.0, t_Gvvvv_ab, "abcd", t_Bvv_b, "cdP", 1.0, t_Xvv_a, "abP"); // "abcd"
     }
     tblis::mult<double>(1.0, t_Xvv_a, "abP", t_Bia_a, "biP", 1.0, t_Za, "ai");        
     
     Eigen::MatrixXd X_oo_a = Eigen::MatrixXd::Zero(na_ * na_, n_aux);
     TBLIS_VIEW_3D(t_Xoo_a, X_oo_a.data(), na_, na_, n_aux);
-    tblis::mult<double>(1.0, t_Goooo_aa, "ijkl", t_Boo_a, "klP", 0.0, t_Xoo_a, "ijP"); 
+    tblis::mult<double>(1.0, t_Goooo_aa, "ijkl", t_Boo_a, "klP", 0.0, t_Xoo_a, "ijP"); // "ijkl" BUKAN "ikjl"
     
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
         TBLIS_VIEW_3D(t_Boo_b, B_oo_b.data(), nb_, nb_, n_aux); 
         TBLIS_VIEW_4D(t_Goooo_ab, Gamma_oooo_ab, na_, na_, nb_, nb_);
-        tblis::mult<double>(1.0, t_Goooo_ab, "ijkl", t_Boo_b, "klP", 1.0, t_Xoo_a, "ijP");
+        tblis::mult<double>(1.0, t_Goooo_ab, "ijkl", t_Boo_b, "klP", 1.0, t_Xoo_a, "ijP"); // "ijkl"
     }
     tblis::mult<double>(-1.0, t_Xoo_a, "ijP", t_Bia_a, "ajP", 1.0, t_Za, "ai");
 
@@ -1008,7 +1008,7 @@ void OMP3::build_generalized_fock() {
         Eigen::MatrixXd X_vv_b = Eigen::MatrixXd::Zero(vb_ * vb_, n_aux);
         TBLIS_VIEW_3D(t_Xvv_b, X_vv_b.data(), vb_, vb_, n_aux);
         tblis::mult<double>(1.0, t_Gvvvv_bb, "abcd", t_Bvv_b, "cdP", 0.0, t_Xvv_b, "abP"); 
-        tblis::mult<double>(1.0, t_Gvvvv_ab, "cdab", t_Bvv_a, "cdP", 1.0, t_Xvv_b, "abP"); 
+        tblis::mult<double>(1.0, t_Gvvvv_ab, "cdab", t_Bvv_a, "cdP", 1.0, t_Xvv_b, "abP");
         tblis::mult<double>(1.0, t_Xvv_b, "abP", t_Bia_b, "biP", 1.0, t_Zb, "ai");        
         
         Eigen::MatrixXd X_oo_b = Eigen::MatrixXd::Zero(nb_ * nb_, n_aux);
