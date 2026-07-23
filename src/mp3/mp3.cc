@@ -628,12 +628,12 @@ void OMP3::build_opdm_alpha() {
         TBLIS_VIEW_2D(t_Gvv, G_vv_alpha_.data(), va_, va_);
 
         tblis::mult<double>(-1.0,  t_T2, "ikab", t_T2t, "jkab", 0.0, t_Goo, "ij");
-        tblis::mult<double>(-1.5, t_T2, "ikab", t_L2t, "jkab", 1.0, t_Goo, "ij"); // KOREKSI EKSATA: 1.5
-        tblis::mult<double>(-1.5, t_L2, "ikab", t_T2t, "jkab", 1.0, t_Goo, "ij"); // KOREKSI EKSATA: 1.5
+        tblis::mult<double>(1.5, t_T2, "ikab", t_L2t, "jkab", 1.0, t_Goo, "ij"); 
+        tblis::mult<double>(1.5, t_L2, "ikab", t_T2t, "jkab", 1.0, t_Goo, "ij");
 
         tblis::mult<double>(1.0,  t_T2, "ijac", t_T2t, "ijbc", 0.0, t_Gvv, "ab");
-        tblis::mult<double>(1.5, t_T2, "ijac", t_L2t, "ijbc", 1.0, t_Gvv, "ab"); // KOREKSI EKSATA: 1.5
-        tblis::mult<double>(1.5, t_L2, "ijac", t_T2t, "ijbc", 1.0, t_Gvv, "ab"); // KOREKSI EKSATA: 1.5
+        tblis::mult<double>(-1.5, t_T2, "ijac", t_L2t, "ijbc", 1.0, t_Gvv, "ab"); 
+        tblis::mult<double>(-1.5, t_L2, "ijac", t_T2t, "ijbc", 1.0, t_Gvv, "ab"); 
         
         return;
     }
@@ -644,12 +644,12 @@ void OMP3::build_opdm_alpha() {
     TBLIS_VIEW_2D(t_Gvv_a, G_vv_alpha_.data(), va_, va_);
 
     tblis::mult<double>(-0.5,   t_T2aa, "ikab", t_T2aa, "jkab", 1.0, t_Goo_a, "ij");
-    tblis::mult<double>(-0.75, t_T2aa, "ikab", t_T3aa, "jkab", 1.0, t_Goo_a, "ij"); // 1.5 / 2 = 0.75
-    tblis::mult<double>(-0.75, t_T3aa, "ikab", t_T2aa, "jkab", 1.0, t_Goo_a, "ij"); 
+    tblis::mult<double>(0.75, t_T2aa, "ikab", t_T3aa, "jkab", 1.0, t_Goo_a, "ij"); // 1.5 / 2 = 0.75
+    tblis::mult<double>(0.75, t_T3aa, "ikab", t_T2aa, "jkab", 1.0, t_Goo_a, "ij"); 
     
     tblis::mult<double>(0.5,   t_T2aa, "ijac", t_T2aa, "ijbc", 1.0, t_Gvv_a, "ab");
-    tblis::mult<double>(0.75, t_T2aa, "ijac", t_T3aa, "ijbc", 1.0, t_Gvv_a, "ab");
-    tblis::mult<double>(0.75, t_T3aa, "ijac", t_T2aa, "ijbc", 1.0, t_Gvv_a, "ab"); 
+    tblis::mult<double>(-0.75, t_T2aa, "ijac", t_T3aa, "ijbc", 1.0, t_Gvv_a, "ab");
+    tblis::mult<double>(-0.75, t_T3aa, "ijac", t_T2aa, "ijbc", 1.0, t_Gvv_a, "ab"); 
 
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
         auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
@@ -657,12 +657,12 @@ void OMP3::build_opdm_alpha() {
         TBLIS_VIEW_4D(t_T3ab, L2_ab_, na_, nb_, va_, vb_);
 
         tblis::mult<double>(-1.0,  t_T2ab, "ikab", t_T2ab, "jkab", 1.0, t_Goo_a, "ij");
-        tblis::mult<double>(-1.5, t_T2ab, "ikab", t_T3ab, "jkab", 1.0, t_Goo_a, "ij");   
-        tblis::mult<double>(-1.5, t_T3ab, "ikab", t_T2ab, "jkab", 1.0, t_Goo_a, "ij");   
+        tblis::mult<double>(1.5, t_T2ab, "ikab", t_T3ab, "jkab", 1.0, t_Goo_a, "ij");   
+        tblis::mult<double>(1.5, t_T3ab, "ikab", t_T2ab, "jkab", 1.0, t_Goo_a, "ij");   
         
         tblis::mult<double>(1.0,  t_T2ab, "ijac", t_T2ab, "ijbc", 1.0, t_Gvv_a, "ab");
-        tblis::mult<double>(1.5, t_T2ab, "ijac", t_T3ab, "ijbc", 1.0, t_Gvv_a, "ab"); 
-        tblis::mult<double>(1.5, t_T3ab, "ijac", t_T2ab, "ijbc", 1.0, t_Gvv_a, "ab"); 
+        tblis::mult<double>(-1.5, t_T2ab, "ijac", t_T3ab, "ijbc", 1.0, t_Gvv_a, "ab"); 
+        tblis::mult<double>(-1.5, t_T3ab, "ijac", t_T2ab, "ijbc", 1.0, t_Gvv_a, "ab"); 
     }
 }
 void OMP3::build_opdm_beta() {
@@ -688,20 +688,20 @@ void OMP3::build_opdm_beta() {
     TBLIS_VIEW_2D(t_Gvv_b, G_vv_beta_.data(), vb_, vb_);
 
     tblis::mult<double>(-0.5,   t_T2bb, "ikab", t_T2bb, "jkab", 1.0, t_Goo_b, "ij");
-    tblis::mult<double>(-0.75, t_T2bb, "ikab", t_T3bb, "jkab", 1.0, t_Goo_b, "ij");
-    tblis::mult<double>(-0.75, t_T3bb, "ikab", t_T2bb, "jkab", 1.0, t_Goo_b, "ij");
+    tblis::mult<double>(0.75, t_T2bb, "ikab", t_T3bb, "jkab", 1.0, t_Goo_b, "ij");
+    tblis::mult<double>(0.75, t_T3bb, "ikab", t_T2bb, "jkab", 1.0, t_Goo_b, "ij");
     
     tblis::mult<double>(0.5,   t_T2bb, "ijac", t_T2bb, "ijbc", 1.0, t_Gvv_b, "ab");
-    tblis::mult<double>(0.75, t_T2bb, "ijac", t_T3bb, "ijbc", 1.0, t_Gvv_b, "ab");
-    tblis::mult<double>(0.75, t_T3bb, "ijac", t_T2bb, "ijbc", 1.0, t_Gvv_b, "ab");
+    tblis::mult<double>(-0.75, t_T2bb, "ijac", t_T3bb, "ijbc", 1.0, t_Gvv_b, "ab");
+    tblis::mult<double>(-0.75, t_T3bb, "ijac", t_T2bb, "ijbc", 1.0, t_Gvv_b, "ab");
     
     tblis::mult<double>(-1.0,  t_T2ab, "kiab", t_T2ab, "kjab", 1.0, t_Goo_b, "ij");
-    tblis::mult<double>(-1.5, t_T2ab, "kiab", t_T3ab, "kjab", 1.0, t_Goo_b, "ij"); 
-    tblis::mult<double>(-1.5, t_T3ab, "kiab", t_T2ab, "kjab", 1.0, t_Goo_b, "ij"); 
+    tblis::mult<double>(1.5, t_T2ab, "kiab", t_T3ab, "kjab", 1.0, t_Goo_b, "ij"); 
+    tblis::mult<double>(1.5, t_T3ab, "kiab", t_T2ab, "kjab", 1.0, t_Goo_b, "ij"); 
     
     tblis::mult<double>(1.0,  t_T2ab, "ijca", t_T2ab, "ijcb", 1.0, t_Gvv_b, "ab");
-    tblis::mult<double>(1.5, t_T2ab, "ijca", t_T3ab, "ijcb", 1.0, t_Gvv_b, "ab");
-    tblis::mult<double>(1.5, t_T3ab, "ijca", t_T2ab, "ijcb", 1.0, t_Gvv_b, "ab");
+    tblis::mult<double>(-1.5, t_T2ab, "ijca", t_T3ab, "ijcb", 1.0, t_Gvv_b, "ab");
+    tblis::mult<double>(-1.5, t_T3ab, "ijca", t_T2ab, "ijcb", 1.0, t_Gvv_b, "ab");
 }
 
 void OMP3::build_generalized_fock() {
@@ -869,19 +869,22 @@ void OMP3::build_generalized_fock() {
 
     Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> Teff_aa(na_*va_, na_*va_);
     
+    // 1. Teff_aa Block
     #pragma omp parallel for collapse(2) schedule(static)
     for (int i = 0; i < na_; ++i) {
         for (int a = 0; a < va_; ++a) {
             for (int j = 0; j < na_; ++j) {
                 for (int b = 0; b < va_; ++b) {
+                    // KUNCI UTAMA: T3 HARUS DIKURANGKAN!
+                    double t3_part = -1.0 * L2_aa_(i, j, a, b); 
+                    double t2_dir = T2_aa_ijab(i, j, a, b) + t3_part + Gamma_ovov_aa(i, a, j, b);
                     if (is_restricted) {
-                        // KOREKSI RMP3: Z-Vector = 2*T3
-                        double t2_sa = 2.0 * T2_aa_ijab(i, j, a, b) - T2_aa_ijab(i, j, b, a);
-                        double t3_sa = 2.0 * L2_aa_(i, j, a, b) - L2_aa_(i, j, b, a);
-                        Teff_aa(i*va_+a, j*va_+b) = t2_sa + 2.0 * t3_sa + Gamma_ovov_aa(i, a, j, b);
+                        double t3_ex = -1.0 * L2_aa_(i, j, b, a); // MINUS!
+                        double t2_ex = T2_aa_ijab(i, j, b, a) + t3_ex + Gamma_ovov_aa(i, b, j, a);
+                        Teff_aa(i*va_+a, j*va_+b) = 2.0 * t2_dir - 1.0 * t2_ex;
                     } else {
-                        // KOREKSI UMP3: T2 dan Z-Vector di-scale oleh 2.0. Gamma = 1.0
-                        Teff_aa(i*va_+a, j*va_+b) = 2.0 * T2_aa_ijab(i, j, a, b) + 4.0 * L2_aa_(i, j, a, b) + Gamma_ovov_aa(i, a, j, b);
+                        // KUNCI UMP3: Faktor 2.0 dipertahankan
+                        Teff_aa(i*va_+a, j*va_+b) = 2.0 * t2_dir; 
                     }
                 }
             }
@@ -927,7 +930,8 @@ void OMP3::build_generalized_fock() {
             for (int a = 0; a < va_; ++a) {
                 for (int j = 0; j < nb_; ++j) {
                     for (int b = 0; b < vb_; ++b) {
-                        Teff_ab(i*va_+a, j*vb_+b) = 2.0 * (*t2_ab_dense)(i, j, a, b) + 4.0 * L2_ab_(i, j, a, b) + Gamma_ovov_ab(i, a, j, b);
+                        double t3_part = -1.0 * L2_ab_(i, j, a, b); // MINUS!
+                        Teff_ab(i*va_+a, j*vb_+b) = 2.0 * ((*t2_ab_dense)(i, j, a, b) + t3_part + Gamma_ovov_ab(i, a, j, b)); // 2.0 Tetap
                     }
                 }
             }
@@ -938,7 +942,8 @@ void OMP3::build_generalized_fock() {
             for (int a = 0; a < vb_; ++a) {
                 for (int j = 0; j < nb_; ++j) {
                     for (int b = 0; b < vb_; ++b) {
-                        Teff_bb(i*vb_+a, j*vb_+b) = 2.0 * (*t2_bb_dense)(i, j, a, b) + 4.0 * L2_bb_(i, j, a, b) + Gamma_ovov_bb(i, a, j, b);
+                        double t3_part = -1.0 * L2_bb_(i, j, a, b); // MINUS!
+                        Teff_bb(i*vb_+a, j*vb_+b) = 2.0 * ((*t2_bb_dense)(i, j, a, b) + t3_part + Gamma_ovov_bb(i, a, j, b)); // 2.0 Tetap
                     }
                 }
             }
@@ -1003,7 +1008,7 @@ void OMP3::build_generalized_fock() {
         TBLIS_VIEW_4D(t_Goooo_bb, Gamma_oooo_bb, nb_, nb_, nb_, nb_);
         TBLIS_VIEW_4D(t_Gvvvv_ab, Gamma_vvvv_ab, va_, va_, vb_, vb_); 
         TBLIS_VIEW_4D(t_Goooo_ab, Gamma_oooo_ab, na_, na_, nb_, nb_);
-        
+
         Eigen::MatrixXd X_vv_b = Eigen::MatrixXd::Zero(vb_ * vb_, n_aux);
         TBLIS_VIEW_3D(t_Xvv_b, X_vv_b.data(), vb_, vb_, n_aux);
         tblis::mult<double>(1.0, t_Gvvvv_bb, "acdb", t_Bvv_b, "cdP", 0.0, t_Xvv_b, "abP"); 
