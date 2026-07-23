@@ -869,22 +869,19 @@ void OMP3::build_generalized_fock() {
 
     Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> Teff_aa(na_*va_, na_*va_);
     
-    // 1. Teff_aa Block
     #pragma omp parallel for collapse(2) schedule(static)
     for (int i = 0; i < na_; ++i) {
         for (int a = 0; a < va_; ++a) {
             for (int j = 0; j < na_; ++j) {
                 for (int b = 0; b < va_; ++b) {
-                    // KUNCI UTAMA: T3 HARUS DIKURANGKAN!
-                    double t3_part = -1.0 * L2_aa_(i, j, a, b); 
-                    double t2_dir = T2_aa_ijab(i, j, a, b) + t3_part + Gamma_ovov_aa(i, a, j, b);
                     if (is_restricted) {
-                        double t3_ex = -1.0 * L2_aa_(i, j, b, a); // MINUS!
-                        double t2_ex = T2_aa_ijab(i, j, b, a) + t3_ex + Gamma_ovov_aa(i, b, j, a);
-                        Teff_aa(i*va_+a, j*va_+b) = 2.0 * t2_dir - 1.0 * t2_ex;
+                        // KOREKSI RMP3: Z-Vector = 2*T3
+                        double t2_sa = 2.0 * T2_aa_ijab(i, j, a, b) - T2_aa_ijab(i, j, b, a);
+                        double t3_sa = 2.0 * L2_aa_(i, j, a, b) - L2_aa_(i, j, b, a);
+                        Teff_aa(i*va_+a, j*va_+b) = t2_sa + 2.0 * t3_sa + Gamma_ovov_aa(i, a, j, b);
                     } else {
-                        // KUNCI UMP3: Faktor 2.0 dipertahankan
-                        Teff_aa(i*va_+a, j*va_+b) = 2.0 * t2_dir; 
+                        // KOREKSI UMP3: T2 dan Z-Vector di-scale oleh 2.0. Gamma = 1.0
+                        Teff_aa(i*va_+a, j*va_+b) = 2.0 * T2_aa_ijab(i, j, a, b) + 4.0 * L2_aa_(i, j, a, b) + Gamma_ovov_aa(i, a, j, b);
                     }
                 }
             }
@@ -930,8 +927,7 @@ void OMP3::build_generalized_fock() {
             for (int a = 0; a < va_; ++a) {
                 for (int j = 0; j < nb_; ++j) {
                     for (int b = 0; b < vb_; ++b) {
-                        double t3_part = -1.0 * L2_ab_(i, j, a, b); // MINUS!
-                        Teff_ab(i*va_+a, j*vb_+b) = 2.0 * ((*t2_ab_dense)(i, j, a, b) + t3_part + Gamma_ovov_ab(i, a, j, b)); // 2.0 Tetap
+                        Teff_ab(i*va_+a, j*vb_+b) = 2.0 * (*t2_ab_dense)(i, j, a, b) + 4.0 * L2_ab_(i, j, a, b) + Gamma_ovov_ab(i, a, j, b);
                     }
                 }
             }
@@ -942,8 +938,7 @@ void OMP3::build_generalized_fock() {
             for (int a = 0; a < vb_; ++a) {
                 for (int j = 0; j < nb_; ++j) {
                     for (int b = 0; b < vb_; ++b) {
-                        double t3_part = -1.0 * L2_bb_(i, j, a, b); // MINUS!
-                        Teff_bb(i*vb_+a, j*vb_+b) = 2.0 * ((*t2_bb_dense)(i, j, a, b) + t3_part + Gamma_ovov_bb(i, a, j, b)); // 2.0 Tetap
+                        Teff_bb(i*vb_+a, j*vb_+b) = 2.0 * (*t2_bb_dense)(i, j, a, b) + 4.0 * L2_bb_(i, j, a, b) + Gamma_ovov_bb(i, a, j, b);
                     }
                 }
             }
