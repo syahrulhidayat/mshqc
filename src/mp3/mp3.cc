@@ -847,10 +847,11 @@ void OMP3::build_generalized_fock() {
     TBLIS_VIEW_4D(t_Govov_aa, Gamma_ovov_aa, na_, va_, na_, va_);
 
     Eigen::Tensor<double, 4> T2_tilde;
-    Eigen::Tensor<double, 4> L2_tilde; // TAMBAHKAN INI
+    Eigen::Tensor<double, 4> L2_tilde; // Sekarang diinisialisasi dan digunakan
 
     if (is_restricted) {
         T2_tilde = Eigen::Tensor<double, 4>(na_, na_, va_, va_);
+        L2_tilde = Eigen::Tensor<double, 4>(na_, na_, va_, va_); 
 
         #pragma omp parallel for collapse(4) schedule(static)
         for(int i=0; i<na_; ++i)
@@ -858,20 +859,43 @@ void OMP3::build_generalized_fock() {
                 for(int a=0; a<va_; ++a)
                     for(int b=0; b<va_; ++b) {
                         T2_tilde(i,j,a,b) = 2.0 * T2_aa_ijab(i,j,a,b) - T2_aa_ijab(i,j,b,a);
+                        L2_tilde(i,j,a,b) = 2.0 * L2_aa_(i,j,a,b) - L2_aa_(i,j,b,a); 
                     }
                     
         TBLIS_VIEW_4D(t_T2t, T2_tilde, na_, na_, va_, va_);
+        TBLIS_VIEW_4D(t_L2t, L2_tilde, na_, na_, va_, va_); 
 
-       
+        // Gamma_vvvv_aa
         tblis::mult<double>(1.0, t_T2t, "ijab", t_Taa, "ijcd", 1.0, t_Gvvvv_aa, "abcd");
+        tblis::mult<double>(1.0, t_L2t, "ijab", t_Taa, "ijcd", 1.0, t_Gvvvv_aa, "abcd"); 
+        tblis::mult<double>(1.0, t_T2t, "ijab", t_T3aa, "ijcd", 1.0, t_Gvvvv_aa, "abcd"); 
+
+        // Gamma_oooo_aa
         tblis::mult<double>(1.0, t_T2t, "ijab", t_Taa, "klab", 1.0, t_Goooo_aa, "ijkl");
+        tblis::mult<double>(1.0, t_L2t, "ijab", t_Taa, "klab", 1.0, t_Goooo_aa, "ijkl"); 
+        tblis::mult<double>(1.0, t_T2t, "ijab", t_T3aa, "klab", 1.0, t_Goooo_aa, "ijkl"); 
+
+        // Gamma_ovov_aa
         tblis::mult<double>(2.0, t_T2t, "ikac", t_Taa, "kjcb", 1.0, t_Govov_aa, "iajb"); 
+        tblis::mult<double>(2.0, t_L2t, "ikac", t_Taa, "kjcb", 1.0, t_Govov_aa, "iajb"); 
+        tblis::mult<double>(2.0, t_T2t, "ikac", t_T3aa, "kjcb", 1.0, t_Govov_aa, "iajb"); 
 
     } else {
        
+        // Gamma_vvvv_aa
         tblis::mult<double>(0.5, t_Taa, "ijab", t_Taa, "ijcd", 1.0, t_Gvvvv_aa, "abcd");
+        tblis::mult<double>(0.5, t_T3aa, "ijab", t_Taa, "ijcd", 1.0, t_Gvvvv_aa, "abcd");
+        tblis::mult<double>(0.5, t_Taa, "ijab", t_T3aa, "ijcd", 1.0, t_Gvvvv_aa, "abcd"); 
+
+        // Gamma_oooo_aa
         tblis::mult<double>(0.5, t_Taa, "ijab", t_Taa, "klab", 1.0, t_Goooo_aa, "ijkl");
+        tblis::mult<double>(0.5, t_T3aa, "ijab", t_Taa, "klab", 1.0, t_Goooo_aa, "ijkl"); 
+        tblis::mult<double>(0.5, t_Taa, "ijab", t_T3aa, "klab", 1.0, t_Goooo_aa, "ijkl"); 
+
+        // Gamma_ovov_aa
         tblis::mult<double>(2.0, t_Taa, "ikac", t_Taa, "kjcb", 1.0, t_Govov_aa, "iajb");
+        tblis::mult<double>(2.0, t_T3aa, "ikac", t_Taa, "kjcb", 1.0, t_Govov_aa, "iajb"); 
+        tblis::mult<double>(2.0, t_Taa, "ikac", t_T3aa, "kjcb", 1.0, t_Govov_aa, "iajb"); 
     }
 
     Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> Teff_aa(na_*va_, na_*va_);
