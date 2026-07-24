@@ -894,6 +894,15 @@ void OMP3::build_generalized_fock() {
             auto* t2_bb_dense = t2_bb_.get_block(0,0,0,0);
             TBLIS_VIEW_4D(t_Tbb, (*t2_bb_dense), nb_, nb_, vb_, vb_);
 
+            // PERBAIKAN: DEKLARASI MAKRO TBLIS_VIEW UNTUK BLOK BB DAN AB 
+            TBLIS_VIEW_4D(t_Gvvvv_bb, Gamma_vvvv_bb, vb_, vb_, vb_, vb_);
+            TBLIS_VIEW_4D(t_Goooo_bb, Gamma_oooo_bb, nb_, nb_, nb_, nb_);
+            TBLIS_VIEW_4D(t_Govov_bb, Gamma_ovov_bb, nb_, vb_, nb_, vb_);
+            
+            TBLIS_VIEW_4D(t_Gvvvv_ab, Gamma_vvvv_ab, va_, va_, vb_, vb_);
+            TBLIS_VIEW_4D(t_Goooo_ab, Gamma_oooo_ab, na_, na_, nb_, nb_);
+            TBLIS_VIEW_4D(t_Govov_ab, Gamma_ovov_ab, na_, va_, nb_, vb_);
+
             tblis::mult<double>(0.125, t_Tbb, "ijac", t_Tbb, "ijbd", 1.0, t_Gvvvv_bb, "abcd");
             tblis::mult<double>(0.125, t_Tbb, "ikab", t_Tbb, "jlab", 1.0, t_Goooo_bb, "ijkl");
             tblis::mult<double>(0.5,   t_Tbb, "ikac", t_Tbb, "jkcb", 1.0, t_Govov_bb, "iajb");
@@ -1028,7 +1037,7 @@ void OMP3::build_generalized_fock() {
                 for (int j = 0; j < nb_; ++j) {
                     for (int b = 0; b < vb_; ++b) {
                         double t2_dir = (*t2_ab_dense)(i, j, a, b) + L2_ab_(i, j, a, b); 
-                        double ovov_sym = Gamma_ovov_ab(i, a, j, b) + Gamma_ovov_ab(j, b, i, a); // AB has 0.25 effective shape
+                        double ovov_sym = Gamma_ovov_ab(i, a, j, b) + Gamma_ovov_ab(j, b, i, a);
                         Teff_ab(i*va_+a, j*vb_+b) = t2_dir + 0.25 * ovov_sym; 
                     }
                 }
@@ -1092,11 +1101,11 @@ void OMP3::build_generalized_fock() {
         TBLIS_VIEW_3D(t_Boo_b, B_oo_b.data(), nb_, nb_, n_aux);
         TBLIS_VIEW_4D(t_Gvvvv_ab_s, Gvvvv_sym_ab, va_, va_, vb_, vb_); 
         TBLIS_VIEW_4D(t_Goovv_ab_s, Goovv_sym_ab, na_, na_, vb_, vb_);
+        TBLIS_VIEW_4D(t_Goooo_ab_s, Goooo_sym_ab, na_, na_, nb_, nb_);
         
         tblis::mult<double>(1.0,  t_Gvvvv_ab_s, "abcd", t_Bvv_b, "cdP", 1.0, t_Xvv_a, "abP");
         tblis::mult<double>(-1.0, t_Goovv_ab_s, "ijab", t_Boo_b, "ijP", 1.0, t_Xvv_a, "abP");
 
-        TBLIS_VIEW_4D(t_Goooo_ab_s, Goooo_sym_ab, na_, na_, nb_, nb_);
         tblis::mult<double>(1.0,  t_Goooo_ab_s, "ijkl", t_Boo_b, "klP", 1.0, t_Xoo_a, "ijP");
     }
 
@@ -1116,6 +1125,9 @@ void OMP3::build_generalized_fock() {
         TBLIS_VIEW_4D(t_Gvvvv_b_s, Gvvvv_sym_b, vb_, vb_, vb_, vb_);
         TBLIS_VIEW_4D(t_Goooo_b_s, Goooo_sym_b, nb_, nb_, nb_, nb_);
         TBLIS_VIEW_4D(t_Goovv_b_s, Goovv_sym_b, nb_, nb_, vb_, vb_);
+
+        TBLIS_VIEW_4D(t_Gvvvv_ab_s, Gvvvv_sym_ab, va_, va_, vb_, vb_);
+        TBLIS_VIEW_4D(t_Goooo_ab_s, Goooo_sym_ab, na_, na_, nb_, nb_);
         
         Eigen::Tensor<double, 4> Goovv_ba_sym(nb_, nb_, va_, va_); Goovv_ba_sym.setZero();
         #pragma omp parallel for collapse(4) schedule(static)
