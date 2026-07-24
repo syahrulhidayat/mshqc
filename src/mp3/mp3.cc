@@ -1108,6 +1108,13 @@ void OMP3::build_generalized_fock() {
                 for(int a=0; a<vb_; ++a)
                     for(int b=0; b<vb_; ++b)
                         Goovv_sym_ab(i,j,a,b) = 0.25 * (Gamma_oovv_ab_ex(i,j,a,b) + Gamma_oovv_ab_ex(j,i,a,b) + Gamma_oovv_ab_ex(i,j,b,a) + Gamma_oovv_ab_ex(j,i,b,a));
+        
+        #pragma omp parallel for collapse(4) schedule(static)
+        for(int i=0; i<nb_; ++i)
+            for(int j=0; j<nb_; ++j)
+                for(int a=0; a<va_; ++a)
+                    for(int b=0; b<va_; ++b)
+                        Goovv_ba_sym(i,j,a,b) = 0.25 * (Gamma_oovv_ba_ex(i,j,a,b) + Gamma_oovv_ba_ex(j,i,a,b) + Gamma_oovv_ba_ex(i,j,b,a) + Gamma_oovv_ba_ex(j,i,b,a));
 
         Teff_ab.resize(na_*va_, nb_*vb_);
         Teff_bb.resize(nb_*vb_, nb_*vb_);
@@ -1195,10 +1202,11 @@ void OMP3::build_generalized_fock() {
         TBLIS_VIEW_4D(t_Govov_ab, Gamma_ovov_ab, na_, va_, nb_, vb_);
         
 
+        // Corrected Alpha Block Contractions
         tblis::mult<double>(1.0,  t_Gvvvv_ab_s, "abcd", t_Bvv_b, "cdP", 1.0, t_Xvv_a, "abP");
-        tblis::mult<double>(-1.0, t_Goovv_ab_s, "ijab", t_Boo_b, "ijP", 1.0, t_Xvv_a, "abP");
+        tblis::mult<double>(-1.0, t_Goovv_ba_s, "ijab", t_Boo_b, "ijP", 1.0, t_Xvv_a, "abP"); 
         tblis::mult<double>(1.0,  t_Goooo_ab_s, "ijkl", t_Boo_b, "klP", 1.0, t_Xoo_a, "ijP");
-
+        tblis::mult<double>(-1.0, t_Goovv_ab_s, "ijab", t_Bvv_b, "abP", 1.0, t_Xoo_a, "ijP"); 
         // EXPLICIT OVOV DF CONTRACTIONS FOR ALPHA-BETA
         Eigen::MatrixXd Y_ab_a = Eigen::MatrixXd::Zero(va_ * na_, n_aux);
         TBLIS_VIEW_3D(t_Y_ab_a, Y_ab_a.data(), va_, na_, n_aux);
@@ -1233,20 +1241,21 @@ void OMP3::build_generalized_fock() {
 
      
         TBLIS_VIEW_4D(t_Goovv_ba_s, Goovv_ba_sym, nb_, nb_, va_, va_);
+        TBLIS_VIEW_4D(t_Goovv_ab_s, Goovv_sym_ab, na_, na_, vb_, vb_);
 
         Eigen::MatrixXd X_vv_b = Eigen::MatrixXd::Zero(vb_ * vb_, n_aux);
         TBLIS_VIEW_3D(t_Xvv_b, X_vv_b.data(), vb_, vb_, n_aux);
         tblis::mult<double>(1.0,  t_Gvvvv_b_s, "abcd", t_Bvv_b, "cdP", 0.0, t_Xvv_b, "abP"); 
         tblis::mult<double>(1.0,  t_Gvvvv_ab_s, "cdab", t_Bvv_a, "cdP", 1.0, t_Xvv_b, "abP"); 
         tblis::mult<double>(-1.0, t_Goovv_b_s, "ijab", t_Boo_b, "ijP", 1.0, t_Xvv_b, "abP");
-        tblis::mult<double>(-1.0, t_Goovv_ba_s, "ijab", t_Boo_a, "ijP", 1.0, t_Xvv_b, "abP");
+        tblis::mult<double>(-1.0, t_Goovv_ab_s, "ijab", t_Boo_a, "ijP", 1.0, t_Xvv_b, "abP"); 
         
         Eigen::MatrixXd X_oo_b = Eigen::MatrixXd::Zero(nb_ * nb_, n_aux);
         TBLIS_VIEW_3D(t_Xoo_b, X_oo_b.data(), nb_, nb_, n_aux);
         tblis::mult<double>(1.0,  t_Goooo_b_s, "ijkl", t_Boo_b, "klP", 0.0, t_Xoo_b, "ijP"); 
         tblis::mult<double>(1.0,  t_Goooo_ab_s, "klij", t_Boo_a, "klP", 1.0, t_Xoo_b, "ijP"); 
-        tblis::mult<double>(-1.0, t_Goovv_b_s, "ijkl", t_Bvv_b, "klP", 1.0, t_Xoo_b, "ijP");
-        tblis::mult<double>(-1.0, t_Goovv_ba_s, "ijkl", t_Bvv_a, "klP", 1.0, t_Xoo_b, "ijP");
+        tblis::mult<double>(-1.0, t_Goovv_b_s, "ijab", t_Bvv_b, "abP", 1.0, t_Xoo_b, "ijP"); 
+        tblis::mult<double>(-1.0, t_Goovv_ba_s, "ijab", t_Bvv_a, "abP", 1.0, t_Xoo_b, "ijP"); 
 
         // EXPLICIT OVOV DF CONTRACTIONS FOR BETA
         Eigen::MatrixXd Y_bb = Eigen::MatrixXd::Zero(vb_ * nb_, n_aux);
