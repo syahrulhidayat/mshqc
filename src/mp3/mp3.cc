@@ -975,8 +975,8 @@ void OMP3::build_generalized_fock() {
             tblis::mult<double>(0.25,  t_Tab, "ijac", t_Tab, "ijbd", 1.0, t_Gvvvv_ab, "abcd"); 
             tblis::mult<double>(0.25,  t_Tab, "ikab", t_Tab, "jlab", 1.0, t_Goooo_ab, "ijkl"); 
             
-            tblis::mult<double>(-1.0, t_Tab, "ikac", t_Tab, "jkbc", 1.0, t_Goovv_ab_ex, "ijab");
-            tblis::mult<double>(-1.0, t_Tab, "kica", t_Tab, "kjcb", 1.0, t_Goovv_ba_ex, "ijab");
+            tblis::mult<double>(-1.0, t_Tab, "ikca", t_Tab, "jkcb", 1.0, t_Goovv_ab_ex, "ijab");
+            tblis::mult<double>(-1.0, t_Tab, "kiac", t_Tab, "kjbc", 1.0, t_Goovv_ba_ex, "ijab");
 
             // --- Kontribusi MP3 Campuran Alpha-Beta ---
             tblis::mult<double>(-1.0,  t_Tab, "kica", t_Lab, "kjcb", 1.0, t_Govov_bb, "iajb"); 
@@ -994,11 +994,11 @@ void OMP3::build_generalized_fock() {
             tblis::mult<double>(0.25,  t_Tab, "ikab", t_Lab, "jlab", 1.0, t_Goooo_ab, "ijkl"); 
             tblis::mult<double>(0.25,  t_Lab, "ikab", t_Tab, "jlab", 1.0, t_Goooo_ab, "ijkl"); 
             
-            tblis::mult<double>(-1.0, t_Tab, "ikac", t_Lab, "jkbc", 1.0, t_Goovv_ab_ex, "ijab");
-            tblis::mult<double>(-1.0, t_Lab, "ikac", t_Tab, "jkbc", 1.0, t_Goovv_ab_ex, "ijab");
+            tblis::mult<double>(-1.0, t_Tab, "ikca", t_Lab, "jkcb", 1.0, t_Goovv_ab_ex, "ijab");
+            tblis::mult<double>(-1.0, t_Lab, "ikca", t_Tab, "jkcb", 1.0, t_Goovv_ab_ex, "ijab");
 
-            tblis::mult<double>(-1.0, t_Tab, "kica", t_Lab, "kjcb", 1.0, t_Goovv_ba_ex, "ijab");
-            tblis::mult<double>(-1.0, t_Lab, "kica", t_Tab, "kjcb", 1.0, t_Goovv_ba_ex, "ijab");
+            tblis::mult<double>(-1.0, t_Tab, "kiac", t_Lab, "kjbc", 1.0, t_Goovv_ba_ex, "ijab");
+            tblis::mult<double>(-1.0, t_Lab, "kiac", t_Tab, "kjbc", 1.0, t_Goovv_ba_ex, "ijab");
         }
     }
 
