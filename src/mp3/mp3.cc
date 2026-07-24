@@ -455,6 +455,12 @@ void OMP3::compute_mp3_correction() {
         Eigen::MatrixXd B_ab_b = build_B_mat(Cbv, Cbv, vb_, vb_);
 
         auto* t2_bb_dense = t2_bb_.get_block(0,0,0,0);
+        Eigen::Tensor<double, 4> dummy_bb;
+        if (!t2_bb_dense && nb_ > 0 && vb_ > 0) {
+            dummy_bb = Eigen::Tensor<double, 4>(nb_, nb_, vb_, vb_);
+            dummy_bb.setZero();
+            t2_bb_dense = &dummy_bb;
+        }
         auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
 
         TBLIS_VIEW_4D(t_Tbb, (*t2_bb_dense), nb_, nb_, vb_, vb_);
@@ -676,10 +682,16 @@ void OMP3::build_opdm_beta() {
     G_vv_beta_ = Eigen::MatrixXd::Zero(vb_, vb_);
     
     if (is_restricted || nb_ == 0 || vb_ == 0) return; 
-
     auto* t2_bb_dense = t2_bb_.get_block(0,0,0,0);
+    Eigen::Tensor<double, 4> dummy_bb;
+    if (!t2_bb_dense && nb_ > 0 && vb_ > 0) {
+        dummy_bb = Eigen::Tensor<double, 4>(nb_, nb_, vb_, vb_);
+        dummy_bb.setZero();
+        t2_bb_dense = &dummy_bb;
+    }
+    
     auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
-    if(!t2_bb_dense || !t2_ab_dense) return;
+    if(!t2_ab_dense) return; 
 
     TBLIS_VIEW_4D(t_T2bb, (*t2_bb_dense), nb_, nb_, vb_, vb_);
     TBLIS_VIEW_4D(t_T3bb, L2_bb_, nb_, nb_, vb_, vb_);
@@ -940,6 +952,12 @@ void OMP3::build_generalized_fock() {
             TBLIS_VIEW_4D(t_Goovv_ba_ex, Gamma_oovv_ba_ex, nb_, nb_, va_, va_);
             
             auto* t2_bb_dense = t2_bb_.get_block(0,0,0,0);
+            Eigen::Tensor<double, 4> dummy_bb_fock1;
+            if (!t2_bb_dense && nb_ > 0 && vb_ > 0) {
+                dummy_bb_fock1 = Eigen::Tensor<double, 4>(nb_, nb_, vb_, vb_);
+                dummy_bb_fock1.setZero();
+                t2_bb_dense = &dummy_bb_fock1;
+            }
             TBLIS_VIEW_4D(t_Tbb, (*t2_bb_dense), nb_, nb_, vb_, vb_);
             TBLIS_VIEW_4D(t_Lbb, L2_bb_, nb_, nb_, vb_, vb_); // <--- VIEW BARU
 
@@ -1058,6 +1076,12 @@ void OMP3::build_generalized_fock() {
     Eigen::Tensor<double, 4> Goovv_ba_sym;
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
         auto* t2_bb_dense = t2_bb_.get_block(0,0,0,0);
+        Eigen::Tensor<double, 4> dummy_bb_fock2;
+        if (!t2_bb_dense) {
+            dummy_bb_fock2 = Eigen::Tensor<double, 4>(nb_, nb_, vb_, vb_);
+            dummy_bb_fock2.setZero();
+            t2_bb_dense = &dummy_bb_fock2;
+        }
         auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
 
         Gvvvv_sym_b = Eigen::Tensor<double, 4>(vb_, vb_, vb_, vb_); Gvvvv_sym_b.setZero();
