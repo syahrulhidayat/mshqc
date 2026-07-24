@@ -971,7 +971,7 @@ void OMP3::build_generalized_fock() {
     Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> Teff_ab, Teff_bb;
     Eigen::Tensor<double, 4> Gvvvv_sym_b, Goooo_sym_b, Goovv_sym_b;
     Eigen::Tensor<double, 4> Gvvvv_sym_ab, Goooo_sym_ab, Goovv_sym_ab;
-
+    Eigen::Tensor<double, 4> Goovv_ba_sym;
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
         auto* t2_bb_dense = t2_bb_.get_block(0,0,0,0);
         auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
@@ -982,7 +982,7 @@ void OMP3::build_generalized_fock() {
         
         Gvvvv_sym_ab = Eigen::Tensor<double, 4>(va_, va_, vb_, vb_); Gvvvv_sym_ab.setZero();
         Goooo_sym_ab = Eigen::Tensor<double, 4>(na_, na_, nb_, nb_); Goooo_sym_ab.setZero();
-        Goovv_sym_ab = Eigen::Tensor<double, 4>(na_, na_, vb_, vb_); Goovv_sym_ab.setZero();
+        Goovv_ba_sym = Eigen::Tensor<double, 4>(nb_, nb_, va_, va_); Goovv_ba_sym.setZero(); 
 
         #pragma omp parallel for collapse(4) schedule(static)
         for(int a=0; a<vb_; ++a)
@@ -1104,11 +1104,13 @@ void OMP3::build_generalized_fock() {
         TBLIS_VIEW_3D(t_Boo_b, B_oo_b.data(), nb_, nb_, n_aux);
         TBLIS_VIEW_4D(t_Gvvvv_ab_s, Gvvvv_sym_ab, va_, va_, vb_, vb_); 
         TBLIS_VIEW_4D(t_Goovv_ab_s, Goovv_sym_ab, na_, na_, vb_, vb_);
+        TBLIS_VIEW_4D(t_Goovv_ba_s, Goovv_ba_sym, nb_, nb_, va_, va_);
         TBLIS_VIEW_4D(t_Goooo_ab_s, Goooo_sym_ab, na_, na_, nb_, nb_);
         TBLIS_VIEW_3D(t_Bia_b, B_ia_P_beta_.data(), vb_, nb_, n_aux);
         
         // DEKLARASI ULANG AGAR TIDAK OUT-OF-SCOPE
         TBLIS_VIEW_4D(t_Govov_ab, Gamma_ovov_ab, na_, va_, nb_, vb_);
+        
 
         tblis::mult<double>(1.0,  t_Gvvvv_ab_s, "abcd", t_Bvv_b, "cdP", 1.0, t_Xvv_a, "abP");
         tblis::mult<double>(-1.0, t_Goovv_ab_s, "ijab", t_Boo_b, "ijP", 1.0, t_Xvv_a, "abP");
@@ -1146,13 +1148,7 @@ void OMP3::build_generalized_fock() {
         TBLIS_VIEW_4D(t_Govov_bb, Gamma_ovov_bb, nb_, vb_, nb_, vb_);
         TBLIS_VIEW_4D(t_Govov_ab, Gamma_ovov_ab, na_, va_, nb_, vb_);
 
-        Eigen::Tensor<double, 4> Goovv_ba_sym(nb_, nb_, va_, va_); Goovv_ba_sym.setZero();
-        #pragma omp parallel for collapse(4) schedule(static)
-        for(int i=0; i<nb_; ++i)
-            for(int j=0; j<nb_; ++j)
-                for(int a=0; a<va_; ++a)
-                    for(int b=0; b<va_; ++b)
-                        Goovv_ba_sym(i,j,a,b) = 0.25 * (Gamma_oovv_ba_ex(i,j,a,b) + Gamma_oovv_ba_ex(j,i,a,b) + Gamma_oovv_ba_ex(i,j,b,a) + Gamma_oovv_ba_ex(j,i,b,a));
+     
         TBLIS_VIEW_4D(t_Goovv_ba_s, Goovv_ba_sym, nb_, nb_, va_, va_);
 
         Eigen::MatrixXd X_vv_b = Eigen::MatrixXd::Zero(vb_ * vb_, n_aux);
