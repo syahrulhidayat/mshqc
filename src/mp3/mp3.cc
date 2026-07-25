@@ -512,7 +512,7 @@ void OMP3::compute_mp3_correction() {
             dummy_bb.setZero();
             t2_bb_dense = &dummy_bb;
         }
-        auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
+     
 
         TBLIS_VIEW_4D(t_Tbb, (*t2_bb_dense), nb_, nb_, vb_, vb_);
         TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
@@ -1015,13 +1015,7 @@ void OMP3::build_generalized_fock() {
             TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
             TBLIS_VIEW_4D(t_Lab, L2_ab_, na_, nb_, va_, vb_);
             
-            auto* t2_bb_dense = t2_bb_.get_block(0,0,0,0);
-            Eigen::Tensor<double, 4> dummy_bb_fock;
-            if (!t2_bb_dense) {
-                dummy_bb_fock = Eigen::Tensor<double, 4>(nb_, nb_, vb_, vb_);
-                dummy_bb_fock.setZero();
-                t2_bb_dense = &dummy_bb_fock;
-            }
+            
             TBLIS_VIEW_4D(t_Tbb, (*t2_bb_dense), nb_, nb_, vb_, vb_);
             TBLIS_VIEW_4D(t_Lbb, L2_bb_, nb_, nb_, vb_, vb_);
 
@@ -1131,14 +1125,7 @@ void OMP3::build_generalized_fock() {
     Eigen::Tensor<double, 4> Gvvvv_sym_ab, Goooo_sym_ab, Goovv_sym_ab;
     Eigen::Tensor<double, 4> Goovv_ba_sym;
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
-        auto* t2_bb_dense = t2_bb_.get_block(0,0,0,0);
-        Eigen::Tensor<double, 4> dummy_bb_fock2;
-        if (!t2_bb_dense) {
-            dummy_bb_fock2 = Eigen::Tensor<double, 4>(nb_, nb_, vb_, vb_);
-            dummy_bb_fock2.setZero();
-            t2_bb_dense = &dummy_bb_fock2;
-        }
-        auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
+       
 
         Gvvvv_sym_b = Eigen::Tensor<double, 4>(vb_, vb_, vb_, vb_); Gvvvv_sym_b.setZero();
         Goooo_sym_b = Eigen::Tensor<double, 4>(nb_, nb_, nb_, nb_); Goooo_sym_b.setZero();
@@ -1146,6 +1133,7 @@ void OMP3::build_generalized_fock() {
         
         Gvvvv_sym_ab = Eigen::Tensor<double, 4>(va_, va_, vb_, vb_); Gvvvv_sym_ab.setZero();
         Goooo_sym_ab = Eigen::Tensor<double, 4>(na_, na_, nb_, nb_); Goooo_sym_ab.setZero();
+        Goovv_sym_ab = Eigen::Tensor<double, 4>(na_, na_, vb_, vb_); Goovv_sym_ab.setZero();
         Goovv_ba_sym = Eigen::Tensor<double, 4>(nb_, nb_, va_, va_); Goovv_ba_sym.setZero(); 
 
         #pragma omp parallel for collapse(4) schedule(static)
