@@ -915,6 +915,24 @@ void OMP3::build_generalized_fock() {
                 for(int b=0; b<va_; ++b)
                     T2_aa_ijab(i,j,a,b) = (*t2_aa_dense)(i,a,j,b);
 
+    auto* t2_bb_dense = t2_bb_.get_block(0,0,0,0);
+    Eigen::Tensor<double, 4> dummy_bb_global;
+    auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
+    Eigen::Tensor<double, 4> dummy_ab_global;
+
+    if (!is_restricted && nb_ > 0 && vb_ > 0) {
+        if (!t2_bb_dense) {
+            dummy_bb_global = Eigen::Tensor<double, 4>(nb_, nb_, vb_, vb_);
+            dummy_bb_global.setZero();
+            t2_bb_dense = &dummy_bb_global;
+        }
+        if (!t2_ab_dense) {
+            dummy_ab_global = Eigen::Tensor<double, 4>(na_, nb_, va_, vb_);
+            dummy_ab_global.setZero();
+            t2_ab_dense = &dummy_ab_global;
+        }
+    }
+
     TBLIS_VIEW_4D(t_Taa, T2_aa_ijab, na_, na_, va_, va_);
     TBLIS_VIEW_4D(t_Laa, L2_aa_, na_, na_, va_, va_); // <--- VIEW BARU UNTUK T(2)
 
