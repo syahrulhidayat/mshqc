@@ -1184,12 +1184,12 @@ void OMP3::build_generalized_fock() {
                     for (int b = 0; b < vb_; ++b) {
                         double t1_dir = (*t2_ab_dense)(i, j, a, b);
                         double t2_dir = L2_ab_(i, j, a, b);
-                        Teff_ab(i*va_+a, j*vb_+b) = 2.0 * (t1_dir + t2_dir)
+                        Teff_ab(i*va_+a, j*vb_+b) = 2.0 * (t1_dir + t2_dir);
                     }
                 }
             }
         }
-                
+                 
         #pragma omp parallel for collapse(2) schedule(static)
         for (int i = 0; i < nb_; ++i) {
             for (int a = 0; a < vb_; ++a) {
@@ -1197,7 +1197,7 @@ void OMP3::build_generalized_fock() {
                     for (int b = 0; b < vb_; ++b) {
                         double t1_dir = (*t2_bb_dense)(i, j, a, b);
                         double t2_dir = L2_bb_(i, j, a, b);
-                        Teff_bb(i*vb_+a, j*vb_+b) = 2.0 * (t1_dir + t2_dir)
+                        Teff_bb(i*vb_+a, j*vb_+b) =2.0 * (t1_dir + t2_dir);
                     }
                 }
             }
