@@ -125,6 +125,16 @@ MP3Result UMP3::compute() {
     const auto& Cbo = scf_.C_beta.leftCols(no_b_);  const auto& Cbv = scf_.C_beta.rightCols(nv_b_);
     double e3_aa = 0.0, e3_bb = 0.0, e3_ab = 0.0;
 
+    if (no_b_ > 0 && nv_b_ > 0) {
+        if (t2_bb_.size() == 0) {
+            t2_bb_ = Eigen::Tensor<double, 4>(no_b_, no_b_, nv_b_, nv_b_);
+            t2_bb_.setZero();
+        }
+        if (t2_ab_.size() == 0) {
+            t2_ab_ = Eigen::Tensor<double, 4>(no_a_, no_b_, nv_a_, nv_b_);
+            t2_ab_.setZero();
+        }
+    }
     TBLIS_VIEW_4D(t_Taa, t2_aa_, no_a_, no_a_, nv_a_, nv_a_);
     TBLIS_VIEW_4D(t_Tbb, t2_bb_, no_b_, no_b_, nv_b_, nv_b_);
     TBLIS_VIEW_4D(t_Tab, t2_ab_, no_a_, no_b_, nv_a_, nv_b_);
@@ -895,30 +905,6 @@ void OMP3::build_generalized_fock() {
         tblis::mult<double>(-1.0, t_T2t, "ikca", t_Taa, "jkcb", 1.0, t_Goovv_aa, "ijab");
         tblis::mult<double>(-1.0, t_T2t, "kiac", t_Taa, "kjbc", 1.0, t_Goovv_aa, "ijab");
 
-        // --- Kontribusi MP3 (Cross-terms: T2_tilde * L2 + L2_tilde * T2) ---
-        tblis::mult<double>(0.5, t_T2t, "ijcd", t_Laa, "ijab", 1.0, t_Gvvvv_aa, "abcd");
-        tblis::mult<double>(0.5, t_L2t, "ijcd", t_Taa, "ijab", 1.0, t_Gvvvv_aa, "abcd");
-
-        tblis::mult<double>(0.5, t_T2t, "klab", t_Laa, "ijab", 1.0, t_Goooo_aa, "ijkl");
-        tblis::mult<double>(0.5, t_L2t, "klab", t_Taa, "ijab", 1.0, t_Goooo_aa, "ijkl");
-        
-        tblis::mult<double>( 2.0, t_T2t, "ikac", t_Laa, "jkcb", 1.0, t_Govov_aa, "iajb"); 
-        tblis::mult<double>( 2.0, t_L2t, "ikac", t_Taa, "jkcb", 1.0, t_Govov_aa, "iajb"); 
-        tblis::mult<double>( 2.0, t_T2t, "jkbc", t_Laa, "ikac", 1.0, t_Govov_aa, "iajb"); 
-        tblis::mult<double>( 2.0, t_L2t, "jkbc", t_Taa, "ikac", 1.0, t_Govov_aa, "iajb"); 
-        tblis::mult<double>(-1.0, t_T2t, "ikac", t_Laa, "jkbc", 1.0, t_Govov_aa, "iajb"); 
-        tblis::mult<double>(-1.0, t_L2t, "ikac", t_Taa, "jkbc", 1.0, t_Govov_aa, "iajb"); 
-        tblis::mult<double>(-1.0, t_T2t, "jkcb", t_Laa, "ikac", 1.0, t_Govov_aa, "iajb"); 
-        tblis::mult<double>(-1.0, t_L2t, "jkcb", t_Taa, "ikac", 1.0, t_Govov_aa, "iajb"); 
-
-        tblis::mult<double>(-1.0, t_T2t, "ikac", t_Laa, "jkcb", 1.0, t_Goovv_aa, "ijab");
-        tblis::mult<double>(-1.0, t_L2t, "ikac", t_Taa, "jkcb", 1.0, t_Goovv_aa, "ijab");
-        tblis::mult<double>(-1.0, t_T2t, "kjcb", t_Laa, "kica", 1.0, t_Goovv_aa, "ijab");
-        tblis::mult<double>(-1.0, t_L2t, "kjcb", t_Taa, "kica", 1.0, t_Goovv_aa, "ijab");
-        tblis::mult<double>(-1.0, t_T2t, "ikca", t_Laa, "jkcb", 1.0, t_Goovv_aa, "ijab");
-        tblis::mult<double>(-1.0, t_L2t, "ikca", t_Taa, "jkcb", 1.0, t_Goovv_aa, "ijab");
-        tblis::mult<double>(-1.0, t_T2t, "kiac", t_Laa, "kjbc", 1.0, t_Goovv_aa, "ijab");
-        tblis::mult<double>(-1.0, t_L2t, "kiac", t_Taa, "kjbc", 1.0, t_Goovv_aa, "ijab");
     } else {
         // --- Kontribusi MP2 Alpha-Alpha ---
         tblis::mult<double>(0.125, t_Taa, "ijac", t_Taa, "ijbd", 1.0, t_Gvvvv_aa, "abcd");
@@ -926,15 +912,6 @@ void OMP3::build_generalized_fock() {
         tblis::mult<double>(-0.5,  t_Taa, "ikac", t_Taa, "jkcb", 1.0, t_Govov_aa, "iajb");
         tblis::mult<double>(-0.5,  t_Taa, "ijab", t_Taa, "kjcb", 1.0, t_Goovv_aa, "ijab");
 
-        // --- Kontribusi MP3 Alpha-Alpha ---
-        tblis::mult<double>(0.125, t_Taa, "ijac", t_Laa, "ijbd", 1.0, t_Gvvvv_aa, "abcd");
-        tblis::mult<double>(0.125, t_Laa, "ijac", t_Taa, "ijbd", 1.0, t_Gvvvv_aa, "abcd");
-        tblis::mult<double>(0.125, t_Taa, "ikab", t_Laa, "jlab", 1.0, t_Goooo_aa, "ijkl");
-        tblis::mult<double>(0.125, t_Laa, "ikab", t_Taa, "jlab", 1.0, t_Goooo_aa, "ijkl");
-        tblis::mult<double>(-0.5,  t_Taa, "ikac", t_Laa, "jkcb", 1.0, t_Govov_aa, "iajb");
-        tblis::mult<double>(-0.5,  t_Laa, "ikac", t_Taa, "jkcb", 1.0, t_Govov_aa, "iajb");
-        tblis::mult<double>(-0.5,  t_Taa, "ijab", t_Laa, "kjcb", 1.0, t_Goovv_aa, "ijab");
-        tblis::mult<double>(-0.5,  t_Laa, "ijab", t_Taa, "kjcb", 1.0, t_Goovv_aa, "ijab");
         
         if (nb_ > 0 && vb_ > 0) {
             auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
@@ -943,9 +920,6 @@ void OMP3::build_generalized_fock() {
 
             // MP2
             tblis::mult<double>(-1.0, t_Tab, "ikac", t_Tab, "jkbc", 1.0, t_Govov_aa, "iajb");
-            // MP3
-            tblis::mult<double>(-1.0, t_Tab, "ikac", t_Lab, "jkbc", 1.0, t_Govov_aa, "iajb");
-            tblis::mult<double>(-1.0, t_Lab, "ikac", t_Tab, "jkbc", 1.0, t_Govov_aa, "iajb");
             
             TBLIS_VIEW_4D(t_Goovv_bb, Gamma_oovv_bb, nb_, nb_, vb_, vb_);
             TBLIS_VIEW_4D(t_Goovv_ab_ex, Gamma_oovv_ab_ex, na_, na_, vb_, vb_);
@@ -975,16 +949,6 @@ void OMP3::build_generalized_fock() {
             tblis::mult<double>(-0.5,  t_Tbb, "ikac", t_Tbb, "jkcb", 1.0, t_Govov_bb, "iajb");
             tblis::mult<double>(-0.5,  t_Tbb, "ijab", t_Tbb, "kjcb", 1.0, t_Goovv_bb, "ijab");
 
-            // --- Kontribusi MP3 Beta-Beta ---
-            tblis::mult<double>(0.125, t_Tbb, "ijac", t_Lbb, "ijbd", 1.0, t_Gvvvv_bb, "abcd");
-            tblis::mult<double>(0.125, t_Lbb, "ijac", t_Tbb, "ijbd", 1.0, t_Gvvvv_bb, "abcd");
-            tblis::mult<double>(0.125, t_Tbb, "ikab", t_Lbb, "jlab", 1.0, t_Goooo_bb, "ijkl");
-            tblis::mult<double>(0.125, t_Lbb, "ikab", t_Tbb, "jlab", 1.0, t_Goooo_bb, "ijkl");
-            tblis::mult<double>(-0.5,  t_Tbb, "ikac", t_Lbb, "jkcb", 1.0, t_Govov_bb, "iajb");
-            tblis::mult<double>(-0.5,  t_Lbb, "ikac", t_Tbb, "jkcb", 1.0, t_Govov_bb, "iajb");
-            tblis::mult<double>(-0.5,  t_Tbb, "ijab", t_Lbb, "kjcb", 1.0, t_Goovv_bb, "ijab");
-            tblis::mult<double>(-0.5,  t_Lbb, "ijab", t_Tbb, "kjcb", 1.0, t_Goovv_bb, "ijab");
-
             // --- Kontribusi MP2 Campuran Alpha-Beta ---
             tblis::mult<double>(-1.0,  t_Tab, "kica", t_Tab, "kjcb", 1.0, t_Govov_bb, "iajb"); 
             tblis::mult<double>(-1.0,  t_Taa, "ikac", t_Tab, "kjcb", 1.0, t_Govov_ab, "iajb"); 
@@ -996,27 +960,6 @@ void OMP3::build_generalized_fock() {
             tblis::mult<double>(-1.0, t_Tab, "ikca", t_Tab, "jkcb", 1.0, t_Goovv_ab_ex, "ijab");
             tblis::mult<double>(-1.0, t_Tab, "kiac", t_Tab, "kjbc", 1.0, t_Goovv_ba_ex, "ijab");
 
-            // --- Kontribusi MP3 Campuran Alpha-Beta ---
-            tblis::mult<double>(-1.0,  t_Tab, "kica", t_Lab, "kjcb", 1.0, t_Govov_bb, "iajb"); 
-            tblis::mult<double>(-1.0,  t_Lab, "kica", t_Tab, "kjcb", 1.0, t_Govov_bb, "iajb"); 
-
-            tblis::mult<double>(-1.0,  t_Taa, "ikac", t_Lab, "kjcb", 1.0, t_Govov_ab, "iajb"); 
-            tblis::mult<double>(-1.0,  t_Laa, "ikac", t_Tab, "kjcb", 1.0, t_Govov_ab, "iajb"); 
-
-            tblis::mult<double>(-1.0,  t_Tab, "ikac", t_Lbb, "kjcb", 1.0, t_Govov_ab, "iajb"); 
-            tblis::mult<double>(-1.0,  t_Lab, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_ab, "iajb"); 
-
-            tblis::mult<double>(0.25,  t_Tab, "ijac", t_Lab, "ijbd", 1.0, t_Gvvvv_ab, "abcd"); 
-            tblis::mult<double>(0.25,  t_Lab, "ijac", t_Tab, "ijbd", 1.0, t_Gvvvv_ab, "abcd"); 
-
-            tblis::mult<double>(0.25,  t_Tab, "ikab", t_Lab, "jlab", 1.0, t_Goooo_ab, "ijkl"); 
-            tblis::mult<double>(0.25,  t_Lab, "ikab", t_Tab, "jlab", 1.0, t_Goooo_ab, "ijkl"); 
-            
-            tblis::mult<double>(-1.0, t_Tab, "ikca", t_Lab, "jkcb", 1.0, t_Goovv_ab_ex, "ijab");
-            tblis::mult<double>(-1.0, t_Lab, "ikca", t_Tab, "jkcb", 1.0, t_Goovv_ab_ex, "ijab");
-
-            tblis::mult<double>(-1.0, t_Tab, "kiac", t_Lab, "kjbc", 1.0, t_Goovv_ba_ex, "ijab");
-            tblis::mult<double>(-1.0, t_Lab, "kiac", t_Tab, "kjbc", 1.0, t_Goovv_ba_ex, "ijab");
         }
     }
 
@@ -1058,7 +1001,7 @@ void OMP3::build_generalized_fock() {
             for (int j = 0; j < na_; ++j) {
                 for (int b = 0; b < va_; ++b) {
                     // Perbaikan: Tambahkan 2.0 * pada L2
-                    double t2_dir = T2_aa_ijab(i, j, a, b) + 2.0 * L2_aa_(i, j, a, b); 
+                    double t2_dir = T2_aa_ijab(i, j, a, b) + L2_aa_(i, j, a, b);
                     if (is_restricted) {
                         double t2_ex = T2_aa_ijab(i, j, b, a) + 2.0 * L2_aa_(i, j, b, a); 
                         Teff_aa(i*va_+a, j*va_+b) = (2.0 * t2_dir - 1.0 * t2_ex);
@@ -1149,7 +1092,7 @@ void OMP3::build_generalized_fock() {
             for (int a = 0; a < va_; ++a) {
                 for (int j = 0; j < nb_; ++j) {
                     for (int b = 0; b < vb_; ++b) {
-                        double t2_dir = (*t2_ab_dense)(i, j, a, b) + 2.0 * L2_ab_(i, j, a, b);
+                        double t2_dir = (*t2_ab_dense)(i, j, a, b) + L2_ab_(i, j, a, b);
                         Teff_ab(i*va_+a, j*vb_+b) = 2.0 * t2_dir; 
                     }
                 }
@@ -1161,7 +1104,7 @@ void OMP3::build_generalized_fock() {
             for (int a = 0; a < vb_; ++a) {
                 for (int j = 0; j < nb_; ++j) {
                     for (int b = 0; b < vb_; ++b) {
-                        double t2_dir = (*t2_bb_dense)(i, j, a, b) + 2.0 * L2_bb_(i, j, a, b);
+                        double t2_dir = (*t2_bb_dense)(i, j, a, b) + L2_bb_(i, j, a, b);
                         Teff_bb(i*vb_+a, j*vb_+b) = 2.0 * t2_dir; 
                     }
                 }
