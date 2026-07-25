@@ -467,7 +467,6 @@ void OMP3::compute_mp3_correction() {
         if (!is_restricted && nb_ > 0 && vb_ > 0) {
             Eigen::Tensor<double, 4> V_ovov_ab = map_4d(B_ia_P_alpha_ * B_ia_P_beta_.transpose(), na_, va_, nb_, vb_);
             TBLIS_VIEW_4D(t_Vovov_ab, V_ovov_ab, na_, va_, nb_, vb_);
-            auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
             TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
             tblis::mult<double>(1.0, t_Vovov_ab, "iakc", t_Tab, "jkbc", 1.0, t_Waa_ring, "ijab");
         }
@@ -1097,9 +1096,9 @@ void OMP3::build_generalized_fock() {
             for (int j = 0; j < na_; ++j) {
                 for (int b = 0; b < va_; ++b) {
                     // Perbaikan: Tambahkan 2.0 * pada L2
-                    double t2_dir = T2_aa_ijab(i, j, a, b) + 1.0 * L2_aa_(i, j, a, b);
+                    double t2_dir = T2_aa_ijab(i, j, a, b) + 2.0 * L2_aa_(i, j, a, b);
                     if (is_restricted) {
-                        double t2_ex = T2_aa_ijab(i, j, b, a) + 1.0 * L2_aa_(i, j, b, a); 
+                        double t2_ex = T2_aa_ijab(i, j, b, a) + 2.0 * L2_aa_(i, j, b, a); 
                         Teff_aa(i*va_+a, j*va_+b) = (2.0 * t2_dir - 1.0 * t2_ex);
                     } else {
                         Teff_aa(i*va_+a, j*va_+b) = 2.0 * t2_dir; 
@@ -1188,7 +1187,7 @@ void OMP3::build_generalized_fock() {
             for (int a = 0; a < va_; ++a) {
                 for (int j = 0; j < nb_; ++j) {
                     for (int b = 0; b < vb_; ++b) {
-                        double t2_dir = (*t2_ab_dense)(i, j, a, b) + 1.0 * L2_ab_(i, j, a, b);
+                        double t2_dir = (*t2_ab_dense)(i, j, a, b) + 2.0 * L2_ab_(i, j, a, b);
                         Teff_ab(i*va_+a, j*vb_+b) = 2.0 * t2_dir; 
                     }
                 }
@@ -1200,7 +1199,7 @@ void OMP3::build_generalized_fock() {
             for (int a = 0; a < vb_; ++a) {
                 for (int j = 0; j < nb_; ++j) {
                     for (int b = 0; b < vb_; ++b) {
-                        double t2_dir = (*t2_bb_dense)(i, j, a, b) +  L2_bb_(i, j, a, b);
+                        double t2_dir = (*t2_bb_dense)(i, j, a, b) + 2.0 * L2_bb_(i, j, a, b);
                         Teff_bb(i*vb_+a, j*vb_+b) = 2.0 * t2_dir; 
                     }
                 }
