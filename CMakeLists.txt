@@ -3,13 +3,6 @@ cmake_minimum_required(VERSION 3.14)
 project(mshqc VERSION 1.0.0 LANGUAGES CXX C)
 
 
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -g -O0 -fsanitize=address -fno-omit-frame-pointer")
-set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} -fsanitize=address")
-set(CMAKE_MODULE_LINKER_FLAGS "${CMAKE_MODULE_LINKER_FLAGS} -fsanitize=address")
-set(CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -fsanitize=address")
-# override release flags agar tidak tertimpa -O3
-set(CMAKE_CXX_FLAGS_RELEASE "-g -O0 -fsanitize=address -fno-omit-frame-pointer")
-
 
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
@@ -184,10 +177,10 @@ set_target_properties(_mshqc PROPERTIES
     BUILD_WITH_INSTALL_RPATH TRUE
 )
 
-##if(ipo_supported)
-    ##set_target_properties(mshqc PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
-    ##set_target_properties(_mshqc PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
-##endif()
+if(ipo_supported)
+    set_target_properties(mshqc PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
+    set_target_properties(_mshqc PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
+endif()
 
 install(TARGETS mshqc _mshqc
     LIBRARY DESTINATION lib

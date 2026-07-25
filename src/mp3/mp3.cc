@@ -943,9 +943,6 @@ void OMP3::build_generalized_fock() {
 
     if (is_restricted) {
         Eigen::Tensor<double, 4> T2_tilde(na_, na_, va_, va_);
-        Eigen::Tensor<double, 4> L2_tilde(na_, na_, va_, va_); 
-        Eigen::Tensor<double, 4> T2_tot(na_, na_, va_, va_);
-        Eigen::Tensor<double, 4> T2t_tot(na_, na_, va_, va_);
         
         #pragma omp parallel for collapse(4) schedule(static)
         for(int i=0; i<na_; ++i) {
@@ -953,20 +950,14 @@ void OMP3::build_generalized_fock() {
                 for(int a=0; a<va_; ++a) {
                     for(int b=0; b<va_; ++b) {
                         T2_tilde(i,j,a,b) = 2.0 * T2_aa_ijab(i,j,a,b) - T2_aa_ijab(i,j,b,a);
-                        L2_tilde(i,j,a,b) = 2.0 * L2_aa_(i,j,a,b) - L2_aa_(i,j,b,a); 
-                        T2_tot(i,j,a,b) = T2_aa_ijab(i,j,a,b) + L2_aa_(i,j,a,b);
-                        T2t_tot(i,j,a,b) = T2_tilde(i,j,a,b) + L2_tilde(i,j,a,b);
                     }
                 }
             }
         }
                     
         TBLIS_VIEW_4D(t_T2t, T2_tilde, na_, na_, va_, va_);
-        TBLIS_VIEW_4D(t_L2t, L2_tilde, na_, na_, va_, va_);
-        TBLIS_VIEW_4D(t_Ttot, T2_tot, na_, na_, va_, va_);
-        TBLIS_VIEW_4D(t_Ttot_t, T2t_tot, na_, na_, va_, va_);
 
-        // --- Evaluasi Gamma dengan T_tot dan koreksi L_tot (Cross-terms Exact O(L^3)) ---
+        // --- Evaluasi Gamma HANYA dengan T1 ---
         auto compute_gamma_res = [&](auto& t_Tleft, auto& t_Tright, double scale) {
             tblis::mult<double>(0.5*scale, t_Tleft, "ijcd", t_Tright, "ijab", 1.0, t_Gvvvv_aa, "abcd");
             tblis::mult<double>(0.5*scale, t_Tleft, "klab", t_Tright, "ijab", 1.0, t_Goooo_aa, "ijkl");
@@ -982,9 +973,8 @@ void OMP3::build_generalized_fock() {
             tblis::mult<double>(-1.0*scale, t_Tleft, "kiac", t_Tright, "kjbc", 1.0, t_Goovv_aa, "ijab");
         };
         
-        // Akumulasi T_tot lalu buang artifisial orde-4 dari L * L
-        compute_gamma_res(t_Ttot_t, t_Ttot, 1.0);
-        compute_gamma_res(t_L2t, t_Laa, -1.0);
+        compute_gamma_res(t_T2t, t_Taa, 1.0); 
+    
 
     } else {
         // --- UNRESTRICTED BLOCK ---
@@ -1000,8 +990,8 @@ void OMP3::build_generalized_fock() {
             tblis::mult<double>(-0.5*scale,  t_T, "ikac", t_T, "jkcb", 1.0, t_Govov_aa, "iajb");
             tblis::mult<double>(-0.5*scale,  t_T, "ijab", t_T, "kjcb", 1.0, t_Goovv_aa, "ijab");
         };
-        compute_gamma_aa(t_Taa_tot, 1.0);
-        compute_gamma_aa(t_Laa, -1.0);
+        compute_gamma_aa(t_Taa, 1.0);
+   
         
         if (nb_ > 0 && vb_ > 0) {
             // Evaluasi pointer fallback sebelum operasi
@@ -1049,9 +1039,8 @@ void OMP3::build_generalized_fock() {
                 tblis::mult<double>(-0.5*scale,  t_T, "ikac", t_T, "jkcb", 1.0, t_Govov_bb, "iajb");
                 tblis::mult<double>(-0.5*scale,  t_T, "ijab", t_T, "kjcb", 1.0, t_Goovv_bb, "ijab");
             };
-            compute_gamma_bb(t_Tbb_tot, 1.0);
-            compute_gamma_bb(t_Lbb, -1.0);
-
+            compute_gamma_bb(t_Tbb, 1.0);
+           
             auto compute_gamma_ab = [&](auto& t_Ta, auto& t_Tb, auto& t_Tab_mix, double scale) {
                 tblis::mult<double>(0.25*scale,  t_Tab_mix, "ijac", t_Tab_mix, "ijbd", 1.0, t_Gvvvv_ab, "abcd"); 
                 tblis::mult<double>(0.25*scale,  t_Tab_mix, "ikab", t_Tab_mix, "jlab", 1.0, t_Goooo_ab, "ijkl"); 
@@ -1065,8 +1054,8 @@ void OMP3::build_generalized_fock() {
                 tblis::mult<double>(-1.0*scale,  t_Tab_mix, "ikac", t_Tab_mix, "jkbc", 1.0, t_Govov_aa, "iajb");
             };
             
-            compute_gamma_ab(t_Taa_tot, t_Tbb_tot, t_Tab_tot, 1.0);
-            compute_gamma_ab(t_Laa, t_Lbb, t_Lab, -1.0);
+            compute_gamma_ab(t_Taa, t_Tbb, t_Tab, 1.0);
+            
         }
     }
 
