@@ -958,22 +958,21 @@ void OMP3::build_generalized_fock() {
         TBLIS_VIEW_4D(t_L2t, L2_tilde, na_, na_, va_, va_); 
 
         auto compute_gamma_res = [&](auto& t_Tleft, auto& t_Tright, double scale) {
-            tblis::mult<double>(0.5*scale, t_Tleft, "ijcd", t_Tright, "ijab", 1.0, t_Gvvvv_aa, "abcd");
-            tblis::mult<double>(0.5*scale, t_Tleft, "klab", t_Tright, "ijab", 1.0, t_Goooo_aa, "ijkl");
-            tblis::mult<double>( 2.0*scale, t_Tleft, "ikac", t_Tright, "jkcb", 1.0, t_Govov_aa, "iajb"); 
-            tblis::mult<double>( 2.0*scale, t_Tleft, "jkbc", t_Tright, "ikac", 1.0, t_Govov_aa, "iajb"); 
-            tblis::mult<double>(-1.0*scale, t_Tleft, "ikac", t_Tright, "jkbc", 1.0, t_Govov_aa, "iajb"); 
-            tblis::mult<double>(-1.0*scale, t_Tleft, "jkcb", t_Tright, "ikac", 1.0, t_Govov_aa, "iajb"); 
-            tblis::mult<double>(-1.0*scale, t_Tleft, "ikac", t_Tright, "jkbc", 1.0, t_Goovv_aa, "ijab");
-            tblis::mult<double>(-1.0*scale, t_Tleft, "kjcb", t_Tright, "kica", 1.0, t_Goovv_aa, "ijab");
-            tblis::mult<double>(-1.0*scale, t_Tleft, "ikca", t_Tright, "jkcb", 1.0, t_Goovv_aa, "ijab");
-            tblis::mult<double>(-1.0*scale, t_Tleft, "kiac", t_Tright, "kjbc", 1.0, t_Goovv_aa, "ijab");
+            tblis::mult<double>(0.5*scale, t_Tleft, "ijac", t_Tright, "ijbd", 1.0, t_Gvvvv_aa, "abcd");
+            tblis::mult<double>(0.5*scale, t_Tleft, "ikab", t_Tright, "jlab", 1.0, t_Goooo_aa, "ijkl");
+            
+            tblis::mult<double>( 2.0*scale, t_Tleft, "ikac", t_Tright, "kjcb", 1.0, t_Govov_aa, "iajb"); 
+            tblis::mult<double>( 2.0*scale, t_Tleft, "kjcb", t_Tright, "kica", 1.0, t_Govov_aa, "iajb"); 
+            tblis::mult<double>(-1.0*scale, t_Tleft, "kjcb", t_Tright, "kiac", 1.0, t_Govov_aa, "iajb"); 
+            tblis::mult<double>(-1.0*scale, t_Tleft, "ikac", t_Tright, "kjbc", 1.0, t_Govov_aa, "iajb"); 
+            
+            tblis::mult<double>(-0.5*scale, t_Tleft, "ikac", t_Tright, "kjcb", 1.0, t_Goovv_aa, "ijab");
+            tblis::mult<double>(-0.5*scale, t_Tleft, "kjcb", t_Tright, "kica", 1.0, t_Goovv_aa, "ijab");
+            tblis::mult<double>(-0.5*scale, t_Tleft, "ikcb", t_Tright, "kjac", 1.0, t_Goovv_aa, "ijab");
+            tblis::mult<double>(-0.5*scale, t_Tleft, "kiac", t_Tright, "kjbc", 1.0, t_Goovv_aa, "ijab");
         };
         
         compute_gamma_res(t_T2t, t_Taa, 1.0);
-        compute_gamma_res(t_L2t, t_Taa, 1.0);
-        compute_gamma_res(t_T2t, t_Laa, 1.0);
-    
 
     } else {
        
@@ -985,8 +984,6 @@ void OMP3::build_generalized_fock() {
         };
         
         compute_gamma_aa(t_Taa, t_Taa, 1.0);
-        compute_gamma_aa(t_Laa, t_Taa, 1.0);
-        compute_gamma_aa(t_Taa, t_Laa, 1.0);
     
         if (nb_ > 0 && vb_ > 0) {
             auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
@@ -1049,8 +1046,6 @@ void OMP3::build_generalized_fock() {
             };
             
             compute_gamma_ab(t_Taa, t_Tbb, t_Tab, t_Taa, t_Tbb, t_Tab, 1.0);
-            compute_gamma_ab(t_Laa, t_Lbb, t_Lab, t_Taa, t_Tbb, t_Tab, 1.0);
-            compute_gamma_ab(t_Taa, t_Tbb, t_Tab, t_Laa, t_Lbb, t_Lab, 1.0);
         }
     }
 
