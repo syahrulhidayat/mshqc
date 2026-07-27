@@ -869,7 +869,6 @@ void OMP3::build_generalized_fock() {
                     T2_aa_ijab(i,j,a,b) = (*t2_aa_dense)(i,a,j,b);
 
     TBLIS_VIEW_4D(t_Taa, T2_aa_ijab, na_, na_, va_, va_);
-    TBLIS_VIEW_4D(t_Laa, L2_aa_, na_, na_, va_, va_); // <--- VIEW BARU UNTUK T(2)
 
     TBLIS_VIEW_4D(t_Gvvvv_aa, Gamma_vvvv_aa, va_, va_, va_, va_);
     TBLIS_VIEW_4D(t_Goooo_aa, Gamma_oooo_aa, na_, na_, na_, na_);
@@ -878,28 +877,26 @@ void OMP3::build_generalized_fock() {
 
     if (is_restricted) {
         Eigen::Tensor<double, 4> T2_tilde(na_, na_, va_, va_);
-        Eigen::Tensor<double, 4> L2_tilde(na_, na_, va_, va_); // <--- TENSOR BARU
         #pragma omp parallel for collapse(4) schedule(static)
-        for(int i=0; i<na_; ++i)
-            for(int j=0; j<na_; ++j)
-                for(int a=0; a<va_; ++a)
+        for(int i=0; i<na_; ++i) {
+            for(int j=0; j<na_; ++j) {
+                for(int a=0; a<va_; ++a) {
                     for(int b=0; b<va_; ++b) {
                         T2_tilde(i,j,a,b) = 2.0 * T2_aa_ijab(i,j,a,b) - T2_aa_ijab(i,j,b,a);
-                        L2_tilde(i,j,a,b) = 2.0 * L2_aa_(i,j,a,b) - L2_aa_(i,j,b,a); // <--- ASSIGN L2
                     }
+                }
+            }
+        }
                     
         TBLIS_VIEW_4D(t_T2t, T2_tilde, na_, na_, va_, va_);
-        TBLIS_VIEW_4D(t_L2t, L2_tilde, na_, na_, va_, va_); // <--- VIEW BARU
 
-        // --- Kontribusi MP2 ---
+        // HANYA EKSEKUSI T1 x T1. Suku L2 akan merusak memori jika dipaksa masuk di sini.
         tblis::mult<double>(0.5, t_T2t, "ijcd", t_Taa, "ijab", 1.0, t_Gvvvv_aa, "abcd");
         tblis::mult<double>(0.5, t_T2t, "klab", t_Taa, "ijab", 1.0, t_Goooo_aa, "ijkl");
-        
         tblis::mult<double>( 2.0, t_T2t, "ikac", t_Taa, "jkcb", 1.0, t_Govov_aa, "iajb"); 
         tblis::mult<double>( 2.0, t_T2t, "jkbc", t_Taa, "ikac", 1.0, t_Govov_aa, "iajb"); 
         tblis::mult<double>(-1.0, t_T2t, "ikac", t_Taa, "jkbc", 1.0, t_Govov_aa, "iajb"); 
         tblis::mult<double>(-1.0, t_T2t, "jkcb", t_Taa, "ikac", 1.0, t_Govov_aa, "iajb"); 
-
         tblis::mult<double>(-1.0, t_T2t, "ikac", t_Taa, "jkcb", 1.0, t_Goovv_aa, "ijab");
         tblis::mult<double>(-1.0, t_T2t, "kjcb", t_Taa, "kica", 1.0, t_Goovv_aa, "ijab");
         tblis::mult<double>(-1.0, t_T2t, "ikca", t_Taa, "jkcb", 1.0, t_Goovv_aa, "ijab");
@@ -910,62 +907,49 @@ void OMP3::build_generalized_fock() {
         tblis::mult<double>(0.125, t_Taa, "ijac", t_Taa, "ijbd", 1.0, t_Gvvvv_aa, "abcd");
         tblis::mult<double>(0.125, t_Taa, "ikab", t_Taa, "jlab", 1.0, t_Goooo_aa, "ijkl");
         tblis::mult<double>(-0.5,  t_Taa, "ikac", t_Taa, "jkcb", 1.0, t_Govov_aa, "iajb");
-        tblis::mult<double>(-0.5,  t_Taa, "ijab", t_Taa, "kjcb", 1.0, t_Goovv_aa, "ijab");
-
+        tblis::mult<double>(-0.5,  t_Taa, "ikac", t_Taa, "jkbc", 1.0, t_Goovv_aa, "ijab");
+        
         if (nb_ > 0 && vb_ > 0) {
-            // 1. DEKLARASI POINTER T2 LOKAL (MENGATASI UNDEFINED IDENTIFIER & SEGFAULT)
             auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
-            Eigen::Tensor<double, 4> dummy_ab(na_, nb_, va_, vb_);
-            if (!t2_ab_dense) {
-                dummy_ab.setZero();
-                t2_ab_dense = &dummy_ab;
-            }
-
             auto* t2_bb_dense = t2_bb_.get_block(0,0,0,0);
-            Eigen::Tensor<double, 4> dummy_bb(nb_, nb_, vb_, vb_);
-            if (!t2_bb_dense) {
-                dummy_bb.setZero();
-                t2_bb_dense = &dummy_bb;
+            
+            // Evaluasi aman menghindari Segfault dari pemanggilan pointer kosong
+            if(t2_ab_dense && t2_bb_dense) {
+                TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
+                TBLIS_VIEW_4D(t_Tbb, (*t2_bb_dense), nb_, nb_, vb_, vb_);
+
+                TBLIS_VIEW_4D(t_Goovv_bb, Gamma_oovv_bb, nb_, nb_, vb_, vb_);
+                TBLIS_VIEW_4D(t_Goovv_ab_ex, Gamma_oovv_ab_ex, na_, na_, vb_, vb_);
+                TBLIS_VIEW_4D(t_Goovv_ba_ex, Gamma_oovv_ba_ex, nb_, nb_, va_, va_);
+                
+                TBLIS_VIEW_4D(t_Gvvvv_bb, Gamma_vvvv_bb, vb_, vb_, vb_, vb_);
+                TBLIS_VIEW_4D(t_Goooo_bb, Gamma_oooo_bb, nb_, nb_, nb_, nb_);
+                TBLIS_VIEW_4D(t_Govov_bb, Gamma_ovov_bb, nb_, vb_, nb_, vb_);
+                
+                TBLIS_VIEW_4D(t_Gvvvv_ab, Gamma_vvvv_ab, va_, va_, vb_, vb_);
+                TBLIS_VIEW_4D(t_Goooo_ab, Gamma_oooo_ab, na_, na_, nb_, nb_);
+                TBLIS_VIEW_4D(t_Govov_ab, Gamma_ovov_ab, na_, va_, nb_, vb_);
+
+                // --- Kontribusi MP2 Beta-Beta ---
+                tblis::mult<double>(0.125, t_Tbb, "ijac", t_Tbb, "ijbd", 1.0, t_Gvvvv_bb, "abcd");
+                tblis::mult<double>(0.125, t_Tbb, "ikab", t_Tbb, "jlab", 1.0, t_Goooo_bb, "ijkl");
+                tblis::mult<double>(-0.5,  t_Tbb, "ikac", t_Tbb, "jkcb", 1.0, t_Govov_bb, "iajb");
+                tblis::mult<double>(-0.5,  t_Tbb, "ikac", t_Tbb, "jkbc", 1.0, t_Goovv_bb, "ijab");
+
+                // --- Kontribusi MP2 Campuran Alpha-Beta ---
+                tblis::mult<double>(-1.0,  t_Tab, "ikac", t_Tab, "jkbc", 1.0, t_Govov_aa, "iajb");
+                tblis::mult<double>(-1.0,  t_Tab, "kica", t_Tab, "kjcb", 1.0, t_Govov_bb, "iajb"); 
+                tblis::mult<double>(-1.0,  t_Taa, "ikac", t_Tab, "kjcb", 1.0, t_Govov_ab, "iajb"); 
+                tblis::mult<double>(-1.0,  t_Tab, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_ab, "iajb"); 
+
+                tblis::mult<double>(0.25,  t_Tab, "ijac", t_Tab, "ijbd", 1.0, t_Gvvvv_ab, "abcd"); 
+                tblis::mult<double>(0.25,  t_Tab, "ikab", t_Tab, "jlab", 1.0, t_Goooo_ab, "ijkl"); 
+                
+                tblis::mult<double>(-1.0, t_Tab, "ikca", t_Tab, "jkcb", 1.0, t_Goovv_ab_ex, "ijab");
+                tblis::mult<double>(-1.0, t_Tab, "kiac", t_Tab, "kjbc", 1.0, t_Goovv_ba_ex, "ijab");
             }
-
-            // 2. PEMETAAN TBLIS
-            TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
-            TBLIS_VIEW_4D(t_Tbb, (*t2_bb_dense), nb_, nb_, vb_, vb_);
-
-            // MP2 Alpha-Beta
-            tblis::mult<double>(-1.0, t_Tab, "ikac", t_Tab, "jkbc", 1.0, t_Govov_aa, "iajb");
-            
-            TBLIS_VIEW_4D(t_Goovv_bb, Gamma_oovv_bb, nb_, nb_, vb_, vb_);
-            TBLIS_VIEW_4D(t_Goovv_ab_ex, Gamma_oovv_ab_ex, na_, na_, vb_, vb_);
-            TBLIS_VIEW_4D(t_Goovv_ba_ex, Gamma_oovv_ba_ex, nb_, nb_, va_, va_);
-            
-            TBLIS_VIEW_4D(t_Gvvvv_bb, Gamma_vvvv_bb, vb_, vb_, vb_, vb_);
-            TBLIS_VIEW_4D(t_Goooo_bb, Gamma_oooo_bb, nb_, nb_, nb_, nb_);
-            TBLIS_VIEW_4D(t_Govov_bb, Gamma_ovov_bb, nb_, vb_, nb_, vb_);
-            
-            TBLIS_VIEW_4D(t_Gvvvv_ab, Gamma_vvvv_ab, va_, va_, vb_, vb_);
-            TBLIS_VIEW_4D(t_Goooo_ab, Gamma_oooo_ab, na_, na_, nb_, nb_);
-            TBLIS_VIEW_4D(t_Govov_ab, Gamma_ovov_ab, na_, va_, nb_, vb_);
-
-            // --- Kontribusi MP2 Beta-Beta ---
-            tblis::mult<double>(0.125, t_Tbb, "ijac", t_Tbb, "ijbd", 1.0, t_Gvvvv_bb, "abcd");
-            tblis::mult<double>(0.125, t_Tbb, "ikab", t_Tbb, "jlab", 1.0, t_Goooo_bb, "ijkl");
-            tblis::mult<double>(-0.5,  t_Tbb, "ikac", t_Tbb, "jkcb", 1.0, t_Govov_bb, "iajb");
-            tblis::mult<double>(-0.5,  t_Tbb, "ijab", t_Tbb, "kjcb", 1.0, t_Goovv_bb, "ijab");
-
-            // --- Kontribusi MP2 Campuran Alpha-Beta ---
-            tblis::mult<double>(-1.0,  t_Tab, "kica", t_Tab, "kjcb", 1.0, t_Govov_bb, "iajb"); 
-            tblis::mult<double>(-1.0,  t_Taa, "ikac", t_Tab, "kjcb", 1.0, t_Govov_ab, "iajb"); 
-            tblis::mult<double>(-1.0,  t_Tab, "ikac", t_Tbb, "kjcb", 1.0, t_Govov_ab, "iajb"); 
-
-            tblis::mult<double>(0.25,  t_Tab, "ijac", t_Tab, "ijbd", 1.0, t_Gvvvv_ab, "abcd"); 
-            tblis::mult<double>(0.25,  t_Tab, "ikab", t_Tab, "jlab", 1.0, t_Goooo_ab, "ijkl"); 
-            
-            tblis::mult<double>(-1.0, t_Tab, "ikca", t_Tab, "jkcb", 1.0, t_Goovv_ab_ex, "ijab");
-            tblis::mult<double>(-1.0, t_Tab, "kiac", t_Tab, "kjbc", 1.0, t_Goovv_ba_ex, "ijab");
         }
     }
-
     // =========================================================================
     //  TOPOLOGICAL SYMMETRIZATION OF TPDM FOR DF GRADIENT & Teff CALCULATION
     // =========================================================================
