@@ -971,8 +971,7 @@ void OMP3::build_generalized_fock() {
         };
         
         compute_gamma_res(t_T2t, t_Taa, 1.0); 
-        compute_gamma_res(t_L2t, t_Taa, 1.0);
-        compute_gamma_res(t_T2t, t_Laa, 1.0); 
+    
 
     } else {
         // --- UNRESTRICTED BLOCK ---
@@ -984,9 +983,7 @@ void OMP3::build_generalized_fock() {
         };
         
         compute_gamma_aa(t_Taa, t_Taa, 1.0);
-        compute_gamma_aa(t_Laa, t_Taa, 1.0);
-        compute_gamma_aa(t_Taa, t_Laa, 1.0);
-   
+    
         if (nb_ > 0 && vb_ > 0) {
             auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
             Eigen::Tensor<double, 4> dummy_ab_fock;
@@ -1032,8 +1029,6 @@ void OMP3::build_generalized_fock() {
             };
             
             compute_gamma_bb(t_Tbb, t_Tbb, 1.0); 
-            compute_gamma_bb(t_Lbb, t_Tbb, 1.0); 
-            compute_gamma_bb(t_Tbb, t_Lbb, 1.0); 
 
             auto compute_gamma_ab = [&](auto& t_Ta_L, auto& t_Tb_L, auto& t_Tab_L,
                                         auto& t_Ta_R, auto& t_Tb_R, auto& t_Tab_R, double scale) {
@@ -1050,8 +1045,6 @@ void OMP3::build_generalized_fock() {
             };
             
             compute_gamma_ab(t_Taa, t_Tbb, t_Tab, t_Taa, t_Tbb, t_Tab, 1.0);
-            compute_gamma_ab(t_Laa, t_Lbb, t_Lab, t_Taa, t_Tbb, t_Tab, 1.0); 
-            compute_gamma_ab(t_Taa, t_Tbb, t_Tab, t_Laa, t_Lbb, t_Lab, 1.0); 
         }
     }
 
