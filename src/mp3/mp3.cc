@@ -912,29 +912,33 @@ void OMP3::build_generalized_fock() {
         tblis::mult<double>(-0.5,  t_Taa, "ikac", t_Taa, "jkcb", 1.0, t_Govov_aa, "iajb");
         tblis::mult<double>(-0.5,  t_Taa, "ijab", t_Taa, "kjcb", 1.0, t_Goovv_aa, "ijab");
 
-        
         if (nb_ > 0 && vb_ > 0) {
+            // 1. DEKLARASI POINTER T2 LOKAL (MENGATASI UNDEFINED IDENTIFIER & SEGFAULT)
             auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
-            TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
-            TBLIS_VIEW_4D(t_Lab, L2_ab_, na_, nb_, va_, vb_); // <--- VIEW BARU
+            Eigen::Tensor<double, 4> dummy_ab(na_, nb_, va_, vb_);
+            if (!t2_ab_dense) {
+                dummy_ab.setZero();
+                t2_ab_dense = &dummy_ab;
+            }
 
-            // MP2
+            auto* t2_bb_dense = t2_bb_.get_block(0,0,0,0);
+            Eigen::Tensor<double, 4> dummy_bb(nb_, nb_, vb_, vb_);
+            if (!t2_bb_dense) {
+                dummy_bb.setZero();
+                t2_bb_dense = &dummy_bb;
+            }
+
+            // 2. PEMETAAN TBLIS
+            TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
+            TBLIS_VIEW_4D(t_Tbb, (*t2_bb_dense), nb_, nb_, vb_, vb_);
+
+            // MP2 Alpha-Beta
             tblis::mult<double>(-1.0, t_Tab, "ikac", t_Tab, "jkbc", 1.0, t_Govov_aa, "iajb");
             
             TBLIS_VIEW_4D(t_Goovv_bb, Gamma_oovv_bb, nb_, nb_, vb_, vb_);
             TBLIS_VIEW_4D(t_Goovv_ab_ex, Gamma_oovv_ab_ex, na_, na_, vb_, vb_);
             TBLIS_VIEW_4D(t_Goovv_ba_ex, Gamma_oovv_ba_ex, nb_, nb_, va_, va_);
             
-            auto* t2_bb_dense = t2_bb_.get_block(0,0,0,0);
-            Eigen::Tensor<double, 4> dummy_bb_fock1;
-            if (!t2_bb_dense && nb_ > 0 && vb_ > 0) {
-                dummy_bb_fock1 = Eigen::Tensor<double, 4>(nb_, nb_, vb_, vb_);
-                dummy_bb_fock1.setZero();
-                t2_bb_dense = &dummy_bb_fock1;
-            }
-            TBLIS_VIEW_4D(t_Tbb, (*t2_bb_dense), nb_, nb_, vb_, vb_);
-            TBLIS_VIEW_4D(t_Lbb, L2_bb_, nb_, nb_, vb_, vb_); // <--- VIEW BARU
-
             TBLIS_VIEW_4D(t_Gvvvv_bb, Gamma_vvvv_bb, vb_, vb_, vb_, vb_);
             TBLIS_VIEW_4D(t_Goooo_bb, Gamma_oooo_bb, nb_, nb_, nb_, nb_);
             TBLIS_VIEW_4D(t_Govov_bb, Gamma_ovov_bb, nb_, vb_, nb_, vb_);
@@ -959,7 +963,6 @@ void OMP3::build_generalized_fock() {
             
             tblis::mult<double>(-1.0, t_Tab, "ikca", t_Tab, "jkcb", 1.0, t_Goovv_ab_ex, "ijab");
             tblis::mult<double>(-1.0, t_Tab, "kiac", t_Tab, "kjbc", 1.0, t_Goovv_ba_ex, "ijab");
-
         }
     }
 
@@ -1017,15 +1020,21 @@ void OMP3::build_generalized_fock() {
     Eigen::Tensor<double, 4> Gvvvv_sym_b, Goooo_sym_b, Goovv_sym_b;
     Eigen::Tensor<double, 4> Gvvvv_sym_ab, Goooo_sym_ab, Goovv_sym_ab;
     Eigen::Tensor<double, 4> Goovv_ba_sym;
+    
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
-        auto* t2_bb_dense = t2_bb_.get_block(0,0,0,0);
-        Eigen::Tensor<double, 4> dummy_bb_fock2;
-        if (!t2_bb_dense) {
-            dummy_bb_fock2 = Eigen::Tensor<double, 4>(nb_, nb_, vb_, vb_);
-            dummy_bb_fock2.setZero();
-            t2_bb_dense = &dummy_bb_fock2;
-        }
         auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
+        Eigen::Tensor<double, 4> dummy_ab2(na_, nb_, va_, vb_);
+        if (!t2_ab_dense) {
+            dummy_ab2.setZero();
+            t2_ab_dense = &dummy_ab2;
+        }
+
+        auto* t2_bb_dense = t2_bb_.get_block(0,0,0,0);
+        Eigen::Tensor<double, 4> dummy_bb2(nb_, nb_, vb_, vb_);
+        if (!t2_bb_dense) {
+            dummy_bb2.setZero();
+            t2_bb_dense = &dummy_bb2;
+        }
 
         Gvvvv_sym_b = Eigen::Tensor<double, 4>(vb_, vb_, vb_, vb_); Gvvvv_sym_b.setZero();
         Goooo_sym_b = Eigen::Tensor<double, 4>(nb_, nb_, nb_, nb_); Goooo_sym_b.setZero();
