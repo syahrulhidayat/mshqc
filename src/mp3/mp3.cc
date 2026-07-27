@@ -958,11 +958,9 @@ void OMP3::build_generalized_fock() {
         TBLIS_VIEW_4D(t_L2t, L2_tilde, na_, na_, va_, va_); 
 
         auto compute_gamma_res = [&](auto& t_Tleft, auto& t_Tright, double scale) {
-            // FIX: Indeks VVVV harus ijcd & ijab. OOOO harus klab & ijab. Koefisien 2.0.
             tblis::mult<double>( 2.0*scale, t_Tleft, "ijcd", t_Tright, "ijab", 1.0, t_Gvvvv_aa, "abcd");
             tblis::mult<double>( 2.0*scale, t_Tleft, "klab", t_Tright, "ijab", 1.0, t_Goooo_aa, "ijkl");
             
-            // FIX: OVOV dan OOVV diubah ke skala 2.0
             tblis::mult<double>( 2.0*scale, t_Tleft, "ikac", t_Tright, "kjcb", 1.0, t_Govov_aa, "iajb"); 
             tblis::mult<double>( 2.0*scale, t_Tleft, "kjcb", t_Tright, "kica", 1.0, t_Govov_aa, "iajb"); 
             tblis::mult<double>(-1.0*scale, t_Tleft, "kjcb", t_Tright, "kiac", 1.0, t_Govov_aa, "iajb"); 
@@ -974,19 +972,24 @@ void OMP3::build_generalized_fock() {
             tblis::mult<double>(-2.0*scale, t_Tleft, "kiac", t_Tright, "kjbc", 1.0, t_Goovv_aa, "ijab");
         };
         
-        compute_gamma_res(t_T2t, t_Taa, 1.0);
+        // --- FIX: Evaluasi T1*T1 (MP2) + T1*T2 + T2*T1 (MP3 Cross Terms) ---
+        compute_gamma_res(t_T2t, t_Taa, 1.0); 
+        compute_gamma_res(t_L2t, t_Taa, 1.0); 
+        compute_gamma_res(t_T2t, t_Laa, 1.0); 
 
     } else {
        
         auto compute_gamma_aa = [&](auto& t_Tleft, auto& t_Tright, double scale) {
-        // FIX: Indeks VVVV & OOOO diperbaiki. Skala diubah ke 0.25 dan 0.5.
             tblis::mult<double>(0.25*scale, t_Tleft, "ijcd", t_Tright, "ijab", 1.0, t_Gvvvv_aa, "abcd");
             tblis::mult<double>(0.25*scale, t_Tleft, "klab", t_Tright, "ijab", 1.0, t_Goooo_aa, "ijkl");
             tblis::mult<double>(-0.5*scale, t_Tleft, "ikac", t_Tright, "jkcb", 1.0, t_Govov_aa, "iajb");
             tblis::mult<double>(-0.5*scale, t_Tleft, "ikac", t_Tright, "jkbc", 1.0, t_Goovv_aa, "ijab"); 
         };
         
+        // --- FIX: Evaluasi MP2 + MP3 (Alpha) ---
         compute_gamma_aa(t_Taa, t_Taa, 1.0);
+        compute_gamma_aa(t_Laa, t_Taa, 1.0);
+        compute_gamma_aa(t_Taa, t_Laa, 1.0);
     
         if (nb_ > 0 && vb_ > 0) {
             auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
@@ -1001,18 +1004,6 @@ void OMP3::build_generalized_fock() {
             
             TBLIS_VIEW_4D(t_Tbb, (*t2_bb_dense), nb_, nb_, vb_, vb_);
             TBLIS_VIEW_4D(t_Lbb, L2_bb_, nb_, nb_, vb_, vb_);
-
-            Eigen::Tensor<double, 4> Tbb_tot(nb_, nb_, vb_, vb_);
-            #pragma omp parallel for collapse(4) schedule(static)
-            for(int i=0; i<nb_; ++i) for(int j=0; j<nb_; ++j) for(int a=0; a<vb_; ++a) for(int b=0; b<vb_; ++b)
-                Tbb_tot(i,j,a,b) = (*t2_bb_dense)(i,j,a,b) + L2_bb_(i,j,a,b);
-            TBLIS_VIEW_4D(t_Tbb_tot, Tbb_tot, nb_, nb_, vb_, vb_);
-
-            Eigen::Tensor<double, 4> Tab_tot(na_, nb_, va_, vb_);
-            #pragma omp parallel for collapse(4) schedule(static)
-            for(int i=0; i<na_; ++i) for(int j=0; j<nb_; ++j) for(int a=0; a<va_; ++a) for(int b=0; b<vb_; ++b)
-                Tab_tot(i,j,a,b) = (*t2_ab_dense)(i,j,a,b) + L2_ab_(i,j,a,b);
-            TBLIS_VIEW_4D(t_Tab_tot, Tab_tot, na_, nb_, va_, vb_);
 
             TBLIS_VIEW_4D(t_Gvvvv_bb, Gamma_vvvv_bb, vb_, vb_, vb_, vb_);
             TBLIS_VIEW_4D(t_Goooo_bb, Gamma_oooo_bb, nb_, nb_, nb_, nb_);
@@ -1032,12 +1023,17 @@ void OMP3::build_generalized_fock() {
                 tblis::mult<double>(-0.5*scale, t_Tleft, "ikac", t_Tright, "jkbc", 1.0, t_Goovv_bb, "ijab");
             };
             
+            // --- FIX: Evaluasi MP2 + MP3 (Beta) ---
             compute_gamma_bb(t_Tbb, t_Tbb, 1.0); 
+            compute_gamma_bb(t_Lbb, t_Tbb, 1.0);
+            compute_gamma_bb(t_Tbb, t_Lbb, 1.0);
 
             auto compute_gamma_ab = [&](auto& t_Ta_L, auto& t_Tb_L, auto& t_Tab_L,
                                         auto& t_Ta_R, auto& t_Tb_R, auto& t_Tab_R, double scale) {
-                tblis::mult<double>(0.5*scale,  t_Tab_L, "ijcd", t_Tab_R, "ijab", 1.0, t_Gvvvv_ab, "abcd"); 
-                tblis::mult<double>(0.5*scale,  t_Tab_L, "klab", t_Tab_R, "ijab", 1.0, t_Goooo_ab, "ijkl"); 
+                
+                // --- FIX: Indeks VVVV dan OOOO diubah menjadi "acbd" dan "ikjl" mencegah Crash TBLIS pada O(N) Unrestricted Asimetris ---
+                tblis::mult<double>(0.5*scale,  t_Tab_L, "ijcd", t_Tab_R, "ijab", 1.0, t_Gvvvv_ab, "acbd"); 
+                tblis::mult<double>(0.5*scale,  t_Tab_L, "klab", t_Tab_R, "ijab", 1.0, t_Goooo_ab, "ikjl"); 
 
                 tblis::mult<double>(-1.0*scale, t_Tab_L, "ikca", t_Tab_R, "jkcb", 1.0, t_Goovv_ab_ex, "ijab"); 
                 tblis::mult<double>(-1.0*scale, t_Tab_L, "kiac", t_Tab_R, "kjbc", 1.0, t_Goovv_ba_ex, "ijab"); 
@@ -1048,7 +1044,10 @@ void OMP3::build_generalized_fock() {
                 tblis::mult<double>(-1.0*scale, t_Tab_L, "ikac", t_Tab_R, "jkbc", 1.0, t_Govov_aa, "iajb");
             };
             
+            // --- FIX: Evaluasi MP2 + MP3 (Alpha-Beta Cross Term) ---
             compute_gamma_ab(t_Taa, t_Tbb, t_Tab, t_Taa, t_Tbb, t_Tab, 1.0);
+            compute_gamma_ab(t_Laa, t_Lbb, t_Lab, t_Taa, t_Tbb, t_Tab, 1.0);
+            compute_gamma_ab(t_Taa, t_Tbb, t_Tab, t_Laa, t_Lbb, t_Lab, 1.0);
         }
     }
 
