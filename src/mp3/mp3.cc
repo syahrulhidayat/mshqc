@@ -1024,28 +1024,34 @@ void OMP3::build_generalized_fock() {
             TBLIS_VIEW_4D(t_Goovv_ab_ex, Gamma_oovv_ab_ex, na_, na_, vb_, vb_);
             TBLIS_VIEW_4D(t_Goovv_ba_ex, Gamma_oovv_ba_ex, nb_, nb_, va_, va_);
 
-            auto compute_gamma_bb = [&](auto& t_T, double scale) {
-                tblis::mult<double>(0.125*scale, t_T, "ijac", t_T, "ijbd", 1.0, t_Gvvvv_bb, "abcd");
-                tblis::mult<double>(0.125*scale, t_T, "ikab", t_T, "jlab", 1.0, t_Goooo_bb, "ijkl");
-                tblis::mult<double>(-0.5*scale,  t_T, "ikac", t_T, "jkcb", 1.0, t_Govov_bb, "iajb");
-                // FIX: Perbaikan yang sama diterapkan untuk Beta-Beta
-                tblis::mult<double>(-0.5*scale,  t_T, "ikac", t_T, "jkbc", 1.0, t_Goovv_bb, "ijab");
+            auto compute_gamma_bb = [&](auto& t_Tleft, auto& t_Tright, double scale) {
+                tblis::mult<double>(0.125*scale, t_Tleft, "ijac", t_Tright, "ijbd", 1.0, t_Gvvvv_bb, "abcd");
+                tblis::mult<double>(0.125*scale, t_Tleft, "ikab", t_Tright, "jlab", 1.0, t_Goooo_bb, "ijkl");
+                tblis::mult<double>(-0.5*scale,  t_Tleft, "ikac", t_Tright, "jkcb", 1.0, t_Govov_bb, "iajb");
+                tblis::mult<double>(-0.5*scale,  t_Tleft, "ikac", t_Tright, "jkbc", 1.0, t_Goovv_bb, "ijab");
             };
-            compute_gamma_bb(t_Tbb, 1.0);
+            
+            compute_gamma_bb(t_Tbb, t_Tbb, 1.0); 
+            compute_gamma_bb(t_Lbb, t_Tbb, 1.0); 
+            compute_gamma_bb(t_Tbb, t_Lbb, 1.0); 
 
-            auto compute_gamma_ab = [&](auto& t_Ta, auto& t_Tb, auto& t_Tab_mix, double scale) {
-                tblis::mult<double>(0.25*scale,  t_Tab_mix, "ijac", t_Tab_mix, "ijbd", 1.0, t_Gvvvv_ab, "abcd"); 
-                tblis::mult<double>(0.25*scale,  t_Tab_mix, "ikab", t_Tab_mix, "jlab", 1.0, t_Goooo_ab, "ijkl"); 
+            auto compute_gamma_ab = [&](auto& t_Ta_L, auto& t_Tb_L, auto& t_Tab_L,
+                                        auto& t_Ta_R, auto& t_Tb_R, auto& t_Tab_R, double scale) {
+                tblis::mult<double>(0.25*scale,  t_Tab_L, "ijac", t_Tab_R, "ijbd", 1.0, t_Gvvvv_ab, "abcd"); 
+                tblis::mult<double>(0.25*scale,  t_Tab_L, "ikab", t_Tab_R, "jlab", 1.0, t_Goooo_ab, "ijkl"); 
 
-                tblis::mult<double>(-1.0*scale, t_Tab_mix, "ikca", t_Tab_mix, "jkcb", 1.0, t_Goovv_ab_ex, "ijab"); 
-                tblis::mult<double>(-1.0*scale, t_Tab_mix, "kiac", t_Tab_mix, "kjbc", 1.0, t_Goovv_ba_ex, "ijab"); 
+                tblis::mult<double>(-1.0*scale, t_Tab_L, "ikca", t_Tab_R, "jkcb", 1.0, t_Goovv_ab_ex, "ijab"); 
+                tblis::mult<double>(-1.0*scale, t_Tab_L, "kiac", t_Tab_R, "kjbc", 1.0, t_Goovv_ba_ex, "ijab"); 
                 
-                tblis::mult<double>(-1.0*scale,  t_Tab_mix, "kica", t_Tab_mix, "kjcb", 1.0, t_Govov_bb, "iajb"); 
-                tblis::mult<double>(-1.0*scale,  t_Ta,      "ikac", t_Tab_mix, "kjcb", 1.0, t_Govov_ab, "iajb"); 
-                tblis::mult<double>(-1.0*scale,  t_Tab_mix, "ikac", t_Tb,      "kjcb", 1.0, t_Govov_ab, "iajb");
-                tblis::mult<double>(-1.0*scale,  t_Tab_mix, "ikac", t_Tab_mix, "jkbc", 1.0, t_Govov_aa, "iajb");
+                tblis::mult<double>(-1.0*scale,  t_Tab_L, "kica", t_Tab_R, "kjcb", 1.0, t_Govov_bb, "iajb"); 
+                tblis::mult<double>(-1.0*scale,  t_Ta_L,  "ikac", t_Tab_R, "kjcb", 1.0, t_Govov_ab, "iajb"); 
+                tblis::mult<double>(-1.0*scale,  t_Tab_L, "ikac", t_Tb_R,  "kjcb", 1.0, t_Govov_ab, "iajb");
+                tblis::mult<double>(-1.0*scale,  t_Tab_L, "ikac", t_Tab_R, "jkbc", 1.0, t_Govov_aa, "iajb");
             };
-            compute_gamma_ab(t_Taa, t_Tbb, t_Tab, 1.0);
+            
+            compute_gamma_ab(t_Taa, t_Tbb, t_Tab, t_Taa, t_Tbb, t_Tab, 1.0);
+            compute_gamma_ab(t_Laa, t_Lbb, t_Lab, t_Taa, t_Tbb, t_Tab, 1.0); 
+            compute_gamma_ab(t_Taa, t_Tbb, t_Tab, t_Laa, t_Lbb, t_Lab, 1.0); 
         }
     }
 
