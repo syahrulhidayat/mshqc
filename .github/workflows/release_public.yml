@@ -143,6 +143,6 @@ jobs:
           echo "Tidak ada perubahan biner baru untuk disimpan di repo privat."
         else
           git commit -m "CI-Bot: Update biner terkompilasi (.whl) [skip ci]"
-          git push origin mshqc-1.0.0
+          git push origin debug
         fi
 
