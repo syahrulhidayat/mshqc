@@ -931,10 +931,18 @@ void OMP3::build_generalized_fock() {
         }
     }
 
+    // DEFINISI TBLIS YANG SEBELUMNYA TIDAK SENGAJA TERHAPUS
     TBLIS_VIEW_4D(t_Taa, T2_aa_ijab, na_, na_, va_, va_);
+    TBLIS_VIEW_4D(t_Laa, L2_aa_, na_, na_, va_, va_); 
+
+    TBLIS_VIEW_4D(t_Gvvvv_aa, Gamma_vvvv_aa, va_, va_, va_, va_);
+    TBLIS_VIEW_4D(t_Goooo_aa, Gamma_oooo_aa, na_, na_, na_, na_);
+    TBLIS_VIEW_4D(t_Govov_aa, Gamma_ovov_aa, na_, va_, na_, va_);
+    TBLIS_VIEW_4D(t_Goovv_aa, Gamma_oovv_aa, na_, na_, va_, va_);
 
     if (is_restricted) {
         Eigen::Tensor<double, 4> T2_tilde(na_, na_, va_, va_);
+        Eigen::Tensor<double, 4> L2_tilde(na_, na_, va_, va_); 
         
         #pragma omp parallel for collapse(4) schedule(static)
         for(int i=0; i<na_; ++i) {
@@ -942,12 +950,14 @@ void OMP3::build_generalized_fock() {
                 for(int a=0; a<va_; ++a) {
                     for(int b=0; b<va_; ++b) {
                         T2_tilde(i,j,a,b) = 2.0 * T2_aa_ijab(i,j,a,b) - T2_aa_ijab(i,j,b,a);
+                        L2_tilde(i,j,a,b) = 2.0 * L2_aa_(i,j,a,b) - L2_aa_(i,j,b,a); 
                     }
                 }
             }
         }
                     
         TBLIS_VIEW_4D(t_T2t, T2_tilde, na_, na_, va_, va_);
+        TBLIS_VIEW_4D(t_L2t, L2_tilde, na_, na_, va_, va_);
 
         auto compute_gamma_res = [&](auto& t_Tleft, auto& t_Tright, double scale) {
             tblis::mult<double>( 2.0*scale, t_Tleft, "ijcd", t_Tright, "ijab", 1.0, t_Gvvvv_aa, "abcd");
@@ -988,7 +998,21 @@ void OMP3::build_generalized_fock() {
                 t2_ab_dense = &dummy_ab_fock;
             }
             TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
+            TBLIS_VIEW_4D(t_Lab, L2_ab_, na_, nb_, va_, vb_);
+            
             TBLIS_VIEW_4D(t_Tbb, (*t2_bb_dense), nb_, nb_, vb_, vb_);
+            TBLIS_VIEW_4D(t_Lbb, L2_bb_, nb_, nb_, vb_, vb_);
+
+            TBLIS_VIEW_4D(t_Gvvvv_bb, Gamma_vvvv_bb, vb_, vb_, vb_, vb_);
+            TBLIS_VIEW_4D(t_Goooo_bb, Gamma_oooo_bb, nb_, nb_, nb_, nb_);
+            TBLIS_VIEW_4D(t_Govov_bb, Gamma_ovov_bb, nb_, vb_, nb_, vb_);
+            TBLIS_VIEW_4D(t_Goovv_bb, Gamma_oovv_bb, nb_, nb_, vb_, vb_);
+            
+            TBLIS_VIEW_4D(t_Gvvvv_ab, Gamma_vvvv_ab, va_, va_, vb_, vb_);
+            TBLIS_VIEW_4D(t_Goooo_ab, Gamma_oooo_ab, na_, na_, nb_, nb_);
+            TBLIS_VIEW_4D(t_Govov_ab, Gamma_ovov_ab, na_, va_, nb_, vb_);
+            TBLIS_VIEW_4D(t_Goovv_ab_ex, Gamma_oovv_ab_ex, na_, na_, vb_, vb_);
+            TBLIS_VIEW_4D(t_Goovv_ba_ex, Gamma_oovv_ba_ex, nb_, nb_, va_, va_);
 
             auto compute_gamma_bb = [&](auto& t_Tleft, auto& t_Tright, double scale) {
                 tblis::mult<double>(0.25*scale, t_Tleft, "ijcd", t_Tright, "ijab", 1.0, t_Gvvvv_bb, "abcd");
@@ -1058,10 +1082,11 @@ void OMP3::build_generalized_fock() {
                     if (is_restricted) {
                         double t1_ex = T2_aa_ijab(i, j, b, a);
                         double t2_ex = L2_aa_(i, j, b, a); 
-                        // FIX: Amplitudo efektif untuk OOVV 2-PDM dievaluasi PENUH (1.0) untuk T2!
-                        Teff_aa(i*va_+a, j*va_+b) = 2.0 * (t1_dir + t2_dir) - 1.0 * (t1_ex + t2_ex);
+                        // FIX: Efektif amplitudo OOMP3 harus berskala T1 + 0.5*T2 !
+                        Teff_aa(i*va_+a, j*va_+b) = 2.0 * (t1_dir + 0.5 * t2_dir) - 1.0 * (t1_ex + 0.5 * t2_ex);
                     } else {
-                        Teff_aa(i*va_+a, j*va_+b) = 2.0 * (t1_dir + t2_dir); 
+                        // FIX: Efektif amplitudo OOMP3 harus berskala T1 + 0.5*T2 !
+                        Teff_aa(i*va_+a, j*va_+b) = 2.0 * (t1_dir + 0.5 * t2_dir); 
                     }
                 }
             }
@@ -1074,7 +1099,6 @@ void OMP3::build_generalized_fock() {
     Eigen::Tensor<double, 4> Goovv_ba_sym;
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
        
-
         Gvvvv_sym_b = Eigen::Tensor<double, 4>(vb_, vb_, vb_, vb_); Gvvvv_sym_b.setZero();
         Goooo_sym_b = Eigen::Tensor<double, 4>(nb_, nb_, nb_, nb_); Goooo_sym_b.setZero();
         Goovv_sym_b = Eigen::Tensor<double, 4>(nb_, nb_, vb_, vb_); Goovv_sym_b.setZero();
@@ -1143,8 +1167,8 @@ void OMP3::build_generalized_fock() {
                     for (int b = 0; b < vb_; ++b) {
                         double t1_dir = (*t2_ab_dense)(i, j, a, b);
                         double t2_dir = L2_ab_(i, j, a, b);
-                        // FIX: Amplitudo efektif dievaluasi PENUH
-                        Teff_ab(i*va_+a, j*vb_+b) = 2.0 * (t1_dir + t2_dir);
+                        // FIX: Efektif amplitudo OOMP3 harus berskala T1 + 0.5*T2 !
+                        Teff_ab(i*va_+a, j*vb_+b) = 2.0 * (t1_dir + 0.5 * t2_dir);
                     }
                 }
             }
@@ -1157,8 +1181,8 @@ void OMP3::build_generalized_fock() {
                     for (int b = 0; b < vb_; ++b) {
                         double t1_dir = (*t2_bb_dense)(i, j, a, b);
                         double t2_dir = L2_bb_(i, j, a, b);
-                        // FIX: Amplitudo efektif dievaluasi PENUH
-                        Teff_bb(i*vb_+a, j*vb_+b) = 2.0 * (t1_dir + t2_dir);
+                        // FIX: Efektif amplitudo OOMP3 harus berskala T1 + 0.5*T2 !
+                        Teff_bb(i*vb_+a, j*vb_+b) = 2.0 * (t1_dir + 0.5 * t2_dir);
                     }
                 }
             }
