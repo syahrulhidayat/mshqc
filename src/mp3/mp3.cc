@@ -684,7 +684,7 @@ void OMP3::build_opdm_alpha() {
         TBLIS_VIEW_2D(t_Goo, G_oo_alpha_.data(), na_, na_);
         TBLIS_VIEW_2D(t_Gvv, G_vv_alpha_.data(), va_, va_);
 
-        // FIX: Scaling eksak 1:1 antara T1*T1, T1*T2, dan T2*T1 untuk 1-PDM
+        // FIX: Scaling eksak 1:1 antara T1*T1 (MP2) dan T1*T2 (MP3) untuk 1-PDM
         tblis::mult<double>(-1.0, t_T2, "ikab", t_T2t, "jkab", 0.0, t_Goo, "ij");
         tblis::mult<double>(-1.0, t_T2, "ikab", t_L2t, "jkab", 1.0, t_Goo, "ij"); 
         tblis::mult<double>(-1.0, t_L2, "ikab", t_T2t, "jkab", 1.0, t_Goo, "ij");  
@@ -931,8 +931,15 @@ void OMP3::build_generalized_fock() {
         }
     }
 
+    // DEFINISI GLOBAL TBLIS VIEW (Aman dari Identifier Error)
     TBLIS_VIEW_4D(t_Taa, T2_aa_ijab, na_, na_, va_, va_);
-    
+    TBLIS_VIEW_4D(t_Laa, L2_aa_, na_, na_, va_, va_); 
+
+    TBLIS_VIEW_4D(t_Gvvvv_aa, Gamma_vvvv_aa, va_, va_, va_, va_);
+    TBLIS_VIEW_4D(t_Goooo_aa, Gamma_oooo_aa, na_, na_, na_, na_);
+    TBLIS_VIEW_4D(t_Govov_aa, Gamma_ovov_aa, na_, va_, na_, va_);
+    TBLIS_VIEW_4D(t_Goovv_aa, Gamma_oovv_aa, na_, na_, va_, va_);
+
     if (is_restricted) {
         Eigen::Tensor<double, 4> T2_tilde(na_, na_, va_, va_);
         
@@ -950,20 +957,18 @@ void OMP3::build_generalized_fock() {
         TBLIS_VIEW_4D(t_T2t, T2_tilde, na_, na_, va_, va_);
 
         auto compute_gamma_res = [&](auto& t_Tleft, auto& t_Tright, double scale) {
-            // Skala 2.0 didapat dari (4.0 * 0.5) untuk Restricted
-            tblis::mult<double>( 2.0*scale, t_Tleft, "ijcd", t_Tright, "ijab", 1.0, t_Gvvvv_aa, "abcd");
-            tblis::mult<double>( 2.0*scale, t_Tleft, "klab", t_Tright, "ijab", 1.0, t_Goooo_aa, "ijkl");
+            tblis::mult<double>( 1.0*scale, t_Tleft, "ijcd", t_Tright, "ijab", 1.0, t_Gvvvv_aa, "abcd");
+            tblis::mult<double>( 1.0*scale, t_Tleft, "klab", t_Tright, "ijab", 1.0, t_Goooo_aa, "ijkl");
             
-            // OVOV dan OOVV di-skalakan dengan -2.0 dan 1.0 untuk memastikan presisi spin-summed MP3
-            tblis::mult<double>(-2.0*scale, t_Tleft, "ikac", t_Tright, "kjcb", 1.0, t_Govov_aa, "iajb"); 
-            tblis::mult<double>(-2.0*scale, t_Tleft, "kjcb", t_Tright, "kica", 1.0, t_Govov_aa, "iajb"); 
-            tblis::mult<double>( 1.0*scale, t_Tleft, "kjcb", t_Tright, "kiac", 1.0, t_Govov_aa, "iajb"); 
-            tblis::mult<double>( 1.0*scale, t_Tleft, "ikac", t_Tright, "kjbc", 1.0, t_Govov_aa, "iajb"); 
+            tblis::mult<double>( 2.0*scale, t_Tleft, "ikac", t_Tright, "kjcb", 1.0, t_Govov_aa, "iajb"); 
+            tblis::mult<double>( 2.0*scale, t_Tleft, "kjcb", t_Tright, "kica", 1.0, t_Govov_aa, "iajb"); 
+            tblis::mult<double>(-1.0*scale, t_Tleft, "kjcb", t_Tright, "kiac", 1.0, t_Govov_aa, "iajb"); 
+            tblis::mult<double>(-1.0*scale, t_Tleft, "ikac", t_Tright, "kjbc", 1.0, t_Govov_aa, "iajb"); 
             
-            tblis::mult<double>(-2.0*scale, t_Tleft, "ikac", t_Tright, "jkcb", 1.0, t_Goovv_aa, "ijab");
-            tblis::mult<double>(-2.0*scale, t_Tleft, "kjcb", t_Tright, "ikca", 1.0, t_Goovv_aa, "ijab");
-            tblis::mult<double>( 1.0*scale, t_Tleft, "ikcb", t_Tright, "jkac", 1.0, t_Goovv_aa, "ijab");
-            tblis::mult<double>( 1.0*scale, t_Tleft, "kiac", t_Tright, "jkbc", 1.0, t_Goovv_aa, "ijab");
+            tblis::mult<double>(-1.0*scale, t_Tleft, "ikac", t_Tright, "kjcb", 1.0, t_Goovv_aa, "ijab");
+            tblis::mult<double>(-1.0*scale, t_Tleft, "kjcb", t_Tright, "kica", 1.0, t_Goovv_aa, "ijab");
+            tblis::mult<double>(-1.0*scale, t_Tleft, "ikcb", t_Tright, "kjac", 1.0, t_Goovv_aa, "ijab");
+            tblis::mult<double>(-1.0*scale, t_Tleft, "kiac", t_Tright, "kjbc", 1.0, t_Goovv_aa, "ijab");
         };
         
         compute_gamma_res(t_T2t, t_Taa, 1.0); 
@@ -971,10 +976,10 @@ void OMP3::build_generalized_fock() {
     } else {
        
         auto compute_gamma_aa = [&](auto& t_Tleft, auto& t_Tright, double scale) {
-            tblis::mult<double>( 0.5*scale, t_Tleft, "ijcd", t_Tright, "ijab", 1.0, t_Gvvvv_aa, "abcd");
-            tblis::mult<double>( 0.5*scale, t_Tleft, "klab", t_Tright, "ijab", 1.0, t_Goooo_aa, "ijkl");
-            tblis::mult<double>(-1.0*scale, t_Tleft, "ikac", t_Tright, "jkcb", 1.0, t_Govov_aa, "iajb");
-            tblis::mult<double>(-1.0*scale, t_Tleft, "ikac", t_Tright, "jkbc", 1.0, t_Goovv_aa, "ijab"); 
+            tblis::mult<double>( 0.25*scale, t_Tleft, "ijcd", t_Tright, "ijab", 1.0, t_Gvvvv_aa, "abcd");
+            tblis::mult<double>( 0.25*scale, t_Tleft, "klab", t_Tright, "ijab", 1.0, t_Goooo_aa, "ijkl");
+            tblis::mult<double>( 0.25*scale, t_Tleft, "ikac", t_Tright, "jkbc", 1.0, t_Govov_aa, "iajb");
+            tblis::mult<double>(-0.25*scale, t_Tleft, "ikac", t_Tright, "jkcb", 1.0, t_Goovv_aa, "ijab"); 
         };
         
         compute_gamma_aa(t_Taa, t_Taa, 1.0);
@@ -1002,10 +1007,10 @@ void OMP3::build_generalized_fock() {
             TBLIS_VIEW_4D(t_Goovv_ba_ex, Gamma_oovv_ba_ex, nb_, nb_, va_, va_);
 
             auto compute_gamma_bb = [&](auto& t_Tleft, auto& t_Tright, double scale) {
-                tblis::mult<double>( 0.5*scale, t_Tleft, "ijcd", t_Tright, "ijab", 1.0, t_Gvvvv_bb, "abcd");
-                tblis::mult<double>( 0.5*scale, t_Tleft, "klab", t_Tright, "ijab", 1.0, t_Goooo_bb, "ijkl");
-                tblis::mult<double>(-1.0*scale, t_Tleft, "ikac", t_Tright, "jkcb", 1.0, t_Govov_bb, "iajb");
-                tblis::mult<double>(-1.0*scale, t_Tleft, "ikac", t_Tright, "jkbc", 1.0, t_Goovv_bb, "ijab");
+                tblis::mult<double>( 0.25*scale, t_Tleft, "ijcd", t_Tright, "ijab", 1.0, t_Gvvvv_bb, "abcd");
+                tblis::mult<double>( 0.25*scale, t_Tleft, "klab", t_Tright, "ijab", 1.0, t_Goooo_bb, "ijkl");
+                tblis::mult<double>( 0.25*scale, t_Tleft, "ikac", t_Tright, "jkbc", 1.0, t_Govov_bb, "iajb");
+                tblis::mult<double>(-0.25*scale, t_Tleft, "ikac", t_Tright, "jkcb", 1.0, t_Goovv_bb, "ijab");
             };
             
             compute_gamma_bb(t_Tbb, t_Tbb, 1.0); 
@@ -1016,13 +1021,13 @@ void OMP3::build_generalized_fock() {
                 tblis::mult<double>( 1.0*scale, t_Tab_L, "ijcd", t_Tab_R, "ijab", 1.0, t_Gvvvv_ab, "abcd"); 
                 tblis::mult<double>( 1.0*scale, t_Tab_L, "klab", t_Tab_R, "ijab", 1.0, t_Goooo_ab, "ijkl"); 
 
-                tblis::mult<double>(-1.0*scale, t_Tab_L, "ikca", t_Tab_R, "jkcb", 1.0, t_Goovv_ab_ex, "ijab"); 
+                tblis::mult<double>(-1.0*scale, t_Tab_L, "ikcb", t_Tab_R, "jkac", 1.0, t_Goovv_ab_ex, "ijab"); 
                 tblis::mult<double>(-1.0*scale, t_Tab_L, "kiac", t_Tab_R, "kjbc", 1.0, t_Goovv_ba_ex, "ijab"); 
                 
-                tblis::mult<double>(-1.0*scale, t_Tab_L, "kica", t_Tab_R, "kjcb", 1.0, t_Govov_bb, "iajb"); 
-                tblis::mult<double>(-1.0*scale, t_Ta_L,  "ikac", t_Tab_R, "kjcb", 1.0, t_Govov_ab, "iajb"); 
-                tblis::mult<double>(-1.0*scale, t_Tab_L, "ikac", t_Tb_R,  "kjcb", 1.0, t_Govov_ab, "iajb");
-                tblis::mult<double>(-1.0*scale, t_Tab_L, "ikac", t_Tab_R, "jkbc", 1.0, t_Govov_aa, "iajb");
+                tblis::mult<double>( 1.0*scale, t_Tab_L, "kjcb", t_Tab_R, "kiac", 1.0, t_Govov_bb, "iajb"); 
+                tblis::mult<double>( 1.0*scale, t_Ta_L,  "kiac", t_Tab_R, "kjcb", 1.0, t_Govov_ab, "iajb"); 
+                tblis::mult<double>( 1.0*scale, t_Tab_L, "ikac", t_Tb_R,  "jkbc", 1.0, t_Govov_ab, "iajb");
+                tblis::mult<double>( 1.0*scale, t_Tab_L, "ikac", t_Tab_R, "jkbc", 1.0, t_Govov_aa, "iajb");
             };
             
             compute_gamma_ab(t_Taa, t_Tbb, t_Tab, t_Taa, t_Tbb, t_Tab, 1.0);
