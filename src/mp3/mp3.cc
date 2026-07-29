@@ -684,7 +684,7 @@ void OMP3::build_opdm_alpha() {
         TBLIS_VIEW_2D(t_Goo, G_oo_alpha_.data(), na_, na_);
         TBLIS_VIEW_2D(t_Gvv, G_vv_alpha_.data(), va_, va_);
 
-        // FIX: Scaling eksak 1:1 antara T1*T1 (MP2) dan T1*T2 (MP3) untuk 1-PDM
+        // FIX: Skala eksak 1.0 untuk MP3 Cross-terms (T1*L2) pada 1-PDM
         tblis::mult<double>(-1.0, t_T2, "ikab", t_T2t, "jkab", 0.0, t_Goo, "ij");
         tblis::mult<double>(-1.0, t_T2, "ikab", t_L2t, "jkab", 1.0, t_Goo, "ij"); 
         tblis::mult<double>(-1.0, t_L2, "ikab", t_T2t, "jkab", 1.0, t_Goo, "ij");  
@@ -931,9 +931,10 @@ void OMP3::build_generalized_fock() {
         }
     }
 
-    // DEFINISI GLOBAL TBLIS VIEW (Aman dari Identifier Error)
+    // =========================================================================
+    // INI ADALAH DEKLARASI TBLIS VIEW YANG SEBELUMNYA HILANG
+    // =========================================================================
     TBLIS_VIEW_4D(t_Taa, T2_aa_ijab, na_, na_, va_, va_);
-    TBLIS_VIEW_4D(t_Laa, L2_aa_, na_, na_, va_, va_); 
 
     TBLIS_VIEW_4D(t_Gvvvv_aa, Gamma_vvvv_aa, va_, va_, va_, va_);
     TBLIS_VIEW_4D(t_Goooo_aa, Gamma_oooo_aa, na_, na_, na_, na_);
@@ -971,6 +972,7 @@ void OMP3::build_generalized_fock() {
             tblis::mult<double>(-1.0*scale, t_Tleft, "kiac", t_Tright, "kjbc", 1.0, t_Goovv_aa, "ijab");
         };
         
+        // FIX: Evaluasi eksklusif hanya untuk T1*T1 (MP3 explicit V-derivatives)
         compute_gamma_res(t_T2t, t_Taa, 1.0); 
 
     } else {
@@ -982,16 +984,10 @@ void OMP3::build_generalized_fock() {
             tblis::mult<double>(-0.25*scale, t_Tleft, "ikac", t_Tright, "jkcb", 1.0, t_Goovv_aa, "ijab"); 
         };
         
+        // FIX: Evaluasi eksklusif hanya untuk T1*T1
         compute_gamma_aa(t_Taa, t_Taa, 1.0);
     
         if (nb_ > 0 && vb_ > 0) {
-            auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
-            Eigen::Tensor<double, 4> dummy_ab_fock;
-            if (!t2_ab_dense) {
-                dummy_ab_fock = Eigen::Tensor<double, 4>(na_, nb_, va_, vb_);
-                dummy_ab_fock.setZero();
-                t2_ab_dense = &dummy_ab_fock;
-            }
             TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
             TBLIS_VIEW_4D(t_Tbb, (*t2_bb_dense), nb_, nb_, vb_, vb_);
 
