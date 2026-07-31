@@ -1332,14 +1332,24 @@ void OMP3::build_generalized_fock() {
         tblis::mult<double>(-1.0, t_Xb, "ajP", t_Boo_b, "jiP", 1.0, t_Zb, "ai");
     }
 
-    F_gen_a_.block(na_, 0, va_, na_) += Z_mat_a;
-    F_gen_a_.block(0, na_, na_, va_) += Z_mat_a.transpose();
-    
-    if (!is_restricted && nb_ > 0 && vb_ > 0) {
-        F_gen_b_.block(nb_, 0, vb_, nb_) += Z_mat_b;
-        F_gen_b_.block(0, nb_, nb_, vb_) += Z_mat_b.transpose();
-    } else if (is_restricted) {
-        F_gen_b_ = F_gen_a_; 
+    F_gen_a_ = F_HF_mo_a + G_gamma_mo_a;
+    if (na_ > 0 && va_ > 0) {
+        Eigen::MatrixXd F_HF_vo_a = F_HF_mo_a.block(na_, 0, va_, na_);
+        Eigen::MatrixXd L_sep_a = G_vv_alpha_ * F_HF_vo_a - F_HF_vo_a * G_oo_alpha_;
+        F_gen_a_.block(na_, 0, va_, na_) += L_sep_a;
+        F_gen_a_.block(0, na_, na_, va_) += L_sep_a.transpose();
+
+        F_gen_a_.block(na_, 0, va_, na_) += Z_mat_a;
+        F_gen_a_.block(0, na_, na_, va_) += Z_mat_a.transpose();
+
+        // --- TAMBAHAN SENSOR DEBUGGING KOMPONEN ---
+        if (omp_get_thread_num() == 0) {
+            std::cout << "\n  [DEBUG KOMPONEN MATRIKS FOCK OMP3]\n";
+            std::cout << "  Norm G_gamma (1-RDM)   : " << G_gamma_mo_a.block(na_, 0, va_, na_).norm() << "\n";
+            std::cout << "  Norm L_sep (Separable) : " << L_sep_a.norm() << "\n";
+            std::cout << "  Norm Z_mat (2-RDM)     : " << Z_mat_a.norm() << "\n";
+        }
+        // ------------------------------------------
     }
 }
 void OMP3::build_hessian_diagonal(Eigen::VectorXd& diag_H, double grad_norm) {
