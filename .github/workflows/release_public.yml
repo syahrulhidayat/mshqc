@@ -2,7 +2,7 @@ name: Compile and Release Wheel to Public Repoo
 
 on:
   push:
-    branches: [ "mshqc-1.0.0" ]
+    branches: [ "debug2" ]
 
 jobs:
   build-and-deploy:
