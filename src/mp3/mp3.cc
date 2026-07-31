@@ -958,30 +958,33 @@ void OMP3::build_generalized_fock() {
         TBLIS_VIEW_4D(t_T2t, T2_tilde, na_, na_, va_, va_);
 
         auto compute_gamma_res = [&](auto& t_Tleft, auto& t_Tright, double scale) {
-            tblis::mult<double>( 1.0*scale, t_Tleft, "ijcd", t_Tright, "ijab", 1.0, t_Gvvvv_aa, "abcd");
-            tblis::mult<double>( 1.0*scale, t_Tleft, "klab", t_Tright, "ijab", 1.0, t_Goooo_aa, "ijkl");
+            // Transposisi indeks (ac|bd) untuk DF Vvvvv dan Voooo
+            tblis::mult<double>( 1.0*scale, t_Tleft, "ijac", t_Tright, "ijbd", 1.0, t_Gvvvv_aa, "abcd");
+            tblis::mult<double>( 1.0*scale, t_Tleft, "ikab", t_Tright, "jlab", 1.0, t_Goooo_aa, "ijkl");
             
-            tblis::mult<double>( 2.0*scale, t_Tleft, "ikac", t_Tright, "kjcb", 1.0, t_Govov_aa, "iajb"); 
+            // Govov_aa (Dimensi: na, va, na, va)
+            tblis::mult<double>( 2.0*scale, t_Tleft, "ikac", t_Tright, "jkbc", 1.0, t_Govov_aa, "iajb"); 
             tblis::mult<double>( 2.0*scale, t_Tleft, "kjcb", t_Tright, "kica", 1.0, t_Govov_aa, "iajb"); 
             tblis::mult<double>(-1.0*scale, t_Tleft, "kjcb", t_Tright, "kiac", 1.0, t_Govov_aa, "iajb"); 
-            tblis::mult<double>(-1.0*scale, t_Tleft, "ikac", t_Tright, "kjbc", 1.0, t_Govov_aa, "iajb"); 
+            tblis::mult<double>(-1.0*scale, t_Tleft, "ikac", t_Tright, "jkcb", 1.0, t_Govov_aa, "iajb"); 
             
-            tblis::mult<double>(-1.0*scale, t_Tleft, "ikac", t_Tright, "kjcb", 1.0, t_Goovv_aa, "ijab");
+            // Goovv_aa (Dimensi: na, na, va, va)
+            tblis::mult<double>(-1.0*scale, t_Tleft, "ikac", t_Tright, "jkbc", 1.0, t_Goovv_aa, "ijab");
             tblis::mult<double>(-1.0*scale, t_Tleft, "kjcb", t_Tright, "kica", 1.0, t_Goovv_aa, "ijab");
-            tblis::mult<double>(-1.0*scale, t_Tleft, "ikcb", t_Tright, "kjac", 1.0, t_Goovv_aa, "ijab");
-            tblis::mult<double>(-1.0*scale, t_Tleft, "kiac", t_Tright, "kjbc", 1.0, t_Goovv_aa, "ijab");
+            tblis::mult<double>(-1.0*scale, t_Tleft, "ikcb", t_Tright, "jkca", 1.0, t_Goovv_aa, "ijab");
+            tblis::mult<double>(-1.0*scale, t_Tleft, "kicb", t_Tright, "kjac", 1.0, t_Goovv_aa, "ijab");
         };
         
-        // FIX: Evaluasi eksklusif hanya untuk T1*T1 (MP3 explicit V-derivatives)
+        // FIX: Evaluasi eksklusif hanya untuk auto compute_gamma_aa = [&](auto& t_Tleft, auto& t_Tright, double scale) {T1*T1 (MP3 explicit V-derivatives)
         compute_gamma_res(t_T2t, t_Taa, 1.0); 
 
     } else {
        
         auto compute_gamma_aa = [&](auto& t_Tleft, auto& t_Tright, double scale) {
-            tblis::mult<double>( 0.25*scale, t_Tleft, "ijcd", t_Tright, "ijab", 1.0, t_Gvvvv_aa, "abcd");
-            tblis::mult<double>( 0.25*scale, t_Tleft, "klab", t_Tright, "ijab", 1.0, t_Goooo_aa, "ijkl");
+            tblis::mult<double>( 0.25*scale, t_Tleft, "ijac", t_Tright, "ijbd", 1.0, t_Gvvvv_aa, "abcd");
+            tblis::mult<double>( 0.25*scale, t_Tleft, "ikab", t_Tright, "jlab", 1.0, t_Goooo_aa, "ijkl");
             tblis::mult<double>( 0.25*scale, t_Tleft, "ikac", t_Tright, "jkbc", 1.0, t_Govov_aa, "iajb");
-            tblis::mult<double>(-0.25*scale, t_Tleft, "ikac", t_Tright, "jkcb", 1.0, t_Goovv_aa, "ijab"); 
+            tblis::mult<double>(-0.25*scale, t_Tleft, "ikac", t_Tright, "jkbc", 1.0, t_Goovv_aa, "ijab"); 
         };
         
         // FIX: Evaluasi eksklusif hanya untuk T1*T1
@@ -1003,29 +1006,34 @@ void OMP3::build_generalized_fock() {
             TBLIS_VIEW_4D(t_Goovv_ba_ex, Gamma_oovv_ba_ex, nb_, nb_, va_, va_);
 
             auto compute_gamma_bb = [&](auto& t_Tleft, auto& t_Tright, double scale) {
-                tblis::mult<double>( 0.25*scale, t_Tleft, "ijcd", t_Tright, "ijab", 1.0, t_Gvvvv_bb, "abcd");
-                tblis::mult<double>( 0.25*scale, t_Tleft, "klab", t_Tright, "ijab", 1.0, t_Goooo_bb, "ijkl");
+                tblis::mult<double>( 0.25*scale, t_Tleft, "ijac", t_Tright, "ijbd", 1.0, t_Gvvvv_bb, "abcd");
+                tblis::mult<double>( 0.25*scale, t_Tleft, "ikab", t_Tright, "jlab", 1.0, t_Goooo_bb, "ijkl");
                 tblis::mult<double>( 0.25*scale, t_Tleft, "ikac", t_Tright, "jkbc", 1.0, t_Govov_bb, "iajb");
-                tblis::mult<double>(-0.25*scale, t_Tleft, "ikac", t_Tright, "jkcb", 1.0, t_Goovv_bb, "ijab");
+                tblis::mult<double>(-0.25*scale, t_Tleft, "ikac", t_Tright, "jkbc", 1.0, t_Goovv_bb, "ijab");
             };
-            
+                
             compute_gamma_bb(t_Tbb, t_Tbb, 1.0); 
 
             auto compute_gamma_ab = [&](auto& t_Ta_L, auto& t_Tb_L, auto& t_Tab_L,
-                                        auto& t_Ta_R, auto& t_Tb_R, auto& t_Tab_R, double scale) {
-                
-                tblis::mult<double>( 1.0*scale, t_Tab_L, "ijcd", t_Tab_R, "ijab", 1.0, t_Gvvvv_ab, "abcd"); 
-                tblis::mult<double>( 1.0*scale, t_Tab_L, "klab", t_Tab_R, "ijab", 1.0, t_Goooo_ab, "ijkl"); 
+                            auto& t_Ta_R, auto& t_Tb_R, auto& t_Tab_R, double scale) {
+    
+                // Gvvvv_ab dan Goooo_ab
+                tblis::mult<double>( 1.0*scale, t_Tab_L, "ijac", t_Tab_R, "ijbd", 1.0, t_Gvvvv_ab, "abcd"); 
+                tblis::mult<double>( 1.0*scale, t_Tab_L, "ikab", t_Tab_R, "jlab", 1.0, t_Goooo_ab, "ijkl"); 
 
-                tblis::mult<double>(-1.0*scale, t_Tab_L, "ikcb", t_Tab_R, "jkac", 1.0, t_Goovv_ab_ex, "ijab"); 
-                tblis::mult<double>(-1.0*scale, t_Tab_L, "kiac", t_Tab_R, "kjbc", 1.0, t_Goovv_ba_ex, "ijab"); 
+                // Goovv_ab_ex dan Goovv_ba_ex dengan index dummy 'l' untuk menyesuaikan cross-term
+                tblis::mult<double>(-1.0*scale, t_Tab_L, "ilca", t_Tab_R, "jlcb", 1.0, t_Goovv_ab_ex, "ijab"); 
+                tblis::mult<double>(-1.0*scale, t_Tab_L, "liad", t_Tab_R, "ljbd", 1.0, t_Goovv_ba_ex, "ijab"); 
                 
-                tblis::mult<double>( 1.0*scale, t_Tab_L, "kjcb", t_Tab_R, "kiac", 1.0, t_Govov_bb, "iajb"); 
-                tblis::mult<double>( 1.0*scale, t_Ta_L,  "kiac", t_Tab_R, "kjcb", 1.0, t_Govov_ab, "iajb"); 
-                tblis::mult<double>( 1.0*scale, t_Tab_L, "ikac", t_Tb_R,  "jkbc", 1.0, t_Govov_ab, "iajb");
+                // Ring terms untuk Govov_bb & Govov_ab
+                tblis::mult<double>( 1.0*scale, t_Tab_L, "ljdb", t_Tab_R, "lida", 1.0, t_Govov_bb, "iajb"); 
+                tblis::mult<double>( 1.0*scale, t_Tab_L, "ikac", t_Tb_R,  "jkbc", 1.0, t_Govov_ab, "iajb"); 
+                tblis::mult<double>( 1.0*scale, t_Ta_L,  "kica", t_Tab_R, "kjcb", 1.0, t_Govov_ab, "iajb"); 
+                
+                // Kontribusi Tab ke Govov_aa murni
                 tblis::mult<double>( 1.0*scale, t_Tab_L, "ikac", t_Tab_R, "jkbc", 1.0, t_Govov_aa, "iajb");
             };
-            
+                        
             compute_gamma_ab(t_Taa, t_Tbb, t_Tab, t_Taa, t_Tbb, t_Tab, 1.0);
         }
     }
@@ -1070,7 +1078,7 @@ void OMP3::build_generalized_fock() {
                         double t2_ex = L2_aa_(i, j, b, a); 
                         Teff_aa(i*va_+a, j*va_+b) = 2.0 * (t1_dir + t2_dir) - 1.0 * (t1_ex + t2_ex);
                     } else {
-                        Teff_aa(i*va_+a, j*va_+b) = 2.0 * (t1_dir + t2_dir); 
+                        Teff_aa(i*va_+a, j*va_+b) = 1.0 * (t1_dir + t2_dir); 
                     }
                 }
             }
@@ -1151,7 +1159,7 @@ void OMP3::build_generalized_fock() {
                     for (int b = 0; b < vb_; ++b) {
                         double t1_dir = (*t2_ab_dense)(i, j, a, b);
                         double t2_dir = L2_ab_(i, j, a, b);
-                        Teff_ab(i*va_+a, j*vb_+b) = 2.0 * (t1_dir + t2_dir);
+                        Teff_ab(i*va_+a, j*vb_+b) = 1.0 * (t1_dir + t2_dir);
                     }
                 }
             }
@@ -1164,7 +1172,7 @@ void OMP3::build_generalized_fock() {
                     for (int b = 0; b < vb_; ++b) {
                         double t1_dir = (*t2_bb_dense)(i, j, a, b);
                         double t2_dir = L2_bb_(i, j, a, b);
-                        Teff_bb(i*vb_+a, j*vb_+b) = 2.0 * (t1_dir + t2_dir);
+                        Teff_bb(i*vb_+a, j*vb_+b) = 1.0 * (t1_dir + t2_dir);
                     }
                 }
             }
