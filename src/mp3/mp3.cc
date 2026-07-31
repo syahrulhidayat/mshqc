@@ -957,26 +957,26 @@ void OMP3::build_generalized_fock() {
                     
         TBLIS_VIEW_4D(t_T2t, T2_tilde, na_, na_, va_, va_);
 
-        auto compute_gamma_res = [&](auto& t_Tleft, auto& t_Tright, double scale) {
-            // Transposisi indeks (ac|bd) untuk DF Vvvvv dan Voooo
-            tblis::mult<double>( 1.0*scale, t_Tleft, "ijac", t_Tright, "ijbd", 1.0, t_Gvvvv_aa, "abcd");
-            tblis::mult<double>( 1.0*scale, t_Tleft, "ikab", t_Tright, "jlab", 1.0, t_Goooo_aa, "ijkl");
+        auto compute_gamma_res = [&](auto& t_T, auto& t_Tt, double scale) {
             
-            // Govov_aa (Dimensi: na, va, na, va)
-            tblis::mult<double>( 2.0*scale, t_Tleft, "ikac", t_Tright, "jkbc", 1.0, t_Govov_aa, "iajb"); 
-            tblis::mult<double>( 2.0*scale, t_Tleft, "kjcb", t_Tright, "kica", 1.0, t_Govov_aa, "iajb"); 
-            tblis::mult<double>(-1.0*scale, t_Tleft, "kjcb", t_Tright, "kiac", 1.0, t_Govov_aa, "iajb"); 
-            tblis::mult<double>(-1.0*scale, t_Tleft, "ikac", t_Tright, "jkcb", 1.0, t_Govov_aa, "iajb"); 
+            tblis::mult<double>( 1.0*scale, t_T, "ijac", t_Tt, "ijbd", 1.0, t_Gvvvv_aa, "abcd");
+            tblis::mult<double>( 1.0*scale, t_T, "ikab", t_Tt, "jlab", 1.0, t_Goooo_aa, "ijkl");
             
-            // Goovv_aa (Dimensi: na, na, va, va)
-            tblis::mult<double>(-1.0*scale, t_Tleft, "ikac", t_Tright, "jkbc", 1.0, t_Goovv_aa, "ijab");
-            tblis::mult<double>(-1.0*scale, t_Tleft, "kjcb", t_Tright, "kica", 1.0, t_Goovv_aa, "ijab");
-            tblis::mult<double>(-1.0*scale, t_Tleft, "ikcb", t_Tright, "jkca", 1.0, t_Goovv_aa, "ijab");
-            tblis::mult<double>(-1.0*scale, t_Tleft, "kicb", t_Tright, "kjac", 1.0, t_Goovv_aa, "ijab");
+            // Govov_aa (4 terms adjoint dari Vovov)
+            tblis::mult<double>( 2.0*scale, t_Tt, "ikac", t_T, "jkcb", 1.0, t_Govov_aa, "iajb");
+            tblis::mult<double>( 2.0*scale, t_T, "kiac", t_Tt, "kjcb", 1.0, t_Govov_aa, "iajb"); 
+            tblis::mult<double>(-1.0*scale, t_T, "kica", t_Tt, "kjcb", 1.0, t_Govov_aa, "iajb"); 
+            tblis::mult<double>(-1.0*scale, t_Tt, "ikac", t_T, "jkbc", 1.0, t_Govov_aa, "iajb"); 
+            
+            // Goovv_aa (4 terms adjoint dari Voovv)
+            tblis::mult<double>(-1.0*scale, t_Tt, "ikac", t_T, "jkcb", 1.0, t_Goovv_aa, "ijab"); 
+            tblis::mult<double>(-1.0*scale, t_T, "kiac", t_Tt, "kjcb", 1.0, t_Goovv_aa, "ijab"); 
+            tblis::mult<double>(-1.0*scale, t_Tt, "ikcb", t_T, "jkca", 1.0, t_Goovv_aa, "ijab"); 
+            tblis::mult<double>(-1.0*scale, t_Tt, "kiac", t_T, "kjbc", 1.0, t_Goovv_aa, "ijab"); 
         };
-        
-        // FIX: Evaluasi eksklusif hanya untuk auto compute_gamma_aa = [&](auto& t_Tleft, auto& t_Tright, double scale) {T1*T1 (MP3 explicit V-derivatives)
-        compute_gamma_res(t_T2t, t_Taa, 1.0); 
+
+        // Panggil dengan urutan (T_normal, T_tilde, scale)
+        compute_gamma_res(t_Taa, t_T2t, 1.0);
 
     } else {
        
@@ -1042,7 +1042,7 @@ void OMP3::build_generalized_fock() {
     Eigen::Tensor<double, 4> Goooo_sym_a(na_, na_, na_, na_); Goooo_sym_a.setZero();
     Eigen::Tensor<double, 4> Goovv_sym_a(na_, na_, va_, va_); Goovv_sym_a.setZero();
 
-    double gs_factor = is_restricted ? 0.5 : 0.25;
+    double gs_factor = is_restricted ? 1.0 : 0.5;
 
     #pragma omp parallel for collapse(4) schedule(static)
     for(int a=0; a<va_; ++a)
