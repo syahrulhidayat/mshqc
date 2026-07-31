@@ -958,16 +958,16 @@ void OMP3::build_generalized_fock() {
         TBLIS_VIEW_4D(t_L2t, L2_tilde, na_, na_, va_, va_); 
 
         auto compute_gamma_res = [&](auto& t_T, auto& t_Tt, double scale) {
-            tblis::mult<double>( 1.0*scale, t_Tt, "ijab", t_T, "ijef", 1.0, t_Gvvvv_aa, "eafb");
-            tblis::mult<double>( 1.0*scale, t_Tt, "ijab", t_T, "mnab", 1.0, t_Goooo_aa, "minj");
+            tblis::mult<double>( 1.0*scale, t_Tt, "ijab", t_T, "ijcd", 1.0, t_Gvvvv_aa, "cadb");
+            tblis::mult<double>( 1.0*scale, t_Tt, "ijab", t_T, "klab", 1.0, t_Goooo_aa, "kilj");
             
-            // Govov: DIKALI 0.5 KARENA INI TERM CAMPURAN (Mencegah Double Counting)
+            // Term campuran (Govov) dikali 0.5 untuk mencegah double counting rotasi orbital
             tblis::mult<double>( 1.0*scale, t_Tt, "ijab", t_T, "kjcb", 1.0, t_Govov_aa, "iakc"); 
             tblis::mult<double>( 1.0*scale, t_Tt, "ijab", t_T, "ikac", 1.0, t_Govov_aa, "kcjb"); 
             tblis::mult<double>(-0.5*scale, t_Tt, "ijab", t_T, "ikca", 1.0, t_Govov_aa, "kcjb"); 
             tblis::mult<double>(-0.5*scale, t_Tt, "ijab", t_T, "kjbc", 1.0, t_Govov_aa, "iakc"); 
             
-            // Goovv: BUKAN TERM CAMPURAN (Murni oo dan vv), tetap 1.0
+            // Term murni (Goovv) tetap 1.0
             tblis::mult<double>(-1.0*scale, t_Tt, "ijab", t_T, "kjcb", 1.0, t_Goovv_aa, "ikac");
             tblis::mult<double>(-1.0*scale, t_Tt, "ijab", t_T, "ikac", 1.0, t_Goovv_aa, "kjcb");
             tblis::mult<double>(-1.0*scale, t_Tt, "ijab", t_T, "ikcb", 1.0, t_Goovv_aa, "jkac");
@@ -979,12 +979,10 @@ void OMP3::build_generalized_fock() {
     } else {
        
         auto compute_gamma_aa = [&](auto& t_Tleft, auto& t_Tright, double scale) {
-            tblis::mult<double>( 0.125*scale, t_Tleft, "ijab", t_Tright, "ijef", 1.0, t_Gvvvv_aa, "eafb");
-            tblis::mult<double>(-0.125*scale, t_Tleft, "ijab", t_Tright, "ijef", 1.0, t_Gvvvv_aa, "ebfa");
-            tblis::mult<double>( 0.125*scale, t_Tleft, "ijab", t_Tright, "mnab", 1.0, t_Goooo_aa, "minj");
-            tblis::mult<double>(-0.125*scale, t_Tleft, "ijab", t_Tright, "mnab", 1.0, t_Goooo_aa, "mjni");
-            tblis::mult<double>( 0.0625*scale, t_Tleft, "ijab", t_Tright, "kjcb", 1.0, t_Govov_aa, "iakc"); // Dikali 0.5
-            tblis::mult<double>(-0.125*scale, t_Tleft, "ijab", t_Tright, "kjcb", 1.0, t_Goovv_aa, "ikac");
+            tblis::mult<double>( 0.125*scale, t_Tleft, "ijab", t_Tright, "ijcd", 1.0, t_Gvvvv_aa, "cadb");
+            tblis::mult<double>( 0.125*scale, t_Tleft, "ijab", t_Tright, "klab", 1.0, t_Goooo_aa, "kilj");
+            tblis::mult<double>( 0.5*scale,   t_Tleft, "ijab", t_Tright, "kjcb", 1.0, t_Govov_aa, "iakc"); // Dikali 0.5
+            tblis::mult<double>(-1.0*scale,   t_Tleft, "ijab", t_Tright, "kjcb", 1.0, t_Goovv_aa, "ikac"); 
         };
                 
         compute_gamma_aa(t_Taa, t_Taa, 1.0);
@@ -1027,12 +1025,10 @@ void OMP3::build_generalized_fock() {
             TBLIS_VIEW_4D(t_Goovv_ba_ex, Gamma_oovv_ba_ex, nb_, nb_, va_, va_);
 
             auto compute_gamma_bb = [&](auto& t_Tleft, auto& t_Tright, double scale) {
-                tblis::mult<double>( 0.125*scale, t_Tleft, "ijab", t_Tright, "ijef", 1.0, t_Gvvvv_bb, "eafb");
-                tblis::mult<double>(-0.125*scale, t_Tleft, "ijab", t_Tright, "ijef", 1.0, t_Gvvvv_bb, "ebfa");
-                tblis::mult<double>( 0.125*scale, t_Tleft, "ijab", t_Tright, "mnab", 1.0, t_Goooo_bb, "minj");
-                tblis::mult<double>(-0.125*scale, t_Tleft, "ijab", t_Tright, "mnab", 1.0, t_Goooo_bb, "mjni");
-                tblis::mult<double>( 0.0625*scale, t_Tleft, "ijab", t_Tright, "kjcb", 1.0, t_Govov_bb, "iakc"); // Dikali 0.5
-                tblis::mult<double>(-0.125*scale, t_Tleft, "ijab", t_Tright, "kjcb", 1.0, t_Goovv_bb, "ikac");
+                tblis::mult<double>( 0.125*scale, t_Tleft, "ijab", t_Tright, "ijcd", 1.0, t_Gvvvv_bb, "cadb");
+                tblis::mult<double>( 0.125*scale, t_Tleft, "ijab", t_Tright, "klab", 1.0, t_Goooo_bb, "kilj");
+                tblis::mult<double>( 0.5*scale,   t_Tleft, "ijab", t_Tright, "kjcb", 1.0, t_Govov_bb, "iakc"); // Dikali 0.5
+                tblis::mult<double>(-1.0*scale,   t_Tleft, "ijab", t_Tright, "kjcb", 1.0, t_Goovv_bb, "ikac");
             };
             
             compute_gamma_bb(t_Tbb, t_Tbb, 1.0); 
@@ -1045,7 +1041,7 @@ void OMP3::build_generalized_fock() {
                 tblis::mult<double>(-1.0*scale, t_Tab_L, "i n e b", t_Tab_R, "m n e f", 1.0, t_Goovv_ab_ex, "i m b f"); 
                 tblis::mult<double>(-1.0*scale, t_Tab_L, "m j e b", t_Tab_R, "m n a b", 1.0, t_Goovv_ba_ex, "j n e a"); 
 
-                // Govov DIKALI 0.5
+                // Govov DIKALI 0.5 untuk mencegah double counting rotasi
                 tblis::mult<double>( 0.5*scale, t_Tab_L, "m j e b", t_Tab_R, "m n e f", 1.0, t_Govov_bb, "j b n f"); 
                 tblis::mult<double>( 0.5*scale, t_Ta_L,  "m i e a", t_Tab_R, "m j e b", 1.0, t_Govov_ab, "i a j b"); 
                 tblis::mult<double>( 0.5*scale, t_Tab_L, "i n a f", t_Tb_R,  "n j f b", 1.0, t_Govov_ab, "i a j b");
