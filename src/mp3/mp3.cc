@@ -985,8 +985,9 @@ void OMP3::build_generalized_fock() {
             tblis::mult<double>(-1.0*scale,   t_Tleft, "ijab", t_Tright, "kjcb", 1.0, t_Goovv_aa, "ikac"); 
         };
                 
-        compute_gamma_aa(t_Taa, t_Taa, 1.0);
-    
+        compute_gamma_aa(t_Taa, t_Laa, 1.0);
+        compute_gamma_aa(t_Laa, t_Taa, 1.0);
+        
         if (nb_ > 0 && vb_ > 0) {
             auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
             Eigen::Tensor<double, 4> dummy_ab_fock;
@@ -1031,7 +1032,8 @@ void OMP3::build_generalized_fock() {
                 tblis::mult<double>(-1.0*scale,   t_Tleft, "ijab", t_Tright, "kjcb", 1.0, t_Goovv_bb, "ikac");
             };
             
-            compute_gamma_bb(t_Tbb, t_Tbb, 1.0); 
+            compute_gamma_bb(t_Tbb, t_Lbb, 1.0);
+            compute_gamma_bb(t_Lbb, t_Tbb, 1.0);
 
             auto compute_gamma_ab = [&](auto& t_Ta_L, auto& t_Tb_L, auto& t_Tab_L,
                                         auto& t_Ta_R, auto& t_Tb_R, auto& t_Tab_R, double scale) {
@@ -1048,7 +1050,8 @@ void OMP3::build_generalized_fock() {
                 tblis::mult<double>( 0.5*scale, t_Tab_L, "i n a b", t_Tab_R, "m n e b", 1.0, t_Govov_aa, "i a m e");
             };
             
-            compute_gamma_ab(t_Taa, t_Tbb, t_Tab, t_Taa, t_Tbb, t_Tab, 1.0);
+            compute_gamma_ab(t_Taa, t_Tbb, t_Tab, t_Laa, t_Lbb, t_Lab, 1.0);
+            compute_gamma_ab(t_Laa, t_Lbb, t_Lab, t_Taa, t_Tbb, t_Tab, 1.0);
         }
     }
 
@@ -1239,9 +1242,9 @@ void OMP3::build_generalized_fock() {
    
     Eigen::MatrixXd Y_aa = Eigen::MatrixXd::Zero(va_ * na_, n_aux);
     TBLIS_VIEW_3D(t_Y_aa, Y_aa.data(), va_, na_, n_aux);
-    tblis::mult<double>(1.0, t_Govov_aa, "i a j b", t_Bia_a, "b j P", 0.0, t_Y_aa, "a i P");
-    tblis::mult<double>(-1.0, t_Y_aa, "a m P", t_Boo_a, "m i P", 1.0, t_Za, "a i");
-    tblis::mult<double>(1.0, t_Y_aa, "e i P", t_Bvv_a, "a e P", 1.0, t_Za, "a i");
+    tblis::mult<double>(1.0, t_Govov_aa, "iajb", t_Bia_a, "bjP", 0.0, t_Y_aa, "aiP");
+    tblis::mult<double>(-1.0, t_Y_aa, "amP", t_Boo_a, "miP", 1.0, t_Za, "ai");
+    tblis::mult<double>(1.0, t_Y_aa, "eiP", t_Bvv_a, "aeP", 1.0, t_Za, "ai");
     
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
         TBLIS_VIEW_3D(t_Bvv_b, B_vv_b.data(), vb_, vb_, n_aux); 
@@ -1264,7 +1267,7 @@ void OMP3::build_generalized_fock() {
        
         Eigen::MatrixXd Y_ab_a = Eigen::MatrixXd::Zero(va_ * na_, n_aux);
         TBLIS_VIEW_3D(t_Y_ab_a, Y_ab_a.data(), va_, na_, n_aux);
-        tblis::mult<double>(1.0, t_Govov_ab, "i a j b", t_Bia_b, "b j P", 0.0, t_Y_ab_a, "a i P");
+        tblis::mult<double>(1.0, t_Govov_ab, "iajb", t_Bia_b, "bjP", 0.0, t_Y_ab_a, "aiP");
         tblis::mult<double>(-1.0, t_Y_ab_a, "a m P", t_Boo_a, "m i P", 1.0, t_Za, "a i");
         tblis::mult<double>(1.0, t_Y_ab_a, "e i P", t_Bvv_a, "a e P", 1.0, t_Za, "a i");
     }
@@ -1313,15 +1316,15 @@ void OMP3::build_generalized_fock() {
        
         Eigen::MatrixXd Y_bb = Eigen::MatrixXd::Zero(vb_ * nb_, n_aux);
         TBLIS_VIEW_3D(t_Y_bb, Y_bb.data(), vb_, nb_, n_aux);
-        tblis::mult<double>(1.0, t_Govov_bb, "i a j b", t_Bia_b, "b j P", 0.0, t_Y_bb, "a i P");
-        tblis::mult<double>(-1.0, t_Y_bb, "a m P", t_Boo_b, "m i P", 1.0, t_Zb, "a i");
-        tblis::mult<double>(1.0, t_Y_bb, "e i P", t_Bvv_b, "a e P", 1.0, t_Zb, "a i");
+        tblis::mult<double>(1.0, t_Govov_bb, "iajb", t_Bia_b, "bjP", 0.0, t_Y_bb, "aiP");
+        tblis::mult<double>(-1.0, t_Y_bb, "amP", t_Boo_b, "miP", 1.0, t_Zb, "ai");
+        tblis::mult<double>(1.0, t_Y_bb, "eiP", t_Bvv_b, "aeP", 1.0, t_Zb, "ai");
 
         Eigen::MatrixXd Y_ab_b = Eigen::MatrixXd::Zero(vb_ * nb_, n_aux);
         TBLIS_VIEW_3D(t_Y_ab_b, Y_ab_b.data(), vb_, nb_, n_aux);
-        tblis::mult<double>(1.0, t_Govov_ab, "i a j b", t_Bia_a, "a i P", 0.0, t_Y_ab_b, "b j P");
-        tblis::mult<double>(-1.0, t_Y_ab_b, "b m P", t_Boo_b, "m j P", 1.0, t_Zb, "b j");
-        tblis::mult<double>(1.0, t_Y_ab_b, "e j P", t_Bvv_b, "b e P", 1.0, t_Zb, "b j");
+        tblis::mult<double>(1.0, t_Govov_ab, "iajb", t_Bia_a, "aiP", 0.0, t_Y_ab_b, "bjP");
+        tblis::mult<double>(-1.0, t_Y_ab_b, "bmP", t_Boo_b, "mjP", 1.0, t_Zb, "bj");
+        tblis::mult<double>(1.0, t_Y_ab_b, "ejP", t_Bvv_b, "beP", 1.0, t_Zb, "bj");
 
         tblis::mult<double>(1.0, t_Xvv_b, "abP", t_Bia_b, "biP", 1.0, t_Zb, "ai");        
         tblis::mult<double>(-1.0, t_Xoo_b, "ijP", t_Bia_b, "ajP", 1.0, t_Zb, "ai");

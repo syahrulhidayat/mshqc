@@ -870,6 +870,43 @@ MP2Result OMP2::compute() {
     int macro_iter = 0;
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     bool step_rejected = false;
+    if (omp_get_thread_num() == 0 && config_.print_level > 0 && na_ > 0 && va_ > 0) {
+        std::cout << "\n--- [DEBUG] Memulai Uji Finite-Difference OMP2 (Total Energy) ---\n";
+        int i_target = na_ - 1; 
+        int a_target = 0;
+        
+        execute_micro_iterations();
+        build_generalized_fock();
+        
+        double grad_ana = is_restricted ? -4.0 * F_gen_a_(na_ + a_target, i_target) : 
+                                          -2.0 * F_gen_a_(na_ + a_target, i_target);
+                          
+        double theta = 1e-5;
+        Eigen::MatrixXd C_a_orig = scf_.C_alpha;
+        Eigen::MatrixXd C_b_orig = scf_.C_beta;
+        
+        auto calc_tot = [&](double t) {
+            Eigen::MatrixXd U = Eigen::MatrixXd::Identity(nbf_, nbf_);
+            U(i_target, na_ + a_target) = t; U(na_ + a_target, i_target) = -t;
+            
+            C_a_current_ = C_a_orig * U;
+            if (nb_ > 0) C_b_current_ = C_b_orig * U;
+            
+            return (scf_.energy_total + execute_micro_iterations()); 
+        };
+
+        double E_plus = calc_tot(theta);
+        double E_minus = calc_tot(-theta);
+        double grad_num = (E_plus - E_minus) / (2.0 * theta);
+        
+        std::cout << "Gradien Numerik (FD) : " << std::scientific << grad_num << "\n";
+        std::cout << "Gradien Analitik     : " << std::scientific << grad_ana << "\n";
+        std::cout << "Selisih Absolut      : " << std::scientific << std::abs(grad_num - grad_ana) << "\n";
+        std::cout << "---------------------------------------------------------\n";
+                  
+        C_a_current_ = C_a_orig;
+        C_b_current_ = C_b_orig;
+    }
     while (macro_iter < config_.max_iterations) {
         scf_.C_alpha = C_a_current_;
         scf_.C_beta  = C_b_current_;

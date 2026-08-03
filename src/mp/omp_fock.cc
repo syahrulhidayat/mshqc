@@ -698,5 +698,21 @@ void OMP2::build_generalized_fock() {
         F_gen_b_.block(nb_, 0, vb_, nb_) += Z_mat_b;
         F_gen_b_.block(0, nb_, nb_, vb_) += Z_mat_b.transpose();
     }
+    
+if (omp_get_thread_num() == 0 && config_.print_level > 1) {
+        std::cout << "\n  [DEBUG KOMPONEN FOCK OMP2]\n";
+        std::cout << "  Trace G_oo_a + G_vv_a (Koreksi Partikel) : " 
+                  << std::scientific << (G_oo_alpha_.trace() + G_vv_alpha_.trace()) << "\n";
+        std::cout << "  Norm Z_mat_a (Z-Vector)                  : " 
+                  << std::scientific << Z_mat_a.norm() << "\n";
+        
+        if (nb_ > 0 && vb_ > 0) {
+            std::cout << "  Trace G_oo_b + G_vv_b (Koreksi Partikel) : " 
+                      << std::scientific << (G_oo_beta_.trace() + G_vv_beta_.trace()) << "\n";
+            std::cout << "  Norm Z_mat_b (Z-Vector)                  : " 
+                      << std::scientific << Z_mat_b.norm() << "\n";
+        }
+    }
+
 }
 }
