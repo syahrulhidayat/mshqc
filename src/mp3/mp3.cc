@@ -685,13 +685,13 @@ void OMP3::build_opdm_alpha() {
         TBLIS_VIEW_2D(t_Gvv, G_vv_alpha_.data(), va_, va_);
 
        
-        tblis::mult<double>(-1.0, t_T2, "ikab", t_T2t, "jkab", 0.0, t_Goo, "ij");
-        tblis::mult<double>(-1.0, t_T2, "ikab", t_L2t, "jkab", 1.0, t_Goo, "ij"); 
-        tblis::mult<double>(-1.0, t_L2, "ikab", t_T2t, "jkab", 1.0, t_Goo, "ij");  
+        tblis::mult<double>(-0.5, t_T2, "ikab", t_T2t, "jkab", 0.0, t_Goo, "ij");
+        tblis::mult<double>(-0.5, t_T2, "ikab", t_L2t, "jkab", 1.0, t_Goo, "ij"); 
+        tblis::mult<double>(-0.5, t_L2, "ikab", t_T2t, "jkab", 1.0, t_Goo, "ij");  
 
-        tblis::mult<double>(1.0, t_T2, "ijac", t_T2t, "ijbc", 0.0, t_Gvv, "ab");
-        tblis::mult<double>(1.0, t_T2, "ijac", t_L2t, "ijbc", 1.0, t_Gvv, "ab");  
-        tblis::mult<double>(1.0, t_L2, "ijac", t_T2t, "ijbc", 1.0, t_Gvv, "ab");  
+        tblis::mult<double>(0.5, t_T2, "ijac", t_T2t, "ijbc", 0.0, t_Gvv, "ab");
+        tblis::mult<double>(0.5, t_T2, "ijac", t_L2t, "ijbc", 1.0, t_Gvv, "ab");  
+        tblis::mult<double>(0.5, t_L2, "ijac", t_T2t, "ijbc", 1.0, t_Gvv, "ab");  
         
         return;
     }
@@ -701,13 +701,19 @@ void OMP3::build_opdm_alpha() {
     TBLIS_VIEW_2D(t_Goo_a, G_oo_alpha_.data(), na_, na_);
     TBLIS_VIEW_2D(t_Gvv_a, G_vv_alpha_.data(), va_, va_);
 
-    tblis::mult<double>(-1.0, t_T2aa, "ikab", t_T2aa, "jkab", 1.0, t_Goo_a, "ij");
-    tblis::mult<double>(-1.0, t_T2aa, "ikab", t_T3aa, "jkab", 1.0, t_Goo_a, "ij"); 
-    tblis::mult<double>(-1.0, t_T3aa, "ikab", t_T2aa, "jkab", 1.0, t_Goo_a, "ij"); 
+    tblis::mult<double>(-0.5, t_T2aa, "ikab", t_T2aa, "jkab", 1.0, t_Goo_a, "ij");
+    tblis::mult<double>(-0.5, t_T2aa, "ikab", t_T3aa, "jkab", 1.0, t_Goo_a, "ij"); 
+    tblis::mult<double>(-0.5, t_T3aa, "ikab", t_T2aa, "jkab", 1.0, t_Goo_a, "ij"); 
     
-    tblis::mult<double>(1.0, t_T2aa, "ijac", t_T2aa, "ijbc", 1.0, t_Gvv_a, "ab");
-    tblis::mult<double>(1.0, t_T2aa, "ijac", t_T3aa, "ijbc", 1.0, t_Gvv_a, "ab");  
-    tblis::mult<double>(1.0, t_T3aa, "ijac", t_T2aa, "ijbc", 1.0, t_Gvv_a, "ab");
+    tblis::mult<double>(0.5, t_T2aa, "ijac", t_T2aa, "ijbc", 1.0, t_Gvv_a, "ab");
+    tblis::mult<double>(0.5, t_T2aa, "ijac", t_T3aa, "ijbc", 1.0, t_Gvv_a, "ab");  
+    tblis::mult<double>(0.5, t_T3aa, "ijac", t_T2aa, "ijbc", 1.0, t_Gvv_a, "ab");
+
+    if (omp_get_thread_num() == 0 && config_.print_level > 1) {
+        std::cout << "  [DEBUG] 1-RDM Alpha (Koreksi Orde-3) berhasil dihitung.\n";
+        std::cout << "  [DEBUG] Trace G_oo_alpha : " << G_oo_alpha_.trace() << "\n";
+        std::cout << "  [DEBUG] Trace G_vv_alpha : " << G_vv_alpha_.trace() << "\n";
+    }
 
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
         auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
@@ -756,21 +762,26 @@ void OMP3::build_opdm_beta() {
     TBLIS_VIEW_2D(t_Goo_b, G_oo_beta_.data(), nb_, nb_);
     TBLIS_VIEW_2D(t_Gvv_b, G_vv_beta_.data(), vb_, vb_);
 
-    tblis::mult<double>(-1.0, t_T2bb, "ikab", t_T2bb, "jkab", 1.0, t_Goo_b, "ij");
-    tblis::mult<double>(-1.0, t_T2bb, "ikab", t_T3bb, "jkab", 1.0, t_Goo_b, "ij"); 
-    tblis::mult<double>(-1.0, t_T3bb, "ikab", t_T2bb, "jkab", 1.0, t_Goo_b, "ij"); 
+    tblis::mult<double>(-0.5, t_T2bb, "ikab", t_T2bb, "jkab", 1.0, t_Goo_b, "ij");
+    tblis::mult<double>(-0.5, t_T2bb, "ikab", t_T3bb, "jkab", 1.0, t_Goo_b, "ij"); 
+    tblis::mult<double>(-0.5, t_T3bb, "ikab", t_T2bb, "jkab", 1.0, t_Goo_b, "ij"); 
     
-    tblis::mult<double>(1.0, t_T2bb, "ijac", t_T2bb, "ijbc", 1.0, t_Gvv_b, "ab");
-    tblis::mult<double>(1.0, t_T2bb, "ijac", t_T3bb, "ijbc", 1.0, t_Gvv_b, "ab");  
-    tblis::mult<double>(1.0, t_T3bb, "ijac", t_T2bb, "ijbc", 1.0, t_Gvv_b, "ab"); 
+    tblis::mult<double>(0.5, t_T2bb, "ijac", t_T2bb, "ijbc", 1.0, t_Gvv_b, "ab");
+    tblis::mult<double>(0.5, t_T2bb, "ijac", t_T3bb, "ijbc", 1.0, t_Gvv_b, "ab");  
+    tblis::mult<double>(0.5, t_T3bb, "ijac", t_T2bb, "ijbc", 1.0, t_Gvv_b, "ab"); 
     
-    tblis::mult<double>(-1.0, t_T2ab, "kiab", t_T2ab, "kjab", 1.0, t_Goo_b, "ij");
-    tblis::mult<double>(-1.0, t_T2ab, "kiab", t_T3ab, "kjab", 1.0, t_Goo_b, "ij");  
-    tblis::mult<double>(-1.0, t_T3ab, "kiab", t_T2ab, "kjab", 1.0, t_Goo_b, "ij");  
+    tblis::mult<double>(-0.5, t_T2ab, "kiab", t_T2ab, "kjab", 1.0, t_Goo_b, "ij");
+    tblis::mult<double>(-0.5, t_T2ab, "kiab", t_T3ab, "kjab", 1.0, t_Goo_b, "ij");  
+    tblis::mult<double>(-0.5, t_T3ab, "kiab", t_T2ab, "kjab", 1.0, t_Goo_b, "ij");  
     
-    tblis::mult<double>(1.0, t_T2ab, "ijca", t_T2ab, "ijcb", 1.0, t_Gvv_b, "ab");
-    tblis::mult<double>(1.0, t_T2ab, "ijca", t_T3ab, "ijcb", 1.0, t_Gvv_b, "ab");   
-    tblis::mult<double>(1.0, t_T3ab, "ijca", t_T2ab, "ijcb", 1.0, t_Gvv_b, "ab");   
+    tblis::mult<double>(0.5, t_T2ab, "ijca", t_T2ab, "ijcb", 1.0, t_Gvv_b, "ab");
+    tblis::mult<double>(0.5, t_T2ab, "ijca", t_T3ab, "ijcb", 1.0, t_Gvv_b, "ab");   
+    tblis::mult<double>(0.5, t_T3ab, "ijca", t_T2ab, "ijcb", 1.0, t_Gvv_b, "ab");   
+    if (omp_get_thread_num() == 0 && config_.print_level > 1) {
+        std::cout << "  [DEBUG] 1-RDM Beta (Koreksi Orde-3) berhasil dihitung.\n";
+        std::cout << "  [DEBUG] Trace G_oo_beta : " << G_oo_beta_.trace() << "\n";
+        std::cout << "  [DEBUG] Trace G_vv_beta : " << G_vv_beta_.trace() << "\n";
+    }
 }
 
 void OMP3::build_generalized_fock() {
@@ -974,7 +985,9 @@ void OMP3::build_generalized_fock() {
             tblis::mult<double>(-1.0*scale, t_Tt, "ijab", t_T, "kjac", 1.0, t_Goovv_aa, "ikbc");
         };
             
-        compute_gamma_res(t_T2t, t_Taa, 1.0);
+        compute_gamma_res(t_T2t, t_Taa, 1.0); // KONTRIBUSI MP2 (T2, T2) -> Wajib ada!
+        compute_gamma_res(t_T2t, t_Laa, 1.0); // Kontribusi MP3 (T2, T3)
+        compute_gamma_res(t_L2t, t_Taa, 1.0); // Kontribusi MP3 (T3, T2)
 
     } else {
        
@@ -985,8 +998,9 @@ void OMP3::build_generalized_fock() {
             tblis::mult<double>(-1.0*scale,   t_Tleft, "ijab", t_Tright, "kjcb", 1.0, t_Goovv_aa, "ikac"); 
         };
                 
-        compute_gamma_aa(t_Taa, t_Laa, 1.0);
-        compute_gamma_aa(t_Laa, t_Taa, 1.0);
+        compute_gamma_aa(t_Taa, t_Taa, 1.0); // KONTRIBUSI MP2
+        compute_gamma_aa(t_Taa, t_Laa, 1.0); // KONTRIBUSI MP3
+        compute_gamma_aa(t_Laa, t_Taa, 1.0); // KONTRIBUSI MP3
         
         if (nb_ > 0 && vb_ > 0) {
             auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
@@ -1032,6 +1046,7 @@ void OMP3::build_generalized_fock() {
                 tblis::mult<double>(-1.0*scale,   t_Tleft, "ijab", t_Tright, "kjcb", 1.0, t_Goovv_bb, "ikac");
             };
             
+            compute_gamma_bb(t_Tbb, t_Tbb, 1.0); // KONTRIBUSI MP2
             compute_gamma_bb(t_Tbb, t_Lbb, 1.0);
             compute_gamma_bb(t_Lbb, t_Tbb, 1.0);
 
@@ -1050,6 +1065,7 @@ void OMP3::build_generalized_fock() {
                 tblis::mult<double>( 0.5*scale, t_Tab_L, "i n a b", t_Tab_R, "m n e b", 1.0, t_Govov_aa, "i a m e");
             };
             
+            compute_gamma_ab(t_Taa, t_Tbb, t_Tab, t_Taa, t_Tbb, t_Tab, 1.0); 
             compute_gamma_ab(t_Taa, t_Tbb, t_Tab, t_Laa, t_Lbb, t_Lab, 1.0);
             compute_gamma_ab(t_Laa, t_Lbb, t_Lab, t_Taa, t_Tbb, t_Tab, 1.0);
         }
@@ -1240,11 +1256,34 @@ void OMP3::build_generalized_fock() {
     tblis::mult<double>(1.0, t_Goovv_s, "ijkl", t_Bvv_a, "klP", 1.0, t_Xoo_a, "ijP");
 
    
-    Eigen::MatrixXd Y_aa = Eigen::MatrixXd::Zero(va_ * na_, n_aux);
+    // =========================================================
+    // MENGHITUNG Y_aa (AMAN DARI SEGFAULT & DEBUGGING)
+    // =========================================================
+    if (omp_get_thread_num() == 0 && config_.print_level > 1) {
+        std::cout << "  [DEBUG] Membentuk matriks Y_aa via manual mapping..." << std::endl;
+    }
+    
+    Eigen::MatrixXd G_mat_aa(na_ * va_, na_ * va_);
+    #pragma omp parallel for collapse(2) schedule(static)
+    for(int i=0; i<na_; ++i) {
+        for(int a=0; a<va_; ++a) {
+            for(int j=0; j<na_; ++j) {
+                for(int b=0; b<va_; ++b) {
+                    G_mat_aa(i * va_ + a, j * va_ + b) = Gamma_ovov_aa(i, a, j, b);
+                }
+            }
+        }
+    }
+    
+    Eigen::MatrixXd Y_aa = G_mat_aa * B_ia_P_alpha_;
     TBLIS_VIEW_3D(t_Y_aa, Y_aa.data(), va_, na_, n_aux);
-    tblis::mult<double>(1.0, t_Govov_aa, "iajb", t_Bia_a, "bjP", 0.0, t_Y_aa, "aiP");
+    
     tblis::mult<double>(-1.0, t_Y_aa, "amP", t_Boo_a, "miP", 1.0, t_Za, "ai");
     tblis::mult<double>(1.0, t_Y_aa, "eiP", t_Bvv_a, "aeP", 1.0, t_Za, "ai");
+
+    if (omp_get_thread_num() == 0 && config_.print_level > 1) {
+        std::cout << "  [DEBUG] Norm Y_aa: " << Y_aa.norm() << std::endl;
+    }
     
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
         TBLIS_VIEW_3D(t_Bvv_b, B_vv_b.data(), vb_, vb_, n_aux); 
@@ -1265,11 +1304,22 @@ void OMP3::build_generalized_fock() {
         tblis::mult<double>(1.0, t_Goovv_ab_s, "ijab", t_Bvv_b, "abP", 1.0, t_Xoo_a, "ijP");
         
        
-        Eigen::MatrixXd Y_ab_a = Eigen::MatrixXd::Zero(va_ * na_, n_aux);
-        TBLIS_VIEW_3D(t_Y_ab_a, Y_ab_a.data(), va_, na_, n_aux);
-        tblis::mult<double>(1.0, t_Govov_ab, "iajb", t_Bia_b, "bjP", 0.0, t_Y_ab_a, "aiP");
-        tblis::mult<double>(-1.0, t_Y_ab_a, "a m P", t_Boo_a, "m i P", 1.0, t_Za, "a i");
-        tblis::mult<double>(1.0, t_Y_ab_a, "e i P", t_Bvv_a, "a e P", 1.0, t_Za, "a i");
+        Eigen::MatrixXd G_mat_ab(na_ * va_, nb_ * vb_);
+            #pragma omp parallel for collapse(2) schedule(static)
+            for(int i=0; i<na_; ++i) {
+                for(int a=0; a<va_; ++a) {
+                    for(int j=0; j<nb_; ++j) {
+                        for(int b=0; b<vb_; ++b) {
+                            G_mat_ab(i * va_ + a, j * vb_ + b) = Gamma_ovov_ab(i, a, j, b);
+                        }
+                    }
+                }
+            }
+            Eigen::MatrixXd Y_ab_a = G_mat_ab * B_ia_P_beta_;
+            TBLIS_VIEW_3D(t_Y_ab_a, Y_ab_a.data(), va_, na_, n_aux);
+            
+            tblis::mult<double>(-1.0, t_Y_ab_a, "a m P", t_Boo_a, "m i P", 1.0, t_Za, "a i");
+            tblis::mult<double>(1.0, t_Y_ab_a, "e i P", t_Bvv_a, "a e P", 1.0, t_Za, "a i");
     }
 
     tblis::mult<double>(1.0, t_Xvv_a, "abP", t_Bia_a, "biP", 1.0, t_Za, "ai");        
@@ -1314,18 +1364,75 @@ void OMP3::build_generalized_fock() {
         tblis::mult<double>(1.0, t_Goovv_ba_s, "ijab", t_Bvv_a, "abP", 1.0, t_Xoo_b, "ijP");
 
        
-        Eigen::MatrixXd Y_bb = Eigen::MatrixXd::Zero(vb_ * nb_, n_aux);
+        // =========================================================
+        // MENGHITUNG Y_bb (AMAN DARI SEGFAULT & DEBUGGING)
+        // =========================================================
+        if (omp_get_thread_num() == 0 && config_.print_level > 1) {
+            std::cout << "  [DEBUG] Membentuk matriks Y_bb via manual mapping..." << std::endl;
+        }
+        
+        Eigen::MatrixXd G_mat_bb(nb_ * vb_, nb_ * vb_);
+        #pragma omp parallel for collapse(2) schedule(static)
+        for(int i=0; i<nb_; ++i) {
+            for(int a=0; a<vb_; ++a) {
+                for(int j=0; j<nb_; ++j) {
+                    for(int b=0; b<vb_; ++b) {
+                        G_mat_bb(i * vb_ + a, j * vb_ + b) = Gamma_ovov_bb(i, a, j, b);
+                    }
+                }
+            }
+        }
+        
+        Eigen::MatrixXd Y_bb = G_mat_bb * B_ia_P_beta_;
         TBLIS_VIEW_3D(t_Y_bb, Y_bb.data(), vb_, nb_, n_aux);
-        tblis::mult<double>(1.0, t_Govov_bb, "iajb", t_Bia_b, "bjP", 0.0, t_Y_bb, "aiP");
+        
         tblis::mult<double>(-1.0, t_Y_bb, "amP", t_Boo_b, "miP", 1.0, t_Zb, "ai");
         tblis::mult<double>(1.0, t_Y_bb, "eiP", t_Bvv_b, "aeP", 1.0, t_Zb, "ai");
 
-        Eigen::MatrixXd Y_ab_b = Eigen::MatrixXd::Zero(vb_ * nb_, n_aux);
+        if (omp_get_thread_num() == 0 && config_.print_level > 1) {
+            std::cout << "  [DEBUG] Norm Y_bb: " << Y_bb.norm() << std::endl;
+        }
+
+        // ===================================================================
+        // MENGHITUNG Y_ab_a dan Y_ab_b (AMAN DARI SEGFAULT & DEBUGGING)
+        // ===================================================================
+        if (omp_get_thread_num() == 0 && config_.print_level > 1) {
+            std::cout << "  [DEBUG] Membentuk matriks Y_ab_a dan Y_ab_b via manual mapping..." << std::endl;
+        }
+
+        Eigen::MatrixXd G_mat_ab(na_ * va_, nb_ * vb_);
+        #pragma omp parallel for collapse(2) schedule(static)
+        for(int i=0; i<na_; ++i) {
+            for(int a=0; a<va_; ++a) {
+                for(int j=0; j<nb_; ++j) {
+                    for(int b=0; b<vb_; ++b) {
+                        G_mat_ab(i * va_ + a, j * vb_ + b) = Gamma_ovov_ab(i, a, j, b);
+                    }
+                }
+            }
+        }
+
+        // Y_ab_a = Govov_ab * B_ia_beta
+        Eigen::MatrixXd Y_ab_a = G_mat_ab * B_ia_P_beta_;
+        TBLIS_VIEW_3D(t_Y_ab_a, Y_ab_a.data(), va_, na_, n_aux);
+        
+        tblis::mult<double>(-1.0, t_Y_ab_a, "a m P", t_Boo_a, "m i P", 1.0, t_Za, "a i");
+        tblis::mult<double>(1.0, t_Y_ab_a, "e i P", t_Bvv_a, "a e P", 1.0, t_Za, "a i");
+
+        if (omp_get_thread_num() == 0 && config_.print_level > 1) {
+            std::cout << "  [DEBUG] Norm Y_ab_a: " << Y_ab_a.norm() << std::endl;
+        }
+
+        // Y_ab_b = (Govov_ab)^T * B_ia_alpha
+        Eigen::MatrixXd Y_ab_b = G_mat_ab.transpose() * B_ia_P_alpha_;
         TBLIS_VIEW_3D(t_Y_ab_b, Y_ab_b.data(), vb_, nb_, n_aux);
-        Eigen::Map<const Eigen::MatrixXd> Govov_ab_mat(Gamma_ovov_ab.data(), na_ * va_, nb_ * vb_);
-        Eigen::Map<const Eigen::MatrixXd> Bia_a_mat(B_ia_P_alpha_.data(), va_ * na_, n_aux);
+        
         tblis::mult<double>(-1.0, t_Y_ab_b, "bmP", t_Boo_b, "mjP", 1.0, t_Zb, "bj");
         tblis::mult<double>(1.0, t_Y_ab_b, "ejP", t_Bvv_b, "beP", 1.0, t_Zb, "bj");
+
+        if (omp_get_thread_num() == 0 && config_.print_level > 1) {
+            std::cout << "  [DEBUG] Norm Y_ab_b: " << Y_ab_b.norm() << std::endl;
+        }
 
         tblis::mult<double>(1.0, t_Xvv_b, "abP", t_Bia_b, "biP", 1.0, t_Zb, "ai");        
         tblis::mult<double>(-1.0, t_Xoo_b, "ijP", t_Bia_b, "ajP", 1.0, t_Zb, "ai");
