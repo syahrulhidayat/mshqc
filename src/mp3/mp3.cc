@@ -880,10 +880,6 @@ void OMP3::build_generalized_fock() {
         }
     }
 
-    if (omp_get_thread_num() == 0 && config_.print_level > 1) {
-        std::cout << "  [DEBUG] Matriks Integral B_MO berhasil dibentuk." << std::endl;
-    }
-
     Eigen::Tensor<double, 4> Gamma_vvvv_aa(va_, va_, va_, va_); Gamma_vvvv_aa.setZero();
     Eigen::Tensor<double, 4> Gamma_oooo_aa(na_, na_, na_, na_); Gamma_oooo_aa.setZero();
     Eigen::Tensor<double, 4> Gamma_ovov_aa(na_, va_, na_, va_); Gamma_ovov_aa.setZero();
@@ -974,13 +970,12 @@ void OMP3::build_generalized_fock() {
             tblis::mult<double>(-1.0*scale, t_Tt, "ijab", t_T, "kjac", 1.0, t_Goovv_aa, "ikbc");
         };
             
-        compute_gamma_res(t_T2t, t_Taa, 1.0);
-        compute_gamma_res(t_T2t, t_Laa, 1.0); 
-        compute_gamma_res(t_L2t, t_Taa, 1.0); 
-        
-        if (omp_get_thread_num() == 0 && config_.print_level > 1) {
-            std::cout << "  [DEBUG] Matriks Gamma 2-RDM (Restricted) berhasil dibentuk." << std::endl;
-        }
+        // =====================================================================
+        // ELIMINASI KONTAMINASI L2 PADA MATRIKS GAMMA (MP3 MURNI)
+        // =====================================================================
+        compute_gamma_res(t_T2t, t_Taa, 1.0); 
+        // compute_gamma_res(t_T2t, t_Laa, 1.0);  // DIHAPUS (Turunan Semu MP4)
+        // compute_gamma_res(t_L2t, t_Taa, 1.0);  // DIHAPUS (Turunan Semu MP4)
 
     } else {
        
@@ -991,9 +986,10 @@ void OMP3::build_generalized_fock() {
             tblis::mult<double>(-1.0*scale,   t_Tleft, "ijab", t_Tright, "kjcb", 1.0, t_Goovv_aa, "ikac"); 
         };
                 
+        // ELIMINASI KONTAMINASI L2 PADA MATRIKS GAMMA ALPHA
         compute_gamma_aa(t_Taa, t_Taa, 1.0); 
-        compute_gamma_aa(t_Taa, t_Laa, 1.0); 
-        compute_gamma_aa(t_Laa, t_Taa, 1.0); 
+        // compute_gamma_aa(t_Taa, t_Laa, 1.0); // DIHAPUS
+        // compute_gamma_aa(t_Laa, t_Taa, 1.0); // DIHAPUS
         
         if (nb_ > 0 && vb_ > 0) {
             auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
@@ -1039,9 +1035,10 @@ void OMP3::build_generalized_fock() {
                 tblis::mult<double>(-1.0*scale,   t_Tleft, "ijab", t_Tright, "kjcb", 1.0, t_Goovv_bb, "ikac");
             };
             
+            // ELIMINASI KONTAMINASI L2 PADA MATRIKS GAMMA BETA
             compute_gamma_bb(t_Tbb, t_Tbb, 1.0); 
-            compute_gamma_bb(t_Tbb, t_Lbb, 1.0); 
-            compute_gamma_bb(t_Lbb, t_Tbb, 1.0); 
+            // compute_gamma_bb(t_Tbb, t_Lbb, 1.0); // DIHAPUS
+            // compute_gamma_bb(t_Lbb, t_Tbb, 1.0); // DIHAPUS
 
             auto compute_gamma_ab = [&](auto& t_Ta_L, auto& t_Tb_L, auto& t_Tab_L,
                                         auto& t_Ta_R, auto& t_Tb_R, auto& t_Tab_R, double scale) {
@@ -1057,13 +1054,10 @@ void OMP3::build_generalized_fock() {
                 tblis::mult<double>( 0.5*scale, t_Tab_L, "inab", t_Tab_R, "mneb", 1.0, t_Govov_aa, "iame");
             };
             
+            // ELIMINASI KONTAMINASI L2 PADA MATRIKS GAMMA ALPHA-BETA
             compute_gamma_ab(t_Taa, t_Tbb, t_Tab, t_Taa, t_Tbb, t_Tab, 1.0); 
-            compute_gamma_ab(t_Taa, t_Tbb, t_Tab, t_Laa, t_Lbb, t_Lab, 1.0); 
-            compute_gamma_ab(t_Laa, t_Lbb, t_Lab, t_Taa, t_Tbb, t_Tab, 1.0); 
-        }
-        
-        if (omp_get_thread_num() == 0 && config_.print_level > 1) {
-            std::cout << "  [DEBUG] Matriks Gamma 2-RDM (Unrestricted) berhasil dibentuk." << std::endl;
+            // compute_gamma_ab(t_Taa, t_Tbb, t_Tab, t_Laa, t_Lbb, t_Lab, 1.0); // DIHAPUS
+            // compute_gamma_ab(t_Laa, t_Lbb, t_Lab, t_Taa, t_Tbb, t_Tab, 1.0); // DIHAPUS
         }
     }
 
@@ -1094,7 +1088,6 @@ void OMP3::build_generalized_fock() {
                 for(int b=0; b<va_; ++b)
                     Goovv_sym_a(i,j,a,b) = gs_factor * (Gamma_oovv_aa(i,j,a,b) + Gamma_oovv_aa(j,i,a,b) + Gamma_oovv_aa(i,j,b,a) + Gamma_oovv_aa(j,i,b,a));
 
-
     Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> Teff_aa(na_*va_, na_*va_);
     #pragma omp parallel for collapse(2) schedule(static)
     for (int i = 0; i < na_; ++i) {
@@ -1106,9 +1099,11 @@ void OMP3::build_generalized_fock() {
                     if (is_restricted) {
                         double t1_ex = T2_aa_ijab(i, j, b, a);
                         double t2_ex = L2_aa_(i, j, b, a); 
-                        Teff_aa(i*va_+a, j*va_+b) = 0.5 * (2.0 * (t1_dir + t2_dir) - 1.0 * (t1_ex + t2_ex));
+                        // REVISI SKALAR DISTORSI (0.5 -> 1.0)
+                        Teff_aa(i*va_+a, j*va_+b) = 1.0 * (2.0 * (t1_dir + t2_dir) - 1.0 * (t1_ex + t2_ex));
                     } else {
-                        Teff_aa(i*va_+a, j*va_+b) = 0.5 * (t1_dir + t2_dir);
+                        // REVISI SKALAR DISTORSI (0.5 -> 1.0)
+                        Teff_aa(i*va_+a, j*va_+b) = 1.0 * (t1_dir + t2_dir);
                     }
                 }
             }
@@ -1121,7 +1116,6 @@ void OMP3::build_generalized_fock() {
     Eigen::Tensor<double, 4> Goovv_ba_sym;
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
        
-
         Gvvvv_sym_b = Eigen::Tensor<double, 4>(vb_, vb_, vb_, vb_); Gvvvv_sym_b.setZero();
         Goooo_sym_b = Eigen::Tensor<double, 4>(nb_, nb_, nb_, nb_); Goooo_sym_b.setZero();
         Goovv_sym_b = Eigen::Tensor<double, 4>(nb_, nb_, vb_, vb_); Goovv_sym_b.setZero();
@@ -1190,7 +1184,8 @@ void OMP3::build_generalized_fock() {
                     for (int b = 0; b < vb_; ++b) {
                         double t1_dir = (*t2_ab_dense)(i, j, a, b);
                         double t2_dir = L2_ab_(i, j, a, b);
-                        Teff_ab(i*va_+a, j*vb_+b) = 0.5 * (t1_dir + t2_dir);
+                        // REVISI SKALAR DISTORSI (0.5 -> 1.0)
+                        Teff_ab(i*va_+a, j*vb_+b) = 1.0 * (t1_dir + t2_dir);
                     }
                 }
             }
@@ -1203,7 +1198,8 @@ void OMP3::build_generalized_fock() {
                     for (int b = 0; b < vb_; ++b) {
                         double t1_dir = (*t2_bb_dense)(i, j, a, b);
                         double t2_dir = L2_bb_(i, j, a, b);
-                        Teff_bb(i*vb_+a, j*vb_+b) = 0.5 * (t1_dir + t2_dir);
+                        // REVISI SKALAR DISTORSI (0.5 -> 1.0)
+                        Teff_bb(i*vb_+a, j*vb_+b) = 1.0 * (t1_dir + t2_dir);
                     }
                 }
             }
@@ -1227,17 +1223,29 @@ void OMP3::build_generalized_fock() {
     Eigen::MatrixXd Z_mat_b;
     if (!is_restricted && nb_ > 0 && vb_ > 0) Z_mat_b = Eigen::MatrixXd::Zero(vb_, nb_);
 
-    if (omp_get_thread_num() == 0 && config_.print_level > 1) {
-        std::cout << "  [DEBUG] Membentuk matriks Z-Vector Alpha via Eigen::Map..." << std::endl;
-    }
+    TBLIS_VIEW_3D(t_Bvv_a, B_vv_a.data(), va_, va_, n_aux);
+    TBLIS_VIEW_3D(t_Xa, X_a.data(), va_, na_, n_aux);
+    TBLIS_VIEW_3D(t_Boo_a, B_oo_a.data(), na_, na_, n_aux);
+    TBLIS_VIEW_2D(t_Za, Z_mat_a.data(), va_, na_);
+    TBLIS_VIEW_3D(t_Bia_a, B_ia_P_alpha_.data(), va_, na_, n_aux); 
 
-    Eigen::Map<const Eigen::MatrixXd> Gvvvv_mat_a(Gvvvv_sym_a.data(), va_ * va_, va_ * va_);
-    Eigen::Map<const Eigen::MatrixXd> Goovv_mat_a(Goovv_sym_a.data(), na_ * na_, va_ * va_);
-    Eigen::Map<const Eigen::MatrixXd> Goooo_mat_a(Goooo_sym_a.data(), na_ * na_, na_ * na_);
+    TBLIS_VIEW_4D(t_Gvvvv_s, Gvvvv_sym_a, va_, va_, va_, va_);
+    TBLIS_VIEW_4D(t_Goooo_s, Goooo_sym_a, na_, na_, na_, na_);
+    TBLIS_VIEW_4D(t_Goovv_s, Goovv_sym_a, na_, na_, va_, va_);
+
+    Eigen::MatrixXd X_vv_a = Eigen::MatrixXd::Zero(va_ * va_, n_aux);
+    TBLIS_VIEW_3D(t_Xvv_a, X_vv_a.data(), va_, va_, n_aux);
+    tblis::mult<double>(1.0,  t_Gvvvv_s, "abcd", t_Bvv_a, "cdP", 0.0, t_Xvv_a, "abP"); 
+    tblis::mult<double>(1.0, t_Goovv_s, "ijab", t_Boo_a, "ijP", 1.0, t_Xvv_a, "abP");
     
-    Eigen::MatrixXd X_vv_a = Gvvvv_mat_a * B_vv_a + Goovv_mat_a.transpose() * B_oo_a;
-    Eigen::MatrixXd X_oo_a = Goooo_mat_a * B_oo_a + Goovv_mat_a * B_vv_a;
+    Eigen::MatrixXd X_oo_a = Eigen::MatrixXd::Zero(na_ * na_, n_aux);
+    TBLIS_VIEW_3D(t_Xoo_a, X_oo_a.data(), na_, na_, n_aux);
+    tblis::mult<double>(1.0,  t_Goooo_s, "ijkl", t_Boo_a, "klP", 0.0, t_Xoo_a, "ijP"); 
+    tblis::mult<double>(1.0, t_Goovv_s, "ijkl", t_Bvv_a, "klP", 1.0, t_Xoo_a, "ijP");
 
+    // ===================================================================
+    // PERBAIKAN SEGFAULT: Menghitung Y_aa (TANPA SPASI PADA STRING TBLIS)
+    // ===================================================================
     Eigen::MatrixXd G_mat_aa(na_ * va_, na_ * va_);
     #pragma omp parallel for collapse(2) schedule(static)
     for(int i=0; i<na_; ++i) {
@@ -1249,45 +1257,50 @@ void OMP3::build_generalized_fock() {
             }
         }
     }
+    
     Eigen::MatrixXd Y_aa = G_mat_aa * B_ia_P_alpha_;
-
-    // Evaluasi loop Z-Vector Alpha
-    for (int P = 0; P < n_aux; ++P) {
-        Eigen::Map<const Eigen::MatrixXd> V_a_map(B_vv_a.col(P).data(), va_, va_);
-        Eigen::Map<const Eigen::MatrixXd> O_a_map(B_oo_a.col(P).data(), na_, na_);
-        Eigen::Map<const Eigen::MatrixXd> B_T_a(B_ia_P_alpha_.col(P).data(), va_, na_); 
-        
-        Eigen::Map<const Eigen::MatrixXd> X_T_a(X_a.col(P).data(), va_, na_); 
-        Eigen::Map<const Eigen::MatrixXd> Y_T_a(Y_aa.col(P).data(), va_, na_);
-        
-        Eigen::Map<const Eigen::MatrixXd> Xvv_a_map(X_vv_a.col(P).data(), va_, va_);
-        Eigen::Map<const Eigen::MatrixXd> Xoo_a_map(X_oo_a.col(P).data(), na_, na_);
-
-        Z_mat_a.noalias() += V_a_map * X_T_a - X_T_a * O_a_map;
-        Z_mat_a.noalias() += V_a_map * Y_T_a - Y_T_a * O_a_map;
-        Z_mat_a.noalias() += Xvv_a_map * B_T_a - B_T_a * Xoo_a_map;
-    }
+    TBLIS_VIEW_3D(t_Y_aa, Y_aa.data(), va_, na_, n_aux);
+    
+    tblis::mult<double>(-1.0, t_Y_aa, "amP", t_Boo_a, "miP", 1.0, t_Za, "ai");
+    tblis::mult<double>(1.0, t_Y_aa, "eiP", t_Bvv_a, "aeP", 1.0, t_Za, "ai");
 
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
-        if (omp_get_thread_num() == 0 && config_.print_level > 1) {
-            std::cout << "  [DEBUG] Membentuk matriks Z-Vector Beta via Eigen::Map..." << std::endl;
-        }
+        TBLIS_VIEW_3D(t_Bvv_b, B_vv_b.data(), vb_, vb_, n_aux);
+        TBLIS_VIEW_3D(t_Xb, X_b.data(), vb_, nb_, n_aux);
+        TBLIS_VIEW_3D(t_Boo_b, B_oo_b.data(), nb_, nb_, n_aux);
+        TBLIS_VIEW_2D(t_Zb, Z_mat_b.data(), vb_, nb_);
+        TBLIS_VIEW_3D(t_Bia_b, B_ia_P_beta_.data(), vb_, nb_, n_aux);
 
-        Eigen::Map<const Eigen::MatrixXd> Gvvvv_mat_b(Gvvvv_sym_b.data(), vb_ * vb_, vb_ * vb_);
-        Eigen::Map<const Eigen::MatrixXd> Gvvvv_mat_ab(Gvvvv_sym_ab.data(), va_ * va_, vb_ * vb_);
-        Eigen::Map<const Eigen::MatrixXd> Goovv_mat_b(Goovv_sym_b.data(), nb_ * nb_, vb_ * vb_);
-        Eigen::Map<const Eigen::MatrixXd> Goovv_mat_ab(Goovv_sym_ab.data(), na_ * na_, vb_ * vb_);
+        TBLIS_VIEW_4D(t_Gvvvv_b_s, Gvvvv_sym_b, vb_, vb_, vb_, vb_);
+        TBLIS_VIEW_4D(t_Goooo_b_s, Goooo_sym_b, nb_, nb_, nb_, nb_);
+        TBLIS_VIEW_4D(t_Goovv_b_s, Goovv_sym_b, nb_, nb_, vb_, vb_);
         
-        Eigen::MatrixXd X_vv_b = Gvvvv_mat_b * B_vv_b + Gvvvv_mat_ab.transpose() * B_vv_a 
-                               + Goovv_mat_b.transpose() * B_oo_b + Goovv_mat_ab.transpose() * B_oo_a;
+        TBLIS_VIEW_4D(t_Gvvvv_ab_s, Gvvvv_sym_ab, va_, va_, vb_, vb_);
+        TBLIS_VIEW_4D(t_Goooo_ab_s, Goooo_sym_ab, na_, na_, nb_, nb_);
         
-        Eigen::Map<const Eigen::MatrixXd> Goooo_mat_b(Goooo_sym_b.data(), nb_ * nb_, nb_ * nb_);
-        Eigen::Map<const Eigen::MatrixXd> Goooo_mat_ab(Goooo_sym_ab.data(), na_ * na_, nb_ * nb_);
-        Eigen::Map<const Eigen::MatrixXd> Goovv_ba_mat(Goovv_ba_sym.data(), nb_ * nb_, va_ * va_);
-        
-        Eigen::MatrixXd X_oo_b = Goooo_mat_b * B_oo_b + Goooo_mat_ab.transpose() * B_oo_a 
-                               + Goovv_mat_b * B_vv_b + Goovv_ba_mat * B_vv_a;
+        TBLIS_VIEW_4D(t_Govov_bb, Gamma_ovov_bb, nb_, vb_, nb_, vb_);
+        TBLIS_VIEW_4D(t_Govov_ab, Gamma_ovov_ab, na_, va_, nb_, vb_);
+     
+        TBLIS_VIEW_4D(t_Goovv_ba_s, Goovv_ba_sym, nb_, nb_, va_, va_);
+        TBLIS_VIEW_4D(t_Goovv_ab_s, Goovv_sym_ab, na_, na_, vb_, vb_);
 
+        Eigen::MatrixXd X_vv_b = Eigen::MatrixXd::Zero(vb_ * vb_, n_aux);
+        TBLIS_VIEW_3D(t_Xvv_b, X_vv_b.data(), vb_, vb_, n_aux);
+        tblis::mult<double>(1.0,  t_Gvvvv_b_s, "abcd", t_Bvv_b, "cdP", 0.0, t_Xvv_b, "abP"); 
+        tblis::mult<double>(1.0,  t_Gvvvv_ab_s, "cdab", t_Bvv_a, "cdP", 1.0, t_Xvv_b, "abP"); 
+        tblis::mult<double>(1.0, t_Goovv_b_s, "ijab", t_Boo_b, "ijP", 1.0, t_Xvv_b, "abP");
+        tblis::mult<double>(1.0, t_Goovv_ab_s, "ijab", t_Boo_a, "ijP", 1.0, t_Xvv_b, "abP");
+        
+        Eigen::MatrixXd X_oo_b = Eigen::MatrixXd::Zero(nb_ * nb_, n_aux);
+        TBLIS_VIEW_3D(t_Xoo_b, X_oo_b.data(), nb_, nb_, n_aux);
+        tblis::mult<double>(1.0,  t_Goooo_b_s, "ijkl", t_Boo_b, "klP", 0.0, t_Xoo_b, "ijP"); 
+        tblis::mult<double>(1.0,  t_Goooo_ab_s, "klij", t_Boo_a, "klP", 1.0, t_Xoo_b, "ijP"); 
+        tblis::mult<double>(1.0, t_Goovv_b_s, "ijab", t_Bvv_b, "abP", 1.0, t_Xoo_b, "ijP");
+        tblis::mult<double>(1.0, t_Goovv_ba_s, "ijab", t_Bvv_a, "abP", 1.0, t_Xoo_b, "ijP");
+
+        // ===================================================================
+        // PERBAIKAN SEGFAULT: Menghitung Y_bb (TANPA SPASI PADA STRING TBLIS)
+        // ===================================================================
         Eigen::MatrixXd G_mat_bb(nb_ * vb_, nb_ * vb_);
         #pragma omp parallel for collapse(2) schedule(static)
         for(int i=0; i<nb_; ++i) {
@@ -1299,8 +1312,16 @@ void OMP3::build_generalized_fock() {
                 }
             }
         }
+        
         Eigen::MatrixXd Y_bb = G_mat_bb * B_ia_P_beta_;
+        TBLIS_VIEW_3D(t_Y_bb, Y_bb.data(), vb_, nb_, n_aux);
+        
+        tblis::mult<double>(-1.0, t_Y_bb, "amP", t_Boo_b, "miP", 1.0, t_Zb, "ai");
+        tblis::mult<double>(1.0, t_Y_bb, "eiP", t_Bvv_b, "aeP", 1.0, t_Zb, "ai");
 
+        // ===================================================================
+        // PERBAIKAN SEGFAULT: Menghitung Y_ab (TANPA SPASI PADA STRING TBLIS)
+        // ===================================================================
         Eigen::MatrixXd G_mat_ab(na_ * va_, nb_ * vb_);
         #pragma omp parallel for collapse(2) schedule(static)
         for(int i=0; i<na_; ++i) {
@@ -1312,37 +1333,30 @@ void OMP3::build_generalized_fock() {
                 }
             }
         }
+
         Eigen::MatrixXd Y_ab_a = G_mat_ab * B_ia_P_beta_;
+        TBLIS_VIEW_3D(t_Y_ab_a, Y_ab_a.data(), va_, na_, n_aux);
+        
+        tblis::mult<double>(-1.0, t_Y_ab_a, "amP", t_Boo_a, "miP", 1.0, t_Za, "ai");
+        tblis::mult<double>(1.0, t_Y_ab_a, "eiP", t_Bvv_a, "aeP", 1.0, t_Za, "ai");
+
         Eigen::MatrixXd Y_ab_b = G_mat_ab.transpose() * B_ia_P_alpha_;
+        TBLIS_VIEW_3D(t_Y_ab_b, Y_ab_b.data(), vb_, nb_, n_aux);
+        
+        tblis::mult<double>(-1.0, t_Y_ab_b, "bmP", t_Boo_b, "mjP", 1.0, t_Zb, "bj");
+        tblis::mult<double>(1.0, t_Y_ab_b, "ejP", t_Bvv_b, "beP", 1.0, t_Zb, "bj");
 
-        // Evaluasi loop Z-Vector Alpha (Lanjutan untuk AB)
-        for (int P = 0; P < n_aux; ++P) {
-            Eigen::Map<const Eigen::MatrixXd> V_a_map(B_vv_a.col(P).data(), va_, va_);
-            Eigen::Map<const Eigen::MatrixXd> O_a_map(B_oo_a.col(P).data(), na_, na_);
-            Eigen::Map<const Eigen::MatrixXd> Yab_T_a(Y_ab_a.col(P).data(), va_, na_);
-            Z_mat_a.noalias() += V_a_map * Yab_T_a - Yab_T_a * O_a_map;
-        }
-
-        // Evaluasi loop Z-Vector Beta
-        for (int P = 0; P < n_aux; ++P) {
-            Eigen::Map<const Eigen::MatrixXd> V_b_map(B_vv_b.col(P).data(), vb_, vb_);
-            Eigen::Map<const Eigen::MatrixXd> O_b_map(B_oo_b.col(P).data(), nb_, nb_);
-            Eigen::Map<const Eigen::MatrixXd> B_T_b(B_ia_P_beta_.col(P).data(), vb_, nb_); 
-            
-            Eigen::Map<const Eigen::MatrixXd> X_T_b(X_b.col(P).data(), vb_, nb_); 
-            Eigen::Map<const Eigen::MatrixXd> Y_T_b(Y_bb.col(P).data(), vb_, nb_);
-            Eigen::Map<const Eigen::MatrixXd> Yab_T_b(Y_ab_b.col(P).data(), vb_, nb_);
-            
-            Eigen::Map<const Eigen::MatrixXd> Xvv_b_map(X_vv_b.col(P).data(), vb_, vb_);
-            Eigen::Map<const Eigen::MatrixXd> Xoo_b_map(X_oo_b.col(P).data(), nb_, nb_);
-
-            Z_mat_b.noalias() += V_b_map * X_T_b - X_T_b * O_b_map;
-            Z_mat_b.noalias() += V_b_map * Y_T_b - Y_T_b * O_b_map;
-            Z_mat_b.noalias() += V_b_map * Yab_T_b - Yab_T_b * O_b_map;
-            Z_mat_b.noalias() += Xvv_b_map * B_T_b - B_T_b * Xoo_b_map;
-        }
+        tblis::mult<double>(1.0, t_Xvv_b, "abP", t_Bia_b, "biP", 1.0, t_Zb, "ai");        
+        tblis::mult<double>(-1.0, t_Xoo_b, "ijP", t_Bia_b, "ajP", 1.0, t_Zb, "ai");
+        tblis::mult<double>(1.0, t_Bvv_b, "baP", t_Xb, "biP", 1.0, t_Zb, "ai");
+        tblis::mult<double>(-1.0, t_Xb, "ajP", t_Boo_b, "jiP", 1.0, t_Zb, "ai");
     }
 
+    tblis::mult<double>(1.0, t_Xvv_a, "abP", t_Bia_a, "biP", 1.0, t_Za, "ai");        
+    tblis::mult<double>(-1.0, t_Xoo_a, "ijP", t_Bia_a, "ajP", 1.0, t_Za, "ai");
+    tblis::mult<double>(1.0, t_Bvv_a, "baP", t_Xa, "biP", 1.0, t_Za, "ai");
+    tblis::mult<double>(-1.0, t_Xa, "ajP", t_Boo_a, "jiP", 1.0, t_Za, "ai");
+    
     F_gen_a_ = F_HF_mo_a + G_gamma_mo_a;
     if (na_ > 0 && va_ > 0) {
         Eigen::MatrixXd F_HF_vo_a = F_HF_mo_a.block(na_, 0, va_, na_);
@@ -1353,14 +1367,12 @@ void OMP3::build_generalized_fock() {
         F_gen_a_.block(na_, 0, va_, na_) += Z_mat_a;
         F_gen_a_.block(0, na_, na_, va_) += Z_mat_a.transpose();
 
-        // --- TAMBAHAN SENSOR DEBUGGING KOMPONEN ---
-        if (omp_get_thread_num() == 0) {
+        if (omp_get_thread_num() == 0 && config_.print_level > 1) {
             std::cout << "\n  [DEBUG KOMPONEN MATRIKS FOCK OMP3]\n";
             std::cout << "  Norm G_gamma (1-RDM)   : " << G_gamma_mo_a.block(na_, 0, va_, na_).norm() << "\n";
             std::cout << "  Norm L_sep (Separable) : " << L_sep_a.norm() << "\n";
             std::cout << "  Norm Z_mat (2-RDM)     : " << Z_mat_a.norm() << "\n";
         }
-        // ------------------------------------------
     }
 }
 void OMP3::build_hessian_diagonal(Eigen::VectorXd& diag_H, double grad_norm) {
