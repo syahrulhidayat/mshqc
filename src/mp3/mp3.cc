@@ -684,14 +684,14 @@ void OMP3::build_opdm_alpha() {
         TBLIS_VIEW_2D(t_Goo, G_oo_alpha_.data(), na_, na_);
         TBLIS_VIEW_2D(t_Gvv, G_vv_alpha_.data(), va_, va_);
 
-        // KOREKSI RESTRICTED: Skalar L2 dinormalkan menjadi setengah dari T2 (-0.5 dan 0.5)
+        // KOREKSI FINAL: Skalar 1-RDM Restricted dikembalikan ke -1.0 dan 1.0 (sesuai T*L + L*T)
         tblis::mult<double>(-1.0, t_T2, "ikab", t_T2t, "jkab", 0.0, t_Goo, "ij");
-        tblis::mult<double>(-0.5, t_T2, "ikab", t_L2t, "jkab", 1.0, t_Goo, "ij"); 
-        tblis::mult<double>(-0.5, t_L2, "ikab", t_T2t, "jkab", 1.0, t_Goo, "ij");  
+        tblis::mult<double>(-1.0, t_T2, "ikab", t_L2t, "jkab", 1.0, t_Goo, "ij"); 
+        tblis::mult<double>(-1.0, t_L2, "ikab", t_T2t, "jkab", 1.0, t_Goo, "ij");  
 
         tblis::mult<double>(1.0, t_T2, "ijac", t_T2t, "ijbc", 0.0, t_Gvv, "ab");
-        tblis::mult<double>(0.5, t_T2, "ijac", t_L2t, "ijbc", 1.0, t_Gvv, "ab");  
-        tblis::mult<double>(0.5, t_L2, "ijac", t_T2t, "ijbc", 1.0, t_Gvv, "ab");  
+        tblis::mult<double>(1.0, t_T2, "ijac", t_L2t, "ijbc", 1.0, t_Gvv, "ab");  
+        tblis::mult<double>(1.0, t_L2, "ijac", t_T2t, "ijbc", 1.0, t_Gvv, "ab");  
         
         return;
     }
@@ -701,7 +701,7 @@ void OMP3::build_opdm_alpha() {
     TBLIS_VIEW_2D(t_Goo_a, G_oo_alpha_.data(), na_, na_);
     TBLIS_VIEW_2D(t_Gvv_a, G_vv_alpha_.data(), va_, va_);
 
-    // KOREKSI UNRESTRICTED AA: Skalar L2 dinormalkan menjadi setengah dari T2 (-0.25 dan 0.25)
+    // KOREKSI FINAL: Skalar 1-RDM Unrestricted tetap di -0.25 dan 0.25
     tblis::mult<double>(-0.5, t_T2aa, "ikab", t_T2aa, "jkab", 1.0, t_Goo_a, "ij");
     tblis::mult<double>(-0.25, t_T2aa, "ikab", t_T3aa, "jkab", 1.0, t_Goo_a, "ij"); 
     tblis::mult<double>(-0.25, t_T3aa, "ikab", t_T2aa, "jkab", 1.0, t_Goo_a, "ij"); 
@@ -715,7 +715,6 @@ void OMP3::build_opdm_alpha() {
         TBLIS_VIEW_4D(t_T2ab, (*t2_ab_dense), na_, nb_, va_, vb_);
         TBLIS_VIEW_4D(t_T3ab, L2_ab_, na_, nb_, va_, vb_);
 
-        // KOREKSI UNRESTRICTED AB (G_a): Skalar L2 dinormalkan (-0.5 dan 0.5)
         tblis::mult<double>(-1.0, t_T2ab, "ikab", t_T2ab, "jkab", 1.0, t_Goo_a, "ij");
         tblis::mult<double>(-0.5, t_T2ab, "ikab", t_T3ab, "jkab", 1.0, t_Goo_a, "ij"); 
         tblis::mult<double>(-0.5, t_T3ab, "ikab", t_T2ab, "jkab", 1.0, t_Goo_a, "ij"); 
@@ -759,7 +758,6 @@ void OMP3::build_opdm_beta() {
     TBLIS_VIEW_2D(t_Goo_b, G_oo_beta_.data(), nb_, nb_);
     TBLIS_VIEW_2D(t_Gvv_b, G_vv_beta_.data(), vb_, vb_);
 
-    // KOREKSI UNRESTRICTED BB: Skalar L2 dinormalkan (-0.25 dan 0.25)
     tblis::mult<double>(-0.5, t_T2bb, "ikab", t_T2bb, "jkab", 1.0, t_Goo_b, "ij");
     tblis::mult<double>(-0.25, t_T2bb, "ikab", t_T3bb, "jkab", 1.0, t_Goo_b, "ij"); 
     tblis::mult<double>(-0.25, t_T3bb, "ikab", t_T2bb, "jkab", 1.0, t_Goo_b, "ij"); 
@@ -768,7 +766,6 @@ void OMP3::build_opdm_beta() {
     tblis::mult<double>(0.25, t_T2bb, "ijac", t_T3bb, "ijbc", 1.0, t_Gvv_b, "ab");  
     tblis::mult<double>(0.25, t_T3bb, "ijac", t_T2bb, "ijbc", 1.0, t_Gvv_b, "ab"); 
     
-    // KOREKSI UNRESTRICTED AB (G_b): Skalar L2 dinormalkan (-0.5 dan 0.5)
     tblis::mult<double>(-1.0, t_T2ab, "kiab", t_T2ab, "kjab", 1.0, t_Goo_b, "ij");
     tblis::mult<double>(-0.5, t_T2ab, "kiab", t_T3ab, "kjab", 1.0, t_Goo_b, "ij");  
     tblis::mult<double>(-0.5, t_T3ab, "kiab", t_T2ab, "kjab", 1.0, t_Goo_b, "ij");  
@@ -964,8 +961,9 @@ void OMP3::build_generalized_fock() {
 
         // 1. KOREKSI RESTRICTED (RMP3)
         auto compute_gamma_res = [&](auto& t_T, auto& t_Tt, double scale) {
-            tblis::mult<double>( 1.0*scale, t_Tt, "ijab", t_T, "ijcd", 1.0, t_Gvvvv_aa, "cadb");
-            tblis::mult<double>( 1.0*scale, t_Tt, "ijab", t_T, "klab", 1.0, t_Goooo_aa, "kilj");
+            // vvvv dan oooo dinaikkan ke 2.0 untuk mengkompensasi simetrisasi matriks G
+            tblis::mult<double>( 2.0*scale, t_Tt, "ijab", t_T, "ijcd", 1.0, t_Gvvvv_aa, "cadb");
+            tblis::mult<double>( 2.0*scale, t_Tt, "ijab", t_T, "klab", 1.0, t_Goooo_aa, "kilj");
             tblis::mult<double>( 2.0*scale, t_Tt, "ijab", t_T, "kjcb", 1.0, t_Govov_aa, "iakc"); 
             tblis::mult<double>( 2.0*scale, t_Tt, "ijab", t_T, "ikac", 1.0, t_Govov_aa, "kcjb"); 
             tblis::mult<double>(-1.0*scale, t_Tt, "ijab", t_T, "ikca", 1.0, t_Govov_aa, "kcjb"); 
@@ -975,28 +973,20 @@ void OMP3::build_generalized_fock() {
             tblis::mult<double>(-1.0*scale, t_Tt, "ijab", t_T, "ikcb", 1.0, t_Goovv_aa, "jkac");
             tblis::mult<double>(-1.0*scale, t_Tt, "ijab", t_T, "kjac", 1.0, t_Goovv_aa, "ikbc");
         };
-            
-        // =====================================================================
-        // ELIMINASI KONTAMINASI L2 PADA MATRIKS GAMMA (MP3 MURNI)
-        // =====================================================================
+        // ELIMINASI L2 TETAP DIPERTAHANKAN
         compute_gamma_res(t_T2t, t_Taa, 1.0); 
-        // compute_gamma_res(t_T2t, t_Laa, 1.0);  // DIHAPUS (Turunan Semu MP4)
-        // compute_gamma_res(t_L2t, t_Taa, 1.0);  // DIHAPUS (Turunan Semu MP4)
 
     } else {
 
+        // 2. KOREKSI UNRESTRICTED ALPHA-ALPHA & BETA-BETA (UMP3)
         auto compute_gamma_aa = [&](auto& t_Tleft, auto& t_Tright, double scale) {
-            // KOREKSI: Gvvvv_aa dan Goooo_aa dinormalkan menjadi 0.25
-            tblis::mult<double>( 0.25*scale, t_Tleft, "ijab", t_Tright, "ijcd", 1.0, t_Gvvvv_aa, "cadb");
-            tblis::mult<double>( 0.25*scale, t_Tleft, "ijab", t_Tright, "klab", 1.0, t_Goooo_aa, "kilj");
-            tblis::mult<double>( 0.5*scale,  t_Tleft, "ijab", t_Tright, "kjcb", 1.0, t_Govov_aa, "iakc"); 
-            tblis::mult<double>(-0.5*scale,  t_Tleft, "ijab", t_Tright, "kjcb", 1.0, t_Goovv_aa, "ikac"); 
+            // Dikembalikan ke skalar 1/8 original
+            tblis::mult<double>( 0.125*scale, t_Tleft, "ijab", t_Tright, "ijcd", 1.0, t_Gvvvv_aa, "cadb");
+            tblis::mult<double>( 0.125*scale, t_Tleft, "ijab", t_Tright, "klab", 1.0, t_Goooo_aa, "kilj");
+            tblis::mult<double>( 0.5*scale,   t_Tleft, "ijab", t_Tright, "kjcb", 1.0, t_Govov_aa, "iakc"); 
+            tblis::mult<double>(-0.5*scale,   t_Tleft, "ijab", t_Tright, "kjcb", 1.0, t_Goovv_aa, "ikac"); 
         };
-                
-        // ELIMINASI KONTAMINASI L2 PADA MATRIKS GAMMA ALPHA
-        compute_gamma_aa(t_Taa, t_Taa, 1.0); 
-        // compute_gamma_aa(t_Taa, t_Laa, 1.0); // DIHAPUS
-        // compute_gamma_aa(t_Laa, t_Taa, 1.0); // DIHAPUS
+        compute_gamma_aa(t_Taa, t_Taa, 1.0);
         
         if (nb_ > 0 && vb_ > 0) {
             auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
@@ -1039,7 +1029,7 @@ void OMP3::build_generalized_fock() {
                 tblis::mult<double>( 0.125*scale, t_Tleft, "ijab", t_Tright, "ijcd", 1.0, t_Gvvvv_bb, "cadb");
                 tblis::mult<double>( 0.125*scale, t_Tleft, "ijab", t_Tright, "klab", 1.0, t_Goooo_bb, "kilj");
                 tblis::mult<double>( 0.5*scale,   t_Tleft, "ijab", t_Tright, "kjcb", 1.0, t_Govov_bb, "iakc"); 
-                tblis::mult<double>(-1.0*scale,   t_Tleft, "ijab", t_Tright, "kjcb", 1.0, t_Goovv_bb, "ikac");
+                tblis::mult<double>(-0.5*scale,   t_Tleft, "ijab", t_Tright, "kjcb", 1.0, t_Goovv_bb, "ikac");
             };
             
             // ELIMINASI KONTAMINASI L2 PADA MATRIKS GAMMA BETA
@@ -1050,20 +1040,18 @@ void OMP3::build_generalized_fock() {
             // 4. KOREKSI UNRESTRICTED ALPHA-BETA (UMP3)
             auto compute_gamma_ab = [&](auto& t_Ta_L, auto& t_Tb_L, auto& t_Tab_L,
                                         auto& t_Ta_R, auto& t_Tb_R, auto& t_Tab_R, double scale) {
+                // Skalar dikembalikan murni ke orisinal
                 tblis::mult<double>( 1.0*scale, t_Tab_L, "ijef", t_Tab_R, "ijab", 1.0, t_Gvvvv_ab, "eafb"); 
                 tblis::mult<double>( 1.0*scale, t_Tab_L, "mnab", t_Tab_R, "ijab", 1.0, t_Goooo_ab, "minj"); 
                 tblis::mult<double>(-1.0*scale, t_Tab_L, "ineb", t_Tab_R, "mnef", 1.0, t_Goovv_ab_ex, "imbf"); 
                 tblis::mult<double>(-1.0*scale, t_Tab_L, "mjeb", t_Tab_R, "mnab", 1.0, t_Goovv_ba_ex, "jnea"); 
-                tblis::mult<double>( 1.0*scale, t_Tab_L, "mjeb", t_Tab_R, "mnef", 1.0, t_Govov_bb, "jbnf"); 
-                tblis::mult<double>( 1.0*scale, t_Ta_L,  "miea", t_Tab_R, "mjeb", 1.0, t_Govov_ab, "iajb"); 
-                tblis::mult<double>( 1.0*scale, t_Tab_L, "inaf", t_Tb_R,  "njfb", 1.0, t_Govov_ab, "iajb");
-                tblis::mult<double>( 1.0*scale, t_Tab_L, "inab", t_Tab_R, "mneb", 1.0, t_Govov_aa, "iame");
+
+                tblis::mult<double>( 0.5*scale, t_Tab_L, "mjeb", t_Tab_R, "mnef", 1.0, t_Govov_bb, "jbnf"); 
+                tblis::mult<double>( 0.5*scale, t_Ta_L,  "miea", t_Tab_R, "mjeb", 1.0, t_Govov_ab, "iajb"); 
+                tblis::mult<double>( 0.5*scale, t_Tab_L, "inaf", t_Tb_R,  "njfb", 1.0, t_Govov_ab, "iajb");
+                tblis::mult<double>( 0.5*scale, t_Tab_L, "inab", t_Tab_R, "mneb", 1.0, t_Govov_aa, "iame");
             };
-            
-            // ELIMINASI KONTAMINASI L2 PADA MATRIKS GAMMA ALPHA-BETA
-            compute_gamma_ab(t_Taa, t_Tbb, t_Tab, t_Taa, t_Tbb, t_Tab, 1.0); 
-            // compute_gamma_ab(t_Taa, t_Tbb, t_Tab, t_Laa, t_Lbb, t_Lab, 1.0); // DIHAPUS
-            // compute_gamma_ab(t_Laa, t_Lbb, t_Lab, t_Taa, t_Tbb, t_Tab, 1.0); // DIHAPUS
+            compute_gamma_ab(t_Taa, t_Tbb, t_Tab, t_Taa, t_Tbb, t_Tab, 1.0);
         }
     }
 
