@@ -234,45 +234,45 @@ void OMP2::compute_t2_and_energy_cholesky() {
     int nf = n_frozen_;
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     
-    // Pindahkan konstanta ke atas agar digunakan seragam oleh semua blok
-    constexpr double sigma_sq = 1e-20; 
-
     t2_aa_.allocate_block(0, 0, 0, 0, na_, va_, na_, va_);
     auto* t_aa_blk = t2_aa_.get_block(0, 0, 0, 0);
 
     if (t_aa_blk) {
-        #pragma omp parallel for reduction(+:E_ss_aa) schedule(dynamic, 1)
-        for (int i = nf; i < na_; ++i) {
+        #pragma omp parallel reduction(+:E_ss_aa)
+        {
+            // ALOKASI LOKAL THREAD: Menghindari lock contention manajer memori
             Eigen::MatrixXd g_ijab(va_, va_); 
+            
+            #pragma omp for schedule(dynamic, 4)
+            for (int i = nf; i < na_; ++i) {
+                for (int j = nf; j < na_; ++j) {
+                    Eigen::MatrixXd Bia = B_ia_P_alpha_.middleRows(i * va_, va_);
+                    Eigen::MatrixXd Bjb = B_ia_P_alpha_.middleRows(j * va_, va_);
+                    g_ijab.noalias() = Bia * Bjb.transpose(); 
 
-            for (int j = nf; j < na_; ++j) {
-                Eigen::MatrixXd Bia = B_ia_P_alpha_.middleRows(i * va_, va_);
-                Eigen::MatrixXd Bjb = B_ia_P_alpha_.middleRows(j * va_, va_);
-                g_ijab.noalias() = Bia * Bjb.transpose(); 
+                    double e_ij = scf_.orbital_energies_alpha(i) + scf_.orbital_energies_alpha(j);
 
-                double e_ij = scf_.orbital_energies_alpha(i) + scf_.orbital_energies_alpha(j);
+                    for (int a = 0; a < va_; ++a) {
+                        double den_a = e_ij - scf_.orbital_energies_alpha(na_ + a);
+                        for (int b = 0; b < va_; ++b) {
+                            double den = den_a - scf_.orbital_energies_alpha(na_ + b);
 
-                for (int a = 0; a < va_; ++a) {
-                    double den_a = e_ij - scf_.orbital_energies_alpha(na_ + a);
-                    for (int b = 0; b < va_; ++b) {
-                        double den = den_a - scf_.orbital_energies_alpha(na_ + b);
+                            double val_dir = g_ijab(a, b);
+                            double val_ex  = g_ijab(b, a); 
 
-                        double val_dir = g_ijab(a, b);
-                        double val_ex  = g_ijab(b, a); 
+                            double reg_den = (std::abs(den) > 1e-12) ? (1.0 / den) : 0.0;
+                            double t_val = 0.0;
 
-                        // Regularisasi mulus (Smooth Regularization)
-                        double reg_den = (std::abs(den) > 1e-12) ? (1.0 / den) : 0.0;
-                        double t_val = 0.0;
-
-                        if (is_restricted) {
-                            t_val = val_dir * reg_den;
-                            E_ss_aa += t_val * (2.0 * val_dir - val_ex); 
-                        } else {
-                            t_val = (val_dir - val_ex) * reg_den;
-                            E_ss_aa += t_val * (val_dir - val_ex); 
+                            if (is_restricted) {
+                                t_val = val_dir * reg_den;
+                                E_ss_aa += t_val * (2.0 * val_dir - val_ex); 
+                            } else {
+                                t_val = (val_dir - val_ex) * reg_den;
+                                E_ss_aa += t_val * (val_dir - val_ex); 
+                            }
+                            
+                            (*t_aa_blk)(i, a, j, b) = t_val;
                         }
-                        
-                        (*t_aa_blk)(i, a, j, b) = t_val;
                     }
                 }
             }
@@ -286,69 +286,64 @@ void OMP2::compute_t2_and_energy_cholesky() {
         t2_ab_.allocate_block(0, 0, 0, 0, na_, nb_, va_, vb_);
         auto* t_ab_blk = t2_ab_.get_block(0, 0, 0, 0);
 
-        // ========================================================
-        // BLOK BETA-BETA
-        // ========================================================
         if (t_bb_blk) {
-            #pragma omp parallel for reduction(+:E_ss_bb) schedule(dynamic, 1)
-            for (int i = nf; i < nb_; ++i) {
+            #pragma omp parallel reduction(+:E_ss_bb)
+            {
                 Eigen::MatrixXd g_ijab(vb_, vb_);
+                #pragma omp for schedule(dynamic, 4)
+                for (int i = nf; i < nb_; ++i) {
+                    for (int j = nf; j < nb_; ++j) {
+                        Eigen::MatrixXd Bia = B_ia_P_beta_.middleRows(i * vb_, vb_);
+                        Eigen::MatrixXd Bjb = B_ia_P_beta_.middleRows(j * vb_, vb_);
+                        g_ijab.noalias() = Bia * Bjb.transpose();
 
-                for (int j = nf; j < nb_; ++j) {
-                    Eigen::MatrixXd Bia = B_ia_P_beta_.middleRows(i * vb_, vb_);
-                    Eigen::MatrixXd Bjb = B_ia_P_beta_.middleRows(j * vb_, vb_);
-                    g_ijab.noalias() = Bia * Bjb.transpose();
+                        double e_ij = scf_.orbital_energies_beta(i) + scf_.orbital_energies_beta(j);
 
-                    double e_ij = scf_.orbital_energies_beta(i) + scf_.orbital_energies_beta(j);
+                        for (int a = 0; a < vb_; ++a) {
+                            double den_a = e_ij - scf_.orbital_energies_beta(nb_ + a);
+                            for (int b = 0; b < vb_; ++b) {
+                                double den = den_a - scf_.orbital_energies_beta(nb_ + b);
 
-                    for (int a = 0; a < vb_; ++a) {
-                        double den_a = e_ij - scf_.orbital_energies_beta(nb_ + a);
-                        for (int b = 0; b < vb_; ++b) {
-                            double den = den_a - scf_.orbital_energies_beta(nb_ + b);
-
-                            double val_dir = g_ijab(a, b);
-                            double val_ex  = g_ijab(b, a);
-                            
-                            // PERBAIKAN: Gunakan regularisasi sigma_sq, bukan std::copysign
-                            double reg_den = (std::abs(den) > 1e-12) ? (1.0 / den) : 0.0;
-                            double t_val = (val_dir - val_ex) * reg_den;
-                            
-                            E_ss_bb += t_val * (val_dir - val_ex);
-                            (*t_bb_blk)(i, j, a, b) = t_val; 
+                                double val_dir = g_ijab(a, b);
+                                double val_ex  = g_ijab(b, a);
+                                
+                                double reg_den = (std::abs(den) > 1e-12) ? (1.0 / den) : 0.0;
+                                double t_val = (val_dir - val_ex) * reg_den;
+                                
+                                E_ss_bb += t_val * (val_dir - val_ex);
+                                (*t_bb_blk)(i, j, a, b) = t_val; 
+                            }
                         }
                     }
                 }
             }
         }
 
-        // ========================================================
-        // BLOK ALPHA-BETA (Opposite Spin)
-        // ========================================================
         if (t_ab_blk) {
-            #pragma omp parallel for reduction(+:E_os) schedule(dynamic, 1)
-            for (int i = nf; i < na_; ++i) {
+            #pragma omp parallel reduction(+:E_os)
+            {
                 Eigen::MatrixXd g_ijab(va_, vb_);
+                #pragma omp for schedule(dynamic, 4)
+                for (int i = nf; i < na_; ++i) {
+                    for (int j = nf; j < nb_; ++j) {
+                        Eigen::MatrixXd Bia = B_ia_P_alpha_.middleRows(i * va_, va_);
+                        Eigen::MatrixXd Bjb = B_ia_P_beta_.middleRows(j * vb_, vb_);
+                        g_ijab.noalias() = Bia * Bjb.transpose(); 
 
-                for (int j = nf; j < nb_; ++j) {
-                    Eigen::MatrixXd Bia = B_ia_P_alpha_.middleRows(i * va_, va_);
-                    Eigen::MatrixXd Bjb = B_ia_P_beta_.middleRows(j * vb_, vb_);
-                    g_ijab.noalias() = Bia * Bjb.transpose(); 
+                        double e_ij = scf_.orbital_energies_alpha(i) + scf_.orbital_energies_beta(j);
 
-                    double e_ij = scf_.orbital_energies_alpha(i) + scf_.orbital_energies_beta(j);
+                        for (int a = 0; a < va_; ++a) {
+                            double den_a = e_ij - scf_.orbital_energies_alpha(na_ + a);
+                            for (int b = 0; b < vb_; ++b) {
+                                double den = den_a - scf_.orbital_energies_beta(nb_ + b);
 
-                    for (int a = 0; a < va_; ++a) {
-                        double den_a = e_ij - scf_.orbital_energies_alpha(na_ + a);
-                        for (int b = 0; b < vb_; ++b) {
-                            double den = den_a - scf_.orbital_energies_beta(nb_ + b);
-
-                            double val_dir = g_ijab(a, b);
-                            
-                            // PERBAIKAN: Gunakan regularisasi sigma_sq, bukan std::copysign
-                            double reg_den = (std::abs(den) > 1e-12) ? (1.0 / den) : 0.0;
-                            double t_val = val_dir * reg_den;
-                            
-                            E_os += t_val * val_dir; 
-                            (*t_ab_blk)(i, j, a, b) = t_val;
+                                double val_dir = g_ijab(a, b);
+                                double reg_den = (std::abs(den) > 1e-12) ? (1.0 / den) : 0.0;
+                                double t_val = val_dir * reg_den;
+                                
+                                E_os += t_val * val_dir; 
+                                (*t_ab_blk)(i, j, a, b) = t_val;
+                            }
                         }
                     }
                 }
