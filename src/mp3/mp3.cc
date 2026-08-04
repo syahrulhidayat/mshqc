@@ -976,6 +976,8 @@ void OMP3::build_generalized_fock() {
             tblis::mult<double>(-1.0*scale, t_Tt, "ijab", t_T, "kjac", 1.0, t_Goovv_aa, "ikbc");
         };
         compute_gamma_res(t_T2t, t_Taa, 1.0); 
+        compute_gamma_res(t_T2t, t_Laa, 0.5); 
+        compute_gamma_res(t_L2t, t_Taa, 0.5);
 
     } else {
 
@@ -987,6 +989,8 @@ void OMP3::build_generalized_fock() {
             tblis::mult<double>(-0.25*scale,  t_Tleft, "ijab", t_Tright, "kjcb", 1.0, t_Goovv_aa, "ikac"); // FIX!
         };
         compute_gamma_aa(t_Taa, t_Taa, 1.0); 
+        compute_gamma_aa(t_Taa, t_Laa, 0.5); 
+        compute_gamma_aa(t_Laa, t_Taa, 0.5);
         
         if (nb_ > 0 && vb_ > 0) {
             auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
@@ -997,8 +1001,10 @@ void OMP3::build_generalized_fock() {
                 t2_ab_dense = &dummy_ab_fock;
             }
             TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
+            TBLIS_VIEW_4D(t_Lab, L2_ab_, na_, nb_, va_, vb_);
             
             TBLIS_VIEW_4D(t_Tbb, (*t2_bb_dense), nb_, nb_, vb_, vb_);
+            TBLIS_VIEW_4D(t_Lbb, L2_bb_, nb_, nb_, vb_, vb_);
 
             TBLIS_VIEW_4D(t_Gvvvv_bb, Gamma_vvvv_bb, vb_, vb_, vb_, vb_);
             TBLIS_VIEW_4D(t_Goooo_bb, Gamma_oooo_bb, nb_, nb_, nb_, nb_);
@@ -1017,7 +1023,9 @@ void OMP3::build_generalized_fock() {
                 tblis::mult<double>( 0.25*scale,  t_Tleft, "ijab", t_Tright, "kjcb", 1.0, t_Govov_bb, "iakc"); 
                 tblis::mult<double>(-0.25*scale,  t_Tleft, "ijab", t_Tright, "kjcb", 1.0, t_Goovv_bb, "ikac"); 
             };
-            compute_gamma_bb(t_Tbb, t_Tbb, 1.0);
+            compute_gamma_bb(t_Tbb, t_Tbb, 1.0); 
+            compute_gamma_bb(t_Tbb, t_Lbb, 0.5); 
+            compute_gamma_bb(t_Lbb, t_Tbb, 0.5);
 
             // 3. KOREKSI UNRESTRICTED AB: MURNI T2 * T2
             auto compute_gamma_ab = [&](auto& t_Ta_L, auto& t_Tb_L, auto& t_Tab_L,
@@ -1033,6 +1041,8 @@ void OMP3::build_generalized_fock() {
                 tblis::mult<double>( 1.0*scale, t_Tab_L, "inab", t_Tab_R, "mneb", 1.0, t_Govov_aa, "iame");
             };
             compute_gamma_ab(t_Taa, t_Tbb, t_Tab, t_Taa, t_Tbb, t_Tab, 1.0); 
+            compute_gamma_ab(t_Taa, t_Tbb, t_Tab, t_Laa, t_Lbb, t_Lab, 0.5); 
+            compute_gamma_ab(t_Laa, t_Lbb, t_Lab, t_Taa, t_Tbb, t_Tab, 0.5);
         }
     }
 
