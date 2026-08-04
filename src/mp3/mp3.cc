@@ -770,13 +770,13 @@ void OMP3::build_opdm_beta() {
     tblis::mult<double>(0.5, t_T2bb, "ijac", t_T3bb, "ijbc", 1.0, t_Gvv_b, "ab");  
     tblis::mult<double>(0.5, t_T3bb, "ijac", t_T2bb, "ijbc", 1.0, t_Gvv_b, "ab"); 
     
-    tblis::mult<double>(-0.5, t_T2ab, "kiab", t_T2ab, "kjab", 1.0, t_Goo_b, "ij");
-    tblis::mult<double>(-0.5, t_T2ab, "kiab", t_T3ab, "kjab", 1.0, t_Goo_b, "ij");  
-    tblis::mult<double>(-0.5, t_T3ab, "kiab", t_T2ab, "kjab", 1.0, t_Goo_b, "ij");  
+    tblis::mult<double>(-1.0, t_T2ab, "kiab", t_T2ab, "kjab", 1.0, t_Goo_b, "ij");
+    tblis::mult<double>(-1.0, t_T2ab, "kiab", t_T3ab, "kjab", 1.0, t_Goo_b, "ij");  
+    tblis::mult<double>(-1.0, t_T3ab, "kiab", t_T2ab, "kjab", 1.0, t_Goo_b, "ij");  
     
-    tblis::mult<double>(0.5, t_T2ab, "ijca", t_T2ab, "ijcb", 1.0, t_Gvv_b, "ab");
-    tblis::mult<double>(0.5, t_T2ab, "ijca", t_T3ab, "ijcb", 1.0, t_Gvv_b, "ab");   
-    tblis::mult<double>(0.5, t_T3ab, "ijca", t_T2ab, "ijcb", 1.0, t_Gvv_b, "ab");   
+    tblis::mult<double>(1.0, t_T2ab, "ijca", t_T2ab, "ijcb", 1.0, t_Gvv_b, "ab");
+    tblis::mult<double>(1.0, t_T2ab, "ijca", t_T3ab, "ijcb", 1.0, t_Gvv_b, "ab");   
+    tblis::mult<double>(1.0, t_T3ab, "ijca", t_T2ab, "ijcb", 1.0, t_Gvv_b, "ab");   
     if (omp_get_thread_num() == 0 && config_.print_level > 1) {
         std::cout << "  [DEBUG] 1-RDM Beta (Koreksi Orde-3) berhasil dihitung.\n";
         std::cout << "  [DEBUG] Trace G_oo_beta : " << G_oo_beta_.trace() << "\n";
@@ -986,8 +986,7 @@ void OMP3::build_generalized_fock() {
         };
             
         compute_gamma_res(t_T2t, t_Taa, 1.0); // KONTRIBUSI MP2 (T2, T2) -> Wajib ada!
-        compute_gamma_res(t_T2t, t_Laa, 1.0); // Kontribusi MP3 (T2, T3)
-        compute_gamma_res(t_L2t, t_Taa, 1.0); // Kontribusi MP3 (T3, T2)
+
 
     } else {
        
@@ -999,8 +998,7 @@ void OMP3::build_generalized_fock() {
         };
                 
         compute_gamma_aa(t_Taa, t_Taa, 1.0); // KONTRIBUSI MP2
-        compute_gamma_aa(t_Taa, t_Laa, 1.0); // KONTRIBUSI MP3
-        compute_gamma_aa(t_Laa, t_Taa, 1.0); // KONTRIBUSI MP3
+
         
         if (nb_ > 0 && vb_ > 0) {
             auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
@@ -1047,8 +1045,7 @@ void OMP3::build_generalized_fock() {
             };
             
             compute_gamma_bb(t_Tbb, t_Tbb, 1.0); // KONTRIBUSI MP2
-            compute_gamma_bb(t_Tbb, t_Lbb, 1.0);
-            compute_gamma_bb(t_Lbb, t_Tbb, 1.0);
+
 
             auto compute_gamma_ab = [&](auto& t_Ta_L, auto& t_Tb_L, auto& t_Tab_L,
                                         auto& t_Ta_R, auto& t_Tb_R, auto& t_Tab_R, double scale) {
@@ -1066,8 +1063,7 @@ void OMP3::build_generalized_fock() {
             };
             
             compute_gamma_ab(t_Taa, t_Tbb, t_Tab, t_Taa, t_Tbb, t_Tab, 1.0); 
-            compute_gamma_ab(t_Taa, t_Tbb, t_Tab, t_Laa, t_Lbb, t_Lab, 1.0);
-            compute_gamma_ab(t_Laa, t_Lbb, t_Lab, t_Taa, t_Tbb, t_Tab, 1.0);
+           
         }
     }
 
@@ -1257,7 +1253,7 @@ void OMP3::build_generalized_fock() {
 
    
     // =========================================================
-    // MENGHITUNG Y_aa (AMAN DARI SEGFAULT & DEBUGGING)
+    // MENGHITUNG Y_aa (AMAN DARI SEGFAULT & DILENGKAPI DEBUGGING)
     // =========================================================
     if (omp_get_thread_num() == 0 && config_.print_level > 1) {
         std::cout << "  [DEBUG] Membentuk matriks Y_aa via manual mapping..." << std::endl;
@@ -1365,7 +1361,7 @@ void OMP3::build_generalized_fock() {
 
        
         // =========================================================
-        // MENGHITUNG Y_bb (AMAN DARI SEGFAULT & DEBUGGING)
+        // MENGHITUNG Y_bb (AMAN DARI SEGFAULT & DILENGKAPI DEBUGGING)
         // =========================================================
         if (omp_get_thread_num() == 0 && config_.print_level > 1) {
             std::cout << "  [DEBUG] Membentuk matriks Y_bb via manual mapping..." << std::endl;
@@ -1389,12 +1385,8 @@ void OMP3::build_generalized_fock() {
         tblis::mult<double>(-1.0, t_Y_bb, "amP", t_Boo_b, "miP", 1.0, t_Zb, "ai");
         tblis::mult<double>(1.0, t_Y_bb, "eiP", t_Bvv_b, "aeP", 1.0, t_Zb, "ai");
 
-        if (omp_get_thread_num() == 0 && config_.print_level > 1) {
-            std::cout << "  [DEBUG] Norm Y_bb: " << Y_bb.norm() << std::endl;
-        }
-
         // ===================================================================
-        // MENGHITUNG Y_ab_a dan Y_ab_b (AMAN DARI SEGFAULT & DEBUGGING)
+        // MENGHITUNG Y_ab_a dan Y_ab_b (AMAN DARI SEGFAULT & DILENGKAPI DEBUGGING)
         // ===================================================================
         if (omp_get_thread_num() == 0 && config_.print_level > 1) {
             std::cout << "  [DEBUG] Membentuk matriks Y_ab_a dan Y_ab_b via manual mapping..." << std::endl;
@@ -1418,10 +1410,6 @@ void OMP3::build_generalized_fock() {
         
         tblis::mult<double>(-1.0, t_Y_ab_a, "a m P", t_Boo_a, "m i P", 1.0, t_Za, "a i");
         tblis::mult<double>(1.0, t_Y_ab_a, "e i P", t_Bvv_a, "a e P", 1.0, t_Za, "a i");
-
-        if (omp_get_thread_num() == 0 && config_.print_level > 1) {
-            std::cout << "  [DEBUG] Norm Y_ab_a: " << Y_ab_a.norm() << std::endl;
-        }
 
         // Y_ab_b = (Govov_ab)^T * B_ia_alpha
         Eigen::MatrixXd Y_ab_b = G_mat_ab.transpose() * B_ia_P_alpha_;
