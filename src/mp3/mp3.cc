@@ -962,31 +962,24 @@ void OMP3::build_generalized_fock() {
         TBLIS_VIEW_4D(t_T2t, T2_tilde, na_, na_, va_, va_);
         TBLIS_VIEW_4D(t_L2t, L2_tilde, na_, na_, va_, va_); 
 
-       // 1. KOREKSI RESTRICTED (RMP3): Murni T1 * T1
         auto compute_gamma_res = [&](auto& t_T, auto& t_Tt, double scale) {
             tblis::mult<double>( 1.0*scale, t_Tt, "ijab", t_T, "ijcd", 1.0, t_Gvvvv_aa, "cadb");
             tblis::mult<double>( 1.0*scale, t_Tt, "ijab", t_T, "klab", 1.0, t_Goooo_aa, "kilj");
-            tblis::mult<double>( 1.0*scale, t_Tt, "ijab", t_T, "kjcb", 1.0, t_Govov_aa, "iakc"); // 0.5 * 2
-            tblis::mult<double>( 1.0*scale, t_Tt, "ijab", t_T, "ikac", 1.0, t_Govov_aa, "kcjb"); // 0.5 * 2
-            tblis::mult<double>(-0.5*scale, t_Tt, "ijab", t_T, "ikca", 1.0, t_Govov_aa, "kcjb"); // -0.25 * 2
-            tblis::mult<double>(-0.5*scale, t_Tt, "ijab", t_T, "kjbc", 1.0, t_Govov_aa, "iakc"); // -0.25 * 2
-            tblis::mult<double>(-1.0*scale, t_Tt, "ijab", t_T, "kjcb", 1.0, t_Goovv_aa, "ikac"); // TETAP -1.0
-            tblis::mult<double>(-1.0*scale, t_Tt, "ijab", t_T, "ikac", 1.0, t_Goovv_aa, "kjcb"); // TETAP -1.0
-            tblis::mult<double>(-1.0*scale, t_Tt, "ijab", t_T, "ikcb", 1.0, t_Goovv_aa, "jkac"); // TETAP -1.0
-            tblis::mult<double>(-1.0*scale, t_Tt, "ijab", t_T, "kjac", 1.0, t_Goovv_aa, "ikbc"); // TETAP -1.0
+            tblis::mult<double>( 2.0*scale, t_Tt, "ijab", t_T, "kjcb", 1.0, t_Govov_aa, "iakc"); 
+            tblis::mult<double>( 2.0*scale, t_Tt, "ijab", t_T, "ikac", 1.0, t_Govov_aa, "kcjb"); 
+            tblis::mult<double>(-1.0*scale, t_Tt, "ijab", t_T, "ikca", 1.0, t_Govov_aa, "kcjb"); 
+            tblis::mult<double>(-1.0*scale, t_Tt, "ijab", t_T, "kjbc", 1.0, t_Govov_aa, "iakc"); 
         };
-        compute_gamma_res(t_T2t, t_Taa, 1.0); 
+        compute_gamma_res(t_T2t, t_Taa, 1.0);
 
     } else {
 
-        // 2. KOREKSI UNRESTRICTED AA & BB: Murni T1 * T1
         auto compute_gamma_aa = [&](auto& t_Tleft, auto& t_Tright, double scale) {
             tblis::mult<double>( 0.125*scale, t_Tleft, "ijab", t_Tright, "ijcd", 1.0, t_Gvvvv_aa, "cadb");
             tblis::mult<double>( 0.125*scale, t_Tleft, "ijab", t_Tright, "klab", 1.0, t_Goooo_aa, "kilj");
-            tblis::mult<double>( 0.25*scale,  t_Tleft, "ijab", t_Tright, "kjcb", 1.0, t_Govov_aa, "iakc"); // KOREKSI EKSAK 0.25
-            tblis::mult<double>(-1.0*scale,   t_Tleft, "ijab", t_Tright, "kjcb", 1.0, t_Goovv_aa, "ikac"); // DIKEMBALIKAN KE -1.0 (Karena ada symmetrization)
+            tblis::mult<double>( 0.5*scale,   t_Tleft, "ijab", t_Tright, "kjcb", 1.0, t_Govov_aa, "iakc"); 
         };
-        compute_gamma_aa(t_Taa, t_Taa, 1.0); 
+        compute_gamma_aa(t_Taa, t_Taa, 1.0);
         
         if (nb_ > 0 && vb_ > 0) {
             auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
@@ -1013,23 +1006,18 @@ void OMP3::build_generalized_fock() {
             auto compute_gamma_bb = [&](auto& t_Tleft, auto& t_Tright, double scale) {
                 tblis::mult<double>( 0.125*scale, t_Tleft, "ijab", t_Tright, "ijcd", 1.0, t_Gvvvv_bb, "cadb");
                 tblis::mult<double>( 0.125*scale, t_Tleft, "ijab", t_Tright, "klab", 1.0, t_Goooo_bb, "kilj");
-                tblis::mult<double>( 0.25*scale,  t_Tleft, "ijab", t_Tright, "kjcb", 1.0, t_Govov_bb, "iakc"); // KOREKSI EKSAK 0.25
-                tblis::mult<double>(-1.0*scale,   t_Tleft, "ijab", t_Tright, "kjcb", 1.0, t_Goovv_bb, "ikac"); // DIKEMBALIKAN KE -1.0
+                tblis::mult<double>( 0.5*scale,   t_Tleft, "ijab", t_Tright, "kjcb", 1.0, t_Govov_bb, "iakc"); 
             };
-            compute_gamma_bb(t_Tbb, t_Tbb, 1.0); 
+            compute_gamma_bb(t_Tbb, t_Tbb, 1.0);
 
-            // 3. KOREKSI UNRESTRICTED AB: Murni T1 * T1
             auto compute_gamma_ab = [&](auto& t_Ta_L, auto& t_Tb_L, auto& t_Tab_L,
                                         auto& t_Ta_R, auto& t_Tb_R, auto& t_Tab_R, double scale) {
                 tblis::mult<double>( 1.0*scale, t_Tab_L, "ijef", t_Tab_R, "ijab", 1.0, t_Gvvvv_ab, "eafb"); 
                 tblis::mult<double>( 1.0*scale, t_Tab_L, "mnab", t_Tab_R, "ijab", 1.0, t_Goooo_ab, "minj"); 
-                tblis::mult<double>(-1.0*scale, t_Tab_L, "ineb", t_Tab_R, "mnef", 1.0, t_Goovv_ab_ex, "imbf"); 
-                tblis::mult<double>(-1.0*scale, t_Tab_L, "mjeb", t_Tab_R, "mnab", 1.0, t_Goovv_ba_ex, "jnea"); 
-
-                tblis::mult<double>( 0.5*scale, t_Tab_L, "mjeb", t_Tab_R, "mnef", 1.0, t_Govov_bb, "jbnf"); // KOREKSI EKSAK 0.5
-                tblis::mult<double>( 0.5*scale, t_Ta_L,  "miea", t_Tab_R, "mjeb", 1.0, t_Govov_ab, "iajb"); // KOREKSI EKSAK 0.5
-                tblis::mult<double>( 0.5*scale, t_Tab_L, "inaf", t_Tb_R,  "njfb", 1.0, t_Govov_ab, "iajb"); // KOREKSI EKSAK 0.5
-                tblis::mult<double>( 0.5*scale, t_Tab_L, "inab", t_Tab_R, "mneb", 1.0, t_Govov_aa, "iame"); // KOREKSI EKSAK 0.5
+                tblis::mult<double>( 1.0*scale, t_Tab_L, "mjeb", t_Tab_R, "mnef", 1.0, t_Govov_bb, "jbnf"); 
+                tblis::mult<double>( 1.0*scale, t_Ta_L,  "miea", t_Tab_R, "mjeb", 1.0, t_Govov_ab, "iajb"); 
+                tblis::mult<double>( 1.0*scale, t_Tab_L, "inaf", t_Tb_R,  "njfb", 1.0, t_Govov_ab, "iajb");
+                tblis::mult<double>( 1.0*scale, t_Tab_L, "inab", t_Tab_R, "mneb", 1.0, t_Govov_aa, "iame");
             };
             compute_gamma_ab(t_Taa, t_Tbb, t_Tab, t_Taa, t_Tbb, t_Tab, 1.0); 
         }
