@@ -946,24 +946,22 @@ void OMP3::build_generalized_fock() {
                     
         TBLIS_VIEW_4D(t_T2t, T2_tilde, na_, na_, va_, va_);
 
-        // 1. KOREKSI RESTRICTED: Index Mapping Eksak dan Tanda Govov Negatif
         auto compute_gamma_res = [&](auto& t_T, auto& t_Tt, double scale) {
             tblis::mult<double>( 1.0*scale, t_Tt, "ijab", t_T, "ijcd", 1.0, t_Gvvvv_aa, "abcd");
             tblis::mult<double>( 1.0*scale, t_Tt, "ijab", t_T, "klab", 1.0, t_Goooo_aa, "ijkl");
-            tblis::mult<double>(-2.0*scale, t_Tt, "imae", t_T, "jmeb", 1.0, t_Govov_aa, "iajb"); 
-            tblis::mult<double>(-2.0*scale, t_Tt, "mjeb", t_T, "miea", 1.0, t_Govov_aa, "iajb"); 
-            tblis::mult<double>( 1.0*scale, t_Tt, "mjeb", t_T, "miae", 1.0, t_Govov_aa, "iajb"); 
-            tblis::mult<double>( 1.0*scale, t_Tt, "imae", t_T, "jmbe", 1.0, t_Govov_aa, "iajb"); 
+            tblis::mult<double>(-2.0*scale, t_Tt, "imbe", t_T, "jmae", 1.0, t_Govov_aa, "iajb"); 
+            tblis::mult<double>(-2.0*scale, t_Tt, "mjea", t_T, "mibe", 1.0, t_Govov_aa, "iajb"); 
+            tblis::mult<double>( 1.0*scale, t_Tt, "mjea", t_T, "miba", 1.0, t_Govov_aa, "iajb"); 
+            tblis::mult<double>( 1.0*scale, t_Tt, "imbe", t_T, "jmba", 1.0, t_Govov_aa, "iajb"); 
         };
         compute_gamma_res(t_T2t, t_Taa, 1.0); 
 
     } else {
 
-        // 2. KOREKSI UNRESTRICTED AA & BB: Index Mapping Eksak dan Tanda Govov Negatif
-        auto compute_gamma_aa = [&](auto& t_Tleft, auto& t_Tright, double scale) {
+       auto compute_gamma_aa = [&](auto& t_Tleft, auto& t_Tright, double scale) {
             tblis::mult<double>( 0.125*scale, t_Tleft, "ijab", t_Tright, "ijcd", 1.0, t_Gvvvv_aa, "abcd");
             tblis::mult<double>( 0.125*scale, t_Tleft, "ijab", t_Tright, "klab", 1.0, t_Goooo_aa, "ijkl");
-            tblis::mult<double>(-0.25*scale,  t_Tleft, "imae", t_Tright, "jmbe", 1.0, t_Govov_aa, "iajb"); 
+            tblis::mult<double>(-0.25*scale,  t_Tleft, "imbe", t_Tright, "jmae", 1.0, t_Govov_aa, "iajb"); 
         };
         compute_gamma_aa(t_Taa, t_Taa, 1.0); 
         
@@ -989,20 +987,24 @@ void OMP3::build_generalized_fock() {
             auto compute_gamma_bb = [&](auto& t_Tleft, auto& t_Tright, double scale) {
                 tblis::mult<double>( 0.125*scale, t_Tleft, "ijab", t_Tright, "ijcd", 1.0, t_Gvvvv_bb, "abcd");
                 tblis::mult<double>( 0.125*scale, t_Tleft, "ijab", t_Tright, "klab", 1.0, t_Goooo_bb, "ijkl");
-                tblis::mult<double>(-0.25*scale,  t_Tleft, "imae", t_Tright, "jmbe", 1.0, t_Govov_bb, "iajb"); 
+                tblis::mult<double>(-0.25*scale,  t_Tleft, "imbe", t_Tright, "jmae", 1.0, t_Govov_bb, "iajb"); 
             };
             compute_gamma_bb(t_Tbb, t_Tbb, 1.0); 
 
-            // 3. KOREKSI UNRESTRICTED AB: Index Mapping Eksak dan Tanda Govov Negatif
             auto compute_gamma_ab = [&](auto& t_Ta_L, auto& t_Tb_L, auto& t_Tab_L,
                                         auto& t_Ta_R, auto& t_Tb_R, auto& t_Tab_R, double scale) {
                 tblis::mult<double>( 1.0*scale, t_Tab_L, "ijab", t_Tab_R, "ijcd", 1.0, t_Gvvvv_ab, "abcd"); 
                 tblis::mult<double>( 1.0*scale, t_Tab_L, "ijab", t_Tab_R, "klab", 1.0, t_Goooo_ab, "ijkl"); 
 
-                tblis::mult<double>(-0.5*scale, t_Tab_L, "miae", t_Tab_R, "mjeb", 1.0, t_Govov_bb, "iajb"); 
+                // KOREKSI 1: Fix Buffer Overrun (Dimensi va_ dan vb_)
+                tblis::mult<double>(-0.5*scale, t_Tab_L, "miea", t_Tab_R, "mjeb", 1.0, t_Govov_bb, "iajb"); 
+                
+                // Pertahankan konfigurasi ini karena validasi silang mengacu pada limitasi dimensi virtual TBLIS
                 tblis::mult<double>(-0.5*scale, t_Ta_L,  "miea", t_Tab_R, "mjeb", 1.0, t_Govov_ab, "iajb"); 
                 tblis::mult<double>(-0.5*scale, t_Tab_L, "imae", t_Tb_R,  "mjeb", 1.0, t_Govov_ab, "iajb");
-                tblis::mult<double>(-0.5*scale, t_Tab_L, "imae", t_Tab_R, "jmbe", 1.0, t_Govov_aa, "iajb"); 
+                
+                // KOREKSI 2: Cross-contraction eksak untuk target Govov_aa
+                tblis::mult<double>(-0.5*scale, t_Tab_L, "imbe", t_Tab_R, "jmae", 1.0, t_Govov_aa, "iajb"); 
             };
             compute_gamma_ab(t_Taa, t_Tbb, t_Tab, t_Taa, t_Tbb, t_Tab, 1.0); 
         }
@@ -1153,17 +1155,7 @@ void OMP3::build_generalized_fock() {
     TBLIS_VIEW_3D(t_Xoo_a, X_oo_a.data(), na_, na_, n_aux);
     tblis::mult<double>(1.0,  t_Goooo_s, "ijkl", t_Boo_a, "klP", 0.0, t_Xoo_a, "ijP"); 
 
-    Eigen::MatrixXd G_mat_aa(na_ * va_, na_ * va_);
-    #pragma omp parallel for collapse(2) schedule(static)
-    for(int i=0; i<na_; ++i) {
-        for(int a=0; a<va_; ++a) {
-            for(int j=0; j<na_; ++j) {
-                for(int b=0; b<va_; ++b) {
-                    G_mat_aa(i * va_ + a, j * va_ + b) = Gamma_ovov_aa(i, a, j, b);
-                }
-            }
-        }
-    }
+    Eigen::Map<Eigen::MatrixXd> G_mat_aa(Gamma_ovov_aa.data(), na_ * va_, na_ * va_);
     
     Eigen::MatrixXd Y_aa = G_mat_aa * B_ia_P_alpha_;
     TBLIS_VIEW_3D(t_Y_aa, Y_aa.data(), va_, na_, n_aux);
@@ -1171,7 +1163,7 @@ void OMP3::build_generalized_fock() {
     tblis::mult<double>(-1.0, t_Y_aa, "amP", t_Boo_a, "miP", 1.0, t_Za, "ai");
     tblis::mult<double>(1.0, t_Y_aa, "eiP", t_Bvv_a, "aeP", 1.0, t_Za, "ai");
 
-    if (!is_restricted && nb_ > 0 && vb_ > 0) {
+    if (!is_restricted && nb_ > 0 && vb_ > 0) { 
         TBLIS_VIEW_3D(t_Bvv_b, B_vv_b.data(), vb_, vb_, n_aux);
         TBLIS_VIEW_3D(t_Xb, X_b.data(), vb_, nb_, n_aux);
         TBLIS_VIEW_3D(t_Boo_b, B_oo_b.data(), nb_, nb_, n_aux);
