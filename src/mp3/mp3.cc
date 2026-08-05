@@ -934,8 +934,6 @@ void OMP3::build_generalized_fock() {
 
     if (is_restricted) {
         Eigen::Tensor<double, 4> T2_tilde(na_, na_, va_, va_);
-        // [PATCH] Deklarasi tensor Tilde untuk T^(2)
-        Eigen::Tensor<double, 4> L2_tilde(na_, na_, va_, va_); 
         
         #pragma omp parallel for collapse(4) schedule(static)
         for(int i=0; i<na_; ++i) {
@@ -943,42 +941,40 @@ void OMP3::build_generalized_fock() {
                 for(int a=0; a<va_; ++a) {
                     for(int b=0; b<va_; ++b) {
                         T2_tilde(i,j,a,b) = 2.0 * T2_aa_ijab(i,j,a,b) - T2_aa_ijab(i,j,b,a);
-                        // [PATCH] Inisialisasi Tilde T^(2) dengan pelacakan spin
-                        L2_tilde(i,j,a,b) = 2.0 * L2_aa_(i,j,a,b) - L2_aa_(i,j,b,a); 
                     }
                 }
             }
         }
                     
         TBLIS_VIEW_4D(t_T2t, T2_tilde, na_, na_, va_, va_);
-        TBLIS_VIEW_4D(t_L2t, L2_tilde, na_, na_, va_, va_); 
 
+        // KOREKSI FINAL: Skalar Govov Dinaikkan 4x (Derivatif Ring Eksak)
         auto compute_gamma_res = [&](auto& t_T, auto& t_Tt, double scale) {
             tblis::mult<double>( 0.25*scale, t_Tt, "ijac", t_T, "ijbd", 1.0, t_Gvvvv_aa, "abcd"); 
             tblis::mult<double>( 0.25*scale, t_Tt, "ikab", t_T, "jlab", 1.0, t_Goooo_aa, "ijkl"); 
-            tblis::mult<double>(-0.5*scale,  t_Tt, "imae", t_T, "jmeb", 1.0, t_Govov_aa, "iajb"); 
-            tblis::mult<double>(-0.5*scale,  t_Tt, "mjea", t_T, "mibe", 1.0, t_Govov_aa, "iajb"); 
-            tblis::mult<double>( 0.25*scale, t_Tt, "mjea", t_T, "miba", 1.0, t_Govov_aa, "iajb"); 
-            tblis::mult<double>( 0.25*scale, t_Tt, "imae", t_T, "jmba", 1.0, t_Govov_aa, "iajb"); 
+            
+            // PENTING: Skalar asli -0.5 diubah menjadi -2.0
+            tblis::mult<double>(-2.0*scale,  t_Tt, "imae", t_T, "jmeb", 1.0, t_Govov_aa, "iajb"); 
+            tblis::mult<double>(-2.0*scale,  t_Tt, "mjea", t_T, "mibe", 1.0, t_Govov_aa, "iajb"); 
+            tblis::mult<double>( 1.0*scale,  t_Tt, "mjea", t_T, "miba", 1.0, t_Govov_aa, "iajb"); 
+            tblis::mult<double>( 1.0*scale,  t_Tt, "imae", t_T, "jmba", 1.0, t_Govov_aa, "iajb"); 
         };
         
-        // [PATCH] Integrasi simetris term OMP2 dan OMP3
-        compute_gamma_res(t_T2t, t_Taa, 1.0);  // Suku T^(1) x T^(1)
-        compute_gamma_res(t_T2t, t_L2aa, 1.0); // Suku T^(1) x T^(2)
-        compute_gamma_res(t_L2t, t_Taa, 1.0);  // Suku T^(2) x T^(1)
+        // PENTING: Hanya T1 * T1. Jangan tambahkan L2/T2.
+        compute_gamma_res(t_T2t, t_Taa, 1.0); 
 
     } else {
 
         auto compute_gamma_aa = [&](auto& t_Tleft, auto& t_Tright, double scale) {
             tblis::mult<double>( 0.125*scale, t_Tleft, "ijac", t_Tright, "ijbd", 1.0, t_Gvvvv_aa, "abcd"); 
             tblis::mult<double>( 0.125*scale, t_Tleft, "ikab", t_Tright, "jlab", 1.0, t_Goooo_aa, "ijkl"); 
-            tblis::mult<double>(-0.25*scale,  t_Tleft, "imae", t_Tright, "jmbe", 1.0, t_Govov_aa, "iajb"); 
+            
+            // PENTING: Skalar asli -0.25 diubah menjadi -1.0
+            tblis::mult<double>(-1.0*scale,   t_Tleft, "imae", t_Tright, "jmbe", 1.0, t_Govov_aa, "iajb"); 
         };
         
-        // [PATCH] Integrasi simetris blok alpha-alpha
+        // Murni T1 * T1
         compute_gamma_aa(t_Taa, t_Taa, 1.0); 
-        compute_gamma_aa(t_Taa, t_L2aa, 1.0); 
-        compute_gamma_aa(t_L2aa, t_Taa, 1.0); 
         
         if (nb_ > 0 && vb_ > 0) {
             auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
@@ -991,10 +987,6 @@ void OMP3::build_generalized_fock() {
             TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
             TBLIS_VIEW_4D(t_Tbb, (*t2_bb_dense), nb_, nb_, vb_, vb_);
 
-            // [PATCH] TBLIS view untuk amplitudo beta-beta dan alpha-beta T^(2)
-            TBLIS_VIEW_4D(t_L2bb, L2_bb_, nb_, nb_, vb_, vb_);
-            TBLIS_VIEW_4D(t_L2ab, L2_ab_, na_, nb_, va_, vb_);
-
             TBLIS_VIEW_4D(t_Gvvvv_bb, Gamma_vvvv_bb, vb_, vb_, vb_, vb_);
             TBLIS_VIEW_4D(t_Goooo_bb, Gamma_oooo_bb, nb_, nb_, nb_, nb_);
             TBLIS_VIEW_4D(t_Govov_bb, Gamma_ovov_bb, nb_, vb_, nb_, vb_);
@@ -1006,29 +998,23 @@ void OMP3::build_generalized_fock() {
             auto compute_gamma_bb = [&](auto& t_Tleft, auto& t_Tright, double scale) {
                 tblis::mult<double>( 0.125*scale, t_Tleft, "ijac", t_Tright, "ijbd", 1.0, t_Gvvvv_bb, "abcd"); 
                 tblis::mult<double>( 0.125*scale, t_Tleft, "ikab", t_Tright, "jlab", 1.0, t_Goooo_bb, "ijkl"); 
-                tblis::mult<double>(-0.25*scale,  t_Tleft, "imae", t_Tright, "jmbe", 1.0, t_Govov_bb, "iajb"); 
+                // Skalar dinaikkan 4x
+                tblis::mult<double>(-1.0*scale,   t_Tleft, "imae", t_Tright, "jmbe", 1.0, t_Govov_bb, "iajb"); 
             };
-            
-            // [PATCH] Integrasi simetris blok beta-beta
             compute_gamma_bb(t_Tbb, t_Tbb, 1.0); 
-            compute_gamma_bb(t_Tbb, t_L2bb, 1.0); 
-            compute_gamma_bb(t_L2bb, t_Tbb, 1.0); 
 
             auto compute_gamma_ab = [&](auto& t_Ta_L, auto& t_Tb_L, auto& t_Tab_L,
                                         auto& t_Ta_R, auto& t_Tb_R, auto& t_Tab_R, double scale) {
                 tblis::mult<double>( 1.0*scale, t_Tab_L, "ijac", t_Tab_R, "ijbd", 1.0, t_Gvvvv_ab, "abcd"); 
                 tblis::mult<double>( 1.0*scale, t_Tab_L, "ikab", t_Tab_R, "jlab", 1.0, t_Goooo_ab, "ijkl"); 
 
-                tblis::mult<double>(-0.25*scale, t_Tab_L, "imae", t_Tab_R, "jmbe", 1.0, t_Govov_bb, "iajb"); 
-                tblis::mult<double>(-0.25*scale, t_Ta_L,  "imae", t_Tab_R, "jmbe", 1.0, t_Govov_ab, "iajb"); 
-                tblis::mult<double>(-0.25*scale, t_Tab_L, "imae", t_Tb_R,  "jmbe", 1.0, t_Govov_ab, "iajb"); 
-                tblis::mult<double>(-0.25*scale, t_Tab_L, "imae", t_Tab_R, "jmbe", 1.0, t_Govov_aa, "iajb"); 
+                // Skalar dinaikkan 4x
+                tblis::mult<double>(-1.0*scale, t_Tab_L, "imae", t_Tab_R, "jmbe", 1.0, t_Govov_bb, "iajb"); 
+                tblis::mult<double>(-1.0*scale, t_Ta_L,  "imae", t_Tab_R, "jmbe", 1.0, t_Govov_ab, "iajb"); 
+                tblis::mult<double>(-1.0*scale, t_Tab_L, "imae", t_Tb_R,  "jmbe", 1.0, t_Govov_ab, "iajb"); 
+                tblis::mult<double>(-1.0*scale, t_Tab_L, "imae", t_Tab_R, "jmbe", 1.0, t_Govov_aa, "iajb"); 
             };
-            
-            // [PATCH] Integrasi simetris blok alpha-beta
             compute_gamma_ab(t_Taa, t_Tbb, t_Tab, t_Taa, t_Tbb, t_Tab, 1.0); 
-            compute_gamma_ab(t_Taa, t_Tbb, t_Tab, t_L2aa, t_L2bb, t_L2ab, 1.0); 
-            compute_gamma_ab(t_L2aa, t_L2bb, t_L2ab, t_Taa, t_Tbb, t_Tab, 1.0); 
         }
     }
 
