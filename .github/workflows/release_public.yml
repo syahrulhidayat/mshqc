@@ -3,6 +3,7 @@ name: Compile and Release Wheel to Public Repoo
 on:
   push:
     branches: [ "debug2" ]
+  workflow_dispatch:  
 
 jobs:
   build-and-deploy:
@@ -51,7 +52,6 @@ jobs:
         export CFLAGS="-O3 -fPIC -mavx2 -mfma -mno-avx512f -funroll-loops -fno-math-errno"
         export CXXFLAGS="-O3 -fPIC -mavx2 -mfma -mno-avx512f -funroll-loops -fno-math-errno"
 
-        # TAMBAHKAN -DBUILD_SHARED_LIBS=OFF DI SINI
         cmake -DCMAKE_INSTALL_PREFIX=$HOME/libcint_install \
               -DCMAKE_C_FLAGS="$CFLAGS" \
               -DCMAKE_CXX_FLAGS="$CXXFLAGS" \
@@ -62,6 +62,7 @@ jobs:
         
         make -j 4
         make install
+
     # =========================================================================
     # 2B. CACHE & COMPILE TBLIS
     # =========================================================================
@@ -144,4 +145,3 @@ jobs:
           git commit -m "CI-Bot: Update biner terkompilasi (.whl) [skip ci]"
           git push origin HEAD:debug2
         fi
-
