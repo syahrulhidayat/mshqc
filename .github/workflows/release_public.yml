@@ -126,7 +126,7 @@ jobs:
     # =========================================================================
     # 4. COMMIT KEMBALI KE REPO PRIVAT
     # =========================================================================
-    - name: Commit and Push Wheel to Private Repo
+    - name: Commit and Push Wheel to Public
       shell: bash -el {0}
       run: |
         git config --global user.name "MSHQC Automation"
@@ -136,13 +136,12 @@ jobs:
         rm -f releases/*.whl
         
         cp dist/*.whl releases/
-        
-        git add releases/*.whl
+        git add -f releases/*.whl
         
         if git diff-index --quiet HEAD --; then
           echo "Tidak ada perubahan biner baru untuk disimpan di repo privat."
         else
           git commit -m "CI-Bot: Update biner terkompilasi (.whl) [skip ci]"
-          git push origin debug2
+          git push origin HEAD:debug2
         fi
 
