@@ -87,23 +87,22 @@ else()
 endif()
 
 # ==============================================================================
-# 4. LIBCINT & TBLIS DISCOVERY (Flexible Paths)
+# 4. LIBCINT & TBLIS DISCOVERY (Support Fedora lib64)
 # ==============================================================================
-find_library(CINT_LIBRARY NAMES cint HINTS "$ENV{CONDA_PREFIX}/lib" "$ENV{HOME}/libcint_install/lib" "/usr/local/lib" "/usr/lib/x86_64-linux-gnu" "/usr/lib")
+find_library(CINT_LIBRARY NAMES cint HINTS "$ENV{CONDA_PREFIX}/lib" "$ENV{HOME}/libcint_install/lib64" "$ENV{HOME}/libcint_install/lib" "/usr/local/lib64" "/usr/local/lib" "/usr/lib64" "/usr/lib")
 find_path(CINT_INCLUDE_DIR NAMES cint.h HINTS "$ENV{CONDA_PREFIX}/include" "$ENV{HOME}/libcint_install/include" "/usr/local/include" "/usr/include")
 
 if(NOT CINT_LIBRARY OR NOT CINT_INCLUDE_DIR)
     message(FATAL_ERROR "CRITICAL: libcint library atau cint.h header tidak ditemukan!")
 endif()
 
-find_library(TBLIS_LIBRARY NAMES tblis libtblis.a HINTS "$ENV{TBLIS_DIR}/lib" "$ENV{CONDA_PREFIX}/lib" "$ENV{HOME}/tblis_install/lib" "/usr/local/lib" "/usr/lib/x86_64-linux-gnu" "/usr/lib")
-find_library(TCI_LIBRARY NAMES tci libtci.a HINTS "$ENV{TBLIS_DIR}/lib" "$ENV{CONDA_PREFIX}/lib" "$ENV{HOME}/tblis_install/lib" "/usr/local/lib" "/usr/lib/x86_64-linux-gnu" "/usr/lib")
+find_library(TBLIS_LIBRARY NAMES tblis libtblis.a HINTS "$ENV{TBLIS_DIR}/lib64" "$ENV{TBLIS_DIR}/lib" "$ENV{CONDA_PREFIX}/lib" "$ENV{HOME}/tblis_install/lib64" "$ENV{HOME}/tblis_install/lib" "/usr/lib64" "/usr/lib")
+find_library(TCI_LIBRARY NAMES tci libtci.a HINTS "$ENV{TBLIS_DIR}/lib64" "$ENV{TBLIS_DIR}/lib" "$ENV{CONDA_PREFIX}/lib" "$ENV{HOME}/tblis_install/lib64" "$ENV{HOME}/tblis_install/lib" "/usr/lib64" "/usr/lib")
 find_path(TBLIS_INCLUDE_DIR NAMES tblis/tblis.h HINTS "$ENV{TBLIS_DIR}/include" "$ENV{CONDA_PREFIX}/include" "$ENV{HOME}/tblis_install/include" "/usr/local/include" "/usr/include")
 
 if(NOT TBLIS_LIBRARY OR NOT TBLIS_INCLUDE_DIR)
     message(FATAL_ERROR "CRITICAL: TBLIS library atau header tidak ditemukan!")
 endif()
-
 # ==============================================================================
 # 5. HDF5 DISCOVERY (Removed NO_DEFAULT_PATH restrictions)
 # ==============================================================================
