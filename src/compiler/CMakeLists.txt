@@ -29,3 +29,11 @@ target_link_libraries(mshqc_compiler
     MLIRTargetLLVMIRExport
     ${llvm_libs}
 )
+
+# ==============================================================================
+# Resolusi Header & TableGen Artefacts
+# ==============================================================================
+target_include_directories(mshqc_compiler PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_BINARY_DIR}
+)

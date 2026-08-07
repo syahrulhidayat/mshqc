@@ -1,37 +1,36 @@
 #!/usr/bin/env python3
-import os
 from pathlib import Path
 
-def patch_unified_headers(base_dir: Path):
-    """Me-rutekan ulang include yang usang ke arsitektur MP2/MP3 terpadu."""
-    src_dir = base_dir / "src"
-    if not src_dir.exists():
+def patch_compiler_includes(base_dir: Path):
+    """Menginjeksi ruting header absolut untuk modul MLIR Compiler."""
+    cmake_path = base_dir / "src/compiler/CMakeLists.txt"
+    
+    if not cmake_path.exists():
+        print(f"[ERROR] {cmake_path} tidak ditemukan.")
         return
 
-    # Pindai seluruh file C++
-    for filepath in src_dir.rglob("*.cc"):
-        with open(filepath, 'r') as f:
-            content = f.read()
+    with open(cmake_path, 'r') as f:
+        content = f.read()
 
-        modified = False
-        
-        # Rutekan ulang rmp2.h ke mp2.h
-        if '#include "mshqc/foundation/rmp2.h"' in content:
-            content = content.replace('#include "mshqc/foundation/rmp2.h"', '#include "mshqc/mp2/mp2.h"')
-            modified = True
-            
-        # Rutekan ulang rmp3.h ke mp3.h
-        if '#include "mshqc/foundation/rmp3.h"' in content:
-            content = content.replace('#include "mshqc/foundation/rmp3.h"', '#include "mshqc/mp3/mp3.h"')
-            modified = True
-
-        if modified:
-            with open(filepath, 'w') as f:
-                f.write(content)
-            print(f"[PATCHED] Header ruting diperbaiki pada: {filepath.name}")
+    # Injeksi target_include_directories jika belum ada
+    if "target_include_directories(mshqc_compiler" not in content:
+        injection = """
+# ==============================================================================
+# Resolusi Header & TableGen Artefacts
+# ==============================================================================
+target_include_directories(mshqc_compiler PUBLIC
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_CURRENT_BINARY_DIR}
+)
+"""
+        with open(cmake_path, 'w') as f:
+            f.write(content + injection)
+        print("[PATCHED] src/compiler/CMakeLists.txt telah dikalibrasi. Resolusi header terbuka.")
+    else:
+        print("[INFO] Ruting header sudah terkonfigurasi.")
 
 if __name__ == "__main__":
     base_directory = Path.cwd()
-    print("[INFO] Memulai perbaikan ruting header untuk Unified MP2/MP3 Engine...")
-    patch_unified_headers(base_directory)
-    print("[SUCCESS] Pointer statis C++ telah disejajarkan.")
+    print("[INFO] Mengeksekusi penambalan memori include pada CMake...")
+    patch_compiler_includes(base_directory)
+    print("[SUCCESS] Silakan commit dan push ulang ke GitHub Actions.")
