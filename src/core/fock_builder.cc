@@ -1,8 +1,3 @@
-/**
- * @file src/core/fock_builder.cc
- * @brief Fock Matrix Builder (HPC Edition - 4D Symmetry & CSAM)
- */
-
 extern "C" {
 #include <cint.h>
 }
@@ -38,27 +33,26 @@ void FockBuilder::set_petite_list(const PetiteList* list) {
     petite_list_ = list;
 }
 
-void FockBuilder::compute(const Eigen::MatrixXd& P_alpha, 
+void FockBuilder::compute(const Eigen::MatrixXd& P_alpha,
                           const Eigen::MatrixXd& P_beta,
-                          Eigen::MatrixXd& F_alpha, 
-                          Eigen::MatrixXd& F_beta) 
+                          Eigen::MatrixXd& F_alpha,
+                          Eigen::MatrixXd& F_beta)
 {
-    // Deteksi jika ini adalah perhitungan RHF (P_beta kosong)
+
     bool is_rhf = (P_beta.size() == 0 || &P_alpha == &P_beta);
 
     Eigen::MatrixXd dP_a, dP_b;
     if (is_first_iter_) {
-        dP_a = P_alpha; 
+        dP_a = P_alpha;
         if (!is_rhf) dP_b = P_beta;
         is_first_iter_ = false;
     } else {
-        dP_a = P_alpha - P_alpha_old_; 
+        dP_a = P_alpha - P_alpha_old_;
         if (!is_rhf) dP_b = P_beta - P_beta_old_;
     }
-    P_alpha_old_ = P_alpha; 
+    P_alpha_old_ = P_alpha;
     if (!is_rhf) P_beta_old_ = P_beta;
 
-    // Untuk RHF, screening hanya bergantung pada dP_a
     double dP_max = dP_a.cwiseAbs().maxCoeff();
     if (!is_rhf) dP_max = std::max(dP_max, dP_b.cwiseAbs().maxCoeff());
 
@@ -70,7 +64,7 @@ void FockBuilder::compute(const Eigen::MatrixXd& P_alpha,
 
     int nshells = basis_.n_shells();
     double schwarz_max = schwarz_.maxCoeff();
-    double threshold = 1e-11; 
+    double threshold = 1e-11;
 
     std::vector<int> shell_offsets(nshells);
     std::vector<int> shell_sizes(nshells);
@@ -80,9 +74,6 @@ void FockBuilder::compute(const Eigen::MatrixXd& P_alpha,
         shell_sizes[i] = basis_.shell(i).n_functions();
     }
 
-    // ========================================================================
-    // CSAM (RADAR SIMETRI)
-    // ========================================================================
     Eigen::MatrixXd P_max = Eigen::MatrixXd::Zero(nshells, nshells);
     for (int i = 0; i < nshells; ++i) {
         for (int j = 0; j <= i; ++j) {
@@ -104,9 +95,6 @@ void FockBuilder::compute(const Eigen::MatrixXd& P_alpha,
     std::vector<Eigen::MatrixXd> Ga_priv(n_threads, Eigen::MatrixXd::Zero(nbasis_, nbasis_));
     std::vector<Eigen::MatrixXd> Gb_priv(n_threads, Eigen::MatrixXd::Zero(nbasis_, nbasis_));
 
-    // ========================================================================
-    // LAMBDA 1: KERNEL UHF ASLI (MENGHITUNG ALPHA & BETA)
-    // ========================================================================
     auto process_shell_quartet = [&](int tid, int M, int N, int P, int Q, double sym_weight) {
         auto shell_ints = integrals_->compute_shell_block(M, N, P, Q);
         if (shell_ints.empty()) return;
@@ -130,7 +118,7 @@ void FockBuilder::compute(const Eigen::MatrixXd& P_alpha,
                     int nu = offN + n;
                     for (int m = 0; m < dM; ++m) {
                         int mu = offM + m;
-                        double val = *I_ptr++; 
+                        double val = *I_ptr++;
                         if (std::abs(val) < 1e-12) continue;
 
                         double v = val * fac;
@@ -158,9 +146,6 @@ void FockBuilder::compute(const Eigen::MatrixXd& P_alpha,
         }
     };
 
-    // ========================================================================
-    // LAMBDA 2: KERNEL RHF SUPER CEPAT (MENGABAIKAN BETA TOTAL)
-    // ========================================================================
     auto process_shell_quartet_rhf = [&](int tid, int M, int N, int P, int Q, double sym_weight) {
         auto shell_ints = integrals_->compute_shell_block(M, N, P, Q);
         if (shell_ints.empty()) return;
@@ -184,14 +169,13 @@ void FockBuilder::compute(const Eigen::MatrixXd& P_alpha,
                     int nu = offN + n;
                     for (int m = 0; m < dM; ++m) {
                         int mu = offM + m;
-                        double val = *I_ptr++; 
+                        double val = *I_ptr++;
                         if (std::abs(val) < 1e-12) continue;
 
                         double v = val * fac;
                         double v2 = v * 2.0;
 
-                        // Di RHF, matriks densitas total adalah 2 * P_a
-                        double pt_ls = dP_a(lam, sig) * 2.0; 
+                        double pt_ls = dP_a(lam, sig) * 2.0;
                         double pt_mn = dP_a(mu, nu) * 2.0;
 
                         Ga_priv[tid](mu, nu) += v2 * pt_ls;
@@ -209,12 +193,9 @@ void FockBuilder::compute(const Eigen::MatrixXd& P_alpha,
         }
     };
 
-    // ========================================================================
-    // TAHAP EKSEKUSI (ROUTING)
-    // ========================================================================
     if (petite_list_ && !petite_list_->get_unique_quartets().empty()) {
         const auto& unique_quartets = petite_list_->get_unique_quartets();
-        
+
         #pragma omp parallel for schedule(dynamic, 1)
         for (size_t i = 0; i < unique_quartets.size(); ++i) {
             int tid = omp_get_thread_num();
@@ -227,8 +208,7 @@ void FockBuilder::compute(const Eigen::MatrixXd& P_alpha,
 
             double local_P_max = std::max({ P_max(M, N), P_max(P, Q), P_max(M, P), P_max(M, Q), P_max(N, P), P_max(N, Q) });
             if (bound * local_P_max < threshold) continue;
-            
-            // Pilih rute eksekusi tanpa cabang di dalam nested loop
+
             if (is_rhf) process_shell_quartet_rhf(tid, M, N, P, Q, weight);
             else        process_shell_quartet(tid, M, N, P, Q, weight);
         }
@@ -246,8 +226,7 @@ void FockBuilder::compute(const Eigen::MatrixXd& P_alpha,
                         double bound = bound_MN * schwarz_(P, Q);
                         double local_P_max = std::max({ P_max(M, N), P_max(P, Q), P_max(M, P), P_max(M, Q), P_max(N, P), P_max(N, Q) });
                         if (bound * local_P_max < threshold) continue;
-                        
-                        // Pilih rute eksekusi tanpa cabang di dalam nested loop
+
                         if (is_rhf) process_shell_quartet_rhf(tid, M, N, P, Q, 1.0);
                         else        process_shell_quartet(tid, M, N, P, Q, 1.0);
                     }
@@ -260,7 +239,7 @@ void FockBuilder::compute(const Eigen::MatrixXd& P_alpha,
         G_alpha_accum_ += Ga_priv[t];
         if (!is_rhf) G_beta_accum_ += Gb_priv[t];
     }
-    
+
     G_alpha_accum_ = 0.5 * (G_alpha_accum_ + G_alpha_accum_.transpose());
     F_alpha = H_core_ + G_alpha_accum_;
 
@@ -270,4 +249,4 @@ void FockBuilder::compute(const Eigen::MatrixXd& P_alpha,
     }
 }
 
-} // namespace mshqc
+}

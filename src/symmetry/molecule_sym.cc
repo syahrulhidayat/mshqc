@@ -1,8 +1,3 @@
-/**
- * @file src/symmetry/molecule_sym.cc
- * @brief Universal AO Transformation Matrix Builder
- */
-
 #include "mshqc/symmetry/molecule_sym.h"
 #include <iostream>
 #include <cmath>
@@ -14,9 +9,6 @@ BasisSymmetrizer::BasisSymmetrizer(const BasisSet& basis, const PointGroup& pg, 
     build_map_and_matrices();
 }
 
-// THE UNIVERSAL PHASE SOLVER FOR D2h/C2v (Menangani semua s, p, d, f, g, dst)
-// THE UNIVERSAL PHASE SOLVER FOR D2h/C2v (Menangani semua s, p, d, f, g, dst)
-// THE UNIVERSAL PHASE SOLVER FOR D2h/C2v (Menangani semua s, p, d, f, g, dst)
 double get_universal_phase(bool is_spherical, int l, int idx, double sx, double sy, double sz) {
     if (!is_spherical) {
         int a = 0, b = 0, c = 0, count = 0;
@@ -33,14 +25,13 @@ double get_universal_phase(bool is_spherical, int l, int idx, double sx, double 
         return phase;
     } else {
         bool ox = false, oy = false, oz = false;
-        
-        // PENGECUALIAN MUTLAK: libcint selalu memaksakan l=1 menjadi px, py, pz
+
         if (l == 1) {
             if (idx == 0) ox = true;
             else if (idx == 1) oy = true;
             else if (idx == 2) oz = true;
         } else {
-            // Rumus Universal Parity untuk l=2 (d), 3 (f), 4 (g), dst (m = -l ... +l)
+
             int m = idx - l;
             if (m < 0) {
                 oy = true;
@@ -80,7 +71,7 @@ void BasisSymmetrizer::build_map_and_matrices() {
             Eigen::Vector3d p_i(basis_.shell(i).position()[0], basis_.shell(i).position()[1], basis_.shell(i).position()[2]);
             Eigen::Vector3d new_pos = R * p_i;
             int l_target = basis_.shell(i).l();
-            
+
             int n_prev = 0;
             for (int x = 0; x < i; ++x) {
                 if (basis_.shell(x).l() == l_target) {
@@ -99,14 +90,14 @@ void BasisSymmetrizer::build_map_and_matrices() {
                     n_found++;
                 }
             }
-            
+
             shell_map_[k][i] = target_idx;
 
             if (target_idx != -1) {
                 int start_i = map[i];
                 int start_j = map[target_idx];
                 int dim = basis_.shell(i).is_spherical() ? (2*l_target + 1) : ((l_target+1)*(l_target+2)/2);
-                
+
                 for (int d = 0; d < dim; ++d) {
                     double phase = get_universal_phase(basis_.shell(i).is_spherical(), l_target, d, sx, sy, sz);
                     R_ao_[k](start_j + d, start_i + d) = phase;
@@ -117,10 +108,10 @@ void BasisSymmetrizer::build_map_and_matrices() {
 }
 
 void BasisSymmetrizer::symmetrize(Eigen::MatrixXd& F) const {
-    if (R_ao_.empty()) return; 
+    if (R_ao_.empty()) return;
 
     Eigen::MatrixXd F_sym = Eigen::MatrixXd::Zero(F.rows(), F.cols());
-    Eigen::MatrixXd temp_FR(F.rows(), F.cols()); 
+    Eigen::MatrixXd temp_FR(F.rows(), F.cols());
 
     for (const auto& R : R_ao_) {
         temp_FR.noalias() = F * R;
@@ -140,29 +131,23 @@ std::vector<int> BasisSymmetrizer::assign_mo_irreps(const Eigen::MatrixXd& C, do
 
         for (int k = 0; k < n_ops; ++k) {
             Eigen::VectorXd C_trans = R_ao_[k] * C_i;
-            double chi = C_i.dot(C_trans); 
-            
+            double chi = C_i.dot(C_trans);
+
             double norm = C_i.norm() * C_trans.norm();
             if (norm > 1e-10 && (chi / norm) < -0.5) {
                 irrep_id |= (1 << k);
             }
         }
-        
-        // ==============================================================
-        // GF(2) ISOMORPHISM (SEKARANG 100% AMAN KARENA SCF SUDAH PURE)
-        // Mampatkan Bitmask 8-bit menjadi ID 0-7 untuk mencegah Hash Collision
-        // ==============================================================
+
         int mapped_id = 0;
-        if (irrep_id & (1 << 1)) mapped_id ^= 1; 
-        if (irrep_id & (1 << 2)) mapped_id ^= 2; 
-        if (irrep_id & (1 << 4)) mapped_id ^= 4; 
+        if (irrep_id & (1 << 1)) mapped_id ^= 1;
+        if (irrep_id & (1 << 2)) mapped_id ^= 2;
+        if (irrep_id & (1 << 4)) mapped_id ^= 4;
 
         irreps[mo] = mapped_id;
         irrep_counts[mapped_id]++;
     }
 
-   
-
     return irreps;
 }
-} // namespace mshqc
+}

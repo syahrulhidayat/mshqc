@@ -10,10 +10,9 @@
 namespace mshqc {
 namespace compiler {
 
-// Deklarasi fungsi pembuat pass (Lowering dari Mshqc ke Linalg)
 std::unique_ptr<mlir::Pass> createLowerToLinalgPass();
 
-} // namespace compiler
-} // namespace mshqc
+}
+}
 
-#endif // MSHQC_COMPILER_PASSES_H_
+#endif

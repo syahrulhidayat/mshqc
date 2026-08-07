@@ -14,24 +14,21 @@ using ERITensor = Eigen::Tensor<double, 4>;
 class IntegralEngine {
 public:
     IntegralEngine(const Molecule& mol, const BasisSet& basis);
-    ~IntegralEngine(); 
+    ~IntegralEngine();
 
-    
     IntegralEngine(const IntegralEngine&) = delete;
     IntegralEngine& operator=(const IntegralEngine&) = delete;
     IntegralEngine(IntegralEngine&&) = default;
     IntegralEngine& operator=(IntegralEngine&&) = default;
-    
+
     Eigen::MatrixXd compute_overlap();
     Eigen::MatrixXd compute_kinetic();
     Eigen::MatrixXd compute_nuclear();
     Eigen::MatrixXd compute_core_hamiltonian();
-    
+
     const Eigen::Tensor<double, 4>& compute_eri();
-    
+
     size_t nbasis() const { return nbasis_; }
-    
-    
 
     Eigen::Tensor<double, 3> compute_3center_eri(const BasisSet& aux_basis);
     Eigen::MatrixXd compute_2center_eri(const BasisSet& aux_basis);
@@ -39,21 +36,16 @@ public:
     Eigen::VectorXd compute_eri_diagonal();
     Eigen::VectorXd compute_eri_column(int pivot_index);
 
-    
-
     std::vector<double> compute_2c2e_block(int sh_P, int sh_Q);
-    
 
     std::vector<double> compute_3c2e_block(int sh_i, int sh_j, int sh_P);
-
-    
 
     const double* compute_shell_block_ptr(int sh_a, int sh_b, int sh_c, int sh_d, size_t& size_out);
     const std::vector<double>& compute_shell_block(int sh_a, int sh_b, int sh_c, int sh_d);
     const std::vector<int>& get_bas() const { return bas_; }
     const std::vector<int>& get_atm() const { return atm_; }
     const std::vector<double>& get_env() const { return env_; }
-    
+
 private:
     const Molecule& mol_;
     const BasisSet& basis_;
@@ -65,17 +57,12 @@ private:
     std::vector<double> env_;
 
     void* opt_ = nullptr;
-  
-    
+
     void convert_basis_to_libcint();
-    
-    
-    
 
     int find_atom_index(const std::array<double, 3>& center);
 };
 
-} 
+}
 
-
-#endif 
+#endif

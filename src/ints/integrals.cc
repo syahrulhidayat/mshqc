@@ -1,11 +1,5 @@
-/**
- * @file src/ints/integrals.cc
- * @brief Integral Engine Implementation (LIBCINT TURBO BACKEND)
- */
-
 #include "mshqc/ints/integrals.h"
 
-// Wajib dibungkus extern "C" karena libcint murni ditulis dalam C
 extern "C" {
 #include <cint.h>
 int cint1e_ovlp_sph(double *buf, int *shls, int *atm, int natm, int *bas, int nbas, double *env, CINTOpt *opt);
@@ -27,12 +21,12 @@ namespace mshqc {
 
 IntegralEngine::IntegralEngine(const Molecule& mol, const BasisSet& basis)
     : mol_(mol), basis_(basis), nbasis_(basis.n_basis_functions()), opt_(nullptr) {
-    
-    convert_basis_to_libcint(); 
+
+    convert_basis_to_libcint();
     CINTOpt* tmp_opt = nullptr;
     cint2e_sph_optimizer(&tmp_opt, atm_.data(), mol_.n_atoms(), bas_.data(), basis_.n_shells(), env_.data());
-    opt_ = static_cast<void*>(tmp_opt); 
-    
+    opt_ = static_cast<void*>(tmp_opt);
+
     cache_valid = false;
 }
 
@@ -45,7 +39,7 @@ IntegralEngine::~IntegralEngine() {
 
 int IntegralEngine::find_atom_index(const std::array<double, 3>& center) {
     int best_i = 0;
-    double min_dist = 1e10; 
+    double min_dist = 1e10;
     for (size_t i = 0; i < mol_.n_atoms(); i++) {
         double dx = mol_.atom(i).x - center[0];
         double dy = mol_.atom(i).y - center[1];
@@ -66,7 +60,6 @@ void IntegralEngine::convert_basis_to_libcint() {
     atm_.resize(natm * ATM_SLOTS, 0);
     bas_.resize(nbas * BAS_SLOTS, 0);
 
-    // 1. Pack Atoms
     for (int i = 0; i < natm; ++i) {
         atm_[i * ATM_SLOTS + CHARGE_OF] = mol_.atom(i).atomic_number;
         atm_[i * ATM_SLOTS + PTR_COORD] = env_.size();
@@ -77,7 +70,7 @@ void IntegralEngine::convert_basis_to_libcint() {
 
     for (int s = 0; s < nbas; ++s) {
         const auto& shell = basis_.shell(s);
-        auto pos = shell.position(); 
+        auto pos = shell.position();
         bas_[s * BAS_SLOTS + ATOM_OF]  = find_atom_index({pos[0], pos[1], pos[2]});
         bas_[s * BAS_SLOTS + ANG_OF]   = shell.l();
         bas_[s * BAS_SLOTS + NPRIM_OF] = shell.n_primitives();
@@ -96,9 +89,6 @@ void IntegralEngine::convert_basis_to_libcint() {
     }
 }
 
-// ============================================================================
-// ONE-ELECTRON INTEGRALS
-// ============================================================================
 Eigen::MatrixXd IntegralEngine::compute_overlap() {
     Eigen::MatrixXd S = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
     auto shell2bf = basis_.shell_to_basis_function_map();
@@ -177,7 +167,7 @@ Eigen::MatrixXd IntegralEngine::compute_nuclear() {
         for (int s1 = 0; s1 < nbas; s1++) {
             for (int s2 = 0; s2 <= s1; s2++) {
                 int shls[2] = {s1, s2};
-                // [FIX 2] Tambahkan nullptr
+
                 int has_val = cint1e_nuc_sph(buf.data(), shls, atm_.data(), mol_.n_atoms(), bas_.data(), nbas, env_.data(), nullptr);
                 if (!has_val) continue;
 
@@ -203,9 +193,6 @@ Eigen::MatrixXd IntegralEngine::compute_core_hamiltonian() {
     return compute_kinetic() + compute_nuclear();
 }
 
-// ============================================================================
-// COMPUTE ERI DENSE (TWO-ELECTRON)
-// ============================================================================
 const Eigen::Tensor<double, 4>& IntegralEngine::compute_eri() {
     if (cache_valid) return cached_eri;
 
@@ -234,7 +221,6 @@ const Eigen::Tensor<double, 4>& IntegralEngine::compute_eri() {
         }
     }
 
-    // 2. Main ERI Loop
     const double screen_thresh = 1e-12;
     #pragma omp parallel
     {
@@ -257,17 +243,16 @@ const Eigen::Tensor<double, 4>& IntegralEngine::compute_eri() {
                         int dim2 = CINTcgto_spheric(s2, bas_.data());
                         int dim3 = CINTcgto_spheric(s3, bas_.data());
                         int dim4 = CINTcgto_spheric(s4, bas_.data());
-                        
+
                         int bf1 = shell2bf[s1]; int bf2 = shell2bf[s2];
                         int bf3 = shell2bf[s3]; int bf4 = shell2bf[s4];
 
-                        // Konversi layout Col-Major libcint (i fast) -> C-Major (l fast)
                         for (int i = 0; i < dim1; ++i) {
                             for (int j = 0; j < dim2; ++j) {
                                 for (int k = 0; k < dim3; ++k) {
                                     for (int l = 0; l < dim4; ++l) {
                                         double val = buf[i + dim1*(j + dim2*(k + dim3*l))];
-                                        
+
                                         long i1 = bf1 + i, i2 = bf2 + j, i3 = bf3 + k, i4 = bf4 + l;
                                         cached_eri(i1, i2, i3, i4) = val;
                                         cached_eri(i2, i1, i3, i4) = val;
@@ -291,30 +276,26 @@ const Eigen::Tensor<double, 4>& IntegralEngine::compute_eri() {
     return cached_eri;
 }
 
-// ============================================================================
-// SINGLE SHELL BLOCK COMPUTE (THREAD-SAFE)
-// ============================================================================
 const std::vector<double>& IntegralEngine::compute_shell_block(int sh_a, int sh_b, int sh_c, int sh_d) {
     thread_local std::vector<double> t_buffer;
-    
+
     int dim1 = CINTcgto_spheric(sh_a, bas_.data());
     int dim2 = CINTcgto_spheric(sh_b, bas_.data());
     int dim3 = CINTcgto_spheric(sh_c, bas_.data());
     int dim4 = CINTcgto_spheric(sh_d, bas_.data());
     size_t sz = dim1 * dim2 * dim3 * dim4;
-    
+
     if (t_buffer.size() < sz) t_buffer.resize(sz);
-    
+
     int shls[4] = {sh_a, sh_b, sh_c, sh_d};
-    
-    // CAST opt_ SEBELUM DIGUNAKAN
+
     CINTOpt* tmp_opt = static_cast<CINTOpt*>(opt_);
     int has_val = cint2e_sph(t_buffer.data(), shls, atm_.data(), mol_.n_atoms(), bas_.data(), basis_.n_shells(), env_.data(), tmp_opt);
-    
+
     if (!has_val) {
         std::fill(t_buffer.begin(), t_buffer.begin() + sz, 0.0);
     }
-    
+
     return t_buffer;
 }
 
@@ -323,58 +304,52 @@ const double* IntegralEngine::compute_shell_block_ptr(int sh_a, int sh_b, int sh
     size_out = buf.size();
     return buf.data();
 }
-// ============================================================================
-// DENSITY FITTING INTEGRALS (2-Center & 3-Center)
-// ============================================================================
 
 std::vector<double> IntegralEngine::compute_2c2e_block(int sh_P, int sh_Q) {
     std::vector<double> t_buffer;
-    
+
     int dimP = CINTcgto_spheric(sh_P, bas_.data());
     int dimQ = CINTcgto_spheric(sh_Q, bas_.data());
     size_t sz = dimP * dimQ;
-    
+
     if (t_buffer.size() < sz) t_buffer.resize(sz);
-    
+
     int shls[2] = {sh_P, sh_Q};
-    CINTOpt* tmp_opt = static_cast<CINTOpt*>(opt_); // Memakai optimizer Libcint
-    
-    // Panggil Libcint 2-center 2-electron (TANPA OPTIMIZER)
+    CINTOpt* tmp_opt = static_cast<CINTOpt*>(opt_);
+
     int has_val = cint2c2e_sph(t_buffer.data(), shls, atm_.data(), mol_.n_atoms(), bas_.data(), basis_.n_shells(), env_.data(), nullptr);
-    
+
     if (!has_val) {
         std::fill(t_buffer.begin(), t_buffer.begin() + sz, 0.0);
     }
-    
+
     return t_buffer;
 }
 
 std::vector<double> IntegralEngine::compute_3c2e_block(int sh_i, int sh_j, int sh_P) {
     std::vector<double> t_buffer;
-    
+
     int dim1 = CINTcgto_spheric(sh_i, bas_.data());
     int dim2 = CINTcgto_spheric(sh_j, bas_.data());
     int dimP = CINTcgto_spheric(sh_P, bas_.data());
     size_t sz = dim1 * dim2 * dimP;
-    
+
     if (t_buffer.size() < sz) t_buffer.resize(sz);
     int shls[3] = {sh_i, sh_j, sh_P};
     CINTOpt* tmp_opt = static_cast<CINTOpt*>(opt_);
     int has_val = cint3c2e_sph(t_buffer.data(), shls, atm_.data(), mol_.n_atoms(), bas_.data(), basis_.n_shells(), env_.data(), nullptr);
-    
+
     if (!has_val) {
         std::fill(t_buffer.begin(), t_buffer.begin() + sz, 0.0);
     }
-    
+
     return t_buffer;
 }
 
-
-// STUBS
 Eigen::Tensor<double, 3> IntegralEngine::compute_3center_eri(const BasisSet&) { return Eigen::Tensor<double, 3>(1,1,1); }
 Eigen::MatrixXd IntegralEngine::compute_2center_eri(const BasisSet&) { return Eigen::MatrixXd::Zero(1,1); }
 double IntegralEngine::compute_single_eri(int, int, int, int) { return 0.0; }
 Eigen::VectorXd IntegralEngine::compute_eri_diagonal() { return Eigen::VectorXd::Zero(nbasis_); }
 Eigen::VectorXd IntegralEngine::compute_eri_column(int) { return Eigen::VectorXd::Zero(nbasis_); }
 
-} // namespace mshqc
+}

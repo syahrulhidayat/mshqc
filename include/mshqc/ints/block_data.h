@@ -11,40 +11,22 @@
 
 namespace mshqc {
 
-/**
- * @struct ShellBlock
- * @brief Merepresentasikan kumpulan shell yang digabung (Super-Shell).
- * Digunakan untuk memaksimalkan efisiensi matriks multiplication (DGEMM).
- */
 struct ShellBlock {
-    int start_shell;     
+    int start_shell;
 
+    int end_shell;
 
-    int end_shell;       
+    int start_basis;
 
+    int size_basis;
 
-    int start_basis;     
-
-
-    int size_basis;      
-
-
-    double max_schwarz;  
-
+    double max_schwarz;
 
 };
 
-/**
- * @brief Memecah basis set menjadi blok-blok berukuran target.
- * @param basis Objek BasisSet
- * @param target_size Ukuran target fungsi basis per blok (e.g., 32 - 64)
- */
 inline std::vector<ShellBlock> make_shell_blocks(const BasisSet& basis, int target_size = 32) {
     std::vector<ShellBlock> blocks;
     int nshells = basis.n_shells();
-    
-    
-
 
     auto shell2bf = basis.shell_to_basis_function_map();
 
@@ -54,9 +36,6 @@ inline std::vector<ShellBlock> make_shell_blocks(const BasisSet& basis, int targ
 
     for (int i = 0; i < nshells; ++i) {
         int shell_dim = basis.shell(i).n_functions();
-        
-        
-
 
         if (current_basis_count == 0) {
             basis_offset_start = shell2bf[i];
@@ -64,25 +43,16 @@ inline std::vector<ShellBlock> make_shell_blocks(const BasisSet& basis, int targ
 
         current_basis_count += shell_dim;
 
-        
-
-
         if (current_basis_count >= target_size || i == nshells - 1) {
             ShellBlock block;
             block.start_shell = current_start;
-            block.end_shell   = i + 1; 
-
+            block.end_shell   = i + 1;
 
             block.start_basis = basis_offset_start;
             block.size_basis  = current_basis_count;
-            block.max_schwarz = 1.0; 
+            block.max_schwarz = 1.0;
 
-
-            
             blocks.push_back(block);
-
-            
-
 
             current_start = i + 1;
             current_basis_count = 0;
@@ -91,8 +61,6 @@ inline std::vector<ShellBlock> make_shell_blocks(const BasisSet& basis, int targ
     return blocks;
 }
 
-} 
-
-
+}
 
 #endif

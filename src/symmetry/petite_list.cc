@@ -1,8 +1,3 @@
-/**
- * @file src/symmetry/petite_list.cc
- * @brief Dual Petite List Implementation (2D Pairs & 4D Quartets)
- */
-
 #include "mshqc/symmetry/petite_list.h"
 #include <iostream>
 #include <cmath>
@@ -21,7 +16,7 @@ int PetiteList::find_shell_at(const Eigen::Vector3d& pos, int original_shell_idx
     int target_l = basis_.shell(original_shell_idx).l();
     auto p_orig = basis_.shell(original_shell_idx).position();
     Eigen::Vector3d pos_orig(p_orig[0], p_orig[1], p_orig[2]);
-    
+
     int n_prev = 0;
     for (int x = 0; x < original_shell_idx; ++x) {
         if (basis_.shell(x).l() == target_l) {
@@ -51,7 +46,6 @@ void PetiteList::build() {
     const auto& ops = pg_.get_operations();
     double group_order = (double)ops.size();
 
-    // 1. Build Shell Map 
     std::vector<std::vector<int>> shell_map(ops.size(), std::vector<int>(nshells));
     for (int s = 0; s < nshells; ++s) {
         auto p = basis_.shell(s).position();
@@ -59,13 +53,10 @@ void PetiteList::build() {
         for (size_t k = 0; k < ops.size(); ++k) {
             Eigen::Vector3d new_pos = ops[k].matrix * pos;
             shell_map[k][s] = find_shell_at(new_pos, s);
-            if (shell_map[k][s] == -1) shell_map[k][s] = s; 
+            if (shell_map[k][s] == -1) shell_map[k][s] = s;
         }
     }
 
-    // ========================================================================
-    // ALGORITMA 2D (Untuk UHF, ROHF, dan MP3 In-Core)
-    // ========================================================================
     for (int M = 0; M < nshells; ++M) {
         for (int N = 0; N <= M; ++N) {
             bool is_canonical = true;
@@ -91,15 +82,12 @@ void PetiteList::build() {
         }
     }
 
-    // ========================================================================
-    // ALGORITMA 4D (Untuk RHF Direct SCF)
-    // ========================================================================
     for (int M = 0; M < nshells; ++M) {
         for (int N = 0; N <= M; ++N) {
             for (int P = 0; P <= M; ++P) {
                 int Q_max = (M == P) ? N : P;
                 for (int Q = 0; Q <= Q_max; ++Q) {
-                    
+
                     bool is_canonical = true;
                     int stabilizer_count = 0;
 
@@ -141,4 +129,4 @@ void PetiteList::build() {
     }
 }
 
-} // namespace mshqc
+}

@@ -9,15 +9,13 @@
 namespace mshqc {
 namespace utils {
 
-    // Implementasi Matriks Eksponensial
     Eigen::MatrixXd matrix_exponential(const Eigen::MatrixXd& mat) {
         return mat.exp();
     }
 
-    // Implementasi Helper Tensor
     void set_zero(Tensor4D& tensor) {
         tensor.setZero();
     }
 
-} // namespace utils
-} // namespace mshqc
+}
+}

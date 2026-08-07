@@ -1,8 +1,3 @@
-/**
- * @file src/mp2/mp2.cc
- * @brief Implementasi Terpadu BaseMP2, RMP2, dan UMP2
- */
-
 #include <tblis/tblis.h>
 #include "mshqc/symmetry/salc_builder.h"
 #include "mshqc/mp2/mp2.h"
@@ -18,14 +13,14 @@
 namespace mshqc {
 using integrals::ERITransformer;
 
-BaseMP2::BaseMP2(const Molecule& mol, const BasisSet& basis, 
-                 std::shared_ptr<IntegralEngine> integrals, 
+BaseMP2::BaseMP2(const Molecule& mol, const BasisSet& basis,
+                 std::shared_ptr<IntegralEngine> integrals,
                  const SCFResult& scf_guess,
                  const MP2Config& config,
                  std::shared_ptr<PointGroup> pg,
                  std::shared_ptr<PetiteList> pl)
     : mol_(mol), basis_(basis), integrals_(integrals), scf_(scf_guess),
-      config_(config), pg_(pg), pl_(pl) 
+      config_(config), pg_(pg), pl_(pl)
 {
     nbf_ = static_cast<int>(scf_.C_alpha.rows());
     nocc_a_ = scf_.n_occ_alpha;
@@ -49,12 +44,12 @@ void BaseMP2::transform_3center_mo() {
     const Eigen::MatrixXd& Ca_vir = scf_.C_alpha.rightCols(nvir_a_);
     Eigen::Map<const Eigen::MatrixXd> L_flat(scf_.L_mat.data(), nbf_, nbf_ * n_aux);
 
-    Eigen::MatrixXd X_a = Ca_vir.transpose() * L_flat; 
+    Eigen::MatrixXd X_a = Ca_vir.transpose() * L_flat;
     #pragma omp parallel for schedule(static)
     for (int P = 0; P < n_aux; ++P) {
         Eigen::Map<Eigen::MatrixXd> X_P(X_a.data() + P * nvir_a_ * nbf_, nvir_a_, nbf_);
-        Eigen::MatrixXd B_MO_a = X_P * Ca_occ; 
-        
+        Eigen::MatrixXd B_MO_a = X_P * Ca_occ;
+
         for (int i = 0; i < nocc_a_; ++i) {
             for (int a = 0; a < nvir_a_; ++a) {
                 B_ia_P_alpha_(i * nvir_a_ + a, P) = B_MO_a(a, i);
@@ -92,7 +87,7 @@ void RMP2::transform_integrals() {
         const Eigen::MatrixXd& C_virt = scf_.C_alpha.rightCols(nvir_a_);
 
         auto eri_chemist = integrals::ERITransformer::transform_ovov(eri_ao, C_occ, C_virt, nbf_, nocc_a_, nvir_a_);
-        Eigen::array<int, 4> shuffle_idxs = {0, 2, 1, 3}; 
+        Eigen::array<int, 4> shuffle_idxs = {0, 2, 1, 3};
         eri_mo_ = eri_chemist.shuffle(shuffle_idxs);
     } else {
         transform_3center_mo();
@@ -117,7 +112,7 @@ void RMP2::compute_amplitudes_and_energy() {
                 for (int b = 0; b < nvir_a_; ++b) {
                     double denom = den_a - eps(nocc_a_ + b);
                     if (std::abs(denom) < 1e-12) {
-                        t2_(i, j, a, b) = 0.0; 
+                        t2_(i, j, a, b) = 0.0;
                         continue;
                     }
 
@@ -159,7 +154,7 @@ MP2Result RMP2::compute() {
     result.energy_scf = scf_.energy_total;
     result.energy_mp2_corr = e_corr_;
     result.energy_total = scf_.energy_total + e_corr_;
-    result.t2_aa = t2_; 
+    result.t2_aa = t2_;
 
     if (config_.print_level > 0) {
         std::cout << "\n=== RMP2 Results (" << config_.eri_method << ") ===\n";
@@ -172,7 +167,7 @@ MP2Result RMP2::compute() {
     return result;
 }
 
-} 
+}
 
 void UMP2::transform_integrals() {
     if (config_.eri_method != "exact") {
@@ -219,15 +214,12 @@ double UMP2::compute_ss_alpha() {
                         val_ibja = B_ia_P_alpha_.row(idx_ib).dot(B_ia_P_alpha_.row(idx_ja));
                     }
 
-                    
                     double val_num = val_iajb - val_ibja;
 
-                   
-                    double safe_den = (std::abs(den) < config_.level_shift) 
-                                    ? std::copysign(config_.level_shift, den) 
+                    double safe_den = (std::abs(den) < config_.level_shift)
+                                    ? std::copysign(config_.level_shift, den)
                                     : den;
 
-                   
                     double val_t = val_num / safe_den;
                     t2_aa_(i, j, a, b) = val_t;
                     e_sum += val_t * val_num;
@@ -377,7 +369,7 @@ MP2Result UMP2::compute() {
     return result;
 }
 
-T2Amplitudes UMP2::get_t2_amplitudes() const { 
+T2Amplitudes UMP2::get_t2_amplitudes() const {
     T2Amplitudes amps;
     amps.t2_aa = t2_aa_;
     amps.t2_bb = t2_bb_;
@@ -385,29 +377,29 @@ T2Amplitudes UMP2::get_t2_amplitudes() const {
     return amps;
 }
 
-OMP2::OMP2(const Molecule& mol, const BasisSet& basis, 
-           std::shared_ptr<IntegralEngine> integrals, 
+OMP2::OMP2(const Molecule& mol, const BasisSet& basis,
+           std::shared_ptr<IntegralEngine> integrals,
            const SCFResult& scf_guess,
-           const MP2Config& config,         
+           const MP2Config& config,
            std::shared_ptr<PointGroup> pg,
-           std::shared_ptr<PetiteList> pl)  
+           std::shared_ptr<PetiteList> pl)
     : BaseMP2(mol, basis, integrals, scf_guess, config, pg, pl)
 {
-    na_  = nocc_a_; 
+    na_  = nocc_a_;
     nb_  = nocc_b_;
-    va_  = nvir_a_; 
+    va_  = nvir_a_;
     vb_  = nvir_b_;
-    n_frozen_ = 0; 
+    n_frozen_ = 0;
 
     e_ss_ = 0.0;
     e_os_ = 0.0;
 
-    max_iter_ = config_.max_iterations; 
-    conv_thresh_ = config_.energy_threshold; 
+    max_iter_ = config_.max_iterations;
+    conv_thresh_ = config_.energy_threshold;
    if (config_.gradient_threshold > 0.0) {
-        grad_thresh_ = config_.gradient_threshold; 
+        grad_thresh_ = config_.gradient_threshold;
     } else {
-        grad_thresh_ = std::sqrt(config_.energy_threshold); 
+        grad_thresh_ = std::sqrt(config_.energy_threshold);
     }
 
     symmetrizer_ = nullptr;
@@ -434,14 +426,14 @@ struct OrbitalLBFGS {
         if (is_first) {
             g_prev = g_curr;
             is_first = false;
-            return -g_curr.cwiseQuotient(diag_H); 
+            return -g_curr.cwiseQuotient(diag_H);
         }
 
         Eigen::VectorXd y = g_curr - g_prev;
-        Eigen::VectorXd s = s_prev; 
+        Eigen::VectorXd s = s_prev;
         double ys = y.dot(s);
 
-        Eigen::VectorXd Bs = s.cwiseProduct(diag_H); 
+        Eigen::VectorXd Bs = s.cwiseProduct(diag_H);
         double sBs = s.dot(Bs);
 
         double theta = 1.0;
@@ -452,14 +444,14 @@ struct OrbitalLBFGS {
         Eigen::VectorXd y_mod = theta * y + (1.0 - theta) * Bs;
         double ys_mod = y_mod.dot(s);
 
-        if (ys_mod > 1e-12) { 
+        if (ys_mod > 1e-12) {
             if ((int)s_hist.size() >= m_max) {
                 s_hist.erase(s_hist.begin());
                 y_hist.erase(y_hist.begin());
                 rho_hist.erase(rho_hist.begin());
             }
             s_hist.push_back(s);
-            y_hist.push_back(y_mod); 
+            y_hist.push_back(y_mod);
             rho_hist.push_back(1.0 / ys_mod);
         }
 
@@ -481,10 +473,9 @@ struct OrbitalLBFGS {
             r += s_hist[i] * (alpha[i] - beta);
         }
 
-        return -r; 
+        return -r;
     }
 };
-
 
 void OMP2::init_fast_integrals() {
     S_ = integrals_->compute_overlap();
@@ -495,7 +486,7 @@ void OMP2::init_fast_integrals() {
     K_val_.clear(); K_ind_.clear(); K_ptr_.clear();
     row_map_.clear();
 
-    long long est_nnz = (long long)(std::pow(nbf_, 4) * 0.15); 
+    long long est_nnz = (long long)(std::pow(nbf_, 4) * 0.15);
     J_val_.reserve(est_nnz); J_ind_.reserve(est_nnz);
     K_val_.reserve(est_nnz); K_ind_.reserve(est_nnz);
     row_map_.reserve(nbf_ * nbf_ / 2);
@@ -504,7 +495,7 @@ void OMP2::init_fast_integrals() {
     J_ptr_.push_back(0);
     K_ptr_.push_back(0);
 
-    auto ERI = integrals_->compute_eri(); 
+    auto ERI = integrals_->compute_eri();
     const double sparse_threshold = 0;
 
     int nshells = basis_.n_shells();
@@ -541,7 +532,7 @@ void OMP2::init_fast_integrals() {
 
                 for (int sig = 0; sig < nbf_; ++sig) {
                     for (int lam = 0; lam < nbf_; ++lam) {
-                        int density_idx = lam + sig * nbf_; 
+                        int density_idx = lam + sig * nbf_;
                         double vJ = ERI(mu, nu, lam, sig);
                         if (std::abs(vJ) > sparse_threshold) {
                             J_val_.push_back(vJ);
@@ -599,8 +590,8 @@ void OMP2::transform_integrals() {
     } else {
         scf_.C_alpha = C_a_current_;
         if (!is_restricted) scf_.C_beta = C_b_current_;
-        
-        transform_3center_mo(); 
+
+        transform_3center_mo();
 
         g_aa_.clear(); g_bb_.clear(); g_ab_.clear();
 
@@ -622,7 +613,7 @@ void OMP2::transform_integrals() {
                 }
             }
         }
-        
+
         if (!is_restricted && nb_ > 0 && vb_ > 0) {
             g_bb_.allocate_block(0, 0, 0, 0, nb_, vb_, nb_, vb_);
             auto* ptr_bb = g_bb_.get_block(0, 0, 0, 0);
@@ -666,7 +657,7 @@ void OMP2::pseudocanonicalize() {
     build_fock_fast(scf_.P_alpha, scf_.P_beta, F_ao_a, F_ao_b);
 
     auto diag_block = [&](const Eigen::MatrixXd& F_ao, Eigen::MatrixXd& C, Eigen::VectorXd& eps, int nocc, int nvir) {
-     
+
         Eigen::MatrixXd C_occ = C.leftCols(nocc);
         Eigen::MatrixXd C_vir = C.rightCols(nvir);
 
@@ -680,7 +671,6 @@ void OMP2::pseudocanonicalize() {
         C.leftCols(nocc).noalias() = C_occ * es_o.eigenvectors();
         C.rightCols(nvir).noalias() = C_vir * es_v.eigenvectors();
 
-        // 5. Pembaruan energi orbital
         eps.resize(nocc + nvir);
         eps.head(nocc) = es_o.eigenvalues();
         eps.tail(nvir) = es_v.eigenvalues();
@@ -693,7 +683,6 @@ void OMP2::pseudocanonicalize() {
         scf_.P_beta.noalias() = scf_.C_beta.leftCols(nb_) * scf_.C_beta.leftCols(nb_).transpose();
     }
 }
-
 
 void OMP2::transform_3center_mo_cholesky() {
     int n_chol = scf_.L_mat.cols();
@@ -713,7 +702,7 @@ void OMP2::transform_3center_mo_cholesky() {
         Cb_vir = scf_.C_beta.rightCols(vb_);
     }
 
-    int chunk_size = 128; 
+    int chunk_size = 128;
 
     #pragma omp parallel for schedule(dynamic)
     for (int P_start = 0; P_start < n_chol; P_start += chunk_size) {
@@ -727,7 +716,7 @@ void OMP2::transform_3center_mo_cholesky() {
 
         for (int p = 0; p < P_size; ++p) {
             Eigen::Map<Eigen::MatrixXd> X_P(X_a.data() + p * va_ * nbf_, va_, nbf_);
-            Eigen::MatrixXd B_MO_a = X_P * Ca_occ; 
+            Eigen::MatrixXd B_MO_a = X_P * Ca_occ;
 
             for (int i = 0; i < na_; ++i) {
                 for (int a = 0; a < va_; ++a) {
@@ -741,7 +730,7 @@ void OMP2::transform_3center_mo_cholesky() {
 
             for (int p = 0; p < P_size; ++p) {
                 Eigen::Map<Eigen::MatrixXd> X_P_b(X_b.data() + p * vb_ * nbf_, vb_, nbf_);
-                Eigen::MatrixXd B_MO_b = X_P_b * Cb_occ; 
+                Eigen::MatrixXd B_MO_b = X_P_b * Cb_occ;
 
                 for (int i = 0; i < nb_; ++i) {
                     for (int a = 0; a < vb_; ++a) {
@@ -771,13 +760,13 @@ double OMP2::execute_micro_iterations() {
         compute_t2_and_energy_cholesky();
 
     } else if (config_.eri_method == "df") {
-        transform_3center_mo(); 
-        transform_integrals(); 
+        transform_3center_mo();
+        transform_integrals();
 
         compute_t2_amplitudes();
         compute_mp2_energy();
     } else {
-        transform_integrals(); 
+        transform_integrals();
 
         compute_t2_amplitudes();
         compute_mp2_energy();
@@ -787,7 +776,7 @@ double OMP2::execute_micro_iterations() {
     if (!is_restricted && nb_ > 0) {
         build_opdm_beta();
     } else if (is_restricted && nb_ > 0) {
-        G_oo_beta_ = G_oo_alpha_; 
+        G_oo_beta_ = G_oo_alpha_;
     }
     return (e_ss_ + e_os_) - old_energy;
 }
@@ -796,7 +785,7 @@ void OMP2::execute_macro_iterations(DIIS& diis_a, DIIS& diis_b, int macro_iter) 
     build_generalized_fock();
 
     bool is_restricted = (na_ == nb_ && va_ == vb_);
-    if (is_restricted && nb_ > 0) F_gen_b_ = F_gen_a_; 
+    if (is_restricted && nb_ > 0) F_gen_b_ = F_gen_a_;
 
     int dim_a = va_ * na_;
     int dim_b = (is_restricted) ? 0 : (nb_ > 0 ? vb_ * nb_ : 0);
@@ -806,7 +795,7 @@ void OMP2::execute_macro_iterations(DIIS& diis_a, DIIS& diis_b, int macro_iter) 
 
     int idx = 0;
     bool use_sym = (!scf_.irreps_alpha.empty() && scf_.irreps_alpha[0] != -1);
-    
+
     if (!is_restricted && nb_ > 0) {
         Eigen::MatrixXd wa = 2.0 * F_gen_a_.block(na_, 0, va_, na_);
         for (int i = 0; i < na_; ++i) {
@@ -826,7 +815,7 @@ void OMP2::execute_macro_iterations(DIIS& diis_a, DIIS& diis_b, int macro_iter) 
         Eigen::MatrixXd wa = 2.0 * F_gen_a_.block(na_, 0, va_, na_);
         Eigen::MatrixXd wb = 2.0 * F_gen_b_.block(nb_, 0, vb_, nb_);
         Eigen::MatrixXd w_sym = wa + wb;
-        
+
         for (int i = 0; i < na_; ++i) {
             for (int a = 0; a < va_; ++a) {
                 if (use_sym && (scf_.irreps_alpha[i] ^ scf_.irreps_alpha[na_ + a]) != 0) orbital_gradient_(idx++) = 0.0;
@@ -844,12 +833,12 @@ MP2Result OMP2::compute() {
     double e_total_best = 1e99;
     double e_corr_best = 0.0;
     double e_total_last = 1e99;
-    double trust_radius = 0.15; 
+    double trust_radius = 0.15;
     double expected_change = -1e-6;
 
     Eigen::MatrixXd C_a_last = scf_.C_alpha;
     Eigen::MatrixXd C_b_last = scf_.C_beta;
-    Eigen::VectorXd last_kappa; 
+    Eigen::VectorXd last_kappa;
 
     OrbitalLBFGS lbfgs_engine;
     DIIS diis_alpha(6);
@@ -872,38 +861,38 @@ MP2Result OMP2::compute() {
     bool step_rejected = false;
     if (omp_get_thread_num() == 0 && config_.print_level > 0 && na_ > 0 && va_ > 0) {
         std::cout << "\n--- [DEBUG] Memulai Uji Finite-Difference OMP2 (Total Energy) ---\n";
-        int i_target = na_ - 1; 
+        int i_target = na_ - 1;
         int a_target = 0;
-        
+
         execute_micro_iterations();
         build_generalized_fock();
-        
-        double grad_ana = is_restricted ? -4.0 * F_gen_a_(na_ + a_target, i_target) : 
+
+        double grad_ana = is_restricted ? -4.0 * F_gen_a_(na_ + a_target, i_target) :
                                           -2.0 * F_gen_a_(na_ + a_target, i_target);
-                          
+
         double theta = 1e-5;
         Eigen::MatrixXd C_a_orig = scf_.C_alpha;
         Eigen::MatrixXd C_b_orig = scf_.C_beta;
-        
+
         auto calc_tot = [&](double t) {
             Eigen::MatrixXd U = Eigen::MatrixXd::Identity(nbf_, nbf_);
             U(i_target, na_ + a_target) = t; U(na_ + a_target, i_target) = -t;
-            
+
             C_a_current_ = C_a_orig * U;
             if (nb_ > 0) C_b_current_ = C_b_orig * U;
-            
-            return (scf_.energy_total + execute_micro_iterations()); 
+
+            return (scf_.energy_total + execute_micro_iterations());
         };
 
         double E_plus = calc_tot(theta);
         double E_minus = calc_tot(-theta);
         double grad_num = (E_plus - E_minus) / (2.0 * theta);
-        
+
         std::cout << "Gradien Numerik (FD) : " << std::scientific << grad_num << "\n";
         std::cout << "Gradien Analitik     : " << std::scientific << grad_ana << "\n";
         std::cout << "Selisih Absolut      : " << std::scientific << std::abs(grad_num - grad_ana) << "\n";
         std::cout << "---------------------------------------------------------\n";
-                  
+
         C_a_current_ = C_a_orig;
         C_b_current_ = C_b_orig;
     }
@@ -915,37 +904,37 @@ MP2Result OMP2::compute() {
         Eigen::MatrixXd F_ao_a, F_ao_b;
         build_fock_fast(scf_.P_alpha, scf_.P_beta, F_ao_a, F_ao_b);
 
-        double e_scf = 0.5 * (scf_.P_alpha.cwiseProduct(H_core_ + F_ao_a).sum() + 
-                              scf_.P_beta.cwiseProduct(H_core_ + F_ao_b).sum()) 
+        double e_scf = 0.5 * (scf_.P_alpha.cwiseProduct(H_core_ + F_ao_a).sum() +
+                              scf_.P_beta.cwiseProduct(H_core_ + F_ao_b).sum())
                        + mol_.nuclear_repulsion_energy();
 
-        double e_mp2_corr = get_correlation_energy(); 
+        double e_mp2_corr = get_correlation_energy();
         double e_tot = e_scf + e_mp2_corr;
         if (macro_iter > 0 && !step_rejected) {
             double actual_change = e_tot - e_total_last;
-            double rho = actual_change / expected_change; 
+            double rho = actual_change / expected_change;
 
             if (actual_change > 1e-7 || actual_change < -5.0 || std::isnan(e_tot) || std::isinf(e_tot)) {
-                C_a_current_ = C_a_last; 
+                C_a_current_ = C_a_last;
                 C_b_current_ = C_b_last;
-                trust_radius *= 0.25; 
+                trust_radius *= 0.25;
                 if (trust_radius <= 1e-5) {
                     if (omp_get_thread_num() == 0) std::cout << "  [OMP2] Trust radius minimum tercapai.\n";
                     is_converged = true;
-                    break; 
+                    break;
                 }
                 scf_.P_alpha = C_a_current_.leftCols(na_) * C_a_current_.leftCols(na_).transpose();
                 if (!is_restricted && nb_ > 0) scf_.P_beta = C_b_current_.leftCols(nb_) * C_b_current_.leftCols(nb_).transpose();
                 else scf_.P_beta = scf_.P_alpha;
-                
-                expected_change = -1e-6; 
+
+                expected_change = -1e-6;
                 step_rejected = true;
-                continue; 
-                
+                continue;
+
             } else {
-                if (rho > 0.75) trust_radius = std::min(0.25, trust_radius * 1.5); 
+                if (rho > 0.75) trust_radius = std::min(0.25, trust_radius * 1.5);
                 else if (rho < 0.25) trust_radius *= 0.5;
-                
+
                 if (trust_radius <= 1e-5) {
                     if (omp_get_thread_num() == 0) std::cout << "  [OMP2] Trust radius minimum tercapai.\n";
                     is_converged = true;
@@ -956,18 +945,18 @@ MP2Result OMP2::compute() {
         step_rejected = false;
 
         if (e_tot < e_total_best) { e_total_best = e_tot; e_corr_best = e_mp2_corr; }
-        
+
         e_total_last = e_tot;
-        C_a_last = C_a_current_; 
+        C_a_last = C_a_current_;
         C_b_last = C_b_current_;
 
         execute_macro_iterations(diis_alpha, diis_beta, macro_iter);
         double grad_norm = orbital_gradient_.norm();
 
         if(omp_get_thread_num() == 0) {
-            std::cout << std::setw(4) << macro_iter << "    " 
+            std::cout << std::setw(4) << macro_iter << "    "
                       << std::fixed << std::setprecision(8) << e_tot << "    "
-                      << std::setprecision(8) << e_mp2_corr << "    " 
+                      << std::setprecision(8) << e_mp2_corr << "    "
                       << std::scientific << std::setprecision(2) << grad_norm << "\n";
         }
 
@@ -980,25 +969,25 @@ MP2Result OMP2::compute() {
         int idx = 0;
         double level_shift = (grad_norm > 0.1) ? 0.05 : 0.005;
         double spin_factor = is_restricted ? 4.0 : 2.0;
-        
-        for (int i = 0; i < na_; ++i) {             
-            for (int a = 0; a < va_; ++a) {        
+
+        for (int i = 0; i < na_; ++i) {
+            for (int a = 0; a < va_; ++a) {
                 double eps_diff = scf_.orbital_energies_alpha(na_ + a) - scf_.orbital_energies_alpha(i);
                 double safe_diff = std::max(std::abs(eps_diff), 1e-4);
                 double J_ia = 0.0;
                 if (config_.eri_method != "exact") {
-                    J_ia = B_ia_P_alpha_.row(i * va_ + a).squaredNorm(); 
+                    J_ia = B_ia_P_alpha_.row(i * va_ + a).squaredNorm();
                 } else {
                     auto* g_blk = g_aa_.get_block(0, 0, 0, 0);
                     if (g_blk) J_ia = std::abs((*g_blk)(i, a, i, a));
                 }
-                diag_H(idx++) = spin_factor * safe_diff + 2.0 * spin_factor * J_ia + level_shift;  
+                diag_H(idx++) = spin_factor * safe_diff + 2.0 * spin_factor * J_ia + level_shift;
             }
         }
-        
+
         if (!is_restricted && nb_ > 0) {
-            for (int i = 0; i < nb_; ++i) {         
-                for (int a = 0; a < vb_; ++a) {    
+            for (int i = 0; i < nb_; ++i) {
+                for (int a = 0; a < vb_; ++a) {
                     double eps_diff = scf_.orbital_energies_beta(nb_ + a) - scf_.orbital_energies_beta(i);
                     double safe_diff = std::max(std::abs(eps_diff), 1e-4);
                     double J_ia = 0.0;
@@ -1022,7 +1011,7 @@ MP2Result OMP2::compute() {
             Eigen::VectorXd kappa = lbfgs_engine.get_direction(orbital_gradient_, diag_H);
             if (kappa.dot(orbital_gradient_) > 0.0) {
                 lbfgs_engine.reset();
-                kappa = -orbital_gradient_.cwiseQuotient(diag_H); 
+                kappa = -orbital_gradient_.cwiseQuotient(diag_H);
             }
             double step_norm = kappa.norm();
             if (step_norm > trust_radius) {
@@ -1046,12 +1035,12 @@ MP2Result OMP2::compute() {
     MP2Result res;
     res.energy_total = e_total_best;
     res.energy_mp2_corr = e_corr_best;
-    res.energy_mp2_ss = e_ss_; 
+    res.energy_mp2_ss = e_ss_;
     res.energy_mp2_os = e_os_;
-    res.energy_scf = e_total_best - e_corr_best; 
+    res.energy_scf = e_total_best - e_corr_best;
     res.converged = is_converged;
     res.iterations = macro_iter;
-    res.C_alpha = C_a_last; 
+    res.C_alpha = C_a_last;
     res.C_beta = C_b_last;
     res.orbital_energies_alpha = scf_.orbital_energies_alpha;
     res.orbital_energies_beta  = scf_.orbital_energies_beta;
@@ -1059,7 +1048,7 @@ MP2Result OMP2::compute() {
     return res;
 }
 void OMP2::reset_diis() {}
-Eigen::MatrixXd OMP2::build_opdm() { return G_oo_alpha_ + G_oo_beta_; } 
+Eigen::MatrixXd OMP2::build_opdm() { return G_oo_alpha_ + G_oo_beta_; }
 Eigen::MatrixXd OMP2::extrapolate_diis(std::vector<Eigen::MatrixXd>&, std::vector<Eigen::MatrixXd>&) { return Eigen::MatrixXd(); }
 
-} // namespace mshqc
+}

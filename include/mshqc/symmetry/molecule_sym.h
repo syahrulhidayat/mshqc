@@ -27,13 +27,11 @@ private:
     const PetiteList& pl_;
 
     std::vector<std::vector<int>> shell_map_;
-    std::vector<Eigen::MatrixXd> R_ao_; 
-
+    std::vector<Eigen::MatrixXd> R_ao_;
 
     void build_map_and_matrices();
 };
 
-} 
-
+}
 
 #endif

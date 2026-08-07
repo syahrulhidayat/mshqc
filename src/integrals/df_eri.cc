@@ -1,8 +1,3 @@
-/**
- * @file src/integrals/df_eri.cc
- * @brief Implementasi Density Fitting Tensor Generator
- */
-
 #include "mshqc/integrals/df_eri.h"
 #include "mshqc/utils/hdf5_io.h"
 #include <iostream>
@@ -12,15 +7,15 @@
 namespace mshqc {
 namespace integrals {
 
-DensityFittingERI::DensityFittingERI(const BasisSet& primary_basis, 
-                                     const BasisSet& aux_basis, 
+DensityFittingERI::DensityFittingERI(const BasisSet& primary_basis,
+                                     const BasisSet& aux_basis,
                                      std::shared_ptr<IntegralEngine> integrals,
                                      double cutoff)
-    : primary_basis_(&primary_basis), 
-      aux_basis_(&aux_basis), 
+    : primary_basis_(&primary_basis),
+      aux_basis_(&aux_basis),
       integrals_(integrals),
       is_computed_(false),
-      cutoff_(cutoff) 
+      cutoff_(cutoff)
 {
     n_primary_ = primary_basis_->n_basis_functions();
     n_aux_     = aux_basis_->n_basis_functions();
@@ -35,14 +30,14 @@ struct CholeskyResult {
 CholeskyResult compute_pivoted_cholesky(Eigen::MatrixXd& J, double tol = 1e-10) {
     int n = J.rows();
     std::vector<int> p(n);
-    std::iota(p.begin(), p.end(), 0); 
-    
+    std::iota(p.begin(), p.end(), 0);
+
     Eigen::VectorXd diag = J.diagonal();
     Eigen::MatrixXd L = Eigen::MatrixXd::Zero(n, n);
-    
+
     int rank = 0;
     for (int i = 0; i < n; ++i) {
-        
+
         int max_idx = i;
         double max_val = diag(i);
         for (int j = i + 1; j < n; ++j) {
@@ -51,35 +46,31 @@ CholeskyResult compute_pivoted_cholesky(Eigen::MatrixXd& J, double tol = 1e-10) 
                 max_idx = j;
             }
         }
-        
-      
-        if (max_val < tol) break; 
-        
-       
+
+        if (max_val < tol) break;
+
         if (max_idx != i) {
             std::swap(p[i], p[max_idx]);
             std::swap(diag(i), diag(max_idx));
             J.row(i).swap(J.row(max_idx));
             J.col(i).swap(J.col(max_idx));
-            L.row(i).swap(L.row(max_idx)); 
+            L.row(i).swap(L.row(max_idx));
         }
-        
+
         L(i, i) = std::sqrt(diag(i));
         double L_ii_inv = 1.0 / L(i, i);
-        
-       
+
         for (int j = i + 1; j < n; ++j) {
             double sum = 0.0;
-        
+
             for (int k = 0; k < i; ++k) {
                 sum += L(j, k) * L(i, k);
             }
             L(j, i) = (J(j, i) - sum) * L_ii_inv;
-            diag(j) -= L(j, i) * L(j, i); 
+            diag(j) -= L(j, i) * L(j, i);
         }
         rank++;
     }
-    
 
     L.conservativeResize(n, rank);
     return {L, p, rank};
@@ -92,7 +83,6 @@ void DensityFittingERI::compute() {
     int n_shells_prim = primary_basis_->n_shells();
     int n_shells_aux  = aux_basis_->n_shells();
 
-    // 1. Setup offset arrays untuk auxiliary basis
     std::vector<int> aux_starts(n_shells_aux), aux_sizes(n_shells_aux);
     int offset_a = 0;
     for(int i = 0; i < n_shells_aux; ++i) {
@@ -101,7 +91,6 @@ void DensityFittingERI::compute() {
         offset_a += aux_sizes[i];
     }
 
-    // Setup offset arrays untuk primary basis
     std::vector<int> prim_starts(n_shells_prim), prim_sizes(n_shells_prim);
     int offset_p = 0;
     for(int i = 0; i < n_shells_prim; ++i) {
@@ -110,15 +99,12 @@ void DensityFittingERI::compute() {
         offset_p += prim_sizes[i];
     }
 
-    // =====================================================================
-    // 2. REKONSTRUKSI MATRIKS METRIK J BERBASIS SIMD & OPENMP
-    // =====================================================================
     std::cout << "  Evaluating 2-Center Metric Matrix...\n";
     Eigen::MatrixXd J_metric = Eigen::MatrixXd::Zero(n_aux_, n_aux_);
 
     #pragma omp parallel for schedule(dynamic, 1)
     for (int R = 0; R < n_shells_aux; ++R) {
-        int abs_R = n_shells_prim + R; 
+        int abs_R = n_shells_prim + R;
         int dim_R = aux_sizes[R];
         int bf_R_start = aux_starts[R];
 
@@ -127,7 +113,7 @@ void DensityFittingERI::compute() {
             int dim_S = aux_sizes[S];
             int bf_S_start = aux_starts[S];
 
-            auto buffer = integrals_->compute_2c2e_block(abs_R, abs_S); 
+            auto buffer = integrals_->compute_2c2e_block(abs_R, abs_S);
             if (buffer.empty()) continue;
 
             for (int s = 0; s < dim_S; ++s) {
@@ -136,17 +122,14 @@ void DensityFittingERI::compute() {
                 for (int r = 0; r < dim_R; ++r) {
                     int idx_R = bf_R_start + r;
                     double val = buffer[r + buffer_offset];
-                    
+
                     J_metric(idx_R, idx_S) = val;
                     if (idx_R != idx_S) J_metric(idx_S, idx_R) = val;
                 }
             }
         }
     }
-    
-    // =====================================================================
-    // 3. DEKOMPOSISI PIVOTED CHOLESKY
-    // =====================================================================
+
     CholeskyResult chol = compute_pivoted_cholesky(J_metric, 1e-10);
     int n_aux_rank = chol.rank;
     std::cout << "  Pivoted Cholesky Rank: " << n_aux_rank << " / " << n_aux_ << " (Removed Linear Dependencies)\n";
@@ -163,9 +146,6 @@ void DensityFittingERI::compute() {
 
     std::cout << "  Evaluating 3-Center Integrals and Pivoting...\n";
 
-    // =====================================================================
-    // 4. EVALUASI INTEGRAL 3-PUSAT & ON-THE-FLY PIVOTING
-    // =====================================================================
     #pragma omp parallel for schedule(dynamic, 1)
     for (int i = 0; i < n_shells_prim; ++i) {
         int bf_i_start = prim_starts[i];
@@ -176,7 +156,7 @@ void DensityFittingERI::compute() {
             int dim_j = prim_sizes[j];
 
             for (int R = 0; R < n_shells_aux; ++R) {
-                int abs_R = n_shells_prim + R; 
+                int abs_R = n_shells_prim + R;
                 int dim_R = aux_sizes[R];
                 int aux_start = aux_starts[R];
 
@@ -191,12 +171,12 @@ void DensityFittingERI::compute() {
                         int base_r1 = bf_j_start + p_j;
                         int base_r2 = (bf_j_start + p_j) * n_primary_;
                         int buffer_offset = dim_i * (p_j + dim_j * r);
-                        
+
                         for (int p_i = 0; p_i < dim_i; ++p_i) {
                             double val = buffer[p_i + buffer_offset];
                             int r1 = (bf_i_start + p_i) * n_primary_ + base_r1;
                             int r2 = base_r2 + (bf_i_start + p_i);
-                            
+
                             B_mat_(r1, new_P) = val;
                             if (r1 != r2) B_mat_(r2, new_P) = val;
                         }
@@ -206,16 +186,13 @@ void DensityFittingERI::compute() {
         }
     }
 
-    // =====================================================================
-    // 5. IN-PLACE TRIANGULAR SOLVE & I/O
-    // =====================================================================
     std::cout << "  In-Place Triangular Solve (cblas_dtrsm)...\n";
     auto V_rank = B_mat_.leftCols(n_aux_rank);
     L_tri.solveInPlace(V_rank.transpose());
 
     std::cout << "  Writing Density Fitting Tensor to HDF5 (Out-of-Core)...\n";
     utils::HDF5TensorIO io("df_tensor.h5", utils::HDF5TensorIO::Mode::WRITE_TRUNCATE);
-    
+
     std::array<long, 4> dims = {(long)n_aux_rank, (long)n_primary_, (long)n_primary_, 1};
     std::array<long, 4> chunks = {1, (long)n_primary_, (long)n_primary_, 1};
     io.create_dataset_4d("df_tensor", dims, chunks);
@@ -225,10 +202,10 @@ void DensityFittingERI::compute() {
         io.write_slice_4d("df_tensor", offset, chunks, V_rank.col(P).data());
     }
 
-    B_mat_ = V_rank; 
+    B_mat_ = V_rank;
     is_computed_ = true;
     std::cout << "  Density Fitting Decomposition Complete.\n";
 }
 
-} 
-} 
+}
+}

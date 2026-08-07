@@ -6,7 +6,7 @@
 #include <string>
 #include <array>
 #include <memory>
-#include <fstream> 
+#include <fstream>
 
 #ifdef I
 #undef I
@@ -38,18 +38,12 @@ struct GaussianPrimitive {
     GaussianPrimitive(double exp, double coef) : exponent(exp), coefficient(coef) {}
 };
 
-
-
-
-
-
-
 class Shell {
 public:
     Shell(AngularMomentum am, int center, const std::array<double, 3>& center_pos);
-    
+
     void add_primitive(double exponent, double coeff);
-    
+
     AngularMomentum angular_momentum() const { return am_; }
     int l() const { return am_to_int(am_); }
     int center() const { return center_; }
@@ -58,15 +52,15 @@ public:
     std::vector<double> origin() const {
         return {position_[0], position_[1], position_[2]};
     }
-    
+
     size_t n_primitives() const { return primitives_.size(); }
     const GaussianPrimitive& primitive(size_t i) const { return primitives_[i]; }
     const std::vector<GaussianPrimitive>& primitives() const { return primitives_; }
-    
+
     int center_index() const { return center_; }
     int n_functions() const;
     void normalize();
-    
+
     bool is_spherical() const { return spherical_; }
     void set_spherical(bool sph) { spherical_ = sph; }
     void set_cartesian(bool cart) { spherical_ = !cart; }
@@ -79,65 +73,45 @@ private:
     bool spherical_;
 };
 
-
-
-
-
-
-
 class BasisSet {
 public:
     BasisSet();
-    BasisSet(const std::string& basis_name, 
+    BasisSet(const std::string& basis_name,
              const Molecule& mol,
              const std::string& basis_dir = "data/basis");
-    
-    
 
     bool read_gbs(const std::string& basis_file, const Molecule& mol);
     void add_shell(const Shell& shell);
-    
-    
 
     size_t n_shells() const { return shells_.size(); }
     const Shell& shell(size_t i) const { return shells_[i]; }
     const std::vector<Shell>& shells() const { return shells_; }
-    
-    
 
     size_t n_basis_functions() const;
-    
+
     const std::string& name() const { return name_; }
     void set_name(const std::string& name) { name_ = name; }
-    
+
     bool is_spherical() const { return spherical_; }
     void set_spherical(bool sph);
     void set_cartesian(bool cart) { spherical_ = !cart; }
-    
+
     void print() const;
     int max_angular_momentum() const;
     std::vector<int> shell_to_basis_function_map() const;
     void append(const BasisSet& other);
-    
+
 private:
     std::string name_;
     std::vector<Shell> shells_;
     bool spherical_;
     size_t n_basis_ = 0;
 
-    
-
-    int parse_atom_basis(std::ifstream& file, 
+    int parse_atom_basis(std::ifstream& file,
                         const std::string& atom_symbol,
                         int atom_index,
                         const std::array<double, 3>& atom_pos);
 };
-
-
-
-
-
-
 
 AngularMomentum char_to_am(char c);
 std::string am_to_string(AngularMomentum am);
@@ -147,7 +121,6 @@ double primitive_overlap_s(double alpha_a, double alpha_b,
                           const std::array<double, 3>& Rb);
 std::string get_element_symbol(int Z);
 
-} 
+}
 
-
-#endif 
+#endif

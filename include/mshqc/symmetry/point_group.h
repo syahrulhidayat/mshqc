@@ -12,9 +12,9 @@
 namespace mshqc {
 
 struct Irrep {
-    int id;               
+    int id;
 
-    std::string name;     
+    std::string name;
 
 };
 
@@ -22,27 +22,22 @@ class CharacterTable {
 public:
     std::string group_name;
     std::vector<Irrep> irreps;
-    Eigen::MatrixXd characters; 
-
-
-    
+    Eigen::MatrixXd characters;
 
     int direct_product(int irrep1, int irrep2) const {
-        return irrep1 ^ irrep2; 
+        return irrep1 ^ irrep2;
 
     }
 };
 
-
-
-enum class SymOpType { 
-    Identity, Rotation, Reflection, Inversion, ImproperRotation 
+enum class SymOpType {
+    Identity, Rotation, Reflection, Inversion, ImproperRotation
 };
 struct SymmetryOperation {
     SymOpType type;
-    int order;              
-    Eigen::Matrix3d matrix; 
-    std::string name;       
+    int order;
+    Eigen::Matrix3d matrix;
+    std::string name;
 };
 
 class PointGroup {
@@ -52,18 +47,14 @@ public:
     CharacterTable get_character_table() const;
     PointGroup(const Molecule& mol, double tolerance = 1e-6);
     double get_tolerance() const { return tolerance_; }
-    
 
     const std::vector<SymmetryOperation>& get_operations() const { return operations_; }
-    
-    
 
     std::string symbol() const { return symbol_; }
     std::string get_symbol() const { return symbol_; }
-    
+
     int get_order() const { return operations_.size(); }
     const Molecule& get_aligned_molecule() const { return aligned_mol_; }
-
 
 private:
     Molecule original_mol_;
@@ -80,7 +71,6 @@ private:
     void find_abelian_subgroup();
 };
 
-} 
+}
 
-
-#endif 
+#endif

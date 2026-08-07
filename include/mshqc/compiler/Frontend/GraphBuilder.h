@@ -17,18 +17,14 @@ public:
     GraphBuilder();
     ~GraphBuilder();
 
-    // Inisialisasi modul (Fungsi utama graf komputasi)
     void initializeModule(const std::string& functionName);
 
-    // Membangun operasi mshqc.contract dari dimensi spesifik
     mlir::Value emitContractOp(const std::vector<int64_t>& lhsShape,
                                const std::vector<int64_t>& rhsShape,
                                const std::string& einsum_eq);
 
-    // Verifikasi validitas graf sebelum optimasi
     bool verifyGraph();
 
-    // Membuka akses untuk Pass Manager
     mlir::ModuleOp getModule() const { return module.get(); }
     mlir::MLIRContext* getContext() { return &context; }
 
@@ -38,7 +34,7 @@ private:
     mlir::OwningOpRef<mlir::ModuleOp> module;
 };
 
-} // namespace compiler
-} // namespace mshqc
+}
+}
 
-#endif // MSHQC_COMPILER_FRONTEND_GRAPHBUILDER_H_
+#endif

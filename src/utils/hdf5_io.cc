@@ -30,7 +30,7 @@ std::vector<hsize_t> HDF5TensorIO::to_hsize(const std::array<long, 4>& dims) con
             static_cast<hsize_t>(dims[2]), static_cast<hsize_t>(dims[3])};
 }
 
-void HDF5TensorIO::create_dataset_4d(const std::string& dataset_name, 
+void HDF5TensorIO::create_dataset_4d(const std::string& dataset_name,
                                      const std::array<long, 4>& dims,
                                      const std::array<long, 4>& chunk_dims) {
     auto h_dims = to_hsize(dims);
@@ -39,12 +39,12 @@ void HDF5TensorIO::create_dataset_4d(const std::string& dataset_name,
     H5::DataSpace dataspace(4, h_dims.data());
     H5::DSetCreatPropList plist;
     plist.setChunk(4, h_chunks.data());
-    plist.setDeflate(6); // Kompresi ZLIB level 6
+    plist.setDeflate(6);
 
     file_->createDataSet(dataset_name, H5::PredType::NATIVE_DOUBLE, dataspace, plist);
 }
 
-void HDF5TensorIO::write_tensor_4d(const std::string& dataset_name, 
+void HDF5TensorIO::write_tensor_4d(const std::string& dataset_name,
                                    const Eigen::Tensor<double, 4>& tensor) {
     H5::DataSet dataset = file_->openDataSet(dataset_name);
     dataset.write(tensor.data(), H5::PredType::NATIVE_DOUBLE);
@@ -53,13 +53,13 @@ void HDF5TensorIO::write_tensor_4d(const std::string& dataset_name,
 Eigen::Tensor<double, 4> HDF5TensorIO::read_tensor_4d(const std::string& dataset_name) {
     H5::DataSet dataset = file_->openDataSet(dataset_name);
     H5::DataSpace dataspace = dataset.getSpace();
-    
+
     std::vector<hsize_t> dims_out(4);
     dataspace.getSimpleExtentDims(dims_out.data(), nullptr);
-    
+
     Eigen::Tensor<double, 4> tensor(dims_out[0], dims_out[1], dims_out[2], dims_out[3]);
     dataset.read(tensor.data(), H5::PredType::NATIVE_DOUBLE, H5::DataSpace::ALL, dataspace);
-    
+
     return tensor;
 }
 
@@ -69,10 +69,10 @@ void HDF5TensorIO::write_slice_4d(const std::string& dataset_name,
                                   const double* data_ptr) {
     H5::DataSet dataset = file_->openDataSet(dataset_name);
     H5::DataSpace memspace(4, to_hsize(slice_dims).data());
-    
+
     H5::DataSpace filespace = dataset.getSpace();
     filespace.selectHyperslab(H5S_SELECT_SET, to_hsize(slice_dims).data(), to_hsize(offset).data());
-    
+
     dataset.write(data_ptr, H5::PredType::NATIVE_DOUBLE, memspace, filespace);
 }
 
@@ -82,12 +82,12 @@ void HDF5TensorIO::read_slice_4d(const std::string& dataset_name,
                                  double* data_ptr) {
     H5::DataSet dataset = file_->openDataSet(dataset_name);
     H5::DataSpace memspace(4, to_hsize(slice_dims).data());
-    
+
     H5::DataSpace filespace = dataset.getSpace();
     filespace.selectHyperslab(H5S_SELECT_SET, to_hsize(slice_dims).data(), to_hsize(offset).data());
-    
+
     dataset.read(data_ptr, H5::PredType::NATIVE_DOUBLE, memspace, filespace);
 }
 
-} // namespace utils
-} // namespace mshqc
+}
+}

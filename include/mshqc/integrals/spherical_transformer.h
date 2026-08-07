@@ -1,10 +1,3 @@
-
-
-
-
-
-
-
 #ifndef MSHQC_SPHERICAL_TRANSFORMER_H
 #define MSHQC_SPHERICAL_TRANSFORMER_H
 
@@ -18,18 +11,10 @@
 
 namespace mshqc {
 
-/**
- * @brief Kelas untuk transformasi basis Cartesian ke Spherical
- * 
- * Menangani transformasi integral dan koefisien orbital dari
- * basis Cartesian (6d, 10f, dll) ke Spherical (5d, 7f, dll)
- */
 class SphericalTransformer {
 public:
     SphericalTransformer();
     ~SphericalTransformer() = default;
-
-    
 
     Eigen::MatrixXd transform_1e_matrix(
         const Eigen::MatrixXd& cart_matrix,
@@ -38,16 +23,12 @@ public:
         const std::vector<int>& shell_offsets_sph
     ) const;
 
-    
-
     std::vector<double> transform_2e_integrals(
         const std::vector<double>& cart_eris,
         const std::vector<int>& angular_momenta,
         int nbf_cart,
         int nbf_sph
     );
-
-    
 
     Eigen::MatrixXd transform_mo_coefficients(
         const Eigen::MatrixXd& cart_coeff,
@@ -56,22 +37,14 @@ public:
         const std::vector<int>& shell_offsets_sph
     ) const;
 
-    
-
     Eigen::MatrixXd get_transformation_matrix(int l)const;
-
-    
 
     int get_cartesian_size(int l) const;
     int get_spherical_size(int l) const;
 
-    
-
     bool is_spherical_basis(const std::vector<int>& angular_momenta) const;
     int count_spherical_functions(const std::vector<int>& angular_momenta) const;
     int count_cartesian_functions(const std::vector<int>& angular_momenta) const;
-
-    
 
     void transform_eri_shell_quartet(
         const double* cart_eri,
@@ -84,39 +57,26 @@ public:
         int n1_sph, int n2_sph, int n3_sph, int n4_sph
     );
 
-
 private:
-    
 
     std::map<int, Eigen::MatrixXd> transformation_matrices_;
 
-    
-
     void initialize_transformation_matrices();
-    
-    
 
-    Eigen::MatrixXd get_s_transform();  
+    Eigen::MatrixXd get_s_transform();
 
-    Eigen::MatrixXd get_p_transform();  
+    Eigen::MatrixXd get_p_transform();
 
-    Eigen::MatrixXd get_d_transform();  
+    Eigen::MatrixXd get_d_transform();
 
-    Eigen::MatrixXd get_f_transform();  
+    Eigen::MatrixXd get_f_transform();
 
-    Eigen::MatrixXd get_g_transform();  
-
-
-    
-    
+    Eigen::MatrixXd get_g_transform();
 
     int cartesian_index(int l, int i, int j, int k) const;
     int spherical_index(int l, int m) const;
 };
 
-/**
- * @brief Helper class untuk manajemen basis transformasi
- */
 class BasisTransformationHelper {
 public:
     struct ShellInfo {
@@ -127,16 +87,13 @@ public:
         int sph_size;
     };
 
-
-
-
 std::vector<int> compute_shell_offsets_cartesian(
     const std::vector<int>& angular_momenta
 );
 
 std::vector<int> compute_shell_offsets_spherical(
     const std::vector<int>& angular_momenta
-);    
+);
 
     BasisTransformationHelper(const std::vector<int>& angular_momenta);
 
@@ -152,18 +109,14 @@ private:
     bool needs_transform_;
 };
 
-
-
-
 std::vector<int> compute_shell_offsets_cartesian(
     const std::vector<int>& angular_momenta
 );
 
 std::vector<int> compute_shell_offsets_spherical(
     const std::vector<int>& angular_momenta
-);    
+);
 
-} 
+}
 
-
-#endif 
+#endif

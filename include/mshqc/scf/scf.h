@@ -1,19 +1,10 @@
-/**
- * @file include/mshqc/scf/scf.h
- * @brief Header definitions for Self-Consistent Field (SCF) methods.
- * @details
- * Updated for High-Performance Computing (HPC):
- * - Unified Architecture (BaseSCF) for RHF, UHF, and ROHF.
- * - Block-Direct SCF Ready + In-Core Fallback + Symmetry + Cholesky.
- */
-
 #ifndef MSHQC_SCF_H
 #define MSHQC_SCF_H
 
 #include <vector>
 #include <memory>
 #include <string>
-#include <iostream> 
+#include <iostream>
 #include <cmath>
 
 #include <Eigen/Dense>
@@ -65,15 +56,8 @@ struct SCFResult {
     Eigen::MatrixXd L_mat;
 };
 
-
-
-
-
-
-
 class BaseSCF {
 protected:
-    
 
     Molecule mol_;
     BasisSet basis_;
@@ -83,16 +67,12 @@ protected:
     std::unique_ptr<BasisSymmetrizer> symmetrizer_;
     SCFConfig config_;
 
-    
-
     int nbasis_;
     int n_alpha_;
     int n_beta_;
     double energy_ = 0.0;
     double energy_old_ = 0.0;
     int iter_scf_ = 0;
-
-    
 
     Eigen::MatrixXd S_, H_, X_, schwarz_;
     Eigen::MatrixXd C_alpha_, C_beta_;
@@ -102,8 +82,6 @@ protected:
     Eigen::VectorXd occ_numbers_alpha_, occ_numbers_beta_;
     std::vector<int> salc_irreps_;
 
-    
-
     std::vector<int> shell_starts_, shell_sizes_;
     std::vector<std::pair<int, int>> row_map_;
     std::vector<double> J_val_, K_val_;
@@ -111,21 +89,11 @@ protected:
     std::vector<size_t> J_ptr_, K_ptr_;
     Eigen::MatrixXd schwarz_basis_;
 
-    
-
     std::unique_ptr<integrals::CholeskyERI> internal_cholesky_;
-    std::vector<Eigen::MatrixXd> L_vecs_; 
+    std::vector<Eigen::MatrixXd> L_vecs_;
     Eigen::MatrixXd L_mat_;
 
-    
-
     std::unique_ptr<FockBuilder> fock_engine_;
-
-    
-
-    
-
-    
 
     void init_integrals();
     void init_integrals_incore();
@@ -135,15 +103,9 @@ protected:
     void solve_fock(const Eigen::MatrixXd& F, Eigen::MatrixXd& C, Eigen::VectorXd& eps);
     void print_final(const SCFResult& r);
 
-    
-
-    
-
-    
-
     virtual void initial_guess() = 0;
     virtual void update_densities() = 0;
-    virtual void build_fock_matrix() = 0; 
+    virtual void build_fock_matrix() = 0;
     virtual double compute_energy() = 0;
 
 public:
@@ -153,14 +115,10 @@ public:
             std::shared_ptr<PetiteList> pl,
             int n_alpha, int n_beta,
             const SCFConfig& config);
-            
+
     virtual ~BaseSCF() = default;
 
-    
-
-    virtual SCFResult compute(); 
-
-    
+    virtual SCFResult compute();
 
     double energy() const { return energy_ + mol_.nuclear_repulsion_energy(); }
     const Molecule& molecule() const { return mol_; }
@@ -168,22 +126,16 @@ public:
     std::shared_ptr<PetiteList> get_petite_list() const { return pl_; }
 };
 
-
-
-
-
-
-
 class RHF : public BaseSCF {
 public:
-    RHF(const Molecule& mol, const BasisSet& basis, 
+    RHF(const Molecule& mol, const BasisSet& basis,
         std::shared_ptr<IntegralEngine> integrals,
-        std::shared_ptr<PointGroup> pg,      
-        std::shared_ptr<PetiteList> pl,      
+        std::shared_ptr<PointGroup> pg,
+        std::shared_ptr<PetiteList> pl,
         const SCFConfig& config);
 
-    RHF(const Molecule& mol, const BasisSet& basis, 
-        std::shared_ptr<IntegralEngine> integrals, 
+    RHF(const Molecule& mol, const BasisSet& basis,
+        std::shared_ptr<IntegralEngine> integrals,
         const SCFConfig& config)
         : RHF(mol, basis, integrals, nullptr, nullptr, config) {}
 
@@ -196,23 +148,16 @@ protected:
 private:
     Eigen::MatrixXd G_J_accum_;
     Eigen::MatrixXd G_accum_;
-    Eigen::MatrixXd P_old_; 
+    Eigen::MatrixXd P_old_;
 
-    
 };
-
-
-
-
-
-
 
 class ROHF : public BaseSCF {
 public:
     ROHF(const Molecule& mol, const BasisSet& basis,
          std::shared_ptr<IntegralEngine> integrals,
-         std::shared_ptr<PointGroup> pg,      
-         std::shared_ptr<PetiteList> pl,      
+         std::shared_ptr<PointGroup> pg,
+         std::shared_ptr<PetiteList> pl,
          int n_alpha, int n_beta, const SCFConfig& config);
 
     ROHF(const Molecule& mol, const BasisSet& basis,
@@ -220,9 +165,8 @@ public:
          int n_alpha, int n_beta, const SCFConfig& config)
          : ROHF(mol, basis, integrals, nullptr, nullptr, n_alpha, n_beta, config) {}
 
-    SCFResult compute() override; 
-    SCFResult run() { return compute(); } 
-
+    SCFResult compute() override;
+    SCFResult run() { return compute(); }
 
 protected:
     void initial_guess() override;
@@ -238,20 +182,14 @@ private:
     Eigen::MatrixXd C_;
 };
 
-
-
-
-
-
-
 class UHF : public BaseSCF {
 public:
     UHF(const Molecule& mol, const BasisSet& basis,
         std::shared_ptr<IntegralEngine> integrals,
-        std::shared_ptr<PointGroup> pg,    
-        std::shared_ptr<PetiteList> pl,    
+        std::shared_ptr<PointGroup> pg,
+        std::shared_ptr<PetiteList> pl,
         int n_alpha, int n_beta, const SCFConfig& config);
-        
+
     UHF(const Molecule& mol, const BasisSet& basis,
         std::shared_ptr<IntegralEngine> integrals,
         int n_alpha, int n_beta, const SCFConfig& config)
@@ -268,11 +206,10 @@ private:
     Eigen::MatrixXd G_accum_a_, G_accum_b_;
     Eigen::MatrixXd G_J_accum_a_;
     Eigen::MatrixXd G_J_accum_b_;
-    Eigen::MatrixXd C_; 
+    Eigen::MatrixXd C_;
     double compute_s2(const Eigen::MatrixXd& Ca, const Eigen::MatrixXd& Cb, const Eigen::MatrixXd& S);
 };
 
-} 
+}
 
-
-#endif 
+#endif

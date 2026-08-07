@@ -1,8 +1,8 @@
 #include "mshqc/mp2/mp2.h"
-#include "mshqc/integrals/eri_transformer.h" 
+#include "mshqc/integrals/eri_transformer.h"
 #include <omp.h>
 #include <tblis/tblis.h>
-#include <iostream> 
+#include <iostream>
 
 namespace mshqc {
 
@@ -28,19 +28,17 @@ void OMP2::build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_
 
         Eigen::Map<const Eigen::MatrixXd> L_flat_J(scf_.L_mat.data(), nbf_ * nbf_, n_chol);
         Eigen::Map<const Eigen::VectorXd> P_tot_flat(P_tot.data(), nbf_ * nbf_);
-        Eigen::VectorXd X_J = L_flat_J.transpose() * P_tot_flat; 
-        Eigen::VectorXd J_flat = L_flat_J * X_J;                 
+        Eigen::VectorXd X_J = L_flat_J.transpose() * P_tot_flat;
+        Eigen::VectorXd J_flat = L_flat_J * X_J;
         Eigen::Map<Eigen::MatrixXd> J_mat(J_flat.data(), nbf_, nbf_);
 
         Eigen::MatrixXd Ka_mat = Eigen::MatrixXd::Zero(nbf_, nbf_);
         Eigen::MatrixXd Kb_mat = Eigen::MatrixXd::Zero(nbf_, nbf_);
 
-        
             Eigen::MatrixXd Ka_priv = Eigen::MatrixXd::Zero(nbf_, nbf_);
             Eigen::MatrixXd Kb_priv = Eigen::MatrixXd::Zero(nbf_, nbf_);
             Eigen::MatrixXd Ta_buf(nbf_, nbf_), Tb_buf(nbf_, nbf_);
 
-            
             for (int K = 0; K < n_chol; ++K) {
                 Eigen::Map<const Eigen::MatrixXd> L_K(scf_.L_mat.col(K).data(), nbf_, nbf_);
 
@@ -52,9 +50,8 @@ void OMP2::build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_
                     Kb_priv.noalias() += Tb_buf * L_K;
                 }
             }
-         
+
             { Ka_mat += Ka_priv; if (nb_ > 0) Kb_mat += Kb_priv; }
-        
 
         F_a = H_core_ + J_mat - Ka_mat;
         if (nb_ > 0) F_b = H_core_ + J_mat - Kb_mat;
@@ -64,17 +61,17 @@ void OMP2::build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_
     }
 
     Eigen::MatrixXd P_tot = P_a + P_b;
-    double max_P = P_tot.cwiseAbs().maxCoeff(); 
+    double max_P = P_tot.cwiseAbs().maxCoeff();
     double threshold = 1e-9;
     const double* __restrict__ p_dtot = P_tot.data();
     const double* __restrict__ p_da   = P_a.data();
     const double* __restrict__ p_db   = P_b.data();
 
-    const double* __restrict__ Jv = J_val_.data(); 
-    const int* __restrict__ Ji = J_ind_.data(); 
+    const double* __restrict__ Jv = J_val_.data();
+    const int* __restrict__ Ji = J_ind_.data();
     const size_t* __restrict__ Jp = J_ptr_.data();
-    const double* __restrict__ Kv = K_val_.data(); 
-    const int* __restrict__ Ki = K_ind_.data(); 
+    const double* __restrict__ Kv = K_val_.data();
+    const int* __restrict__ Ki = K_ind_.data();
     const size_t* __restrict__ Kp = K_ptr_.data();
 
     int n_threads = omp_get_max_threads();
@@ -122,7 +119,7 @@ void OMP2::build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_
 
     for (int i = 0; i < nbf_; ++i) {
         for (int j = 0; j < i; ++j) {
-            G_a(j, i) = G_a(i, j); 
+            G_a(j, i) = G_a(i, j);
             G_b(j, i) = G_b(i, j);
         }
     }
@@ -132,11 +129,11 @@ void OMP2::build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_
 }
 void OMP2::build_opdm_alpha() {
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
-    
+
     G_oo_alpha_ = Eigen::MatrixXd::Zero(na_, na_);
     G_vv_alpha_ = Eigen::MatrixXd::Zero(va_, va_);
-    
-    if (is_restricted) { 
+
+    if (is_restricted) {
         auto* t_blk = t2_aa_.get_block(0,0,0,0);
         if (t_blk) {
             #pragma omp parallel for
@@ -148,7 +145,7 @@ void OMP2::build_opdm_alpha() {
                             for (int b = 0; b < va_; ++b) {
                                 double t_ik = (*t_blk)(i, a, k, b);
                                 double t_jk = (*t_blk)(j, a, k, b);
-                                double t_jk_ex = (*t_blk)(j, b, k, a); 
+                                double t_jk_ex = (*t_blk)(j, b, k, a);
                                 p_oo += t_ik * (2.0 * t_jk - t_jk_ex);
                             }
                         }
@@ -174,39 +171,33 @@ void OMP2::build_opdm_alpha() {
                 }
             }
         }
-        return; 
+        return;
     }
 
-    // --- UMP2 OPDM DENGAN EIGEN DGEMM (BEBAS OOM, ZERO-ALLOCATION) ---
     auto* t_aa_blk = t2_aa_.get_block(0,0,0,0);
     if (t_aa_blk) {
-        // Blok G_oo_alpha_: Sudah optimal menggunakan Map.
+
         Eigen::Map<const Eigen::MatrixXd> T_mat(t_aa_blk->data(), na_, va_ * na_ * va_);
         G_oo_alpha_.noalias() = -0.5 * (T_mat * T_mat.transpose());
 
-        // Blok G_vv_alpha_: PERBAIKAN FATAL OOM
-        // Dimensi ColMajor (i, a, j, c) -> Stride i=1, a=na_, j=na_*va_, c=na_*va_*na_
-        // Untuk j dan c yang tetap, elemen (i, a) membentuk matriks berurutan berukuran na_ x va_.
         const double* base_ptr = t_aa_blk->data();
-        
+
         #pragma omp parallel
         {
             Eigen::MatrixXd G_vv_local = Eigen::MatrixXd::Zero(va_, va_);
-            
+
             #pragma omp for schedule(dynamic)
             for (int jc = 0; jc < na_ * va_; ++jc) {
                 int j = jc % na_;
                 int c = jc / na_;
-                
+
                 size_t offset = j * (na_ * va_) + c * (na_ * va_ * na_);
-                
-                // M adalah pemetaan matriks T_ij (ukuran na_ x va_)
+
                 Eigen::Map<const Eigen::MatrixXd> M(base_ptr + offset, na_, va_);
-                
-                // G_ab += (T_ij)^T * T_ij
+
                 G_vv_local.noalias() += M.transpose() * M;
             }
-            
+
             #pragma omp critical
             {
                 G_vv_alpha_ += 0.5 * G_vv_local;
@@ -220,25 +211,24 @@ void OMP2::build_opdm_alpha() {
             Eigen::Map<const Eigen::MatrixXd> Tab_mat(t_ab_blk->data(), na_, nb_ * va_ * vb_);
             G_oo_alpha_.noalias() -= Tab_mat * Tab_mat.transpose();
 
-           
-            const double* base_ab = t_ab_blk->data(); 
-            
+            const double* base_ab = t_ab_blk->data();
+
             #pragma omp parallel
             {
                 Eigen::MatrixXd G_vv_local = Eigen::MatrixXd::Zero(va_, va_);
-                
+
                 #pragma omp for schedule(dynamic)
                 for (int b = 0; b < vb_; ++b) {
                     size_t offset = b * (na_ * nb_ * va_);
-                    
+
                     Eigen::Map<const Eigen::MatrixXd> M(base_ab + offset, na_ * nb_, va_);
                     G_vv_local.noalias() += M.transpose() * M;
                 }
-                
+
                 #pragma omp critical
                 {
-                   
-                    G_vv_alpha_ += G_vv_local; 
+
+                    G_vv_alpha_ += G_vv_local;
                 }
             }
         }
@@ -256,7 +246,7 @@ void OMP2::build_opdm_beta() {
         Eigen::Map<const Eigen::MatrixXd> T_mat(t_bb_blk->data(), nb_, vb_ * nb_ * vb_);
         G_oo_beta_.noalias() = -0.5 * (T_mat * T_mat.transpose());
         const double* base_bb = t_bb_blk->data();
-        
+
         #pragma omp parallel
         {
             Eigen::MatrixXd G_vv_local = Eigen::MatrixXd::Zero(vb_, vb_);
@@ -268,7 +258,7 @@ void OMP2::build_opdm_beta() {
                 Eigen::Map<const Eigen::MatrixXd, 0, Eigen::OuterStride<Eigen::Dynamic>> M(
                 base_bb + offset, nb_, vb_, Eigen::OuterStride<Eigen::Dynamic>(nb_ * nb_)
             );
-                
+
                 G_vv_local.noalias() += M.transpose() * M;
             }
             #pragma omp critical
@@ -287,10 +277,10 @@ void OMP2::build_opdm_beta() {
             for (int ab = 0; ab < va_ * vb_; ++ab) {
                 int a = ab % va_;
                 int b = ab / va_;
-                
+
                 size_t offset = a * (na_ * nb_) + b * (na_ * nb_ * va_);
                 Eigen::Map<const Eigen::MatrixXd> M(base_ab + offset, na_, nb_);
-                
+
                 G_oo_local.noalias() += M.transpose() * M;
             }
             #pragma omp critical
@@ -307,13 +297,13 @@ void OMP2::build_generalized_fock() {
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
 
     Eigen::MatrixXd G_full_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
-    G_full_a.block(0, 0, na_, na_) = G_oo_alpha_; 
+    G_full_a.block(0, 0, na_, na_) = G_oo_alpha_;
     G_full_a.block(na_, na_, va_, va_) = G_vv_alpha_;
     Eigen::MatrixXd P_corr_a = scf_.C_alpha * G_full_a * scf_.C_alpha.transpose();
 
     Eigen::MatrixXd G_full_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
     Eigen::MatrixXd P_corr_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
-    
+
     if (is_restricted) {
         G_oo_beta_ = G_oo_alpha_;
         G_vv_beta_ = G_vv_alpha_;
@@ -352,11 +342,11 @@ void OMP2::build_generalized_fock() {
             const auto& eri_ao = integrals_->compute_eri();
             const Eigen::MatrixXd& Ca_o = scf_.C_alpha.leftCols(na_);
             const Eigen::MatrixXd& Ca_v = scf_.C_alpha.rightCols(va_);
-            
+
             auto ovvv = integrals::ERITransformer::transform_custom(eri_ao, Ca_o, Ca_v, Ca_v, Ca_v, nbf_, na_, va_, va_, va_);
             auto ooov = integrals::ERITransformer::transform_custom(eri_ao, Ca_o, Ca_o, Ca_o, Ca_v, nbf_, na_, na_, na_, va_);
             auto* t_blk = t2_aa_.get_block(0,0,0,0);
-            
+
             if (t_blk) {
                 #pragma omp parallel for
                 for (int a=0; a<va_; ++a) {
@@ -406,20 +396,20 @@ void OMP2::build_generalized_fock() {
                 #pragma omp for schedule(dynamic)
                 for (int s_i = 0; s_i < occ_spaces_a.size(); ++s_i) {
                     const auto& o_i = occ_spaces_a[s_i];
-                    if (o_i.size == 0) continue; 
+                    if (o_i.size == 0) continue;
 
                     for (const auto& v_a : vir_spaces_a) {
-                        if (v_a.size == 0) continue; 
-                        if ((o_i.id ^ v_a.id) != 0) continue; 
+                        if (v_a.size == 0) continue;
+                        if ((o_i.id ^ v_a.id) != 0) continue;
 
                         for (const auto& o_j : occ_spaces_a) {
-                            if (o_j.size == 0) continue; 
+                            if (o_j.size == 0) continue;
 
                             for (const auto& v_b : vir_spaces_a) {
-                                if (v_b.size == 0) continue; 
+                                if (v_b.size == 0) continue;
 
                                 for (const auto& v_c : vir_spaces_a) {
-                                    if (v_c.size == 0) continue; 
+                                    if (v_c.size == 0) continue;
 
                                     if ((o_j.id ^ v_c.id ^ v_a.id ^ v_b.id) == 0) {
                                         auto* blk = ovvv_blk.get_block(o_j.id, v_c.id, v_a.id, v_b.id);
@@ -439,7 +429,7 @@ void OMP2::build_generalized_fock() {
                                             tblis::tblis_init_tensor_d(&t_V, 4, len_V, blk->data(), str_V);
 
                                             Eigen::Map<Eigen::MatrixXd> Z_temp(z_buffer.data(), ni, na);
-                                            Z_temp.setZero(); 
+                                            Z_temp.setZero();
 
                                             tblis::len_type len_Z[] = {ni, na};
                                             tblis::stride_type str_Z[] = {1, ni};
@@ -457,7 +447,7 @@ void OMP2::build_generalized_fock() {
                                 }
 
                                 for (const auto& o_k : occ_spaces_a) {
-                                    if (o_k.size == 0) continue; 
+                                    if (o_k.size == 0) continue;
 
                                     if ((o_i.id ^ o_j.id ^ o_k.id ^ v_b.id) == 0) {
                                         auto* blk = ooov_blk.get_block(o_j.id, o_i.id, o_k.id, v_b.id);
@@ -476,7 +466,7 @@ void OMP2::build_generalized_fock() {
                                             tblis::tblis_init_tensor_d(&t_T, 4, len_T, t_blk->data(), str_T);
 
                                             Eigen::Map<Eigen::MatrixXd> Z_temp(z_buffer.data(), ni, na);
-                                            Z_temp.setZero(); 
+                                            Z_temp.setZero();
 
                                             tblis::len_type len_Z[] = {ni, na};
                                             tblis::stride_type str_Z[] = {1, ni};
@@ -486,7 +476,7 @@ void OMP2::build_generalized_fock() {
 
                                             for(int di=0; di<ni; ++di) {
                                                 for(int da=0; da<na; ++da) {
-                                                    Z_local(v_a.offset + da, o_i.offset + di) -= Z_temp(di, da); 
+                                                    Z_local(v_a.offset + da, o_i.offset + di) -= Z_temp(di, da);
                                                 }
                                             }
                                         }
@@ -587,9 +577,9 @@ void OMP2::build_generalized_fock() {
                             if (is_restricted) {
                                 L_ijab = 2.0 * (*t_aa_blk)(i, a, j, b) - 1.0 * (*t_aa_blk)(i, b, j, a);
                             } else {
-                                L_ijab = (*t_aa_blk)(i, a, j, b); 
-                            } 
-                            T2_aa(i*va_+a, j*va_+b) = L_ijab; 
+                                L_ijab = (*t_aa_blk)(i, a, j, b);
+                            }
+                            T2_aa(i*va_+a, j*va_+b) = L_ijab;
                         }
                     }
                 }
@@ -597,12 +587,12 @@ void OMP2::build_generalized_fock() {
         }
 
         Eigen::MatrixXd X_a = T2_aa * B_ia_P_alpha_;
-        Eigen::MatrixXd X_b; 
+        Eigen::MatrixXd X_b;
 
         if (!is_restricted && nb_ > 0 && vb_ > 0) {
             Eigen::MatrixXd T2_ab = Eigen::MatrixXd::Zero(na_*va_, nb_*vb_);
             Eigen::MatrixXd T2_bb = Eigen::MatrixXd::Zero(nb_*vb_, nb_*vb_);
-            
+
             auto* t_ab_blk = t2_ab_.get_block(0,0,0,0);
             if (t_ab_blk) {
                 #pragma omp parallel for collapse(2)
@@ -629,7 +619,7 @@ void OMP2::build_generalized_fock() {
                     }
                 }
             }
-            
+
             X_a += T2_ab * B_ia_P_beta_;
             X_b = T2_bb * B_ia_P_beta_ + T2_ab.transpose() * B_ia_P_alpha_;
         }
@@ -648,7 +638,7 @@ void OMP2::build_generalized_fock() {
         }
         Z_mat_a.setZero();
         for (int P = 0; P < n_aux; ++P) {
-            Eigen::Map<const Eigen::MatrixXd> XT_a(X_a.col(P).data(), va_, na_); 
+            Eigen::Map<const Eigen::MatrixXd> XT_a(X_a.col(P).data(), va_, na_);
             Eigen::Map<const Eigen::MatrixXd> V_a(B_vv_a.col(P).data(), va_, va_);
             Eigen::Map<const Eigen::MatrixXd> O_a(B_oo_a.col(P).data(), na_, na_);
             Z_mat_a.noalias() += V_a * XT_a - XT_a * O_a;
@@ -672,7 +662,7 @@ void OMP2::build_generalized_fock() {
 
             Z_mat_b.setZero();
             for (int P = 0; P < n_aux; ++P) {
-                Eigen::Map<const Eigen::MatrixXd> XT_b(X_b.col(P).data(), vb_, nb_); 
+                Eigen::Map<const Eigen::MatrixXd> XT_b(X_b.col(P).data(), vb_, nb_);
                 Eigen::Map<const Eigen::MatrixXd> V_b(B_vv_b.col(P).data(), vb_, vb_);
                 Eigen::Map<const Eigen::MatrixXd> O_b(B_oo_b.col(P).data(), nb_, nb_);
                 Z_mat_b.noalias() += V_b * XT_b - XT_b * O_b;
@@ -681,7 +671,7 @@ void OMP2::build_generalized_fock() {
     }
     F_gen_a_ = F_HF_mo_a + G_gamma_mo_a;
     if (na_ > 0 && va_ > 0) {
-        Eigen::MatrixXd F_HF_vo_a = F_HF_mo_a.block(na_, 0, va_, na_); 
+        Eigen::MatrixXd F_HF_vo_a = F_HF_mo_a.block(na_, 0, va_, na_);
         Eigen::MatrixXd L_sep_a = G_vv_alpha_ * F_HF_vo_a - F_HF_vo_a * G_oo_alpha_;
         F_gen_a_.block(na_, 0, va_, na_) += L_sep_a;
         F_gen_a_.block(0, na_, na_, va_) += L_sep_a.transpose();
@@ -691,25 +681,25 @@ void OMP2::build_generalized_fock() {
 
     F_gen_b_ = F_HF_mo_b + G_gamma_mo_b;
     if (nb_ > 0 && vb_ > 0) {
-        Eigen::MatrixXd F_HF_vo_b = F_HF_mo_b.block(nb_, 0, vb_, nb_); 
+        Eigen::MatrixXd F_HF_vo_b = F_HF_mo_b.block(nb_, 0, vb_, nb_);
         Eigen::MatrixXd L_sep_b = G_vv_beta_ * F_HF_vo_b - F_HF_vo_b * G_oo_beta_;
         F_gen_b_.block(nb_, 0, vb_, nb_) += L_sep_b;
         F_gen_b_.block(0, nb_, nb_, vb_) += L_sep_b.transpose();
         F_gen_b_.block(nb_, 0, vb_, nb_) += Z_mat_b;
         F_gen_b_.block(0, nb_, nb_, vb_) += Z_mat_b.transpose();
     }
-    
+
 if (omp_get_thread_num() == 0 && config_.print_level > 1) {
         std::cout << "\n  [DEBUG KOMPONEN FOCK OMP2]\n";
-        std::cout << "  Trace G_oo_a + G_vv_a (Koreksi Partikel) : " 
+        std::cout << "  Trace G_oo_a + G_vv_a (Koreksi Partikel) : "
                   << std::scientific << (G_oo_alpha_.trace() + G_vv_alpha_.trace()) << "\n";
-        std::cout << "  Norm Z_mat_a (Z-Vector)                  : " 
+        std::cout << "  Norm Z_mat_a (Z-Vector)                  : "
                   << std::scientific << Z_mat_a.norm() << "\n";
-        
+
         if (nb_ > 0 && vb_ > 0) {
-            std::cout << "  Trace G_oo_b + G_vv_b (Koreksi Partikel) : " 
+            std::cout << "  Trace G_oo_b + G_vv_b (Koreksi Partikel) : "
                       << std::scientific << (G_oo_beta_.trace() + G_vv_beta_.trace()) << "\n";
-            std::cout << "  Norm Z_mat_b (Z-Vector)                  : " 
+            std::cout << "  Norm Z_mat_b (Z-Vector)                  : "
                       << std::scientific << Z_mat_b.norm() << "\n";
         }
     }

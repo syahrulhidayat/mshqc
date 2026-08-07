@@ -1,8 +1,3 @@
-/**
- * @file src/symmetry/point_group.cc
- * @brief Symmetry Detection Engine (Improved Matrix Definitions)
- */
-
 #include "mshqc/symmetry/point_group.h"
 #include <iostream>
 #include <cmath>
@@ -24,11 +19,11 @@ void PointGroup::center_and_align() {
     int natoms = original_mol_.n_atoms();
     std::vector<Atom> temp_atoms;
     std::vector<double> masses(natoms);
-    
+
     for(int i=0; i<natoms; ++i) {
         temp_atoms.push_back(original_mol_.atom(i));
         int Z = temp_atoms[i].atomic_number;
-        masses[i] = (Z == 1) ? 1.0078 : (double)Z; 
+        masses[i] = (Z == 1) ? 1.0078 : (double)Z;
         if (Z == 8) masses[i] = 15.999;
     }
 
@@ -80,7 +75,7 @@ void PointGroup::center_and_align() {
 
     Molecule new_mol;
     new_mol.set_charge(original_mol_.charge());
-    new_mol.set_multiplicity(original_mol_.multiplicity()); 
+    new_mol.set_multiplicity(original_mol_.multiplicity());
     for(const auto& at : temp_atoms) new_mol.add_atom(at.atomic_number, at.x, at.y, at.z);
     aligned_mol_ = new_mol;
 }
@@ -120,56 +115,52 @@ bool PointGroup::has_sigma(int axis_normal) {
     return check_operation(ref);
 }
 
-// Helper untuk menambahkan operasi D2h
 void add_d2h_ops(std::vector<SymmetryOperation>& ops) {
     Eigen::Matrix3d m;
-    // E
+
     m = Eigen::Matrix3d::Identity(); ops.push_back({SymOpType::Identity, -1, m, "E"});
-    // C2(z)
+
     m << -1,0,0, 0,-1,0, 0,0,1; ops.push_back({SymOpType::Rotation, 2, m, "C2(z)"});
-    // C2(y)
+
     m << -1,0,0, 0,1,0, 0,0,-1; ops.push_back({SymOpType::Rotation, 2, m, "C2(y)"});
-    // C2(x)
+
     m << 1,0,0, 0,-1,0, 0,0,-1; ops.push_back({SymOpType::Rotation, 2, m, "C2(x)"});
-    // i
+
     m << -1,0,0, 0,-1,0, 0,0,-1; ops.push_back({SymOpType::Inversion, 1, m, "i"});
-    // s(xy)
+
     m << 1,0,0, 0,1,0, 0,0,-1; ops.push_back({SymOpType::Reflection, 1, m, "s(xy)"});
-    // s(xz)
+
     m << 1,0,0, 0,-1,0, 0,0,1; ops.push_back({SymOpType::Reflection, 1, m, "s(xz)"});
-    // s(yz)
+
     m << -1,0,0, 0,1,0, 0,0,1; ops.push_back({SymOpType::Reflection, 1, m, "s(yz)"});
 }
 
 void PointGroup::detect() {
     operations_.clear();
-    
-    // 1. Cek Linearitas
+
     bool linear_z = true;
     for(int i=0; i<aligned_mol_.n_atoms(); ++i) {
-        if (std::abs(aligned_mol_.atom(i).x) > tolerance_ || 
+        if (std::abs(aligned_mol_.atom(i).x) > tolerance_ ||
             std::abs(aligned_mol_.atom(i).y) > tolerance_) {
             linear_z = false; break;
         }
     }
 
     bool i_op = has_inversion();
-    
-    // A. ATOM TUNGGAL -> D2h
+
     if (aligned_mol_.n_atoms() == 1) {
         symbol_ = "D2h";
         add_d2h_ops(operations_);
         return;
     }
 
-    // B. LINEAR MOLECULE
     if (linear_z) {
         if (i_op) {
-            symbol_ = "D2h"; // Dinf_h -> D2h
+            symbol_ = "D2h";
             add_d2h_ops(operations_);
         } else {
-            symbol_ = "C2v"; // Cinf_v -> C2v
-            // Add C2v ops (E, C2z, sxz, syz)
+            symbol_ = "C2v";
+
             operations_.push_back({SymOpType::Identity, -1, Eigen::Matrix3d::Identity(), "E"});
             Eigen::Matrix3d m;
             m << -1,0,0, 0,-1,0, 0,0,1; operations_.push_back({SymOpType::Rotation, 2, m, "C2(z)"});
@@ -179,29 +170,26 @@ void PointGroup::detect() {
         return;
     }
 
-    // C. C2v / D2h Check
     bool c2x = has_c2(0); bool c2y = has_c2(1); bool c2z = has_c2(2);
     bool sig_yz = has_sigma(0); bool sig_xz = has_sigma(1); bool sig_xy = has_sigma(2);
 
     int n_c2 = (c2x?1:0) + (c2y?1:0) + (c2z?1:0);
     int n_sigma = (sig_yz?1:0) + (sig_xz?1:0) + (sig_xy?1:0);
 
-    // D2h
     if (n_c2 == 3 && n_sigma == 3 && i_op) {
         symbol_ = "D2h";
         add_d2h_ops(operations_);
         return;
     }
 
-    // C2v
     if (n_c2 == 1 && n_sigma == 2) {
         symbol_ = "C2v";
         operations_.push_back({SymOpType::Identity, -1, Eigen::Matrix3d::Identity(), "E"});
-        
+
         if (c2z) {
             Eigen::Matrix3d m;
             m << -1,0,0, 0,-1,0, 0,0,1; operations_.push_back({SymOpType::Rotation, 2, m, "C2(z)"});
-            // Sigma mana yang ada?
+
             if (sig_xz) { m << 1,0,0, 0,-1,0, 0,0,1; operations_.push_back({SymOpType::Reflection, 1, m, "s(xz)"}); }
             if (sig_yz) { m << -1,0,0, 0,1,0, 0,0,1; operations_.push_back({SymOpType::Reflection, 1, m, "s(yz)"}); }
         }
@@ -214,11 +202,10 @@ void PointGroup::detect() {
         return;
     }
 
-    // Default C1
     symbol_ = "C1";
     operations_.push_back({SymOpType::Identity, -1, Eigen::Matrix3d::Identity(), "E"});
 }
 
 void PointGroup::find_abelian_subgroup() {}
 
-} // namespace mshqc
+}

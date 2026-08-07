@@ -46,6 +46,7 @@ hasil/
 # --- Text Files and Custom Script Exceptions ---
 
 !recaftor.py
-scaffold_compiler.py
+!scaffold_compiler.py
 *.sh
-deploy_self_hosted.sh
+!deploy_self_hosted.sh
+clean_all.py

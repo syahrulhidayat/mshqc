@@ -26,15 +26,8 @@ inline void unpack_irreps(int packed, int& i, int& a, int& j, int& b) {
     i = (packed >> 9) & 7;
 }
 
-
-
-
-
-
-
 class BlockedTensor2D {
 public:
-    
 
     std::unordered_map<int, Eigen::MatrixXd> blocks;
 
@@ -52,12 +45,6 @@ public:
         blocks[irrep] = Eigen::MatrixXd::Zero(d1, d2);
     }
 };
-
-
-
-
-
-
 
 class BlockedTensor4D {
 public:
@@ -77,14 +64,10 @@ public:
         blocks[pack_irreps(i, a, j, b)] = Eigen::Tensor<double, 4>(d1, d2, d3, d4);
     }
 
-    
-
     void clear() {
         blocks.clear();
     }
 };
-
-
 
 inline std::vector<IrrepSpace> get_irrep_spaces(const std::vector<int>& sorted_irreps, int start_idx, int total_size) {
     std::vector<IrrepSpace> spaces;
@@ -109,6 +92,6 @@ inline std::vector<IrrepSpace> get_irrep_spaces(const std::vector<int>& sorted_i
     return spaces;
 }
 
-} 
+}
 
 #endif

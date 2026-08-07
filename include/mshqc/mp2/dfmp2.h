@@ -9,120 +9,57 @@
 #undef I
 #endif
 
-/**
- * @file dfmp2.h
- * @brief Density-Fitted MP2 for ROHF
- * 
- * REFERENCES:
- * Feyereisen et al. (1993), Chem. Phys. Lett. 208, 359 - Eq. (7)
- * Weigend et al. (1998), Chem. Phys. Lett. 294, 143 - Eq. (3)
- * 
- * Theory:
- * Approximate (μν|λσ) ≈ Σ_PQ B_μνP [J^-1]_PQ B_λσQ
- * where B_μνP = (μν|P) are 3-center integrals
- * and J_PQ = (P|Q) is auxiliary basis metric
- * 
- * MP2 energy:
- * E = Σ_{ijab} t_ijab <ia|jb>_DF
- * where <ia|jb>_DF uses fitted integrals
- */
-
 namespace mshqc {
 
-/**
- * DF-MP2 result
- */
 struct DFMP2Result {
-    double e_ss;       
+    double e_ss;
 
-    double e_os;       
+    double e_os;
 
-    double e_corr;     
+    double e_corr;
 
-    double e_total;    
+    double e_total;
 
 };
 
-/**
- * Density-Fitted MP2 for ROHF
- * 
- * Uses auxiliary basis (cc-pVTZ-RI) to approximate ERIs
- * Much faster than conventional MP2, same accuracy
- * 
- * REFERENCE: Feyereisen et al. (1993), Eq. (7)
- */
 class DFMP2 {
 public:
-    /**
-     * Constructor
-     * @param rohf_result ROHF result
-     * @param basis Primary basis
-     * @param aux_basis Auxiliary basis (e.g. cc-pVTZ-RI)
-     * @param integrals Integral engine
-     */
+
     DFMP2(const SCFResult& rohf_result,
           const BasisSet& basis,
           const BasisSet& aux_basis,
           std::shared_ptr<IntegralEngine> integrals);
-    
-    /**
-     * Compute DF-MP2 energy
-     */
+
     DFMP2Result compute();
-    
+
 private:
     const SCFResult& rohf_;
     const BasisSet& basis_;
     const BasisSet& aux_basis_;
     std::shared_ptr<IntegralEngine> integrals_;
-    
-    
 
-    int nbf_;      
+    int nbf_;
 
-    int naux_;     
+    int naux_;
 
-    int nocc_;     
+    int nocc_;
 
-    int nvir_;     
+    int nvir_;
 
-    
-    
+    Eigen::MatrixXd B_ia_;
 
-    Eigen::MatrixXd B_ia_;  
+    Eigen::MatrixXd J_;
 
-    Eigen::MatrixXd J_;     
+    Eigen::MatrixXd J_inv_;
 
-    Eigen::MatrixXd J_inv_; 
-
-    
-    /**
-     * Build auxiliary metric and invert
-     * J_PQ = (P|Q)
-     * 
-     * REFERENCE: Feyereisen et al. (1993), Eq. (8)
-     */
     void compute_metric();
-    
-    /**
-     * Transform 3-center to MO basis
-     * B^P_ia = Σ_μν C_μi (μν|P) C_νa
-     */
+
     void transform_3center();
-    
-    /**
-     * Compute DF-MP2 energy components
-     * 
-     * REFERENCE: Feyereisen et al. (1993), Eq. (11)
-     * E = Σ t_ijab <ia|jb>_DF
-     * where <ia|jb>_DF = Σ_PQ B^P_ia [J^-1]_PQ B^Q_jb
-     */
+
     double compute_ss_energy();
     double compute_os_energy();
 };
 
-} 
+}
 
-
-#endif 
-
+#endif

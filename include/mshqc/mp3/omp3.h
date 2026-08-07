@@ -1,10 +1,3 @@
-/**
- * @file include/mshqc/mp3/omp3.h
- * @brief Orbital-Optimized MP3 (OMP3) Engine
- * @details Menggunakan arsitektur "share engine", mewarisi mesin SCF, DIIS, 
- * dan optimasi orbital dari modul OMP2.
- */
-
 #pragma once
 
 #include "mshqc/mp2/mp2.h"
@@ -48,4 +41,4 @@ protected:
     void compute_mp3_correction();
 };
 
-} // namespace mshqc
+}

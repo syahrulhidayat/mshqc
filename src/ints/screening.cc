@@ -1,10 +1,5 @@
-/**
- * @file screening.cc
- * @brief Implementation of Shell-Based Schwarz Screening
- */
-
 #include "mshqc/integrals/screening.h"
-#include "mshqc/ints/integrals.h" 
+#include "mshqc/ints/integrals.h"
 #include <cmath>
 #include <algorithm>
 #include <iostream>
@@ -20,8 +15,8 @@
 namespace mshqc {
 namespace integrals {
 
-Screening::Screening(const BasisSet& basis) 
-    : basis_(basis), nshells_(basis.n_shells()), max_Q_(0.0) 
+Screening::Screening(const BasisSet& basis)
+    : basis_(basis), nshells_(basis.n_shells()), max_Q_(0.0)
 {
     Q_matrix_ = Eigen::MatrixXd::Zero(nshells_, nshells_);
 }
@@ -31,28 +26,27 @@ void Screening::reset() {
     Q_matrix_.setZero();
 }
 
-// Implementasi compute sekarang akan dikenali karena sudah ada di header
 void Screening::compute(std::shared_ptr<mshqc::IntegralEngine> integrals) {
     if (!integrals) throw std::runtime_error("IntegralEngine null in Screening::compute");
 
     max_Q_ = 0.0;
-    
+
     #pragma omp parallel for schedule(dynamic) reduction(max:max_Q_)
     for (int i = 0; i < nshells_; ++i) {
         for (int j = 0; j <= i; ++j) {
-            // Memanggil fungsi dari IntegralEngine
+
             auto buffer = integrals->compute_shell_block(i, j, i, j);
-            
+
             double max_val = 0.0;
             for (double v : buffer) {
                 max_val = std::max(max_val, std::abs(v));
             }
-            
+
             double Q_val = std::sqrt(max_val);
-            
+
             Q_matrix_(i, j) = Q_val;
-            Q_matrix_(j, i) = Q_val; 
-            
+            Q_matrix_(j, i) = Q_val;
+
             if (Q_val > max_Q_) max_Q_ = Q_val;
         }
     }
@@ -76,9 +70,9 @@ std::vector<ShellPair> Screening::get_significant_pairs(double threshold) const 
         }
     }
 
-    std::sort(pairs.begin(), pairs.end(), 
+    std::sort(pairs.begin(), pairs.end(),
         [](const ShellPair& a, const ShellPair& b) {
-            return a.max_val > b.max_val; 
+            return a.max_val > b.max_val;
         });
 
     return pairs;
@@ -97,7 +91,7 @@ double Screening::get_schwarz_val(int sh_a, int sh_b) const {
 void Screening::print_stats(double threshold) const {
     long long total_pairs = (long long)nshells_ * (nshells_ + 1) / 2;
     long long kept_pairs = 0;
-    
+
     double safe_max_Q = (max_Q_ > 1e-12) ? max_Q_ : 1.0;
     double effective_cutoff = threshold / safe_max_Q;
 
@@ -110,21 +104,20 @@ void Screening::print_stats(double threshold) const {
     }
 
     double percent = 100.0 * kept_pairs / total_pairs;
-    
+
     std::cout << "\n  [Screening Stats]" << std::endl;
     std::cout << "  Threshold       : " << std::scientific << threshold << std::endl;
     std::cout << "  Max Schwarz (Q) : " << max_Q_ << std::endl;
-    std::cout << "  Shell Pairs     : " << kept_pairs << " / " << total_pairs 
+    std::cout << "  Shell Pairs     : " << kept_pairs << " / " << total_pairs
               << " (" << std::fixed << std::setprecision(2) << percent << "% kept)" << std::endl;
     std::cout << "  Sparsity Gain   : " << (100.0 - percent) << "% computations skipped.\n" << std::endl;
 }
 
-// Stub function untuk shell_centers_ (jika belum dipakai, dikosongkan dulu)
 void Screening::init_shell_centers() {}
 
 void Screening::build_from_eri_tensor(const Eigen::Tensor<double, 4>& eri) {
-    // Implementasi placeholder jika diperlukan, atau bisa dihapus
+
 }
 
-} // namespace integrals
-} // namespace mshqc
+}
+}
