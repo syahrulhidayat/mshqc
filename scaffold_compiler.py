@@ -1,36 +1,35 @@
 #!/usr/bin/env python3
 from pathlib import Path
 
-def patch_compiler_includes(base_dir: Path):
-    """Menginjeksi ruting header absolut untuk modul MLIR Compiler."""
-    cmake_path = base_dir / "src/compiler/CMakeLists.txt"
+def patch_dialect_headers(base_dir: Path):
+    """Menambahkan MLIR Builtin Types dan Interface ke dalam Dialect Header."""
+    h_path = base_dir / "include/mshqc/compiler/Dialect/MshqcDialect.h"
     
-    if not cmake_path.exists():
-        print(f"[ERROR] {cmake_path} tidak ditemukan.")
+    if not h_path.exists():
+        print(f"[ERROR] File {h_path} tidak ditemukan pada arsitektur direktori.")
         return
 
-    with open(cmake_path, 'r') as f:
+    with open(h_path, 'r') as f:
         content = f.read()
 
-    # Injeksi target_include_directories jika belum ada
-    if "target_include_directories(mshqc_compiler" not in content:
-        injection = """
-# ==============================================================================
-# Resolusi Header & TableGen Artefacts
-# ==============================================================================
-target_include_directories(mshqc_compiler PUBLIC
-    ${CMAKE_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_BINARY_DIR}
-)
+    if "BuiltinTypes.h" not in content:
+        # Blok header MLIR yang wajib ada sebelum file .inc di-load
+        missing_headers = """#include "mlir/IR/BuiltinTypes.h"
+#include "mlir/IR/OpImplementation.h"
+#include "mlir/Bytecode/BytecodeOpInterface.h"
 """
-        with open(cmake_path, 'w') as f:
-            f.write(content + injection)
-        print("[PATCHED] src/compiler/CMakeLists.txt telah dikalibrasi. Resolusi header terbuka.")
+        # Injeksi persis sebelum '#include "MshqcDialect.h.inc"'
+        target_str = '#include "MshqcDialect.h.inc"'
+        content = content.replace(target_str, missing_headers + "\n" + target_str)
+        
+        with open(h_path, 'w') as f:
+            f.write(content)
+        print("[PATCHED] Header MLIR tingkat rendah telah ditambahkan ke MshqcDialect.h.")
     else:
-        print("[INFO] Ruting header sudah terkonfigurasi.")
+        print("[INFO] Header MLIR sudah tersedia.")
 
 if __name__ == "__main__":
     base_directory = Path.cwd()
-    print("[INFO] Mengeksekusi penambalan memori include pada CMake...")
-    patch_compiler_includes(base_directory)
-    print("[SUCCESS] Silakan commit dan push ulang ke GitHub Actions.")
+    print("[INFO] Memulai sinkronisasi pointer header MLIR...")
+    patch_dialect_headers(base_directory)
+    print("[SUCCESS] Silakan commit dan evaluasi ulang pipeline kompilator.")
