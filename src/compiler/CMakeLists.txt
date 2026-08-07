@@ -8,6 +8,13 @@ mlir_tablegen(MshqcDialect.cpp.inc -gen-dialect-defs)
 
 add_custom_target(MshqcCompilerIncGen DEPENDS MshqcOps.h.inc MshqcOps.cpp.inc MshqcDialect.h.inc MshqcDialect.cpp.inc)
 
+
+# Generate Pass headers
+set(LLVM_TARGET_DEFINITIONS ${CMAKE_SOURCE_DIR}/include/mshqc/compiler/Passes/Passes.td)
+mlir_tablegen(Passes.h.inc -gen-pass-decls -name Mshqc)
+add_custom_target(MshqcPassIncGen DEPENDS Passes.h.inc)
+add_dependencies(mshqc_compiler MshqcPassIncGen)
+
 add_library(mshqc_compiler STATIC
     Dialect/MshqcDialect.cc
     Dialect/MshqcOps.cc

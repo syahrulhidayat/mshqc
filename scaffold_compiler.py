@@ -1,115 +1,189 @@
 #!/usr/bin/env python3
+import os
 from pathlib import Path
-import re
 
-def refactor_graph_builder(base_dir: Path):
-    """Menyelaraskan GraphBuilder agar menghasilkan parameter fungsi (Block Arguments) yang valid di MLIR."""
-    gb_path = base_dir / "src/compiler/Frontend/GraphBuilder.cc"
-    if not gb_path.exists(): return
+def setup_tools_directory(base_dir: Path):
+    """Membangun tool CLI mshqc-opt untuk debugging IR terisolasi."""
+    tools_dir = base_dir / "tools" / "mshqc-opt"
+    tools_dir.mkdir(parents=True, exist_ok=True)
 
-    content = """#include "mshqc/compiler/Frontend/GraphBuilder.h"
+    # 1. mshqc-opt.cc
+    opt_cc = tools_dir / "mshqc-opt.cc"
+    opt_cc_content = """#include "mlir/IR/DialectRegistry.h"
+#include "mlir/InitAllDialects.h"
+#include "mlir/InitAllPasses.h"
+#include "mlir/Tools/mlir-opt/MlirOptMain.h"
 #include "mshqc/compiler/Dialect/MshqcDialect.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/IR/Verifier.h"
+#include "mshqc/compiler/Passes/Passes.h"
 
-using namespace mlir;
+int main(int argc, char **argv) {
+    mlir::DialectRegistry registry;
+    
+    // Register dialek standar LLVM/MLIR
+    mlir::registerAllDialects(registry);
+    
+    // Register dialek khusus mshqc
+    registry.insert<mshqc::compiler::MshqcDialect>();
+
+    // Register passes kustom mshqc
+    mshqc::compiler::registerPasses();
+
+    return mlir::asMainReturnCode(
+        mlir::MlirOptMain(argc, argv, "MSHQC Modular Optimizer Driver\\n", registry));
+}
+"""
+    with open(opt_cc, 'w') as f: f.write(opt_cc_content)
+
+    # 2. tools/CMakeLists.txt
+    tools_cmake = base_dir / "tools" / "CMakeLists.txt"
+    tools_cmake_content = """# CMakeLists untuk tools MLIR
+add_subdirectory(mshqc-opt)
+"""
+    with open(tools_cmake, 'w') as f: f.write(tools_cmake_content)
+
+    # 3. tools/mshqc-opt/CMakeLists.txt
+    opt_cmake = tools_dir / "CMakeLists.txt"
+    opt_cmake_content = """get_property(dialect_libs GLOBAL PROPERTY MLIR_DIALECT_LIBS)
+
+add_llvm_executable(mshqc-opt mshqc-opt.cc)
+llvm_update_compile_flags(mshqc-opt)
+
+target_link_libraries(mshqc-opt PRIVATE
+    mshqc_compiler
+    ${dialect_libs}
+    MLIROptLib
+    MLIRPass
+)
+"""
+    with open(opt_cmake, 'w') as f: f.write(opt_cmake_content)
+
+def setup_pass_tablegen(base_dir: Path):
+    """Memigrasikan deklarasi C++ Pass manual menjadi TableGen."""
+    passes_td = base_dir / "include/mshqc/compiler/Passes/Passes.td"
+    passes_td_content = """#ifndef MSHQC_PASSES
+#define MSHQC_PASSES
+
+include "mlir/Pass/PassBase.td"
+
+def LowerToLinalg : Pass<"mshqc-lower-to-linalg", "::mlir::func::FuncOp"> {
+    let summary = "Lower mshqc dialect to linalg operations.";
+    let description = [{
+        Transformasi analitik dari graf tingkat tinggi (mshqc.contract) 
+        menuju representasi aljabar linear standar (linalg.generic) 
+        sebelum dilakukan loop fusion dan bufferization.
+    }];
+    let constructor = "mshqc::compiler::createLowerToLinalgPass()";
+}
+
+#endif // MSHQC_PASSES
+"""
+    with open(passes_td, 'w') as f: f.write(passes_td_content)
+
+    passes_h = base_dir / "include/mshqc/compiler/Passes/Passes.h"
+    passes_h_content = """#ifndef MSHQC_COMPILER_PASSES_H_
+#define MSHQC_COMPILER_PASSES_H_
+
+#include "mlir/Pass/Pass.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include <memory>
 
 namespace mshqc {
 namespace compiler {
 
-GraphBuilder::GraphBuilder() : builder(&context) {
-    context.getOrLoadDialect<MshqcDialect>();
-    context.getOrLoadDialect<func::FuncDialect>();
-}
+// Generate deklarasi pass dari TableGen
+#define GEN_PASS_DECL
+#include "mshqc/compiler/Passes/Passes.h.inc"
 
-GraphBuilder::~GraphBuilder() = default;
+// Generate fungsi registrasi pass untuk mshqc-opt
+#define GEN_PASS_REGISTRATION
+#include "mshqc/compiler/Passes/Passes.h.inc"
 
-void GraphBuilder::initializeModule(const std::string& functionName) {
-    Location loc = builder.getUnknownLoc();
-    module = ModuleOp::create(loc);
-    builder.setInsertionPointToEnd(module->getBody());
-}
+} // namespace compiler
+} // namespace mshqc
 
-mlir::Value GraphBuilder::emitContractOp(const std::vector<int64_t>& lhsShape,
-                                         const std::vector<int64_t>& rhsShape,
-                                         const std::string& einsum_eq) {
-    Location loc = builder.getUnknownLoc();
-    auto f64Type = builder.getF64Type();
-    
-    auto lhsTensorType = RankedTensorType::get(lhsShape, f64Type);
-    auto rhsTensorType = RankedTensorType::get(rhsShape, f64Type);
-    auto resTensorType = RankedTensorType::get({lhsShape[0], lhsShape[1], rhsShape[0], rhsShape[1]}, f64Type);
+#endif // MSHQC_COMPILER_PASSES_H_
+"""
+    with open(passes_h, 'w') as f: f.write(passes_h_content)
 
-    // Membuat fungsi dinamis sesuai ukuran tensor untuk menampung argumen memori
-    auto funcType = builder.getFunctionType({lhsTensorType, rhsTensorType}, {resTensorType});
-    auto funcOp = builder.create<func::FuncOp>(loc, "contract_kernel", funcType);
-    
-    Block* entryBlock = funcOp.addEntryBlock();
-    builder.setInsertionPointToEnd(entryBlock);
+    lowering_cc = base_dir / "src/compiler/Passes/LowerToLinalg.cc"
+    lowering_cc_content = """#include "mshqc/compiler/Passes/Passes.h"
+#include "mshqc/compiler/Dialect/MshqcDialect.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include "mlir/Transforms/DialectConversion.h"
 
-    // Menggunakan Block Arguments sebagai nilai aktual (bukan pointer kosong)
-    Value lhsArg = entryBlock->getArgument(0);
-    Value rhsArg = entryBlock->getArgument(1);
+namespace mshqc {
+namespace compiler {
 
-    auto contractNode = builder.create<mshqc::compiler::ContractOp>(
-        loc, resTensorType, lhsArg, rhsArg, builder.getStringAttr(einsum_eq)
-    );
+// Konstruksi Base Class otomatis dari TableGen
+#define GEN_PASS_DEF_LOWERTOLINALG
+#include "mshqc/compiler/Passes/Passes.h.inc"
 
-    builder.create<func::ReturnOp>(loc, contractNode.getResult());
-    return contractNode.getResult();
-}
+namespace {
+struct ContractOpLowering : public mlir::OpRewritePattern<ContractOp> {
+    using OpRewritePattern<ContractOp>::OpRewritePattern;
+    mlir::LogicalResult matchAndRewrite(ContractOp op, mlir::PatternRewriter &rewriter) const override {
+        // Blok lowering (linalg.generic) akan dieksekusi di fase berikutnya
+        return mlir::success();
+    }
+};
 
-bool GraphBuilder::verifyGraph() {
-    return succeeded(verify(module.get()));
+struct LowerToLinalgPass : public impl::LowerToLinalgBase<LowerToLinalgPass> {
+    void runOnOperation() override {
+        mlir::ConversionTarget target(getContext());
+        target.addLegalDialect<mlir::linalg::LinalgDialect, mlir::func::FuncDialect>();
+        target.addIllegalOp<ContractOp>();
+
+        mlir::RewritePatternSet patterns(&getContext());
+        patterns.add<ContractOpLowering>(&getContext());
+
+        if (mlir::failed(mlir::applyPartialConversion(getOperation(), target, std::move(patterns)))) {
+            signalPassFailure();
+        }
+    }
+};
+} // end anonymous namespace
+
+std::unique_ptr<mlir::Pass> createLowerToLinalgPass() {
+    return std::make_unique<LowerToLinalgPass>();
 }
 
 } // namespace compiler
 } // namespace mshqc
 """
-    with open(gb_path, 'w') as f:
-        f.write(content)
-    print(f"[REFACTORED] {gb_path.name} dioptimasi dengan pemetaan Block Argument.")
+    with open(lowering_cc, 'w') as f: f.write(lowering_cc_content)
 
-def inject_mp2_shadow_execution(base_dir: Path):
-    """Menyisipkan Graph Builder ke dalam logika komputasi amplitudo MP2."""
-    mp2_path = base_dir / "src/mp2/mp2.cc"
-    if not mp2_path.exists(): return
+def update_cmake_targets(base_dir: Path):
+    """Merutekan ulang graph kompilasi CMake agar mencakup TableGen Passes dan direktori Tools."""
+    root_cmake = base_dir / "CMakeLists.txt"
+    if root_cmake.exists():
+        with open(root_cmake, 'r') as f:
+            content = f.read()
+        if "add_subdirectory(tools)" not in content:
+            content = content.replace("add_subdirectory(src/compiler)", "add_subdirectory(src/compiler)\nadd_subdirectory(tools)")
+            with open(root_cmake, 'w') as f: f.write(content)
 
-    with open(mp2_path, 'r') as f:
-        content = f.read()
-
-    # Injeksi header jika belum ada
-    if "GraphBuilder.h" not in content:
-        content = content.replace(
-            '#include "mshqc/mp2/mp2.h"',
-            '#include "mshqc/mp2/mp2.h"\n#include "mshqc/compiler/Frontend/GraphBuilder.h"'
-        )
-
-    # Deteksi blok komputasi MP2 untuk injeksi AST MLIR
-    target_block = "void RMP2::compute_amplitudes_and_energy() {"
-    if target_block in content and "GraphBuilder mlir_builder;" not in content:
-        mlir_logic = """
-    // Konstruksi MLIR AST (Shadow Execution)
-    #ifdef MSHQC_ENABLE_MLIR
-    mshqc::compiler::GraphBuilder mlir_builder;
-    mlir_builder.initializeModule("rmp2_amplitude_module");
-    int64_t n_aux = B_ia_P_alpha_.cols();
-    std::vector<int64_t> lhs_shape = {nocc_a_, nvir_a_, n_aux};
-    std::vector<int64_t> rhs_shape = {nocc_a_, nvir_a_, n_aux};
-    mlir_builder.emitContractOp(lhs_shape, rhs_shape, "iaP,jbP->iajb");
-    if (!mlir_builder.verifyGraph()) {
-        std::cerr << "[CRITICAL] MLIR Graph Semantic Verification Failed.\\n";
-    }
-    #endif
+    compiler_cmake = base_dir / "src/compiler/CMakeLists.txt"
+    if compiler_cmake.exists():
+        with open(compiler_cmake, 'r') as f:
+            content = f.read()
+        
+        # Tambahkan instruksi kompilasi TableGen untuk Pass
+        if "Passes.h.inc" not in content:
+            tablegen_pass = """
+# Generate Pass headers
+set(LLVM_TARGET_DEFINITIONS ${CMAKE_SOURCE_DIR}/include/mshqc/compiler/Passes/Passes.td)
+mlir_tablegen(Passes.h.inc -gen-pass-decls -name Mshqc)
+add_custom_target(MshqcPassIncGen DEPENDS Passes.h.inc)
+add_dependencies(mshqc_compiler MshqcPassIncGen)
 """
-        content = content.replace(target_block, target_block + mlir_logic)
-        with open(mp2_path, 'w') as f:
-            f.write(content)
-        print(f"[REFACTORED] Shadow execution AST MLIR ditambahkan pada {mp2_path.name}.")
+            content = content.replace("add_library(mshqc_compiler", tablegen_pass + "\nadd_library(mshqc_compiler")
+            with open(compiler_cmake, 'w') as f: f.write(content)
 
 if __name__ == "__main__":
     base_directory = Path.cwd()
-    print("[INFO] Memulai sinkronisasi Frontend MLIR...")
-    refactor_graph_builder(base_directory)
-    inject_mp2_shadow_execution(base_directory)
-    print("[SUCCESS] Kompilator siap memproses C++ AST ke format DAG.")
+    print("[INFO] Mengeksekusi restrukturisasi arsitektur kompilator mshqc...")
+    setup_tools_directory(base_directory)
+    setup_pass_tablegen(base_directory)
+    update_cmake_targets(base_directory)
+    print("[SUCCESS] Direktori tools/ dan infrastruktur Passes.td berhasil diimplementasikan.")

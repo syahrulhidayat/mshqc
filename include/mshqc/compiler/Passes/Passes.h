@@ -4,13 +4,16 @@
 #include "mlir/Pass/Pass.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
-#include "mlir/Transforms/DialectConversion.h"
 #include <memory>
 
 namespace mshqc {
 namespace compiler {
 
-std::unique_ptr<mlir::Pass> createLowerToLinalgPass();
+#define GEN_PASS_DECL
+#include "mshqc/compiler/Passes/Passes.h.inc"
+
+#define GEN_PASS_REGISTRATION
+#include "mshqc/compiler/Passes/Passes.h.inc"
 
 }
 }
