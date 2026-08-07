@@ -13,6 +13,7 @@ add_library(mshqc_compiler STATIC
     Dialect/MshqcOps.cc
     Passes/FusionPass.cc
     Passes/LowerToLinalg.cc
+    Frontend/GraphBuilder.cc
     JIT/ExecutionEngine.cc
 )
 
@@ -21,6 +22,7 @@ add_dependencies(mshqc_compiler MshqcCompilerIncGen)
 target_link_libraries(mshqc_compiler
     PUBLIC
     MLIRIR
+    MLIRFuncDialect
     MLIRLinalgDialect
     MLIRAffineDialect
     MLIRExecutionEngine
