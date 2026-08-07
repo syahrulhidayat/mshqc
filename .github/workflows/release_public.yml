@@ -39,16 +39,15 @@ jobs:
     - name: Ensure libcint is Compiled
       shell: bash
       run: |
-        if [ -d "$HOME/libcint_install/lib" ]; then
+        if [ -d "$HOME/libcint_install/lib64" ] || [ -d "$HOME/libcint_install/lib" ]; then
           echo "✅ libcint sudah terinstal di PC. Melanjutkan..."
         else
           echo "⚠️ libcint tidak ditemukan. Mengompilasi dari Source..."
           git clone -b v6.1.2 https://github.com/sunqm/libcint.git /tmp/libcint
           cd /tmp/libcint
           mkdir build && cd build
-
-          export CFLAGS="-O3 -fPIC -mavx2 -mfma -mno-avx512f -funroll-loops -fno-math-errno"
-          export CXXFLAGS="-O3 -fPIC -mavx2 -mfma -mno-avx512f -funroll-loops -fno-math-errno"
+          export CFLAGS="-O3 -fPIC -mavx2 -mfma -mno-avx512f -funroll-loops -fno-math-errno -Wno-incompatible-pointer-types"
+          export CXXFLAGS="-O3 -fPIC -mavx2 -mfma -mno-avx512f -funroll-loops -fno-math-errno -Wno-incompatible-pointer-types"
 
           cmake -DCMAKE_INSTALL_PREFIX=$HOME/libcint_install \
                 -DCMAKE_C_FLAGS="$CFLAGS" \
