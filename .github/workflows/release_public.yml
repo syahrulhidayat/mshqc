@@ -3,11 +3,10 @@ name: Compile and Release Wheel to Public Repoo
 on:
   push:
     branches: [ "debug2" ]
-  workflow_dispatch:  
 
 jobs:
   build-and-deploy:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
 
     steps:
     - name: Checkout Private Source Code
@@ -16,9 +15,9 @@ jobs:
         token: ${{ secrets.MY_GITHUB_TOKEN }} 
         fetch-depth: 0 
 
-    # ==============================================================================
+    # ==========================================================================
     # 1. SETUP CONDA (Python 3.14 + MKL)
-    # ==============================================================================
+    # ===========================================================================
     - name: Setup Conda Environment (Python 3.14)
       uses: conda-incubator/setup-miniconda@v3
       with:
@@ -52,6 +51,7 @@ jobs:
         export CFLAGS="-O3 -fPIC -mavx2 -mfma -mno-avx512f -funroll-loops -fno-math-errno"
         export CXXFLAGS="-O3 -fPIC -mavx2 -mfma -mno-avx512f -funroll-loops -fno-math-errno"
 
+        # TAMBAHKAN -DBUILD_SHARED_LIBS=OFF DI SINI
         cmake -DCMAKE_INSTALL_PREFIX=$HOME/libcint_install \
               -DCMAKE_C_FLAGS="$CFLAGS" \
               -DCMAKE_CXX_FLAGS="$CXXFLAGS" \
@@ -62,7 +62,6 @@ jobs:
         
         make -j 4
         make install
-
     # =========================================================================
     # 2B. CACHE & COMPILE TBLIS
     # =========================================================================
@@ -127,7 +126,7 @@ jobs:
     # =========================================================================
     # 4. COMMIT KEMBALI KE REPO PRIVAT
     # =========================================================================
-    - name: Commit and Push Wheel to Public
+    - name: Commit and Push Wheel to Private Repo
       shell: bash -el {0}
       run: |
         git config --global user.name "MSHQC Automation"
@@ -137,11 +136,13 @@ jobs:
         rm -f releases/*.whl
         
         cp dist/*.whl releases/
-        git add -f releases/*.whl
+        
+        git add releases/*.whl
         
         if git diff-index --quiet HEAD --; then
           echo "Tidak ada perubahan biner baru untuk disimpan di repo privat."
         else
           git commit -m "CI-Bot: Update biner terkompilasi (.whl) [skip ci]"
-          git push origin HEAD:debug2
+          git push origin debug2
         fi
+
