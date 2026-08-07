@@ -1,141 +1,116 @@
 #!/usr/bin/env python3
 import os
-import sys
-import re
 from pathlib import Path
 
-def create_directories_and_stubs(base_dir: Path):
-    """Membangun arsitektur direktori compiler dan file header/source kosong dengan include guards."""
-    
-    dirs = {
-        "include/mshqc/compiler/Dialect": ["MshqcDialect.h", "MshqcOps.td"],
-        "include/mshqc/compiler/Passes": ["PassDetail.h", "Passes.h"],
-        "include/mshqc/compiler/JIT": ["ExecutionEngine.h"],
-        "src/compiler/Dialect": ["MshqcDialect.cc", "MshqcOps.cc"],
-        "src/compiler/Passes": ["FusionPass.cc", "LowerToLinalg.cc"],
-        "src/compiler/JIT": ["ExecutionEngine.cc"]
-    }
+def inject_tablegen(base_dir: Path):
+    """Mendefinisikan Mshqc Dialect dan operasi tensor dasar di TableGen."""
+    td_path = base_dir / "include/mshqc/compiler/Dialect/MshqcOps.td"
+    content = """// MLIR TableGen definitions for mshqc Dialect
+#ifndef MSHQC_OPS
+#define MSHQC_OPS
 
-    print("[INFO] Membangun struktur direktori dan file stub...")
-    for dir_path, files in dirs.items():
-        full_dir = base_dir / dir_path
-        full_dir.mkdir(parents=True, exist_ok=True)
-        
-        for file in files:
-            file_path = full_dir / file
-            if not file_path.exists():
-                with open(file_path, 'w') as f:
-                    if file.endswith('.h'):
-                        guard = f"MSHQC_COMPILER_{file.replace('.', '_').upper()}_"
-                        f.write(f"#ifndef {guard}\n#define {guard}\n\n#endif // {guard}\n")
-                    elif file.endswith('.td'):
-                        f.write("// MLIR TableGen definitions for mshqc Dialect\n")
-                    else:
-                        f.write(f"// TODO: Implementasi modul {file}\n")
-                print(f"  [CREATED] {file_path}")
-            else:
-                print(f"  [EXISTS]  {file_path}")
+include "mlir/IR/OpBase.td"
+include "mlir/Interfaces/SideEffectInterfaces.td"
 
-def inject_root_cmake(base_dir: Path):
-    """Menginjeksi konfigurasi LLVM/MLIR ke dalam root CMakeLists.txt tanpa duplikasi."""
-    cmake_path = base_dir / "CMakeLists.txt"
-    
-    if not cmake_path.exists():
-        print("[ERROR] Root CMakeLists.txt tidak ditemukan.")
-        sys.exit(1)
+// =============================================================================
+// Dialect Definition
+// =============================================================================
+def Mshqc_Dialect : Dialect {
+    let name = "mshqc";
+    let summary = "A high-performance dialect for Quantum Chemistry Tensor Contractions";
+    let description = [{
+        Dialect khusus untuk merepresentasikan persamaan kimia kuantum (SCF, MP2, MP3, CCSD).
+        Operasi pada dialect ini dirancang untuk mempertahankan informasi semantik 
+        tingkat tinggi guna memungkinkan optimasi loop fusion dan manajemen cache locality 
+        secara analitik sebelum diturunkan (lowered) ke Linalg/Affine.
+    }];
+    let cppNamespace = "::mshqc::compiler";
+}
 
-    with open(cmake_path, 'r') as f:
-        content = f.read()
+// =============================================================================
+// Base Operation Class
+// =============================================================================
+class Mshqc_Op<string mnemonic, list<Trait> traits = []> :
+    Op<Mshqc_Dialect, mnemonic, traits>;
 
-    if "find_package(LLVM" in content and "find_package(MLIR" in content:
-        print("[INFO] Konfigurasi LLVM/MLIR sudah ada di root CMakeLists.txt. Melewati injeksi.")
-        return
+// =============================================================================
+// Operations
+// =============================================================================
+def Mshqc_ContractOp : Mshqc_Op<"contract", [Pure]> {
+    let summary = "Quantum chemistry tensor contraction operation";
+    let description = [{
+        Mewakili operasi einsum tingkat tinggi yang mengeksekusi kontraksi antar 
+        tensor multidimensi. Menggantikan abstraksi TBLIS/Eigen murni untuk 
+        memungkinkan analisis cost-model pada memory footprint.
+    }];
 
-    injection_block = """
-# ==============================================================================
-# LLVM and MLIR Compiler Infrastructure (Injected Auto)
-# ==============================================================================
-find_package(LLVM REQUIRED CONFIG)
-message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
-message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")
+    let arguments = (ins AnyTensor:$lhs, AnyTensor:$rhs, StrAttr:$einsum_eq);
+    let results = (outs AnyTensor:$result);
+}
 
-find_package(MLIR REQUIRED CONFIG)
-message(STATUS "Found MLIR ${MLIR_PACKAGE_VERSION}")
-message(STATUS "Using MLIRConfig.cmake in: ${MLIR_DIR}")
-
-list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
-list(APPEND CMAKE_MODULE_PATH "${MLIR_CMAKE_DIR}")
-include(TableGen)
-include(AddLLVM)
-include(AddMLIR)
-
-include_directories(${LLVM_INCLUDE_DIRS})
-include_directories(${MLIR_INCLUDE_DIRS})
-add_definitions(${LLVM_DEFINITIONS})
-
-llvm_map_components_to_libnames(llvm_libs support core orcjit native)
-
-add_subdirectory(src/compiler)
+#endif // MSHQC_OPS
 """
-    # Mencari titik injeksi yang aman (sebelum add_subdirectory(src) jika ada, atau di akhir file)
-    if "add_subdirectory(src)" in content:
-        content = content.replace("add_subdirectory(src)", injection_block + "\nadd_subdirectory(src)")
-    else:
-        content += "\n" + injection_block
-
-    with open(cmake_path, 'w') as f:
+    with open(td_path, 'w') as f:
         f.write(content)
-    print("[MODIFIED] Root CMakeLists.txt berhasil diinjeksi.")
+    print(f"[INJECTED] {td_path}")
 
-def create_compiler_cmake(base_dir: Path):
-    """Membuat CMakeLists.txt untuk target mshqc_compiler."""
-    compiler_cmake_path = base_dir / "src/compiler/CMakeLists.txt"
-    
-    if compiler_cmake_path.exists():
-        print("[INFO] src/compiler/CMakeLists.txt sudah ada. Melewati pembuatan.")
-        return
+def inject_headers(base_dir: Path):
+    """Menulis header C++ untuk Dialect yang mengaitkan file auto-generated dari CMake."""
+    h_path = base_dir / "include/mshqc/compiler/Dialect/MshqcDialect.h"
+    content = """#ifndef MSHQC_COMPILER_DIALECT_MSHQCDIALECT_H_
+#define MSHQC_COMPILER_DIALECT_MSHQCDIALECT_H_
 
-    cmake_content = """# CMakeLists.txt untuk mshqc MLIR/LLVM Backend
+#include "mlir/IR/Dialect.h"
+#include "mlir/IR/OpDefinition.h"
+#include "mlir/Interfaces/SideEffectInterfaces.h"
 
-set(LLVM_TARGET_DEFINITIONS ${CMAKE_SOURCE_DIR}/include/mshqc/compiler/Dialect/MshqcOps.td)
-mlir_tablegen(MshqcOps.h.inc -gen-op-decls)
-mlir_tablegen(MshqcOps.cpp.inc -gen-op-defs)
-mlir_tablegen(MshqcDialect.h.inc -gen-dialect-decls)
-mlir_tablegen(MshqcDialect.cpp.inc -gen-dialect-defs)
+// Include deklarasi Dialect yang di-generate oleh TableGen
+#include "MshqcDialect.h.inc"
 
-add_custom_target(MshqcCompilerIncGen DEPENDS MshqcOps.h.inc MshqcOps.cpp.inc MshqcDialect.h.inc MshqcDialect.cpp.inc)
+// Deklarasi Operasi (Ops) yang di-generate oleh TableGen
+#define GET_OP_CLASSES
+#include "MshqcOps.h.inc"
 
-add_library(mshqc_compiler STATIC
-    Dialect/MshqcDialect.cc
-    Dialect/MshqcOps.cc
-    Passes/FusionPass.cc
-    Passes/LowerToLinalg.cc
-    JIT/ExecutionEngine.cc
-)
-
-add_dependencies(mshqc_compiler MshqcCompilerIncGen)
-
-target_link_libraries(mshqc_compiler
-    PUBLIC
-    MLIRIR
-    MLIRLinalgDialect
-    MLIRAffineDialect
-    MLIRExecutionEngine
-    MLIRTargetLLVMIRExport
-    ${llvm_libs}
-)
+#endif // MSHQC_COMPILER_DIALECT_MSHQCDIALECT_H_
 """
-    with open(compiler_cmake_path, 'w') as f:
-        f.write(cmake_content)
-    print("[CREATED] src/compiler/CMakeLists.txt")
+    with open(h_path, 'w') as f:
+        f.write(content)
+    print(f"[INJECTED] {h_path}")
+
+def inject_sources(base_dir: Path):
+    """Menulis source C++ untuk registrasi Dialect ke dalam MLIR Context."""
+    cc_path = base_dir / "src/compiler/Dialect/MshqcDialect.cc"
+    content = """#include "mshqc/compiler/Dialect/MshqcDialect.h"
+#include "mlir/IR/Builders.h"
+#include "mlir/IR/OpImplementation.h"
+
+using namespace mlir;
+using namespace mshqc::compiler;
+
+// Inklusi definisi Dialect yang di-generate oleh TableGen
+#include "MshqcDialect.cpp.inc"
+
+// Inisialisasi Dialect ke dalam Context MLIR
+void MshqcDialect::initialize() {
+    addOperations<
+#define GET_OP_LIST
+#include "MshqcOps.cpp.inc"
+    >();
+}
+
+// Inklusi implementasi operasi yang di-generate oleh TableGen
+#define GET_OP_CLASSES
+#include "MshqcOps.cpp.inc"
+"""
+    with open(cc_path, 'w') as f:
+        f.write(content)
+    print(f"[INJECTED] {cc_path}")
 
 if __name__ == "__main__":
     base_directory = Path.cwd()
-    print(f"Memulai injeksi arsitektur ML Compiler di: {base_directory}")
-    
-    create_directories_and_stubs(base_directory)
-    inject_root_cmake(base_directory)
-    create_compiler_cmake(base_directory)
-    
-    print("\n[SUCCESS] Proses scaffolding selesai.")
-    print("Jalankan 'cmake -B build' untuk memverifikasi resolusi dependensi LLVM/MLIR.")
+    print("Memulai injeksi definisi MLIR Dialect (TableGen & C++)...")
+    inject_tablegen(base_directory)
+    inject_headers(base_directory)
+    inject_sources(base_directory)
+    print("\n[SUCCESS] Dialect Mshqc telah didefinisikan.")
+    print("Jalankan ulang 'cmake --build build -j' untuk memicu TableGen (mlir-tblgen) men-generate file *.inc.")
