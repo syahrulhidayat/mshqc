@@ -994,12 +994,12 @@ void OMP3::build_generalized_fock() {
             compute_gamma_bb(t_Tbb, t_Tbb, 1.0); 
 
             auto compute_gamma_ab = [&](auto& t_Ta_L, auto& t_Tb_L, auto& t_Tab_L,
-                                        auto& t_Ta_R, auto& t_Tb_R, auto& t_Tab_R, double scale) {
+                            auto& t_Ta_R, auto& t_Tb_R, auto& t_Tab_R, double scale) {
                 tblis::mult<double>( 1.0*scale, t_Tab_L, "ijac", t_Tab_R, "ijbd", 1.0, t_Gvvvv_ab, "abcd"); 
                 tblis::mult<double>( 1.0*scale, t_Tab_L, "ikab", t_Tab_R, "jlab", 1.0, t_Goooo_ab, "ijkl"); 
-                tblis::mult<double>(-0.25*scale, t_Tab_L, "imae", t_Tab_R, "jmbe", 1.0, t_Govov_bb, "iajb"); 
-                tblis::mult<double>(-0.25*scale, t_Ta_L,  "imae", t_Tab_R, "jmbe", 1.0, t_Govov_ab, "iajb"); 
-                tblis::mult<double>(-0.25*scale, t_Tab_L, "imae", t_Tb_R,  "jmbe", 1.0, t_Govov_ab, "iajb"); 
+                tblis::mult<double>(-0.25*scale, t_Tab_L, "imae", t_Tab_R, "inaf", 1.0, t_Govov_bb, "menf"); 
+                tblis::mult<double>(-0.25*scale, t_Ta_L,  "kica", t_Tab_R, "kmce", 1.0, t_Govov_ab, "iame"); 
+                tblis::mult<double>(-0.25*scale, t_Tab_L, "inaf", t_Tb_R,  "nmfe", 1.0, t_Govov_ab, "iame"); 
                 tblis::mult<double>(-0.25*scale, t_Tab_L, "imae", t_Tab_R, "jmbe", 1.0, t_Govov_aa, "iajb"); 
             };
             compute_gamma_ab(t_Taa, t_Tbb, t_Tab, t_Taa, t_Tbb, t_Tab, 1.0); 

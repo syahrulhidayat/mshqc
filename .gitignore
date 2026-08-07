@@ -6,6 +6,7 @@
 venv/
 .venv/
 env/
+tunning/
 ActiveState.venv
 environment.yml.user
 
