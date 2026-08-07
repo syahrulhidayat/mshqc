@@ -21,7 +21,7 @@ void GraphBuilder::initializeModule(const std::string& functionName) {
     module = ModuleOp::create(loc);
     builder.setInsertionPointToEnd(module->getBody());
 
-    auto funcType = builder.getFunctionType(std::nullopt, std::nullopt);
+    auto funcType = builder.getFunctionType(TypeRange{}, TypeRange{});
     auto funcOp = builder.create<func::FuncOp>(loc, functionName, funcType);
 
     Block* entryBlock = funcOp.addEntryBlock();

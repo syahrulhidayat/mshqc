@@ -1,35 +1,56 @@
 #!/usr/bin/env python3
+import re
 from pathlib import Path
 
-def patch_dialect_headers(base_dir: Path):
-    """Menambahkan MLIR Builtin Types dan Interface ke dalam Dialect Header."""
-    h_path = base_dir / "include/mshqc/compiler/Dialect/MshqcDialect.h"
+def patch_mlir_api(base_dir: Path):
+    """Menyesuaikan sintaks Mshqc MLIR C++ dengan LLVM API modern."""
     
-    if not h_path.exists():
-        print(f"[ERROR] File {h_path} tidak ditemukan pada arsitektur direktori.")
-        return
-
-    with open(h_path, 'r') as f:
-        content = f.read()
-
-    if "BuiltinTypes.h" not in content:
-        # Blok header MLIR yang wajib ada sebelum file .inc di-load
-        missing_headers = """#include "mlir/IR/BuiltinTypes.h"
-#include "mlir/IR/OpImplementation.h"
-#include "mlir/Bytecode/BytecodeOpInterface.h"
-"""
-        # Injeksi persis sebelum '#include "MshqcDialect.h.inc"'
-        target_str = '#include "MshqcDialect.h.inc"'
-        content = content.replace(target_str, missing_headers + "\n" + target_str)
+    # 1. Refaktor LowerToLinalg.cc (Memperbaiki error casting RTTI)
+    linalg_path = base_dir / "src/compiler/Passes/LowerToLinalg.cc"
+    if linalg_path.exists():
+        with open(linalg_path, 'r') as f:
+            content = f.read()
         
-        with open(h_path, 'w') as f:
+        # Ganti metode .cast internal dengan global llvm::cast
+        content = re.sub(
+            r'lhs\.getType\(\)\.cast<ShapedType>\(\)', 
+            r'::llvm::cast<ShapedType>(lhs.getType())', 
+            content
+        )
+        content = re.sub(
+            r'rhs\.getType\(\)\.cast<ShapedType>\(\)', 
+            r'::llvm::cast<ShapedType>(rhs.getType())', 
+            content
+        )
+        # ContractOp mengambil getResult() sebelum getType()
+        content = re.sub(
+            r'op\.getType\(\)\.cast<ShapedType>\(\)', 
+            r'::llvm::cast<ShapedType>(op.getResult().getType())', 
+            content
+        )
+        
+        with open(linalg_path, 'w') as f:
             f.write(content)
-        print("[PATCHED] Header MLIR tingkat rendah telah ditambahkan ke MshqcDialect.h.")
-    else:
-        print("[INFO] Header MLIR sudah tersedia.")
+        print(f"[PATCHED] llvm::cast API diterapkan pada {linalg_path.name}")
+
+    # 2. Refaktor GraphBuilder.cc (Memperbaiki error konversi tipe)
+    builder_path = base_dir / "src/compiler/Frontend/GraphBuilder.cc"
+    if builder_path.exists():
+        with open(builder_path, 'r') as f:
+            content = f.read()
+        
+        # Ganti std::nullopt dengan TypeRange{} untuk representasi arity nol
+        content = content.replace(
+            "builder.getFunctionType(std::nullopt, std::nullopt)", 
+            "builder.getFunctionType(TypeRange{}, TypeRange{})"
+        )
+        
+        with open(builder_path, 'w') as f:
+            f.write(content)
+        print(f"[PATCHED] Resolusi mlir::TypeRange diterapkan pada {builder_path.name}")
 
 if __name__ == "__main__":
     base_directory = Path.cwd()
-    print("[INFO] Memulai sinkronisasi pointer header MLIR...")
-    patch_dialect_headers(base_directory)
-    print("[SUCCESS] Silakan commit dan evaluasi ulang pipeline kompilator.")
+    print("[INFO] Memulai modernisasi MLIR C++ API...")
+    patch_mlir_api(base_directory)
+    print("[SUCCESS] Skrip selesai. Kode siap dikompilasi.")

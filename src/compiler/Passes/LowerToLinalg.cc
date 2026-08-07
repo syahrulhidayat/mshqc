@@ -19,9 +19,9 @@ struct ContractOpLowering : public OpRewritePattern<mshqc::compiler::ContractOp>
         Value lhs = op.getLhs();
         Value rhs = op.getRhs();
 
-        auto lhsType = lhs.getType().cast<ShapedType>();
-        auto rhsType = rhs.getType().cast<ShapedType>();
-        auto resultType = op.getType().cast<ShapedType>();
+        auto lhsType = ::llvm::cast<ShapedType>(lhs.getType());
+        auto rhsType = ::llvm::cast<ShapedType>(rhs.getType());
+        auto resultType = ::llvm::cast<ShapedType>(op.getResult().getType());
 
         SmallVector<AffineMap, 3> indexingMaps;
         SmallVector<utils::IteratorType, 3> iteratorTypes;
