@@ -1,186 +1,67 @@
-#!/usr/bin/env python3
 import os
+import shutil
 import re
-from pathlib import Path
 
-def sanitize_build_system(base_dir: Path):
-    """Purifikasi agresif terhadap dead code pada CMakeLists dan Bindings."""
-    # 1. Purifikasi bindings.cc
-    bindings_path = base_dir / "python/bindings.cc"
-    if bindings_path.exists():
-        with open(bindings_path, 'r') as f:
-            content = f.read()
-        
-        # Hapus include dan blok yang tidak valid (integrasi/ci/mcscf)
-        content = re.sub(r'#include "mshqc/integration/.*?\.h"\n', '', content)
-        content = re.sub(r'#include "mshqc/ci/.*?\.h"\n', '', content)
-        content = re.sub(r'#include "mshqc/mcscf/.*?\.h"\n', '', content)
-        
-        with open(bindings_path, 'w') as f:
-            f.write(content)
-        print("[SANITIZED] python/bindings.cc dibersihkan dari referensi modul mati.")
-
-    # 2. Purifikasi CMakeLists.txt utama
-    cmake_path = base_dir / "CMakeLists.txt"
-    if cmake_path.exists():
-        with open(cmake_path, 'r') as f:
-            content = f.read()
-        
-        content = re.sub(r'file\(GLOB_RECURSE SRC_INTEGRATION[^\n]+\n', '', content)
-        content = content.replace('${SRC_INTEGRATION} ', '').replace('${SRC_INTEGRATION}', '')
-        
-        with open(cmake_path, 'w') as f:
-            f.write(content)
-        print("[SANITIZED] CMakeLists.txt utama di-unlink dari SRC_INTEGRATION.")
-
-def inject_frontend_builder(base_dir: Path):
-    """Membangun C++ API untuk memetakan aljabar linear mshqc ke graf MLIR."""
-    frontend_dir_inc = base_dir / "include/mshqc/compiler/Frontend"
-    frontend_dir_src = base_dir / "src/compiler/Frontend"
+def clean_dead_code():
+    print("=== MSHQC DEAD CODE CLEANER ===")
     
-    frontend_dir_inc.mkdir(parents=True, exist_ok=True)
-    frontend_dir_src.mkdir(parents=True, exist_ok=True)
-
-    header_path = frontend_dir_inc / "GraphBuilder.h"
-    source_path = frontend_dir_src / "GraphBuilder.cc"
-
-    # Header C++ untuk MLIR Graph Builder
-    header_content = """#ifndef MSHQC_COMPILER_FRONTEND_GRAPHBUILDER_H_
-#define MSHQC_COMPILER_FRONTEND_GRAPHBUILDER_H_
-
-#include "mlir/IR/Builders.h"
-#include "mlir/IR/BuiltinOps.h"
-#include "mlir/IR/MLIRContext.h"
-#include "mlir/ExecutionEngine/ExecutionEngine.h"
-#include <memory>
-#include <vector>
-#include <string>
-
-namespace mshqc {
-namespace compiler {
-
-class GraphBuilder {
-public:
-    GraphBuilder();
-    ~GraphBuilder();
-
-    // Inisialisasi modul (Fungsi utama graf komputasi)
-    void initializeModule(const std::string& functionName);
-
-    // Membangun operasi mshqc.contract dari dimensi spesifik
-    mlir::Value emitContractOp(const std::vector<int64_t>& lhsShape,
-                               const std::vector<int64_t>& rhsShape,
-                               const std::string& einsum_eq);
-
-    // Verifikasi validitas graf sebelum optimasi
-    bool verifyGraph();
-
-    // Membuka akses untuk Pass Manager
-    mlir::ModuleOp getModule() const { return module.get(); }
-    mlir::MLIRContext* getContext() { return &context; }
-
-private:
-    mlir::MLIRContext context;
-    mlir::OpBuilder builder;
-    mlir::OwningOpRef<mlir::ModuleOp> module;
-};
-
-} // namespace compiler
-} // namespace mshqc
-
-#endif // MSHQC_COMPILER_FRONTEND_GRAPHBUILDER_H_
-"""
-    with open(header_path, 'w') as f: f.write(header_content)
-
-    # Implementasi C++ API Graph Builder
-    source_content = """#include "mshqc/compiler/Frontend/GraphBuilder.h"
-#include "mshqc/compiler/Dialect/MshqcDialect.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/IR/Verifier.h"
-
-using namespace mlir;
-
-namespace mshqc {
-namespace compiler {
-
-GraphBuilder::GraphBuilder() : builder(&context) {
-    // Memuat Mshqc Dialect ke dalam memori kompilator
-    context.getOrLoadDialect<MshqcDialect>();
-    context.getOrLoadDialect<func::FuncDialect>();
-}
-
-GraphBuilder::~GraphBuilder() = default;
-
-void GraphBuilder::initializeModule(const std::string& functionName) {
-    Location loc = builder.getUnknownLoc();
-    module = ModuleOp::create(loc);
-    builder.setInsertionPointToEnd(module->getBody());
-
-    // Membangun prototipe fungsi (sementara menggunakan arity nol untuk scaffolding)
-    auto funcType = builder.getFunctionType(std::nullopt, std::nullopt);
-    auto funcOp = builder.create<func::FuncOp>(loc, functionName, funcType);
+    # 1. HAPUS FOLDER FISIK
+    folders_to_delete = [
+        "src/foundation",
+        "include/mshqc/foundation"
+    ]
     
-    Block* entryBlock = funcOp.addEntryBlock();
-    builder.setInsertionPointToEnd(entryBlock);
-}
+    for folder in folders_to_delete:
+        if os.path.exists(folder):
+            shutil.rmtree(folder)
+            print(f"[OK] Direktori terhapus: {folder}")
+        else:
+            print(f"[SKIP] Direktori sudah tidak ada: {folder}")
 
-mlir::Value GraphBuilder::emitContractOp(const std::vector<int64_t>& lhsShape,
-                                         const std::vector<int64_t>& rhsShape,
-                                         const std::string& einsum_eq) {
-    Location loc = builder.getUnknownLoc();
-    
-    // Alokasi tipe tensor memori
-    auto f64Type = builder.getF64Type();
-    auto lhsTensorType = RankedTensorType::get(lhsShape, f64Type);
-    auto rhsTensorType = RankedTensorType::get(rhsShape, f64Type);
-    
-    // (Dummy) Nilai tensor kosong untuk konstruksi graf.
-    // Di tahap produksi, ini akan dipetakan langsung dari memori Eigen via pointer.
-    Value dummyLhs = builder.create<mshqc::compiler::ContractOp>(loc, lhsTensorType, Value(), Value(), builder.getStringAttr(einsum_eq)).getResult();
-    
-    return dummyLhs; // Representasi nilai hasil return
-}
-
-bool GraphBuilder::verifyGraph() {
-    return succeeded(verify(module.get()));
-}
-
-} // namespace compiler
-} // namespace mshqc
-"""
-    with open(source_path, 'w') as f: f.write(source_content)
-    print("[INJECTED] Infrastruktur Frontend GraphBuilder berhasil diinisialisasi.")
-
-def patch_compiler_cmake(base_dir: Path):
-    """Menambahkan modul Frontend ke sistem build LLVM mshqc_compiler."""
-    cmake_path = base_dir / "src/compiler/CMakeLists.txt"
-    if not cmake_path.exists():
-        return
+    # 2. BERSIHKAN CMAKELISTS.TXT
+    cmake_file = "CMakeLists.txt"
+    if os.path.exists(cmake_file):
+        with open(cmake_file, 'r') as f:
+            cmake_content = f.read()
         
-    with open(cmake_path, 'r') as f:
-        content = f.read()
+        # Hapus baris file(GLOB_RECURSE SRC_FOUNDATION ...)
+        cmake_content = re.sub(r'file\(GLOB_RECURSE SRC_FOUNDATION[^\)]+\)\n?', '', cmake_content)
         
-    if "Frontend/GraphBuilder.cc" not in content:
-        content = content.replace(
-            "JIT/ExecutionEngine.cc",
-            "Frontend/GraphBuilder.cc\n    JIT/ExecutionEngine.cc"
-        )
-        # Tambahkan FuncDialect ke linker untuk fungsi graf
-        content = content.replace(
-            "MLIRLinalgDialect",
-            "MLIRFuncDialect\n    MLIRLinalgDialect"
-        )
+        # Hapus variabel ${SRC_FOUNDATION} dari list ALL_SOURCES
+        cmake_content = cmake_content.replace('${SRC_FOUNDATION} ', '')
+        cmake_content = cmake_content.replace('${SRC_FOUNDATION}', '')
         
-        with open(cmake_path, 'w') as f:
-            f.write(content)
-        print("[MODIFIED] src/compiler/CMakeLists.txt di-update dengan dependensi Frontend.")
+        with open(cmake_file, 'w') as f:
+            f.write(cmake_content)
+        print(f"[OK] Variabel dibersihkan dari: {cmake_file}")
+
+    # 3. BERSIHKAN PYTHON/BINDINGS.CC
+    binding_file = "python/bindings.cc"
+    if os.path.exists(binding_file):
+        with open(binding_file, 'r') as f:
+            binding_content = f.read()
+            
+        # Hapus include headers yang mati
+        binding_content = re.sub(r'#include "mshqc/foundation/fcidump\.h"\n?', '', binding_content)
+        binding_content = re.sub(r'#include "mshqc/foundation/wavefunction\.h"\n?', '', binding_content)
+        
+        # Hapus blok binding fungsi export_fcidump (regex multiline)
+        fcidump_pattern = r'\s*m\.def\("export_fcidump"[\s\S]*?"Export SCF and Integral results to standard FCIDUMP format"\);'
+        binding_content = re.sub(fcidump_pattern, '', binding_content)
+        
+        with open(binding_file, 'w') as f:
+            f.write(binding_content)
+        print(f"[OK] Bindings dihapus dari: {binding_file}")
+
+    # 4. HAPUS CACHE BUILD
+    cache_folders = ["build", "dist", "python/mshqc.egg-info"]
+    for folder in cache_folders:
+        if os.path.exists(folder):
+            shutil.rmtree(folder)
+            print(f"[OK] Cache terhapus: {folder}")
 
 if __name__ == "__main__":
-    base_directory = Path.cwd()
-    print("[INFO] Memulai injeksi Tahap 4 (Frontend MLIR Graph Builder)...")
-    
-    sanitize_build_system(base_directory)
-    inject_frontend_builder(base_directory)
-    patch_compiler_cmake(base_directory)
-    
-    print("[SUCCESS] Pipeline C++ siap dikompilasi ulang.")
+    clean_dead_code()
+    print("===============================")
+    print("Pembersihan selesai! Codebase Anda sekarang lebih ringan.")
+    print("Silakan jalankan ulang: python setup.py install")
