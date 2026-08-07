@@ -967,8 +967,8 @@ void OMP3::build_generalized_fock() {
         
         
         compute_gamma_res(t_T2t, t_Taa, 1.0);  
-        compute_gamma_res(t_T2t, t_L2aa, 0.5); 
-        compute_gamma_res(t_L2t, t_Taa, 0.5);  
+        //compute_gamma_res(t_T2t, t_L2aa, 0.5); 
+        //compute_gamma_res(t_L2t, t_Taa, 0.5);  
     } else {
 
         auto compute_gamma_aa = [&](auto& t_Tleft, auto& t_Tright, double scale) {
@@ -979,8 +979,8 @@ void OMP3::build_generalized_fock() {
         
         
         compute_gamma_aa(t_Taa, t_Taa, 1.0); 
-        compute_gamma_aa(t_Taa, t_L2aa, 0.5); 
-        compute_gamma_aa(t_L2aa, t_Taa, 0.5); 
+        //compute_gamma_aa(t_Taa, t_L2aa, 0.5); 
+        //compute_gamma_aa(t_L2aa, t_Taa, 0.5); 
         if (nb_ > 0 && vb_ > 0) {
             auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
             Eigen::Tensor<double, 4> dummy_ab_fock;
@@ -1012,8 +1012,8 @@ void OMP3::build_generalized_fock() {
             
             
             compute_gamma_bb(t_Tbb, t_Tbb, 1.0); 
-            compute_gamma_bb(t_Tbb, t_L2bb, 0.5); 
-            compute_gamma_bb(t_L2bb, t_Tbb, 0.5); 
+            //compute_gamma_bb(t_Tbb, t_L2bb, 0.5); 
+            //compute_gamma_bb(t_L2bb, t_Tbb, 0.5); 
 
 
             auto compute_gamma_ab = [&](auto& t_Ta_L, auto& t_Tb_L, auto& t_Tab_L,
@@ -1030,8 +1030,8 @@ void OMP3::build_generalized_fock() {
             
            
             compute_gamma_ab(t_Taa, t_Tbb, t_Tab, t_Taa, t_Tbb, t_Tab, 1.0); 
-            compute_gamma_ab(t_Taa, t_Tbb, t_Tab, t_L2aa, t_L2bb, t_L2ab, 0.5);
-            compute_gamma_ab(t_L2aa, t_L2bb, t_L2ab, t_Taa, t_Tbb, t_Tab, 0.5);
+            //compute_gamma_ab(t_Taa, t_Tbb, t_Tab, t_L2aa, t_L2bb, t_L2ab, 0.5);
+            //compute_gamma_ab(t_L2aa, t_L2bb, t_L2ab, t_Taa, t_Tbb, t_Tab, 0.5);
 
         }
     }
@@ -1068,9 +1068,9 @@ void OMP3::build_generalized_fock() {
                     if (is_restricted) {
                         double t1_ex = T2_aa_ijab(i, j, b, a);
                         double t2_ex = L2_aa_(i, j, b, a); 
-                        Teff_aa(i*va_+a, j*va_+b) = (2.0 * t1_dir - 1.0 * t1_ex) + 0.5 * (2.0 * t2_dir - 1.0 * t2_ex);
+                        Teff_aa(i*va_+a, j*va_+b) = 1.0 * (2.0 * t1_dir - 1.0 * t1_ex) + 1.0 * (2.0 * t2_dir - 1.0 * t2_ex);
                     } else {
-                        Teff_aa(i*va_+a, j*va_+b) = t1_dir + 0.5 * t2_dir;
+                        Teff_aa(i*va_+a, j*va_+b) = 1.0 * t1_dir + 1.0 * t2_dir;
                     }
                 }
             }
@@ -1129,7 +1129,7 @@ void OMP3::build_generalized_fock() {
                     for (int b = 0; b < vb_; ++b) {
                         double t1_dir = (*t2_ab_dense)(i, j, a, b);
                         double t2_dir = L2_ab_(i, j, a, b);
-                        Teff_ab(i*va_+a, j*vb_+b) = 1.0 * t1_dir + 0.5 * t2_dir; 
+                        Teff_ab(i*va_+a, j*vb_+b) = 1.0 * t1_dir + 1.0 * t2_dir; 
                     }
                 }
             }
@@ -1142,13 +1142,12 @@ void OMP3::build_generalized_fock() {
                     for (int b = 0; b < vb_; ++b) {
                         double t1_dir = (*t2_bb_dense)(i, j, a, b);
                         double t2_dir = L2_bb_(i, j, a, b);
-                        Teff_bb(i*vb_+a, j*vb_+b) = 1.0 * t1_dir + 0.5 * t2_dir; 
+                        Teff_bb(i*vb_+a, j*vb_+b) = 1.0 * t1_dir + 1.0 * t2_dir; 
                     }
                 }
             }
         }
     }
-
     Eigen::MatrixXd X_a(na_*va_, n_aux);
     X_a.noalias() = Teff_aa * B_ia_P_alpha_;
     if (!is_restricted && nb_ > 0 && vb_ > 0) {

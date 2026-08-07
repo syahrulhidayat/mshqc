@@ -103,7 +103,7 @@ jobs:
       run: |
         source $HOME/miniconda3/etc/profile.d/conda.sh
         conda activate mshqc_314
-        rm -rf build/ dist/ *.egg-info
+        rm -rf dist/ *.egg-info
 
         export CC="ccache $CONDA_PREFIX/bin/x86_64-conda-linux-gnu-cc"
         export CXX="ccache $CONDA_PREFIX/bin/x86_64-conda-linux-gnu-c++" 
