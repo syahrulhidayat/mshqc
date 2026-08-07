@@ -3,11 +3,11 @@ name: Compile and Release Wheel to Public Repoo
 on:
   push:
     branches: [ "debug2" ]
-  workflow_dispatch: self-hosted
+  workflow_dispatch:
 
 jobs:
   build-and-deploy:
-    runs-on:
+    runs-on: self-hosted
 
     steps:
     - name: Checkout Private Source Code
