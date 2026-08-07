@@ -1,6 +1,5 @@
 /**
  * @file src/foundation/fcidump.cc
- * @brief FCIDUMP Exporter Implementation
  */
 
 #include "mshqc/foundation/fcidump.h"
@@ -22,7 +21,6 @@ void export_fcidump(const std::string& filename,
 {
     std::ofstream out(filename);
     if (!out.is_open()) {
-        std::cerr << "[ERROR] Gagal membuka file untuk menulis FCIDUMP: " << filename << "\n";
         return;
     }
 
@@ -31,9 +29,7 @@ void export_fcidump(const std::string& filename,
     int ms2 = scf.n_occ_alpha - scf.n_occ_beta + 1; // Multiplisitas Spin: 2S + 1
 
     // =========================================================================
-    // 1. TULIS HEADER FCIDUMP STANDAR (Kompatibel dengan Qiskit/OpenFermion)
     // =========================================================================
-    out << "&FCI NORB= " << std::setw(3) << norb 
         << ", NELEC= " << std::setw(3) << nelec 
         << ", MS2= " << ms2 << ",\n";
     
@@ -50,7 +46,6 @@ void export_fcidump(const std::string& filename,
     // =========================================================================
     // 2. TRANSFORMASI & TULIS INTEGRAL 2-ELEKTRON (MO BASIS)
     // =========================================================================
-    std::cout << "[FCIDUMP] Mengekspor integral 2-elektron...\n";
     const auto& eri_ao = integrals->compute_eri();
     const Eigen::MatrixXd& C = scf.C_alpha; // Ekspor berdasarkan Alpha (RHF/ROHF standard)
 
@@ -69,7 +64,6 @@ void export_fcidump(const std::string& filename,
                     if (ij >= kl) {
                         double val = eri_mo(i, k, j, l); // Perhatikan notasi fisik ke kimiawi
                         if (std::abs(val) > tol) {
-                            // FCIDUMP menggunakan indeks 1-based
                             out << std::setw(22) << val << " "
                                 << std::setw(4) << (i + 1) << " "
                                 << std::setw(4) << (j + 1) << " "
@@ -85,7 +79,6 @@ void export_fcidump(const std::string& filename,
     // =========================================================================
     // 3. TRANSFORMASI & TULIS INTEGRAL 1-ELEKTRON (MO BASIS)
     // =========================================================================
-    std::cout << "[FCIDUMP] Mengekspor integral 1-elektron (Core Hamiltonian)...\n";
     Eigen::MatrixXd H_core_ao = integrals->compute_core_hamiltonian();
     Eigen::MatrixXd H_core_mo = C.transpose() * H_core_ao * C;
 
@@ -107,7 +100,6 @@ void export_fcidump(const std::string& filename,
     out << std::setw(22) << mol.nuclear_repulsion_energy() << "    0    0    0    0\n";
     
     out.close();
-    std::cout << "[FCIDUMP] Ekspor sukses! File tersimpan di: " << filename << "\n";
 }
 
 } // namespace mshqc

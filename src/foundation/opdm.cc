@@ -34,7 +34,6 @@ namespace foundation {
 // ============================================================================
 
 OPDM::OPDM(const std::vector<double>& ci_coeffs,
-           const std::vector<ci::Determinant>& determinants,
            int n_orbitals)
     : n_orbitals_(n_orbitals),
       n_determinants_(static_cast<int>(determinants.size())),
@@ -54,7 +53,6 @@ OPDM::OPDM(const std::vector<double>& ci_coeffs,
     
     if (determinants.empty()) {
         throw std::invalid_argument(
-            "OPDM: Determinant list cannot be empty");
     }
     
     // Initialize density matrices
@@ -256,7 +254,6 @@ double OPDM::one_electron_energy(const Eigen::MatrixXd& h_core) const {
 void OPDM::print_statistics() const {
     std::cout << "\n=== OPDM Statistics ===\n";
     std::cout << "Dimensions: " << n_orbitals_ << " × " << n_orbitals_ << "\n";
-    std::cout << "Determinants: " << n_determinants_ << "\n\n";
     
     // Traces
     double trace_alpha = trace(true);

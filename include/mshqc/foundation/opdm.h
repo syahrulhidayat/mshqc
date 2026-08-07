@@ -58,7 +58,6 @@
 #ifndef MSHQC_FOUNDATION_OPDM_H
 #define MSHQC_FOUNDATION_OPDM_H
 
-#include "mshqc/ci/determinant.h"
 #include <Eigen/Dense>
 #include <vector>
 #include <utility>
@@ -109,7 +108,6 @@ public:
      * @throws std::invalid_argument if inputs inconsistent
      */
     OPDM(const std::vector<double>& ci_coeffs,
-         const std::vector<ci::Determinant>& determinants,
          int n_orbitals);
     
     
@@ -377,7 +375,6 @@ private:
     std::vector<double> ci_coeffs_;           
 
 
-    std::vector<ci::Determinant> determinants_; 
 
 
     
@@ -427,7 +424,6 @@ private:
      *   For each occupied orbital p:
      *     γ_pp += c_I²
      * 
-     * @param I Determinant index
      * @param alpha Process α-spin or β-spin
      */
     void add_diagonal_contribution(int I, bool alpha);

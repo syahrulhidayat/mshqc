@@ -1,6 +1,5 @@
 /**
  * @file include/mshqc/fcidump.h
- * @brief FCIDUMP Exporter for Qiskit / OpenFermion Compatibility
  */
 
 #pragma once
@@ -14,9 +13,7 @@
 namespace mshqc {
 
 /**
- * @brief Ekspor hasil SCF dan Integral ke format standar FCIDUMP.
  * 
- * @param filename Nama file output (misal: "H2O.FCIDUMP").
  * @param mol Objek Molekul (untuk mendapatkan tolakan inti & jumlah elektron).
  * @param scf Hasil SCF yang sudah konvergen (mengandung matriks koefisien C).
  * @param integrals Pointer ke IntegralEngine (untuk mengambil H_core dan ERI).
