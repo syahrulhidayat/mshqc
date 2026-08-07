@@ -17,7 +17,9 @@ dependencies:
   - eigen
   - libcint          
   - tblis            
-  - hdf5             
+  - hdf5
+  - llvmdev     # Injeksi MLIR/LLVM backend
+  - mlir        # Infrastruktur graf kompilator             
   - jemalloc         
   - nanobind         
   - numpy>=1.20

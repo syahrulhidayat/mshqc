@@ -48,4 +48,4 @@ hasil/
 !recaftor.py
 scaffold_compiler.py
 *.sh
-
+deploy_self_hosted.sh
