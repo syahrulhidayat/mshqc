@@ -1,6 +1,7 @@
 #include <tblis/tblis.h>
 #include "mshqc/symmetry/salc_builder.h"
 #include "mshqc/mp2/mp2.h"
+#include "mshqc/compiler/Frontend/GraphBuilder.h"
 #include "mshqc/integrals/eri_transformer.h"
 #include "mshqc/gradient/optimizer.h"
 #include <unsupported/Eigen/MatrixFunctions>
@@ -95,6 +96,19 @@ void RMP2::transform_integrals() {
 }
 
 void RMP2::compute_amplitudes_and_energy() {
+
+    #ifdef MSHQC_ENABLE_MLIR
+    mshqc::compiler::GraphBuilder mlir_builder;
+    mlir_builder.initializeModule("rmp2_amplitude_module");
+    int64_t n_aux = B_ia_P_alpha_.cols();
+    std::vector<int64_t> lhs_shape = {nocc_a_, nvir_a_, n_aux};
+    std::vector<int64_t> rhs_shape = {nocc_a_, nvir_a_, n_aux};
+    mlir_builder.emitContractOp(lhs_shape, rhs_shape, "iaP,jbP->iajb");
+    if (!mlir_builder.verifyGraph()) {
+        std::cerr << "[CRITICAL] MLIR Graph Semantic Verification Failed.\n";
+    }
+    #endif
+
     const Eigen::VectorXd& eps = scf_.orbital_energies_alpha;
     t2_ = Eigen::Tensor<double, 4>(nocc_a_, nocc_a_, nvir_a_, nvir_a_);
 

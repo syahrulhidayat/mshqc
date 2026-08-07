@@ -9,7 +9,6 @@ namespace mshqc {
 namespace compiler {
 
 GraphBuilder::GraphBuilder() : builder(&context) {
-
     context.getOrLoadDialect<MshqcDialect>();
     context.getOrLoadDialect<func::FuncDialect>();
 }
@@ -20,26 +19,33 @@ void GraphBuilder::initializeModule(const std::string& functionName) {
     Location loc = builder.getUnknownLoc();
     module = ModuleOp::create(loc);
     builder.setInsertionPointToEnd(module->getBody());
-
-    auto funcType = builder.getFunctionType(TypeRange{}, TypeRange{});
-    auto funcOp = builder.create<func::FuncOp>(loc, functionName, funcType);
-
-    Block* entryBlock = funcOp.addEntryBlock();
-    builder.setInsertionPointToEnd(entryBlock);
 }
 
 mlir::Value GraphBuilder::emitContractOp(const std::vector<int64_t>& lhsShape,
                                          const std::vector<int64_t>& rhsShape,
                                          const std::string& einsum_eq) {
     Location loc = builder.getUnknownLoc();
-
     auto f64Type = builder.getF64Type();
+
     auto lhsTensorType = RankedTensorType::get(lhsShape, f64Type);
     auto rhsTensorType = RankedTensorType::get(rhsShape, f64Type);
+    auto resTensorType = RankedTensorType::get({lhsShape[0], lhsShape[1], rhsShape[0], rhsShape[1]}, f64Type);
 
-    Value dummyLhs = builder.create<mshqc::compiler::ContractOp>(loc, lhsTensorType, Value(), Value(), builder.getStringAttr(einsum_eq)).getResult();
+    auto funcType = builder.getFunctionType({lhsTensorType, rhsTensorType}, {resTensorType});
+    auto funcOp = builder.create<func::FuncOp>(loc, "contract_kernel", funcType);
 
-    return dummyLhs;
+    Block* entryBlock = funcOp.addEntryBlock();
+    builder.setInsertionPointToEnd(entryBlock);
+
+    Value lhsArg = entryBlock->getArgument(0);
+    Value rhsArg = entryBlock->getArgument(1);
+
+    auto contractNode = builder.create<mshqc::compiler::ContractOp>(
+        loc, resTensorType, lhsArg, rhsArg, builder.getStringAttr(einsum_eq)
+    );
+
+    builder.create<func::ReturnOp>(loc, contractNode.getResult());
+    return contractNode.getResult();
 }
 
 bool GraphBuilder::verifyGraph() {
