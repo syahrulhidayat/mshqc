@@ -1,141 +1,80 @@
 #!/usr/bin/env python3
+import os
+import re
+import shutil
 from pathlib import Path
 
-def inject_passes_header(base_dir: Path):
-    path = base_dir / "include/mshqc/compiler/Passes/Passes.h"
-    content = """#ifndef MSHQC_COMPILER_PASSES_H_
-#define MSHQC_COMPILER_PASSES_H_
+def prune_directories(base_dir: Path):
+    """Menghapus direktori sumber dan header ci dan mcscf secara rekursif."""
+    dirs_to_remove = [
+        base_dir / "src/ci",
+        base_dir / "src/mcscf",
+        base_dir / "include/mshqc/ci",
+        base_dir / "include/mshqc/mcscf"
+    ]
+    for d in dirs_to_remove:
+        if d.exists() and d.is_dir():
+            shutil.rmtree(d)
+            print(f"[REMOVED] Direktori {d} telah dihapus dari sistem memori.")
 
-#include "mlir/Pass/Pass.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Dialect/Linalg/IR/Linalg.h"
-#include "mlir/Transforms/DialectConversion.h"
-#include <memory>
+def patch_cmake(base_dir: Path):
+    """Menghapus referensi SRC_CI dan SRC_MCSCF dari CMakeLists.txt."""
+    cmake_path = base_dir / "CMakeLists.txt"
+    if not cmake_path.exists():
+        return
 
-namespace mshqc {
-namespace compiler {
+    with open(cmake_path, 'r') as f:
+        content = f.read()
 
-// Deklarasi fungsi pembuat pass (Lowering dari Mshqc ke Linalg)
-std::unique_ptr<mlir::Pass> createLowerToLinalgPass();
+    # Menghapus instruksi GLOB_RECURSE
+    content = re.sub(r'file\(GLOB_RECURSE SRC_MCSCF[^\n]+\n', '', content)
+    content = re.sub(r'file\(GLOB_RECURSE SRC_CI[^\n]+\n', '', content)
+    
+    # Menghapus injeksi variabel dari array ALL_SOURCES
+    content = content.replace('${SRC_MCSCF} ', '').replace('${SRC_CI} ', '')
+    content = content.replace('${SRC_MCSCF}', '').replace('${SRC_CI}', '')
+    
+    with open(cmake_path, 'w') as f:
+        f.write(content)
+    print(f"[PATCHED] {cmake_path} berhasil direstrukturisasi.")
 
-} // namespace compiler
-} // namespace mshqc
+def patch_bindings(base_dir: Path):
+    """Menghapus header C++ dan blok nanobind untuk modul ci dan mcscf dari bindings.cc."""
+    bindings_path = base_dir / "python/bindings.cc"
+    if not bindings_path.exists():
+        return
 
-#endif // MSHQC_COMPILER_PASSES_H_
-"""
-    with open(path, 'w') as f: f.write(content)
-    print(f"[UPDATED] {path}")
+    with open(bindings_path, 'r') as f:
+        content = f.read()
 
-def inject_lowering_source(base_dir: Path):
-    path = base_dir / "src/compiler/Passes/LowerToLinalg.cc"
-    content = """#include "mshqc/compiler/Passes/Passes.h"
-#include "mshqc/compiler/Dialect/MshqcDialect.h"
-#include "mlir/Dialect/Linalg/IR/Linalg.h"
-#include "mlir/Dialect/Affine/IR/AffineOps.h"
-#include "mlir/Dialect/Func/IR/FuncOps.h"
-#include "mlir/Transforms/DialectConversion.h"
-#include "mlir/Pass/Pass.h"
+    # 1. Hapus direktif #include untuk modul ci dan mcscf
+    content = re.sub(r'#include "mshqc/(ci|mcscf)/.*?\n', '', content)
+    
+    # 2. Hapus deklarasi namespace
+    content = re.sub(r'using namespace mshqc::mcscf;\n', '', content)
 
-using namespace mlir;
+    # 3. Ekstraksi dan pemotongan blok Python bindings secara presisi
+    # Batas awal pemotongan: blok CI
+    match_ci_start = re.search(r'nb::class_<ci::Determinant>\(m, "Determinant"\)', content)
+    # Batas akhir pemotongan: blok Gradient (harus dipertahankan)
+    match_grad_start = re.search(r'nb::class_<gradient::GradientResult>\(m, "GradientResult"\)', content)
 
-namespace {
+    if match_ci_start and match_grad_start:
+        content = content[:match_ci_start.start()] + content[match_grad_start.start():]
+    
+    # 4. Hapus secara eksplisit objek PT2Amplitudes di akhir file (karena terikat pada modul CASPT2)
+    content = re.sub(r'\s*nb::class_<PT2Amplitudes>\(m, "PT2Amplitudes"\).*?t2_semi2\);', '', content, flags=re.DOTALL)
 
-// =============================================================================
-// Rewrite Pattern: Mshqc.Contract -> Linalg.Generic
-// =============================================================================
-struct ContractOpLowering : public OpRewritePattern<mshqc::compiler::ContractOp> {
-    using OpRewritePattern<mshqc::compiler::ContractOp>::OpRewritePattern;
-
-    LogicalResult matchAndRewrite(mshqc::compiler::ContractOp op,
-                                  PatternRewriter &rewriter) const override {
-        Location loc = op.getLoc();
-        Value lhs = op.getLhs();
-        Value rhs = op.getRhs();
-        
-        // Ekstraksi tipe tensor
-        auto lhsType = lhs.getType().cast<ShapedType>();
-        auto rhsType = rhs.getType().cast<ShapedType>();
-        auto resultType = op.getType().cast<ShapedType>();
-
-        // Dalam implementasi penuh, string einsum_eq akan di-parsing di sini 
-        // untuk menghasilkan AffineMap yang memetakan indeks kontraksi.
-        // Untuk tahap ini, kita membuat representasi pemetaan (AffineMap) kosong
-        // sebagai placeholder struktur Linalg Generic.
-        
-        SmallVector<AffineMap, 3> indexingMaps; // lhs, rhs, result
-        SmallVector<utils::IteratorType, 3> iteratorTypes; // parallel, reduction
-        
-        // TODO: Generate indexing maps berdasarkan op.getEinsumEq()
-        
-        // Membangun operasi Linalg Generic pengganti Mshqc.Contract
-        /*
-        auto linalgOp = rewriter.create<linalg::GenericOp>(
-            loc,
-            TypeRange{resultType},
-            ValueRange{lhs, rhs},
-            ValueRange{}, // init tensors
-            indexingMaps,
-            iteratorTypes,
-            [&](OpBuilder &nestedBuilder, Location nestedLoc, ValueRange args) {
-                // Implementasi MAC (Multiply-Accumulate)
-                Value mul = nestedBuilder.create<arith::MulFOp>(nestedLoc, args[0], args[1]);
-                Value add = nestedBuilder.create<arith::AddFOp>(nestedLoc, mul, args[2]);
-                nestedBuilder.create<linalg::YieldOp>(nestedLoc, add);
-            }
-        );
-        rewriter.replaceOp(op, linalgOp.getResults());
-        */
-        
-        // Sementara di-pass untuk mencegah kompilasi terhenti karena logic AffineMap belum ada
-        return success();
-    }
-};
-
-// =============================================================================
-// Pass Registration
-// =============================================================================
-struct LowerToLinalgPass : public PassWrapper<LowerToLinalgPass, OperationPass<func::FuncOp>> {
-    MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(LowerToLinalgPass)
-
-    StringRef getArgument() const final { return "mshqc-lower-to-linalg"; }
-    StringRef getDescription() const final { return "Lower mshqc dialect to linalg operations."; }
-
-    void runOnOperation() override {
-        ConversionTarget target(getContext());
-        
-        // Menentukan dialect apa saja yang sah (legal) setelah lowering
-        target.addLegalDialect<linalg::LinalgDialect, affine::AffineDialect, func::FuncDialect>();
-        
-        // MshqcContract tidak lagi sah, harus diubah
-        target.addIllegalOp<mshqc::compiler::ContractOp>();
-
-        RewritePatternSet patterns(&getContext());
-        patterns.add<ContractOpLowering>(&getContext());
-
-        if (failed(applyPartialConversion(getOperation(), target, std::move(patterns)))) {
-            signalPassFailure();
-        }
-    }
-};
-
-} // end anonymous namespace
-
-namespace mshqc {
-namespace compiler {
-
-std::unique_ptr<mlir::Pass> createLowerToLinalgPass() {
-    return std::make_unique<LowerToLinalgPass>();
-}
-
-} // namespace compiler
-} // namespace mshqc
-"""
-    with open(path, 'w') as f: f.write(content)
-    print(f"[UPDATED] {path}")
+    with open(bindings_path, 'w') as f:
+        f.write(content)
+    print(f"[PATCHED] {bindings_path} telah dibersihkan dari pointer yang putus.")
 
 if __name__ == "__main__":
-    base_dir = Path.cwd()
-    print("Menginjeksi MLIR Lowering Pass (Mshqc -> Linalg)...")
-    inject_passes_header(base_dir)
-    inject_lowering_source(base_dir)
-    print("Selesai. Silakan kompilasi ulang.")
+    base_directory = Path.cwd()
+    print(f"[INFO] Memulai proses purifikasi direktori dan linking di {base_directory}...")
+    
+    prune_directories(base_directory)
+    patch_cmake(base_directory)
+    patch_bindings(base_directory)
+    
+    print("[SUCCESS] Operasi eradikasi modul selesai. Pipeline C++ siap dikompilasi ulang.")

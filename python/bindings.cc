@@ -43,19 +43,8 @@
 #include "mshqc/foundation/wavefunction.h"
 
 
-#include "mshqc/ci/determinant.h"
-#include "mshqc/ci/fci.h"
 
 
-#include "mshqc/mcscf/active_space.h"
-#include "mshqc/mcscf/sa_casscf.h"
-#include "mshqc/mcscf/cholesky_sa_casscf.h"
-#include "mshqc/mcscf/cholesky_sa_caspt2.h"
-#include "mshqc/mcscf/uno_result.h"
-#include "mshqc/mcscf/cholesky_uno.h"
-#include "mshqc/mcscf/canonical_uno.h"
-#include "mshqc/mcscf/canonical_sa_casscf.h"
-#include "mshqc/mcscf/canonical_sa_caspt2.h"
 
 
 #include "mshqc/gradient/gradient.h"
@@ -67,7 +56,6 @@
 
 namespace nb = nanobind;
 using namespace mshqc;
-using namespace mshqc::mcscf;
 using namespace mshqc::integrals;
 
 
@@ -520,141 +508,6 @@ NB_MODULE(_mshqc, m) {
     
     
     
-    nb::class_<ci::Determinant>(m, "Determinant")
-        .def(nb::init<>())
-        .def(nb::init<const std::vector<int>&, const std::vector<int>&>(),
-             nb::arg("alpha_occ"), nb::arg("beta_occ"))
-        .def("n_alpha", &ci::Determinant::n_alpha)
-        .def("n_beta", &ci::Determinant::n_beta)
-        .def("excitation_level", &ci::Determinant::excitation_level, nb::arg("other"));
-
-    nb::class_<ci::CIIntegrals>(m, "CIIntegrals")
-        .def(nb::init<>())
-        .def_rw("e_nuc", &ci::CIIntegrals::e_nuc);
-
-    nb::class_<ci::FCIResult>(m, "FCIResult")
-        .def(nb::init<>())
-        .def_rw("determinants", &ci::FCIResult::determinants)
-        .def_rw("converged", &ci::FCIResult::converged);
-
-    nb::class_<ci::FCI>(m, "FCI")
-        .def(nb::init<const ci::CIIntegrals&, int, int, int, int>(),
-             nb::arg("ints"), nb::arg("n_orbitals"),
-             nb::arg("n_alpha"), nb::arg("n_beta"), nb::arg("n_roots") = 1)
-        .def("compute", &ci::FCI::compute, nb::call_guard<nb::gil_scoped_release>());
-
-    
-    
-    
-    nb::class_<mcscf::ActiveSpace>(m, "ActiveSpace")
-        .def(nb::init<>())
-        .def(nb::init<int, int, int, int>(),
-             nb::arg("n_inactive"), nb::arg("n_active"), 
-             nb::arg("n_virtual"), nb::arg("n_elec_active"))
-        .def_static("CAS_Frozen", &mcscf::ActiveSpace::CAS_Frozen,
-             nb::arg("n_frozen_orb"), nb::arg("n_active_orb"),
-             nb::arg("n_total_orb"), nb::arg("n_total_elec"))
-        .def_static("CAS", &mcscf::ActiveSpace::CAS,
-                   nb::arg("n_elec"), nb::arg("n_orb"),
-                   nb::arg("n_total_orb"), nb::arg("n_total_elec"))
-        .def("n_inactive", &mcscf::ActiveSpace::n_inactive)
-        .def("n_active", &mcscf::ActiveSpace::n_active)
-        .def("n_virtual", &mcscf::ActiveSpace::n_virtual)
-        .def("n_elec_active", &mcscf::ActiveSpace::n_elec_active)
-        .def("inactive_indices", &mcscf::ActiveSpace::inactive_indices)
-        .def("active_indices", &mcscf::ActiveSpace::active_indices)
-        .def("virtual_indices", &mcscf::ActiveSpace::virtual_indices)
-        .def("__repr__", &mcscf::ActiveSpace::to_string);
-    
-    nb::class_<UNOResult>(m, "UNOResult")
-        .def(nb::init<>())
-        .def_rw("C_uno", &UNOResult::C_uno)
-        .def_rw("occupations", &UNOResult::occupations)
-        .def_rw("entropy", &UNOResult::entropy)
-        .def_rw("suggested_n_active", &UNOResult::suggested_n_active)
-        .def_rw("suggested_n_electrons", &UNOResult::suggested_n_electrons)
-        .def_rw("active_indices", &UNOResult::active_indices);
-
-    nb::class_<CholeskyUNO>(m, "CholeskyUNO")
-        .def(nb::init<const SCFResult&, std::shared_ptr<IntegralEngine>, int>())
-        .def("compute", &CholeskyUNO::compute, nb::call_guard<nb::gil_scoped_release>())
-        .def("print_report", &CholeskyUNO::print_report, nb::arg("threshold") = 0.02)
-        .def("save_orbitals", &CholeskyUNO::save_orbitals);
-    
-    nb::class_<CanonicalUNO>(m, "CanonicalUNO")
-        .def(nb::init<const SCFResult&, std::shared_ptr<IntegralEngine>, int>(),
-             nb::arg("uhf_res"), nb::arg("integrals"), nb::arg("n_basis"))
-        .def("compute", &CanonicalUNO::compute, nb::call_guard<nb::gil_scoped_release>())
-        .def("print_report", &CanonicalUNO::print_report, nb::arg("threshold") = 0.02)
-        .def("save_orbitals", &CanonicalUNO::save_orbitals);
-    
-    nb::class_<SACASConfig>(m, "SACASConfig")
-        .def(nb::init<>())
-        .def_rw("n_states", &SACASConfig::n_states)
-        .def_rw("max_iter", &SACASConfig::max_iter)
-        .def_rw("cholesky_thresh", &SACASConfig::cholesky_thresh)
-        .def_rw("weights", &SACASConfig::weights)
-        .def_rw("e_thresh", &SACASConfig::e_thresh)
-        .def_rw("grad_thresh", &SACASConfig::grad_thresh)
-        .def_rw("print_level", &SACASConfig::print_level)
-        .def_rw("rotation_damping", &SACASConfig::rotation_damping)
-        .def_rw("shift", &SACASConfig::shift)
-        .def("set_equal_weights", &SACASConfig::set_equal_weights);
-
-    nb::class_<SACASResult>(m, "SACASResult")
-        .def(nb::init<>())
-        .def_rw("e_avg", &SACASResult::e_avg)
-        .def_rw("state_energies", &SACASResult::state_energies)
-        .def_rw("C_mo", &SACASResult::C_mo)
-        .def_rw("orbital_energies", &SACASResult::orbital_energies)
-        .def_rw("converged", &SACASResult::converged)
-        .def_rw("ci_vectors", &SACASResult::ci_vectors)
-        .def_rw("rdm1_states", &SACASResult::rdm1_states);
-        
-    nb::class_<CholeskySACASSCF>(m, "CholeskySACASSCF")
-        .def(nb::init<const Molecule&, const BasisSet&, std::shared_ptr<IntegralEngine>, const ActiveSpace&, const SACASConfig&>())
-        .def(nb::init<const Molecule&, const BasisSet&, std::shared_ptr<IntegralEngine>, const ActiveSpace&, const SACASConfig&, const std::vector<Eigen::VectorXd>&>())
-        .def("compute", nb::overload_cast<const SCFResult&>(&CholeskySACASSCF::compute), nb::call_guard<nb::gil_scoped_release>())
-        .def("compute", nb::overload_cast<const Eigen::MatrixXd&>(&CholeskySACASSCF::compute), nb::call_guard<nb::gil_scoped_release>());
-
-    nb::class_<CanonicalSACASSCF>(m, "CanonicalSACASSCF")
-        .def(nb::init<const Molecule&, const BasisSet&, std::shared_ptr<IntegralEngine>, 
-                      const ActiveSpace&, const SACASConfig&>(),
-             nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), 
-             nb::arg("active_space"), nb::arg("config"))
-        .def("compute", nb::overload_cast<const SCFResult&>(&CanonicalSACASSCF::compute), nb::call_guard<nb::gil_scoped_release>(), nb::arg("initial_guess"))
-        .def("compute", nb::overload_cast<const Eigen::MatrixXd&>(&CanonicalSACASSCF::compute), nb::call_guard<nb::gil_scoped_release>(), nb::arg("initial_orbitals"));
-    
-    nb::class_<CASPT2Config>(m, "CASPT2Config")
-        .def(nb::init<>())
-        .def_rw("shift", &CASPT2Config::shift)
-        .def_rw("print_level", &CASPT2Config::print_level)
-        .def_rw("zero_thresh", &CASPT2Config::zero_thresh)
-        .def_rw("use_tblis", &CASPT2Config::use_tblis)
-        .def_rw("export_amplitudes", &CASPT2Config::export_amplitudes);
-
-    nb::class_<CASPT2Result>(m, "CASPT2Result")
-        .def(nb::init<>())
-        .def_rw("e_cas", &CASPT2Result::e_cas)
-        .def_rw("e_pt2", &CASPT2Result::e_pt2)
-        .def_rw("e_total", &CASPT2Result::e_total)
-        .def_rw("amplitudes", &CASPT2Result::amplitudes);
-
-    nb::class_<CholeskySACASPT2>(m, "CholeskySACASPT2")
-        .def(nb::init<const SACASResult&, const std::vector<Eigen::VectorXd>&, int, const ActiveSpace&, const CASPT2Config&>())
-        .def("compute", [](CholeskySACASPT2& self) {
-            nb::gil_scoped_release release;
-            return self.compute(nullptr); 
-        }, "Compute CASPT2 without precomputed MO integrals");
-
-    nb::class_<CanonicalSACASPT2>(m, "CanonicalSACASPT2")
-        .def(nb::init<const SACASResult&, std::shared_ptr<IntegralEngine>, const BasisSet&, const ActiveSpace&, const CASPT2Config&>(),
-             nb::arg("sacas_result"), nb::arg("integrals"), nb::arg("basis"), nb::arg("active_space"), nb::arg("config"))
-        .def("compute", &CanonicalSACASPT2::compute, nb::call_guard<nb::gil_scoped_release>());
-
-    
-    
-    
     nb::class_<gradient::GradientResult>(m, "GradientResult")
         .def(nb::init<>())
         .def_rw("energy", &gradient::GradientResult::energy)
@@ -669,13 +522,6 @@ NB_MODULE(_mshqc, m) {
         .def_rw("converged", &gradient::OptResult::converged)
         .def_rw("n_iterations", &gradient::OptResult::n_iterations)
         .def_rw("final_energy", &gradient::OptResult::final_energy);
-
-    nb::class_<PT2Amplitudes>(m, "PT2Amplitudes")
-        .def(nb::init<>())
-        .def_rw("t2_core", &PT2Amplitudes::t2_core)
-        .def_rw("t2_active", &PT2Amplitudes::t2_active)
-        .def_rw("t2_semi1", &PT2Amplitudes::t2_semi1)
-        .def_rw("t2_semi2", &PT2Amplitudes::t2_semi2);
 
     
     
