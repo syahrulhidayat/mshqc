@@ -18,6 +18,12 @@ def LinalgTiling : Pass<"mshqc-linalg-tiling", "::mlir::func::FuncOp"> {
     ];
 }
 
+
+def LowerToLLVM : Pass<"mshqc-lower-to-llvm", "::mlir::ModuleOp"> {
+    let summary = "Lower all intermediate dialects (Linalg, SCF, MemRef, Arith, Func) to LLVM IR dialect.";
+    let constructor = "mshqc::compiler::createLowerToLLVMPass()";
+}
+
 def Bufferize : Pass<"mshqc-bufferize", "::mlir::ModuleOp"> {
     let summary = "Menerjemahkan semantik Tensor abstrak menjadi semantik MemRef fisik (Pointer).";
     let constructor = "mshqc::compiler::createBufferizePass()";

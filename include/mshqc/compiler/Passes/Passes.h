@@ -18,6 +18,8 @@ std::unique_ptr<mlir::Pass> createBufferizePass();
 
 std::unique_ptr<mlir::Pass> createLinalgTilingPass();
 
+std::unique_ptr<mlir::Pass> createLowerToLLVMPass();
+
 #define GEN_PASS_REGISTRATION
 #include "Passes.h.inc"
 

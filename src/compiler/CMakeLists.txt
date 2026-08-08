@@ -21,6 +21,7 @@ add_library(mshqc_compiler STATIC
     Passes/LowerToLinalg.cc
     Passes/TilingPass.cc
     Passes/BufferizePass.cc
+    Passes/LowerToLLVMPass.cc
     Frontend/GraphBuilder.cc
     JIT/ExecutionEngine.cc
 )
@@ -38,6 +39,14 @@ target_link_libraries(mshqc_compiler
     MLIRMemRefDialect
     MLIRBufferizationDialect
     MLIRBufferizationTransforms
+    MLIRLLVMDialect
+    MLIRLLVMCommonConversion
+    MLIRSCFToControlFlow
+    MLIRMemRefToLLVM
+    MLIRFuncToLLVM
+    MLIRControlFlowToLLVM
+    MLIRArithToLLVM
+    MLIRAffineToStandard
     MLIRTensorDialect
     MLIRAffineDialect
     MLIRExecutionEngine
