@@ -18,14 +18,14 @@ namespace {
 struct GenericVectorizationPattern : public mlir::OpInterfaceRewritePattern<mlir::linalg::LinalgOp> {
     using OpInterfaceRewritePattern<mlir::linalg::LinalgOp>::OpInterfaceRewritePattern;
     mlir::LogicalResult matchAndRewrite(mlir::linalg::LinalgOp op, mlir::PatternRewriter &rewriter) const override {
-        // Pemanggilan utilitas MLIR Vectorize modern
+
         if (mlir::failed(mlir::linalg::vectorize(rewriter, op))) {
             return mlir::failure();
         }
         return mlir::success();
     }
 };
-} // namespace
+}
 
 struct LinalgTilingPass : public impl::LinalgTilingBase<LinalgTilingPass> {
     using LinalgTilingBase::LinalgTilingBase;
@@ -67,7 +67,6 @@ struct LinalgTilingPass : public impl::LinalgTilingBase<LinalgTilingPass> {
             return mlir::WalkResult::advance();
         });
 
-        // Pemaksaan vektorisasi Linalg ke representasi intrinsik Vector Dialect
         mlir::RewritePatternSet vectorPatterns(&getContext());
         vectorPatterns.add<GenericVectorizationPattern>(&getContext());
         if (mlir::failed(mlir::applyPatternsGreedily(getOperation(), std::move(vectorPatterns)))) {
