@@ -32,7 +32,6 @@ struct LowerToLLVMPass : public impl::LowerToLLVMBase<LowerToLLVMPass> {
         mlir::LLVMTypeConverter typeConverter(&getContext());
         mlir::RewritePatternSet patterns(&getContext());
 
-        // Rantai translasi graf dari tingkat tinggi ke abstraksi mesin (LLVM IR)
         mlir::populateAffineToStdConversionPatterns(patterns);
         mlir::populateSCFToControlFlowConversionPatterns(patterns);
         mlir::arith::populateArithToLLVMConversionPatterns(typeConverter, patterns);
@@ -46,11 +45,11 @@ struct LowerToLLVMPass : public impl::LowerToLLVMBase<LowerToLLVMPass> {
         }
     }
 };
-} // end anonymous namespace
+}
 
 std::unique_ptr<mlir::Pass> createLowerToLLVMPass() {
     return std::make_unique<LowerToLLVMPass>();
 }
 
-} // namespace compiler
-} // namespace mshqc
+}
+}

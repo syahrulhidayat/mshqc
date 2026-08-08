@@ -18,7 +18,6 @@ def LinalgTiling : Pass<"mshqc-linalg-tiling", "::mlir::func::FuncOp"> {
     ];
 }
 
-
 def LowerToLLVM : Pass<"mshqc-lower-to-llvm", "::mlir::ModuleOp"> {
     let summary = "Lower all intermediate dialects (Linalg, SCF, MemRef, Arith, Func) to LLVM IR dialect.";
     let constructor = "mshqc::compiler::createLowerToLLVMPass()";
