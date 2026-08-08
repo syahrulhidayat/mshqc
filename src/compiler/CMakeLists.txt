@@ -43,6 +43,7 @@ target_link_libraries(mshqc_compiler
     MLIRLLVMCommonConversion
     MLIRSCFToControlFlow
     MLIRMemRefToLLVM
+    MLIRMemRefTransforms
     MLIRFuncToLLVM
     MLIRControlFlowToLLVM
     MLIRArithToLLVM

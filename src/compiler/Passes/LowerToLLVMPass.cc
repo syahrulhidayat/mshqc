@@ -10,6 +10,7 @@
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/MemRef/Transforms/Transforms.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
 
@@ -32,6 +33,7 @@ struct LowerToLLVMPass : public impl::LowerToLLVMBase<LowerToLLVMPass> {
         mlir::LLVMTypeConverter typeConverter(&getContext());
         mlir::RewritePatternSet patterns(&getContext());
 
+        mlir::memref::populateExpandStridedMetadataPatterns(patterns);
         mlir::populateAffineToStdConversionPatterns(patterns);
         mlir::populateSCFToControlFlowConversionPatterns(patterns);
         mlir::arith::populateArithToLLVMConversionPatterns(typeConverter, patterns);

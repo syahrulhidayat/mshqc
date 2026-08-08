@@ -10,6 +10,7 @@ int main(int argc, char **argv) {
     
     // Register dialek standar LLVM/MLIR
     mlir::registerAllDialects(registry);
+    mlir::registerAllPasses();
     
     // Register dialek khusus mshqc
     registry.insert<mshqc::compiler::MshqcDialect>();
