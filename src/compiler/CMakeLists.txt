@@ -40,6 +40,7 @@ target_link_libraries(mshqc_compiler
     MLIRBufferizationDialect
     MLIRBufferizationTransforms
     MLIRLLVMDialect
+    MLIRBuiltinToLLVMIRTranslation
     MLIRLLVMCommonConversion
     MLIRSCFToControlFlow
     MLIRMemRefToLLVM
