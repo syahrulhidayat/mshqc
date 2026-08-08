@@ -55,8 +55,8 @@ struct LinalgTilingPass : public impl::LinalgTilingBase<LinalgTilingPass> {
 
         // Pemaksaan vektorisasi Linalg ke representasi intrinsik Vector Dialect
         mlir::RewritePatternSet vectorPatterns(&getContext());
-        mlir::linalg::populateLinalgVectorizationPatterns(vectorPatterns);
-        if (mlir::failed(mlir::applyPatternsAndFoldGreedily(getOperation(), std::move(vectorPatterns)))) {
+        mlir::linalg::populateVectorizationPatterns(vectorPatterns);
+        if (mlir::failed(mlir::applyPatternsGreedily(getOperation(), std::move(vectorPatterns)))) {
             signalPassFailure();
         }
     }
