@@ -15,7 +15,7 @@ int main(int argc, char **argv) {
     registry.insert<mshqc::compiler::MshqcDialect>();
 
     // Register passes kustom mshqc
-    mshqc::compiler::registerPasses();
+    mshqc::compiler::registerMshqcPasses();
 
     return mlir::asMainReturnCode(
         mlir::MlirOptMain(argc, argv, "MSHQC Modular Optimizer Driver\n", registry));
