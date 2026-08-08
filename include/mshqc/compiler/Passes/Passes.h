@@ -9,6 +9,8 @@
 namespace mshqc {
 namespace compiler {
 
+std::unique_ptr<mlir::Pass> createLowerToLinalgPass();
+
 #define GEN_PASS_DECL
 #include "Passes.h.inc"
 
