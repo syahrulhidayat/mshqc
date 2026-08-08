@@ -1,6 +1,3 @@
-#ifndef MSHQC_PASSES
-#define MSHQC_PASSES
-
 include "mlir/Pass/PassBase.td"
 
 def LowerToLinalg : Pass<"mshqc-lower-to-linalg", "::mlir::func::FuncOp"> {
@@ -13,18 +10,15 @@ def LowerToLinalg : Pass<"mshqc-lower-to-linalg", "::mlir::func::FuncOp"> {
     let constructor = "mshqc::compiler::createLowerToLinalgPass()";
 }
 
-def Bufferize : Pass<"mshqc-bufferize", "::mlir::ModuleOp"> {
-    let summary = "Menerjemahkan semantik Tensor abstrak menjadi semantik MemRef fisik (Pointer).";
-    let constructor = "mshqc::compiler::createBufferizePass()";
-}
-
-
 def LinalgTiling : Pass<"mshqc-linalg-tiling", "::mlir::func::FuncOp"> {
     let summary = "Apply loop tiling to Linalg operations for L1/L2 cache locality.";
     let constructor = "mshqc::compiler::createLinalgTilingPass()";
     let options = [
-        ListOption<"tileSizes", "tile-sizes", "int64_t", "Tile sizes for loop nest", "llvm::SmallVector<int64_t>{}">
+        ListOption<"tileSizes", "tile-sizes", "int64_t", "Tile sizes for loop nest">
     ];
 }
 
-#endif
+def Bufferize : Pass<"mshqc-bufferize", "::mlir::ModuleOp"> {
+    let summary = "Menerjemahkan semantik Tensor abstrak menjadi semantik MemRef fisik (Pointer).";
+    let constructor = "mshqc::compiler::createBufferizePass()";
+}

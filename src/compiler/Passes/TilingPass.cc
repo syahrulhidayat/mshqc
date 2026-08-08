@@ -22,37 +22,41 @@ struct LinalgTilingPass : public impl::LinalgTilingBase<LinalgTilingPass> {
         mlir::func::FuncOp funcOp = getOperation();
         mlir::IRRewriter rewriter(&getContext());
 
-        // Mengambil ukuran memori dari CLI mshqc-opt, fallback ke 32x32x32x32
-        llvm::SmallVector<int64_t> tiles = tileSizes;
+        llvm::SmallVector<int64_t> tiles(tileSizes.begin(), tileSizes.end());
         if (tiles.empty()) {
-            tiles = {32, 32, 32, 32}; 
+            tiles = {32, 32, 32, 32};
         }
 
         mlir::linalg::LinalgTilingOptions tilingOptions;
         tilingOptions.setTileSizes(tiles);
 
-        funcOp.walk([&](mlir::linalg::GenericOp op) {
+        funcOp.walk([&](mlir::linalg::LinalgOp op) {
             if (op->hasAttr("tiled")) return mlir::WalkResult::advance();
 
             rewriter.setInsertionPoint(op);
-            mlir::FailureOr<mlir::linalg::TilingResult> tilingResult = 
+
+            mlir::FailureOr<mlir::linalg::TiledLinalgOp> tilingResult =
                 mlir::linalg::tileLinalgOp(rewriter, op, tilingOptions);
-            
+
             if (mlir::succeeded(tilingResult)) {
-                if (!tilingResult->tiledOps.empty()) {
-                    tilingResult->tiledOps.front()->setAttr("tiled", rewriter.getUnitAttr());
+
+                tilingResult->op->setAttr("tiled", rewriter.getUnitAttr());
+
+                if (!tilingResult->tensorResults.empty()) {
+                    rewriter.replaceOp(op, tilingResult->tensorResults);
+                } else {
+                    rewriter.eraseOp(op);
                 }
-                rewriter.replaceOp(op, tilingResult->replacements);
             }
             return mlir::WalkResult::advance();
         });
     }
 };
-} // end anonymous namespace
+}
 
 std::unique_ptr<mlir::Pass> createLinalgTilingPass() {
     return std::make_unique<LinalgTilingPass>();
 }
 
-} // namespace compiler
-} // namespace mshqc
+}
+}
