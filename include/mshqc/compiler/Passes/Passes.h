@@ -10,10 +10,10 @@ namespace mshqc {
 namespace compiler {
 
 #define GEN_PASS_DECL
-#include "mshqc/compiler/Passes/Passes.h.inc"
+#include "Passes.h.inc"
 
 #define GEN_PASS_REGISTRATION
-#include "mshqc/compiler/Passes/Passes.h.inc"
+#include "Passes.h.inc"
 
 }
 }

@@ -9,7 +9,7 @@ namespace mshqc {
 namespace compiler {
 
 #define GEN_PASS_DEF_LOWERTOLINALG
-#include "mshqc/compiler/Passes/Passes.h.inc"
+#include "Passes.h.inc"
 
 namespace {
 struct ContractOpLowering : public mlir::OpRewritePattern<ContractOp> {
