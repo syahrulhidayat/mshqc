@@ -1,4 +1,5 @@
 #include "mshqc/compiler/Passes/Passes.h"
+#include "mlir/Dialect/Bufferization/IR/BufferizableOpInterface.h"
 #include "mlir/Dialect/Bufferization/IR/Bufferization.h"
 #include "mlir/Dialect/Bufferization/Transforms/OneShotAnalysis.h"
 #include "mlir/Dialect/Bufferization/Transforms/OneShotModuleBufferize.h"
@@ -20,21 +21,22 @@ struct BufferizePass : public impl::BufferizeBase<BufferizePass> {
     void runOnOperation() override {
         mlir::bufferization::OneShotBufferizationOptions options;
         options.bufferizeFunctionBoundaries = true;
-        
-        // Memaksa penurunan langsung Tensor -> MemRef tanpa mempertimbangkan layout kompleks
-        options.setFunctionBoundaryTypeConversion(mlir::bufferization::LayoutMapOption::Identity);
 
-        // Eksekusi API MLIR Bufferization versi terbaru
-        if (mlir::failed(mlir::bufferization::bufferizeModuleOp(getOperation(), options))) {
+        mlir::ModuleOp module = getOperation();
+
+        mlir::bufferization::BufferizationState bufferizationState;
+
+        if (mlir::failed(mlir::bufferization::runOneShotModuleBufferize(
+                module, options, bufferizationState))) {
             signalPassFailure();
         }
     }
 };
-} // end anonymous namespace
+}
 
 std::unique_ptr<mlir::Pass> createBufferizePass() {
     return std::make_unique<BufferizePass>();
 }
 
-} // namespace compiler
-} // namespace mshqc
+}
+}

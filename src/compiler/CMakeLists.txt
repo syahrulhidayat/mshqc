@@ -19,6 +19,7 @@ add_library(mshqc_compiler STATIC
     Dialect/MshqcOps.cc
     Passes/FusionPass.cc
     Passes/LowerToLinalg.cc
+    Passes/TilingPass.cc
     Passes/BufferizePass.cc
     Frontend/GraphBuilder.cc
     JIT/ExecutionEngine.cc
@@ -32,6 +33,7 @@ target_link_libraries(mshqc_compiler
     MLIRIR
     MLIRFuncDialect
     MLIRLinalgDialect
+    MLIRSCFDialect
     MLIRArithDialect
     MLIRMemRefDialect
     MLIRBufferizationDialect

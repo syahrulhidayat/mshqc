@@ -18,4 +18,13 @@ def Bufferize : Pass<"mshqc-bufferize", "::mlir::ModuleOp"> {
     let constructor = "mshqc::compiler::createBufferizePass()";
 }
 
+
+def LinalgTiling : Pass<"mshqc-linalg-tiling", "::mlir::func::FuncOp"> {
+    let summary = "Apply loop tiling to Linalg operations for L1/L2 cache locality.";
+    let constructor = "mshqc::compiler::createLinalgTilingPass()";
+    let options = [
+        ListOption<"tileSizes", "tile-sizes", "int64_t", "Tile sizes for loop nest", "llvm::SmallVector<int64_t>{}">
+    ];
+}
+
 #endif
