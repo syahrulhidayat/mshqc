@@ -9,6 +9,8 @@
 #include "mlir/Conversion/SCFToControlFlow/SCFToControlFlow.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/Conversion/VectorToLLVM/ConvertVectorToLLVM.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/MemRef/Transforms/Transforms.h"
 #include "mlir/Pass/Pass.h"
@@ -23,7 +25,7 @@ namespace compiler {
 namespace {
 struct LowerToLLVMPass : public impl::LowerToLLVMBase<LowerToLLVMPass> {
     void getDependentDialects(mlir::DialectRegistry &registry) const override {
-        registry.insert<mlir::LLVM::LLVMDialect, mlir::scf::SCFDialect>();
+        registry.insert<mlir::LLVM::LLVMDialect, mlir::scf::SCFDialect, mlir::vector::VectorDialect>();
     }
 
     void runOnOperation() override {
@@ -39,6 +41,7 @@ struct LowerToLLVMPass : public impl::LowerToLLVMBase<LowerToLLVMPass> {
         mlir::arith::populateArithToLLVMConversionPatterns(typeConverter, patterns);
         mlir::populateFinalizeMemRefToLLVMConversionPatterns(typeConverter, patterns);
         mlir::cf::populateControlFlowToLLVMConversionPatterns(typeConverter, patterns);
+        mlir::populateVectorToLLVMConversionPatterns(typeConverter, patterns);
         mlir::populateFuncToLLVMConversionPatterns(typeConverter, patterns);
 
         auto module = getOperation();

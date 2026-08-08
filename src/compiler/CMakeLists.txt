@@ -50,6 +50,8 @@ target_link_libraries(mshqc_compiler
     MLIRArithToLLVM
     MLIRAffineToStandard
     MLIRTensorDialect
+    MLIRVectorDialect
+    MLIRVectorToLLVM
     MLIRAffineDialect
     MLIRExecutionEngine
     MLIRTargetLLVMIRExport

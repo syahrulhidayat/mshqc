@@ -3,6 +3,8 @@
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/IR/PatternMatch.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 namespace mshqc {
 namespace compiler {
@@ -15,7 +17,7 @@ struct LinalgTilingPass : public impl::LinalgTilingBase<LinalgTilingPass> {
     using LinalgTilingBase::LinalgTilingBase;
 
     void getDependentDialects(mlir::DialectRegistry &registry) const override {
-        registry.insert<mlir::scf::SCFDialect, mlir::linalg::LinalgDialect>();
+        registry.insert<mlir::scf::SCFDialect, mlir::linalg::LinalgDialect, mlir::vector::VectorDialect>();
     }
 
     void runOnOperation() override {
@@ -50,6 +52,13 @@ struct LinalgTilingPass : public impl::LinalgTilingBase<LinalgTilingPass> {
             }
             return mlir::WalkResult::advance();
         });
+
+        // Pemaksaan vektorisasi Linalg ke representasi intrinsik Vector Dialect
+        mlir::RewritePatternSet vectorPatterns(&getContext());
+        mlir::linalg::populateLinalgVectorizationPatterns(vectorPatterns);
+        if (mlir::failed(mlir::applyPatternsAndFoldGreedily(getOperation(), std::move(vectorPatterns)))) {
+            signalPassFailure();
+        }
     }
 };
 }

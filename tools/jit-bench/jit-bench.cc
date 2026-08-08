@@ -1,3 +1,4 @@
+#include <x86intrin.h>
 #include <cstdlib>
 #include "mshqc/compiler/JIT/ExecutionEngine.h"
 #include "mlir/IR/MLIRContext.h"
@@ -57,49 +58,49 @@ int main(int argc, char **argv) {
 
     size_t lhs_size = 10 * 20 * 30;
     size_t rhs_size = 10 * 20 * 30;
-    // Resolusi Mutlak: 64-byte aligned allocation untuk SIMD AVX-512 (vmovapd)
+
     size_t lhs_bytes = (lhs_size * sizeof(double) + 63) & ~63;
     size_t rhs_bytes = (rhs_size * sizeof(double) + 63) & ~63;
-    
+
     double* lhs_ptr = static_cast<double*>(std::aligned_alloc(64, lhs_bytes));
     double* rhs_ptr = static_cast<double*>(std::aligned_alloc(64, rhs_bytes));
-    
+
     for(size_t i = 0; i < lhs_size; ++i) lhs_ptr[i] = 1.25;
     for(size_t i = 0; i < rhs_size; ++i) rhs_ptr[i] = 2.50;
 
     MemRef3D lhs = {lhs_ptr, lhs_ptr, 0, {10, 20, 30}, {600, 30, 1}};
     MemRef3D rhs = {rhs_ptr, rhs_ptr, 0, {10, 20, 30}, {600, 30, 1}};
-    // Resolusi Mutlak: Pre-alokasi output untuk Destination-Passing Style (DPS) ABI
+
     size_t res_size = 10 * 20 * 10 * 20;
     size_t res_bytes = (res_size * sizeof(double) + 63) & ~63;
     double* res_ptr = static_cast<double*>(std::aligned_alloc(64, res_bytes));
-    
-    // Registrasi struktur MemRef4D dengan metadata memori row-major absolut (10x20x10x20)
+
     MemRef4D res = {res_ptr, res_ptr, 0, {10, 20, 10, 20}, {4000, 200, 20, 1}};
 
-    // Resolusi Mutlak: Flattened ABI (18 argumen primitif input + 1 pointer luaran struct)
     std::vector<void*> args = {
-        &lhs.allocated, &lhs.aligned, &lhs.offset, 
-        &lhs.sizes[0], &lhs.sizes[1], &lhs.sizes[2], 
+        &lhs.allocated, &lhs.aligned, &lhs.offset,
+        &lhs.sizes[0], &lhs.sizes[1], &lhs.sizes[2],
         &lhs.strides[0], &lhs.strides[1], &lhs.strides[2],
-        &rhs.allocated, &rhs.aligned, &rhs.offset, 
-        &rhs.sizes[0], &rhs.sizes[1], &rhs.sizes[2], 
+        &rhs.allocated, &rhs.aligned, &rhs.offset,
+        &rhs.sizes[0], &rhs.sizes[1], &rhs.sizes[2],
         &rhs.strides[0], &rhs.strides[1], &rhs.strides[2],
         &res
     };
 
     std::cout << "[INFO] Memulai eksekusi JIT runtime...\n";
-    auto start = std::chrono::high_resolution_clock::now();
+
+    unsigned int dummy;
+    uint64_t start_cycles = __rdtscp(&dummy);
 
     if (auto err = engine->invoke("test_mp2_contraction", args)) {
         std::cerr << "[FATAL] Terjadi interupsi pada eksekusi JIT runtime.\n";
         return 1;
     }
 
-    auto end = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> diff = end - start;
+    uint64_t end_cycles = __rdtscp(&dummy);
+    uint64_t total_cycles = end_cycles - start_cycles;
 
-    std::cout << "[METRIK] Latensi eksekusi kontraksi murni : " << diff.count() << " detik.\n";
+    std::cout << "[METRIK] Total CPU Cycles terkonsumsi : " << total_cycles << "\n";
     if (res.aligned != nullptr) {
         std::cout << "[METRIK] Pointer L-Value berhasil dipetakan ke alamat fisik: "
                   << res.aligned << "\n";
