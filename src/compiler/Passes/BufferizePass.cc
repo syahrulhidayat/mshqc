@@ -19,20 +19,22 @@ struct BufferizePass : public impl::BufferizeBase<BufferizePass> {
 
     void runOnOperation() override {
         mlir::bufferization::OneShotBufferizationOptions options;
-        options.allowReturnAllocs = true;
         options.bufferizeFunctionBoundaries = true;
-        options.setFunctionBoundaryTypeConversion(mlir::bufferization::LayoutMapOption::IdentityExt);
+        
+        // Memaksa penurunan langsung Tensor -> MemRef tanpa mempertimbangkan layout kompleks
+        options.setFunctionBoundaryTypeConversion(mlir::bufferization::LayoutMapOption::Identity);
 
-        if (mlir::failed(mlir::bufferization::runOneShotModuleBufferize(getOperation(), options))) {
+        // Eksekusi API MLIR Bufferization versi terbaru
+        if (mlir::failed(mlir::bufferization::bufferizeModuleOp(getOperation(), options))) {
             signalPassFailure();
         }
     }
 };
-}
+} // end anonymous namespace
 
 std::unique_ptr<mlir::Pass> createBufferizePass() {
     return std::make_unique<BufferizePass>();
 }
 
-}
-}
+} // namespace compiler
+} // namespace mshqc
