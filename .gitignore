@@ -43,6 +43,7 @@ timer.dat
 hasil/
 *.sh
 deploy_self_hosted.sh
+test/
 scaffold_compiler.py
 !clean_all.py
 !recaftor.py

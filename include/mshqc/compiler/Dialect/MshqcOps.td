@@ -29,6 +29,7 @@ def Mshqc_ContractOp : Mshqc_Op<"contract", [Pure]> {
 
     let arguments = (ins AnyTensor:$lhs, AnyTensor:$rhs, StrAttr:$einsum_eq);
     let results = (outs AnyTensor:$result);
+    let assemblyFormat = "$lhs `,` $rhs attr-dict `:` `(` type($lhs) `,` type($rhs) `)` `->` type($result)";
 }
 
 #endif

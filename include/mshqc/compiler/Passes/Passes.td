@@ -13,4 +13,9 @@ def LowerToLinalg : Pass<"mshqc-lower-to-linalg", "::mlir::func::FuncOp"> {
     let constructor = "mshqc::compiler::createLowerToLinalgPass()";
 }
 
+def Bufferize : Pass<"mshqc-bufferize", "::mlir::ModuleOp"> {
+    let summary = "Menerjemahkan semantik Tensor abstrak menjadi semantik MemRef fisik (Pointer).";
+    let constructor = "mshqc::compiler::createBufferizePass()";
+}
+
 #endif
