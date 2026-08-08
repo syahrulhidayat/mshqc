@@ -35,18 +35,14 @@ Makefile
 cmake_install.cmake
 
 
-# --- Quantum Chemistry Output & Temporary Logs ---
 psi.*.clean
 *.out
 *.log
 timer.dat
 *.h5
 hasil/
-
-# --- Text Files and Custom Script Exceptions ---
-
-!recaftor.py
-!scaffold_compiler.py
 *.sh
-!deploy_self_hosted.sh
-clean_all.py
+deploy_self_hosted.sh
+scaffold_compiler.py
+!clean_all.py
+!recaftor.py
