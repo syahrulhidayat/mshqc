@@ -31,6 +31,8 @@ target_link_libraries(mshqc_compiler
     MLIRIR
     MLIRFuncDialect
     MLIRLinalgDialect
+    MLIRArithDialect
+    MLIRTensorDialect
     MLIRAffineDialect
     MLIRExecutionEngine
     MLIRTargetLLVMIRExport
