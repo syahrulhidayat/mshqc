@@ -40,12 +40,14 @@ struct LinalgTilingPass : public impl::LinalgTilingBase<LinalgTilingPass> {
 
         llvm::SmallVector<int64_t> tiles(tileSizes.begin(), tileSizes.end());
         if (tiles.empty()) {
-            // L1 Cache boundaries optimization for 64-bit FP (8x8x8x8 = 32 KB)
+
             tiles = {8, 8, 8, 8};
         }
 
         mlir::linalg::LinalgTilingOptions tilingOptions;
         tilingOptions.setTileSizes(tiles);
+
+        tilingOptions.setLoopType(mlir::linalg::LinalgTilingLoopType::ParallelLoops);
 
         funcOp.walk([&](mlir::linalg::LinalgOp op) {
             if (op->hasAttr("tiled")) return mlir::WalkResult::advance();
