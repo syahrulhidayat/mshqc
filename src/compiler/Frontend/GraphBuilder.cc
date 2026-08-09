@@ -40,11 +40,11 @@ mlir::Value GraphBuilder::emitContractOp(const std::vector<int64_t>& lhsShape,
     Value lhsArg = entryBlock->getArgument(0);
     Value rhsArg = entryBlock->getArgument(1);
 
-    auto contractNode = mshqc::compiler::ContractOp::create(
+    auto contractNode = builder.create<mshqc::compiler::ContractOp>(
         loc, resTensorType, lhsArg, rhsArg, builder.getStringAttr(einsum_eq)
     );
 
-    builder.create<func::ReturnOp>(loc, mlir::ValueRange{contractNode.getResult()});
+    builder.create<func::ReturnOp>(loc, contractNode.getResult());
     return contractNode.getResult();
 }
 

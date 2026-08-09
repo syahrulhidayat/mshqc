@@ -44,11 +44,13 @@ struct LowerToLLVMPass : public impl::LowerToLLVMBase<LowerToLLVMPass> {
             }
         });
 
+        mlir::LLVMTypeConverter typeConverter(&getContext());
+
         mlir::LLVMConversionTarget target(getContext());
         target.addLegalOp<mlir::ModuleOp>();
-        target.addLegalDialect<mlir::omp::OpenMPDialect>();
-
-        mlir::LLVMTypeConverter typeConverter(&getContext());
+        target.addDynamicallyLegalDialect<mlir::omp::OpenMPDialect>([&](mlir::Operation *op) -> std::optional<bool> {
+        return typeConverter.isLegal(op);
+    });
         mlir::RewritePatternSet patterns(&getContext());
 
         mlir::memref::populateExpandStridedMetadataPatterns(patterns);
@@ -62,20 +64,19 @@ struct LowerToLLVMPass : public impl::LowerToLLVMBase<LowerToLLVMPass> {
         mlir::cf::populateControlFlowToLLVMConversionPatterns(typeConverter, patterns);
         mlir::populateVectorToLLVMConversionPatterns(typeConverter, patterns);
         mlir::populateFuncToLLVMConversionPatterns(typeConverter, patterns);
-        
 
         auto module = getOperation();
         if (mlir::failed(mlir::applyFullConversion(module, target, std::move(patterns)))) {
             signalPassFailure();
+            return;
         }
 
-        // Resolusi native untuk memori artefak Unrealized Conversion Casts
         mlir::PassManager pm(&getContext());
         pm.addPass(mlir::createReconcileUnrealizedCastsPass());
         if (mlir::failed(pm.run(module))) {
             signalPassFailure();
         }
-        
+
     }
 };
 }

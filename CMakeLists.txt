@@ -181,7 +181,10 @@ target_compile_definitions(mshqc PUBLIC
 # TCI is optional in some setups, we handle if it exists or not
 set(MSHQC_LINK_LIBS 
     Eigen3::Eigen
-    mshqc_compiler
+    -Wl,--whole-archive mshqc_compiler -Wl,--no-whole-archive
+    MLIRIR
+    MLIRSupport
+    LLVMSupport
     ${CINT_LIBRARY}
     ${TBLIS_LIBRARY}
     ${HDF5_LIBRARIES} 
