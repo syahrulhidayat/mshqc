@@ -70,8 +70,9 @@ llvm::Error MshqcJIT::invoke(llvm::StringRef name, llvm::MutableArrayRef<void *>
         return expectedFPtr.takeError();
     }
 
-    void (*fn)(void **) = *expectedFPtr;
-    fn(args.data());
+    // Penyelarasan paksa System V AMD64 ABI untuk RDI, RSI, RDX
+    void (*fn)(void *, void *, void *) = reinterpret_cast<void (*)(void *, void *, void *)>(*expectedFPtr);
+    fn(args[0], args[1], args[2]);
 
     return llvm::Error::success();
 }
