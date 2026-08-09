@@ -59,3 +59,18 @@ belajar_c++/
 # --- Exceptions (Force Tracked Files) ---
 !clean_all.py
 !recaftor.py
+
+# Build and Python artifacts
+*.egg-info/
+__pycache__/
+build/
+build_verify/
+releases/
+
+# Execution artifacts
+*.mlir
+*.h5
+*.dat
+
+# System includes
+include/python*/
