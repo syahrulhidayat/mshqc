@@ -1,6 +1,11 @@
 #include <tblis/tblis.h>
 #include "mshqc/symmetry/salc_builder.h"
 #include "mshqc/mp2/mp2.h"
+#include "mshqc/compiler/JIT/ExecutionEngine.h"
+#include "mlir/Pass/PassManager.h"
+#include "mlir/Conversion/SCFToOpenMP/SCFToOpenMP.h"
+#include "mlir/Conversion/LinalgToStandard/LinalgToStandard.h"
+
 #include "mshqc/compiler/Frontend/GraphBuilder.h"
 #include "mshqc/integrals/eri_transformer.h"
 #include "mshqc/gradient/optimizer.h"
@@ -98,15 +103,70 @@ void RMP2::transform_integrals() {
 void RMP2::compute_amplitudes_and_energy() {
 
     #ifdef MSHQC_ENABLE_MLIR
+    if (config_.print_level > 0) std::cout << "  [HPC] Menginisialisasi MLIR JIT Execution (Zero-Copy)...
+";
+
     mshqc::compiler::GraphBuilder mlir_builder;
     mlir_builder.initializeModule("rmp2_amplitude_module");
+
     int64_t n_aux = B_ia_P_alpha_.cols();
-    std::vector<int64_t> lhs_shape = {nocc_a_, nvir_a_, n_aux};
-    std::vector<int64_t> rhs_shape = {nocc_a_, nvir_a_, n_aux};
-    mlir_builder.emitContractOp(lhs_shape, rhs_shape, "iaP,jbP->iajb");
-    if (!mlir_builder.verifyGraph()) {
-        std::cerr << "[CRITICAL] MLIR Graph Semantic Verification Failed.\n";
+    int64_t dim_ov = nocc_a_ * nvir_a_;
+    std::vector<int64_t> shape = {dim_ov, n_aux};
+
+    mlir_builder.emitContractOp(shape, shape, "mP,nP->mn");
+
+    mlir::PassManager pm(mlir_builder.getContext());
+    pm.addPass(mshqc::compiler::createLowerToLinalgPass());
+    pm.addPass(mshqc::compiler::createBufferizePass());
+    pm.addPass(mshqc::compiler::createLinalgTilingPass());
+    pm.addPass(mlir::createConvertLinalgToLoopsPass());
+    pm.addPass(mlir::createConvertSCFToOpenMPPass());
+    pm.addPass(mshqc::compiler::createLowerToLLVMPass());
+
+    if (mlir::failed(pm.run(mlir_builder.getModule()))) {
+        std::cerr << "[FATAL] JIT Lowering Pipeline Gagal.
+";
+        exit(1);
     }
+
+    auto engine_exp = mshqc::compiler::MshqcJIT::create(mlir_builder.getModule());
+    if (!engine_exp) {
+        std::cerr << "[FATAL] JIT Execution Engine gagal diinisialisasi.
+";
+        exit(1);
+    }
+    auto engine = std::move(*engine_exp);
+
+    struct MemRef2D {
+        double *allocated; double *aligned; intptr_t offset;
+        intptr_t sizes[2]; intptr_t strides[2];
+    };
+
+    MemRef2D B_desc = {
+        B_ia_P_alpha_.data(), B_ia_P_alpha_.data(), 0,
+        {dim_ov, n_aux}, {1, dim_ov}
+    };
+
+    Eigen::MatrixXd G_iajb = Eigen::MatrixXd::Zero(dim_ov, dim_ov);
+    MemRef2D G_desc = {
+        G_iajb.data(), G_iajb.data(), 0,
+        {dim_ov, dim_ov}, {1, dim_ov}
+    };
+
+    std::vector<void*> args = {
+        &B_desc.allocated, &B_desc.aligned, &B_desc.offset, &B_desc.sizes[0], &B_desc.sizes[1], &B_desc.strides[0], &B_desc.strides[1],
+        &B_desc.allocated, &B_desc.aligned, &B_desc.offset, &B_desc.sizes[0], &B_desc.sizes[1], &B_desc.strides[0], &B_desc.strides[1],
+        &G_desc.allocated, &G_desc.aligned, &G_desc.offset, &G_desc.sizes[0], &G_desc.sizes[1], &G_desc.strides[0], &G_desc.strides[1]
+    };
+
+    if (auto err = engine->invoke("contract_kernel", args)) {
+        std::cerr << "[FATAL] Terjadi interupsi pada JIT Runtime.
+";
+        exit(1);
+    }
+
+    if (config_.print_level > 0) std::cout << "  [HPC] Matriks Densitas Korelasi berhasil ditransformasi via MLIR.
+";
     #endif
 
     const Eigen::VectorXd& eps = scf_.orbital_energies_alpha;

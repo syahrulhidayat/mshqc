@@ -44,6 +44,7 @@ struct LowerToLLVMPass : public impl::LowerToLLVMBase<LowerToLLVMPass> {
 
         mlir::LLVMConversionTarget target(getContext());
         target.addLegalOp<mlir::ModuleOp>();
+        target.addLegalDialect<mlir::omp::OpenMPDialect>();
 
         mlir::LLVMTypeConverter typeConverter(&getContext());
         mlir::RewritePatternSet patterns(&getContext());

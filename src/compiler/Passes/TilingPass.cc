@@ -2,9 +2,6 @@
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
-#include "mlir/IR/PatternMatch.h"
-#include "mlir/Dialect/Vector/IR/VectorOps.h"
-#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 namespace mshqc {
 namespace compiler {
@@ -14,42 +11,30 @@ namespace compiler {
 
 namespace {
 
-struct GenericVectorizationPattern : public mlir::OpInterfaceRewritePattern<mlir::linalg::LinalgOp> {
-    using OpInterfaceRewritePattern<mlir::linalg::LinalgOp>::OpInterfaceRewritePattern;
-    mlir::LogicalResult matchAndRewrite(mlir::linalg::LinalgOp op, mlir::PatternRewriter &rewriter) const override {
-        if (mlir::failed(mlir::linalg::vectorize(rewriter, op))) {
-            return mlir::failure();
-        }
-        return mlir::success();
-    }
-};
-
 struct LinalgTilingPass : public impl::LinalgTilingBase<LinalgTilingPass> {
     using LinalgTilingBase::LinalgTilingBase;
     void getDependentDialects(mlir::DialectRegistry &registry) const override {
-        registry.insert<mlir::scf::SCFDialect, mlir::linalg::LinalgDialect, mlir::vector::VectorDialect>();
+        registry.insert<mlir::scf::SCFDialect, mlir::linalg::LinalgDialect>();
     }
     void runOnOperation() override {
         mlir::func::FuncOp funcOp = getOperation();
         mlir::IRRewriter rewriter(&getContext());
 
-        llvm::SmallVector<int64_t> baseTiles(tileSizes.begin(), tileSizes.end());
-        if (baseTiles.empty()) {
-            baseTiles = {8, 8, 8, 8};
-        }
-
         llvm::SmallVector<mlir::linalg::LinalgOp, 4> targetOps;
         funcOp.walk([&](mlir::linalg::LinalgOp op) {
-            if (!op->hasAttr("tiled")) {
+            if (!op->hasAttr("tiled") && mlir::isa<mlir::linalg::GenericOp>(op)) {
                 targetOps.push_back(op);
             }
         });
 
         for (auto op : targetOps) {
-            llvm::SmallVector<int64_t> opTiles = baseTiles;
-            unsigned numLoops = op.getNumLoops();
-            if (numLoops < opTiles.size()) {
-                opTiles.resize(numLoops);
+            llvm::SmallVector<int64_t> opTiles;
+            for (auto iterType : op.getIteratorTypesArray()) {
+                if (iterType == mlir::utils::IteratorType::parallel) {
+                    opTiles.push_back(8);
+                } else {
+                    opTiles.push_back(0);
+                }
             }
 
             mlir::linalg::LinalgTilingOptions tilingOptions;
@@ -70,11 +55,6 @@ struct LinalgTilingPass : public impl::LinalgTilingBase<LinalgTilingPass> {
             }
         }
 
-        mlir::RewritePatternSet vectorPatterns(&getContext());
-        vectorPatterns.add<GenericVectorizationPattern>(&getContext());
-        if (mlir::failed(mlir::applyPatternsGreedily(getOperation(), std::move(vectorPatterns)))) {
-            signalPassFailure();
-        }
     }
 };
 }
