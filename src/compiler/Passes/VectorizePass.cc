@@ -15,6 +15,7 @@
  // limitations under the License.
  // ==============================================================================
 
+
 #include "mshqc/compiler/Passes/Passes.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
@@ -35,10 +36,9 @@ struct LinalgVectorizePass : public impl::LinalgVectorizeBase<LinalgVectorizePas
     void runOnOperation() override {
         mlir::func::FuncOp funcOp = getOperation();
         mlir::IRRewriter rewriter(&getContext());
-
         llvm::SmallVector<mlir::linalg::LinalgOp, 4> targetOps;
-        funcOp.walk([&](mlir::linalg::LinalgOp op) {
 
+        funcOp.walk([&](mlir::linalg::LinalgOp op) {
             if (op->hasAttr("tiled")) {
                 targetOps.push_back(op);
             }
@@ -46,16 +46,18 @@ struct LinalgVectorizePass : public impl::LinalgVectorizeBase<LinalgVectorizePas
 
         for (auto op : targetOps) {
             rewriter.setInsertionPoint(op);
+            // Eksekusi vektorisasi fallback tanpa memaksakan Struct Options
+            // (Menghindari diskrepansi API pada versi MLIR yang berbeda)
             (void)mlir::linalg::vectorize(rewriter, op);
+            llvm::errs() << "[METRIK] SIMD Vectorization Pass dieksekusi pada node Linalg.\n";
         }
     }
 };
-
 } // end anonymous namespace
 
 std::unique_ptr<mlir::Pass> createLinalgVectorizePass() {
     return std::make_unique<LinalgVectorizePass>();
 }
 
-}
-}
+} // namespace compiler
+} // namespace mshqc
