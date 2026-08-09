@@ -35,27 +35,31 @@ struct LinalgTilingPass : public impl::LinalgTilingBase<LinalgTilingPass> {
 
         llvm::SmallVector<int64_t> baseTiles(tileSizes.begin(), tileSizes.end());
         if (baseTiles.empty()) {
-            baseTiles = {8, 8, 8, 8}; // Constraint L1 Cache FP64
+            baseTiles = {8, 8, 8, 8};
         }
 
+        llvm::SmallVector<mlir::linalg::LinalgOp, 4> targetOps;
         funcOp.walk([&](mlir::linalg::LinalgOp op) {
-            if (op->hasAttr("tiled")) return mlir::WalkResult::advance();
-            
-            // Mitigasi absolut: Konfigurasi array rank secara dinamis
+            if (!op->hasAttr("tiled")) {
+                targetOps.push_back(op);
+            }
+        });
+
+        for (auto op : targetOps) {
             llvm::SmallVector<int64_t> opTiles = baseTiles;
             unsigned numLoops = op.getNumLoops();
             if (numLoops < opTiles.size()) {
                 opTiles.resize(numLoops);
             }
-            
+
             mlir::linalg::LinalgTilingOptions tilingOptions;
             tilingOptions.setTileSizes(opTiles);
             tilingOptions.setLoopType(mlir::linalg::LinalgTilingLoopType::ParallelLoops);
-            
+
             rewriter.setInsertionPoint(op);
             mlir::FailureOr<mlir::linalg::TiledLinalgOp> tilingResult =
                 mlir::linalg::tileLinalgOp(rewriter, op, tilingOptions);
-                
+
             if (mlir::succeeded(tilingResult)) {
                 tilingResult->op->setAttr("tiled", rewriter.getUnitAttr());
                 if (!tilingResult->tensorResults.empty()) {
@@ -64,8 +68,7 @@ struct LinalgTilingPass : public impl::LinalgTilingBase<LinalgTilingPass> {
                     rewriter.eraseOp(op);
                 }
             }
-            return mlir::WalkResult::advance();
-        });
+        }
 
         mlir::RewritePatternSet vectorPatterns(&getContext());
         vectorPatterns.add<GenericVectorizationPattern>(&getContext());
@@ -74,11 +77,11 @@ struct LinalgTilingPass : public impl::LinalgTilingBase<LinalgTilingPass> {
         }
     }
 };
-} // namespace
+}
 
 std::unique_ptr<mlir::Pass> createLinalgTilingPass() {
     return std::make_unique<LinalgTilingPass>();
 }
 
-} // namespace compiler
-} // namespace mshqc
+}
+}
