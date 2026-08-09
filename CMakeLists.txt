@@ -13,7 +13,7 @@ set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
 # ==============================================================================
 # BUILD OPTIONS
 # ==============================================================================
-option(MSHQC_ENABLE_NATIVE_OPT "Enable hardware-specific optimization (-march=native)" ON)
+option(MSHQC_ENABLE_NATIVE_OPT "Enable hardware-specific optimization (-march=native)" OFF)
 option(MSHQC_ENABLE_IPO "Enable Interprocedural Optimization (LTO)" ON)
 
 if(DEFINED ENV{GITHUB_ACTIONS})

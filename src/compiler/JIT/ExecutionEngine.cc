@@ -44,6 +44,18 @@ llvm::Expected<std::unique_ptr<MshqcJIT>> MshqcJIT::create(mlir::ModuleOp module
     mlir::registerLLVMDialectTranslation(*module->getContext());
     mlir::registerOpenMPDialectTranslation(*module->getContext());
 
+    
+
+    mlir::StringAttr targetFeatures = mlir::StringAttr::get(
+        module->getContext(), 
+        "+avx2,-avx512f,-avx512vl,-avx512bw,-avx512dq,-avx512cd"
+    );
+    mlir::StringAttr targetCPU = mlir::StringAttr::get(module->getContext(), "haswell");
+
+    module->setAttr("llvm.target_features", targetFeatures);
+    module->setAttr("llvm.target_cpu", targetCPU);
+    module->setAttr("llvm.tune_cpu", mlir::StringAttr::get(module->getContext(), "generic"));
+
     auto engine = mlir::ExecutionEngine::create(module, engineOptions);
     if (!engine) {
         return engine.takeError();
