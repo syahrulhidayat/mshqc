@@ -8,16 +8,17 @@
 
 ## Statement of Need & Architectural Novelty
 
-`mshqc` is an ultra-high-performance quantum chemistry library implementing modern electronic
-structure methods. Unlike legacy packages that rely on eager execution of isolated C/C++ kernels
-and high memory-bandwidth consumption, `mshqc` introduces an embedded C++20 MLIR pipeline
-(`MshqcDialect`).
+`mshqc` is a high-performance quantum chemistry library implementing modern electronic structure
+methods. Unlike traditional packages that rely on the eager execution of monolithic tensor kernels—
+often incurring severe memory-bandwidth bottlenecks due to intermediate read/write operations—`mshqc`
+introduces an embedded C++20 compiler pipeline powered by MLIR (`MshqcDialect`).
 
-This architecture performs domain-specific **cross-kernel loop fusion** and **tiling** on a
-high-level Intermediate Representation (IR) prior to Just-In-Time (JIT) code generation via the
-LLVM ORCJIT infrastructure [1, 2]. This approach systematically eliminates intermediate tensor
-DRAM allocation by maintaining execution strictly within L1/L2 cache boundaries [3]. Inter-
-operability with Python is enforced via zero-overhead `nanobind` bindings [4].
+This architecture performs domain-specific **cross-kernel loop fusion** and **cache-aware tiling**
+on a high-level Intermediate Representation (IR) prior to Just-In-Time (JIT) code generation via the
+LLVM ORCJIT infrastructure. This approach systematically minimizes intermediate DRAM traffic
+by enforcing temporal and spatial data locality within L1/L2 cache boundaries during highly-contracted
+operations. Interoperability with Python is enforced via zero-overhead `nanobind` interfaces.
+
 
 ---
 

@@ -1,3 +1,4 @@
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
  // ==============================================================================
  // Copyright (c) 2026 Muhamad Syahrul Hidayat and mshqc contributors
  //
@@ -76,7 +77,7 @@ struct LinalgTilingPass : public impl::LinalgTilingBase<LinalgTilingPass> {
     }
 };
 
-}
+} // end anonymous namespace
 
 std::unique_ptr<mlir::Pass> createLinalgTilingPass() {
     return std::make_unique<LinalgTilingPass>();

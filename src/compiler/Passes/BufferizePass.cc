@@ -1,3 +1,4 @@
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
  // ==============================================================================
  // Copyright (c) 2026 Muhamad Syahrul Hidayat and mshqc contributors
  //
@@ -39,7 +40,6 @@ struct BufferizePass : public impl::BufferizeBase<BufferizePass> {
         options.bufferizeFunctionBoundaries = true;
 
         mlir::ModuleOp module = getOperation();
-
         mlir::bufferization::BufferizationState bufferizationState;
 
         if (mlir::failed(mlir::bufferization::runOneShotModuleBufferize(
@@ -48,7 +48,8 @@ struct BufferizePass : public impl::BufferizeBase<BufferizePass> {
         }
     }
 };
-}
+
+} // end anonymous namespace
 
 std::unique_ptr<mlir::Pass> createBufferizePass() {
     return std::make_unique<BufferizePass>();

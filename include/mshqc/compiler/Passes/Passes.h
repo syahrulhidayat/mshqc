@@ -36,6 +36,9 @@ std::unique_ptr<mlir::Pass> createLinalgTilingPass();
 
 std::unique_ptr<mlir::Pass> createLowerToLLVMPass();
 
+std::unique_ptr<mlir::Pass> createLinalgVectorizePass();
+std::unique_ptr<mlir::Pass> createFusionPass();
+
 #define GEN_PASS_REGISTRATION
 #include "Passes.h.inc"
 

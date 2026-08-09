@@ -1,3 +1,4 @@
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
  // ==============================================================================
  // Copyright (c) 2026 Muhamad Syahrul Hidayat and mshqc contributors
  //
@@ -49,7 +50,8 @@ struct LinalgVectorizePass : public impl::LinalgVectorizeBase<LinalgVectorizePas
         }
     }
 };
-}
+
+} // end anonymous namespace
 
 std::unique_ptr<mlir::Pass> createLinalgVectorizePass() {
     return std::make_unique<LinalgVectorizePass>();

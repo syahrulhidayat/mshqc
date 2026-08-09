@@ -1,3 +1,4 @@
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
  // ==============================================================================
  // Copyright (c) 2026 Muhamad Syahrul Hidayat and mshqc contributors
  //
@@ -172,7 +173,8 @@ struct LowerToLinalgPass : public impl::LowerToLinalgBase<LowerToLinalgPass> {
         }
     }
 };
-}
+
+} // end anonymous namespace
 
 std::unique_ptr<mlir::Pass> createLowerToLinalgPass() {
     return std::make_unique<LowerToLinalgPass>();

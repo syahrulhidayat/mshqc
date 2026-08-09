@@ -1,3 +1,4 @@
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
  // ==============================================================================
  // Copyright (c) 2026 Muhamad Syahrul Hidayat and mshqc contributors
  //
@@ -56,8 +57,7 @@ mlir::Value GraphBuilder::emitContractOp(const std::vector<int64_t>& lhsShape,
     Value lhsArg = entryBlock->getArgument(0);
     Value rhsArg = entryBlock->getArgument(1);
 
-    auto contractNode = builder.create<mshqc::compiler::ContractOp>(
-        loc, resTensorType, lhsArg, rhsArg, builder.getStringAttr(einsum_eq)
+    auto contractNode = builder.create<mshqc::compiler::ContractOp>(loc, resTensorType, lhsArg, rhsArg, builder.getStringAttr(einsum_eq)
     );
 
     builder.create<func::ReturnOp>(loc, contractNode.getResult());
