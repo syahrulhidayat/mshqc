@@ -3,8 +3,6 @@
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
-#include "mlir/Dialect/Linalg/Transforms/Transforms.h"
-#include "mlir/Dialect/Vector/IR/VectorOps.h"
 
 namespace mshqc {
 namespace compiler {
@@ -16,9 +14,12 @@ namespace {
 
 struct LinalgTilingPass : public impl::LinalgTilingBase<LinalgTilingPass> {
     using LinalgTilingBase::LinalgTilingBase;
+
     void getDependentDialects(mlir::DialectRegistry &registry) const override {
-        registry.insert<mlir::scf::SCFDialect, mlir::linalg::LinalgDialect>, mlir::vector::VectorDialect>();
+
+        registry.insert<mlir::scf::SCFDialect, mlir::linalg::LinalgDialect, mlir::vector::VectorDialect>();
     }
+
     void runOnOperation() override {
         mlir::func::FuncOp funcOp = getOperation();
         mlir::IRRewriter rewriter(&getContext());
@@ -37,9 +38,6 @@ struct LinalgTilingPass : public impl::LinalgTilingBase<LinalgTilingPass> {
                 if (iterType == mlir::utils::IteratorType::parallel) {
                     opTiles.push_back(32);
                 } else {
-                    opTiles.push_back(8);
-                }
-            } else {
                     opTiles.push_back(8);
                 }
             }
@@ -64,9 +62,9 @@ struct LinalgTilingPass : public impl::LinalgTilingBase<LinalgTilingPass> {
                 (void)mlir::linalg::vectorize(rewriter, tilingResult->op);
             }
         }
-
     }
 };
+
 }
 
 std::unique_ptr<mlir::Pass> createLinalgTilingPass() {
