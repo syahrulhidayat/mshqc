@@ -17,21 +17,18 @@
 #include "mshqc/compiler/Passes/Passes.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
-#include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 
 namespace mshqc {
 namespace compiler {
 
-#define GEN_PASS_DEF_LINALGTILING
+#define GEN_PASS_DEF_LINALGVECTORIZE
 #include "Passes.h.inc"
 
 namespace {
-
-struct LinalgTilingPass : public impl::LinalgTilingBase<LinalgTilingPass> {
-    using LinalgTilingBase::LinalgTilingBase;
-
+struct LinalgVectorizePass : public impl::LinalgVectorizeBase<LinalgVectorizePass> {
     void getDependentDialects(mlir::DialectRegistry &registry) const override {
-        registry.insert<mlir::scf::SCFDialect, mlir::linalg::LinalgDialect>();
+        registry.insert<mlir::linalg::LinalgDialect, mlir::vector::VectorDialect>();
     }
 
     void runOnOperation() override {
@@ -40,46 +37,22 @@ struct LinalgTilingPass : public impl::LinalgTilingBase<LinalgTilingPass> {
 
         llvm::SmallVector<mlir::linalg::LinalgOp, 4> targetOps;
         funcOp.walk([&](mlir::linalg::LinalgOp op) {
-            if (!op->hasAttr("tiled") && mlir::isa<mlir::linalg::GenericOp>(op)) {
+
+            if (op->hasAttr("tiled")) {
                 targetOps.push_back(op);
             }
         });
 
         for (auto op : targetOps) {
-            llvm::SmallVector<int64_t> opTiles;
-
-            for (auto iterType : op.getIteratorTypesArray()) {
-                if (iterType == mlir::utils::IteratorType::parallel) {
-                    opTiles.push_back(32);
-                } else {
-                    opTiles.push_back(0);
-                }
-            }
-
-            mlir::linalg::LinalgTilingOptions tilingOptions;
-            tilingOptions.setTileSizes(opTiles);
-            tilingOptions.setLoopType(mlir::linalg::LinalgTilingLoopType::ParallelLoops);
-
             rewriter.setInsertionPoint(op);
-            mlir::FailureOr<mlir::linalg::TiledLinalgOp> tilingResult =
-                mlir::linalg::tileLinalgOp(rewriter, op, tilingOptions);
-
-            if (mlir::succeeded(tilingResult)) {
-                tilingResult->op->setAttr("tiled", rewriter.getUnitAttr());
-                if (!tilingResult->tensorResults.empty()) {
-                    rewriter.replaceOp(op, tilingResult->tensorResults);
-                } else {
-                    rewriter.eraseOp(op);
-                }
-            }
+            (void)mlir::linalg::vectorize(rewriter, op);
         }
     }
 };
-
 }
 
-std::unique_ptr<mlir::Pass> createLinalgTilingPass() {
-    return std::make_unique<LinalgTilingPass>();
+std::unique_ptr<mlir::Pass> createLinalgVectorizePass() {
+    return std::make_unique<LinalgVectorizePass>();
 }
 
 }

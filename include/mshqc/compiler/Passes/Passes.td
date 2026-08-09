@@ -1,3 +1,19 @@
+ // ==============================================================================
+ // Copyright (c) 2026 Syahrul and mshqc contributors
+ //
+ // Licensed under the Apache License, Version 2.0 (the "License");
+ // you may not use this file except in compliance with the License.
+ // You may obtain a copy of the License at
+ //
+ //     http://www.apache.org/licenses/LICENSE-2.0
+ //
+ // Unless required by applicable law or agreed to in writing, software
+ // distributed under the License is distributed on an "AS IS" BASIS,
+ // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ // See the License for the specific language governing permissions and
+ // limitations under the License.
+ // ==============================================================================
+
 include "mlir/Pass/PassBase.td"
 
 def LowerToLinalg : Pass<"mshqc-lower-to-linalg", "::mlir::func::FuncOp"> {
@@ -26,4 +42,8 @@ def LowerToLLVM : Pass<"mshqc-lower-to-llvm", "::mlir::ModuleOp"> {
 def Bufferize : Pass<"mshqc-bufferize", "::mlir::ModuleOp"> {
     let summary = "Menerjemahkan semantik Tensor abstrak menjadi semantik MemRef fisik (Pointer).";
     let constructor = "mshqc::compiler::createBufferizePass()";
+}
+def LinalgVectorize : Pass<"mshqc-linalg-vectorize", "::mlir::func::FuncOp"> {
+    let summary = "Apply SIMD vectorization to innermost Linalg operations.";
+    let constructor = "mshqc::compiler::createLinalgVectorizePass()";
 }
