@@ -23,6 +23,9 @@ llvm::Expected<std::unique_ptr<MshqcJIT>> MshqcJIT::create(mlir::ModuleOp module
     }
 
     mlir::ExecutionEngineOptions engineOptions;
+    // Mengaitkan runtime OpenMP host ke memori JIT
+    std::vector<llvm::StringRef> sharedLibs = {"libomp.so"}; // Pastikan libomp.so ada di LD_LIBRARY_PATH host
+    engineOptions.sharedLibPaths = sharedLibs;
     engineOptions.jitCodeGenOptLevel = llvm::CodeGenOpt::Aggressive;
     engineOptions.transformer = mlir::makeOptimizingTransformer(
         3, 0, targetMachineBuilder ? &targetMachineBuilder.get() : nullptr);
