@@ -1,0 +1,384 @@
+% ============================================================
+%  paper.bib — Bibliography for mshqc JOSS submission
+%  All 28 references; citation keys match paper.md exactly.
+% ============================================================
+
+% ── Compiler Infrastructure & JIT ───────────────────────────
+
+@inproceedings{lattner2021mlir,
+  title     = {{MLIR}: Scaling Compiler Infrastructure for Domain Specific Computation},
+  author    = {Lattner, Chris and Amini, Mehdi and Bondhugula, Uday and
+               Cohen, Albert and Davis, Andy and Pienaar, Jacques and
+               Riddle, River and Shpeisman, Tatiana and Vasilache, Nicolas and
+               Zinenko, Oleksandr},
+  booktitle = {2021 {IEEE/ACM} International Symposium on Code Generation
+               and Optimization ({CGO})},
+  pages     = {2--14},
+  year      = {2021},
+  publisher = {IEEE},
+  doi       = {10.1109/CGO51591.2021.9370308}
+}
+
+@inproceedings{lattner2004llvm,
+  title     = {{LLVM}: A Compilation Framework for Lifelong Program Analysis
+               and Transformation},
+  author    = {Lattner, Chris and Adve, Vikram},
+  booktitle = {Proceedings of the International Symposium on Code Generation
+               and Optimization ({CGO})},
+  pages     = {75--86},
+  year      = {2004},
+  publisher = {IEEE},
+  doi       = {10.1109/CGO.2004.1281665}
+}
+
+% ── Cache-Blocking & Loop Tiling ────────────────────────────
+
+@inproceedings{bondhugula2008practical,
+  title     = {A Practical Automatic Polyhedral Parallelizer and Locality Optimizer},
+  author    = {Bondhugula, Uday and Hartono, Albert and Ramanujam, J. and
+               Sadayappan, P.},
+  booktitle = {Proceedings of the 29th {ACM} {SIGPLAN} Conference on
+               Programming Language Design and Implementation ({PLDI})},
+  pages     = {101--113},
+  year      = {2008},
+  publisher = {ACM},
+  doi       = {10.1145/1375581.1375595}
+}
+
+% ── Python Bindings ─────────────────────────────────────────
+
+@misc{jakob2022nanobind,
+  title        = {nanobind: Tiny and efficient {C++/Python} bindings},
+  author       = {Jakob, Wenzel},
+  year         = {2022},
+  howpublished = {\url{https://github.com/wjakob/nanobind}}
+}
+
+% ── Molecular Electronic Structure Theory ───────────────────
+
+@book{helgaker2000molecular,
+  title     = {Molecular Electronic-Structure Theory},
+  author    = {Helgaker, Trygve and J{\o}rgensen, Poul and Olsen, Jeppe},
+  year      = {2000},
+  publisher = {John Wiley \& Sons},
+  address   = {Chichester},
+  doi       = {10.1002/9781119019572}
+}
+
+% ── Basis Sets ──────────────────────────────────────────────
+
+@article{dunning1989gaussian,
+  title     = {Gaussian basis sets for use in correlated molecular calculations.
+               {I}. The atoms boron through neon and hydrogen},
+  author    = {Dunning, Thom H.},
+  journal   = {The Journal of Chemical Physics},
+  volume    = {90},
+  number    = {2},
+  pages     = {1007--1023},
+  year      = {1989},
+  publisher = {AIP},
+  doi       = {10.1063/1.456153}
+}
+
+% ── Point Group Symmetry ─────────────────────────────────────
+
+@book{atkins1970tables,
+  title     = {Tables for Group Theory},
+  author    = {Atkins, P. W. and Child, M. S. and Phillips, C. S. G.},
+  year      = {1970},
+  publisher = {Oxford University Press},
+  address   = {Oxford}
+}
+
+% ── Integral Evaluation — libcint ───────────────────────────
+
+@article{sun2015libcint,
+  title     = {Libcint: An efficient general integral library for
+               {G}aussian basis functions},
+  author    = {Sun, Qiming},
+  journal   = {Journal of Computational Chemistry},
+  volume    = {36},
+  number    = {22},
+  pages     = {1664--1671},
+  year      = {2015},
+  publisher = {Wiley},
+  doi       = {10.1002/jcc.23981}
+}
+
+% ── Cholesky Decomposition of ERIs ──────────────────────────
+
+@article{beebe1977simplifications,
+  title     = {Simplifications in the generation and transformation of
+               two-electron integrals in molecular calculations},
+  author    = {Beebe, Nelson H. F. and Linderberg, Jan},
+  journal   = {International Journal of Quantum Chemistry},
+  volume    = {12},
+  number    = {4},
+  pages     = {683--705},
+  year      = {1977},
+  publisher = {Wiley},
+  doi       = {10.1002/qua.560120408}
+}
+
+@article{koch2003reduced,
+  title     = {Reduced scaling in electronic structure calculations using
+               {C}holesky decompositions},
+  author    = {Koch, Henrik and S{\'a}nchez de Mer{\'a}s, Alfredo and
+               Pedersen, Thomas Bondo},
+  journal   = {The Journal of Chemical Physics},
+  volume    = {118},
+  number    = {21},
+  pages     = {9481--9484},
+  year      = {2003},
+  publisher = {AIP},
+  doi       = {10.1063/1.1578621}
+}
+
+% ── Integral Screening (Schwarz) ─────────────────────────────
+
+@article{haser1989improvements,
+  title     = {Improvements on the direct {SCF} method},
+  author    = {H{\"a}ser, Marco and Ahlrichs, Reinhart},
+  journal   = {Journal of Computational Chemistry},
+  volume    = {10},
+  number    = {1},
+  pages     = {104--111},
+  year      = {1989},
+  publisher = {Wiley},
+  doi       = {10.1002/jcc.540100111}
+}
+
+% ── Restricted Hartree-Fock ──────────────────────────────────
+
+@article{roothaan1951new,
+  title     = {New Developments in Molecular Orbital Theory},
+  author    = {Roothaan, Clemens C. J.},
+  journal   = {Reviews of Modern Physics},
+  volume    = {23},
+  number    = {2},
+  pages     = {69--89},
+  year      = {1951},
+  publisher = {APS},
+  doi       = {10.1103/RevModPhys.23.69}
+}
+
+% ── Unrestricted Hartree-Fock ────────────────────────────────
+
+@article{pople1954self,
+  title     = {Self-Consistent Orbitals for Radicals},
+  author    = {Pople, John A. and Nesbet, Robert K.},
+  journal   = {The Journal of Chemical Physics},
+  volume    = {22},
+  number    = {3},
+  pages     = {571--572},
+  year      = {1954},
+  publisher = {AIP},
+  doi       = {10.1063/1.1740120}
+}
+
+% ── Restricted Open-shell Hartree-Fock ──────────────────────
+
+@article{roothaan1960self,
+  title     = {Self-Consistent Field Theory for Open Shells of Electronic Systems},
+  author    = {Roothaan, Clemens C. J.},
+  journal   = {Reviews of Modern Physics},
+  volume    = {32},
+  number    = {2},
+  pages     = {179--185},
+  year      = {1960},
+  publisher = {APS},
+  doi       = {10.1103/RevModPhys.32.179}
+}
+
+% ── DIIS Convergence Acceleration ───────────────────────────
+
+@article{pulay1980convergence,
+  title     = {Convergence acceleration of iterative sequences.
+               The case of {SCF} iteration},
+  author    = {Pulay, P{\'e}ter},
+  journal   = {Chemical Physics Letters},
+  volume    = {73},
+  number    = {2},
+  pages     = {393--398},
+  year      = {1980},
+  publisher = {Elsevier},
+  doi       = {10.1016/0009-2614(80)80396-4}
+}
+
+@article{pulay1982improved,
+  title     = {Improved {SCF} convergence acceleration},
+  author    = {Pulay, P{\'e}ter},
+  journal   = {Journal of Computational Chemistry},
+  volume    = {3},
+  number    = {4},
+  pages     = {556--560},
+  year      = {1982},
+  publisher = {Wiley},
+  doi       = {10.1002/jcc.540030413}
+}
+
+% ── Møller-Plesset Perturbation Theory ──────────────────────
+
+@article{moller1934note,
+  title     = {Note on an Approximation Treatment for Many-Electron Systems},
+  author    = {M{\o}ller, Chr. and Plesset, Milton S.},
+  journal   = {Physical Review},
+  volume    = {46},
+  number    = {7},
+  pages     = {618--622},
+  year      = {1934},
+  publisher = {APS},
+  doi       = {10.1103/PhysRev.46.618}
+}
+
+@article{head1988mp2,
+  title     = {{MP2} energy evaluation by direct methods},
+  author    = {Head-Gordon, Martin and Pople, John A. and Frisch, Michael J.},
+  journal   = {Chemical Physics Letters},
+  volume    = {153},
+  number    = {6},
+  pages     = {503--506},
+  year      = {1988},
+  publisher = {Elsevier},
+  doi       = {10.1016/0009-2614(88)85250-3}
+}
+
+% ── Orbital-Optimized MP2 ────────────────────────────────────
+
+@article{neese2009assessment,
+  title     = {Assessment of Orbital-Optimized, Spin-Component Scaled
+               Second-Order Many-Body Perturbation Theory for Thermochemistry
+               and Kinetics},
+  author    = {Neese, Frank and Schwabe, Tobias and Kossmann, Simone and
+               Schirmer, Bernd and Grimme, Stefan},
+  journal   = {Journal of Chemical Theory and Computation},
+  volume    = {5},
+  number    = {11},
+  pages     = {3060--3073},
+  year      = {2009},
+  publisher = {ACS},
+  doi       = {10.1021/ct9003299}
+}
+
+% ── MP3 ─────────────────────────────────────────────────────
+
+@article{pople1976theoretical,
+  title     = {Theoretical Models Incorporating Electron Correlation},
+  author    = {Pople, John A. and Binkley, J. Stephen and Seeger, Rolf},
+  journal   = {International Journal of Quantum Chemistry},
+  volume    = {10},
+  number    = {S10},
+  pages     = {1--19},
+  year      = {1976},
+  publisher = {Wiley},
+  doi       = {10.1002/qua.560100802}
+}
+
+% ── Orbital-Optimized MP3 ────────────────────────────────────
+
+@article{bozkaya2011quadratically,
+  title     = {Quadratically convergent algorithm for orbital optimization in the
+               orbital-optimized coupled-cluster doubles method and in
+               orbital-optimized second-order {M\o{}ller-Plesset} perturbation theory},
+  author    = {Bozkaya, U{\u{g}}ur and Turney, Justin M. and Yamaguchi, Yukio and
+               Schaefer, Henry F. and Sherrill, C. David},
+  journal   = {The Journal of Chemical Physics},
+  volume    = {135},
+  number    = {10},
+  pages     = {104103},
+  year      = {2011},
+  publisher = {AIP},
+  doi       = {10.1063/1.3631129}
+}
+
+% ── Analytical Gradients ─────────────────────────────────────
+
+@article{pulay1969abinitio,
+  title     = {Ab initio calculation of force constants and equilibrium
+               geometries in polyatomic molecules},
+  author    = {Pulay, P{\'e}ter},
+  journal   = {Molecular Physics},
+  volume    = {17},
+  number    = {2},
+  pages     = {197--204},
+  year      = {1969},
+  publisher = {Taylor \& Francis},
+  doi       = {10.1080/00268976900100941}
+}
+
+@article{pople1979derivative,
+  title     = {Derivative studies in {H}artree-{F}ock and {M\o{}ller-Plesset} theories},
+  author    = {Pople, John A. and Krishnan, Raghavachari and Schlegel, H. Bernhard
+               and Binkley, J. Stephen},
+  journal   = {International Journal of Quantum Chemistry},
+  volume    = {16},
+  number    = {S13},
+  pages     = {225--241},
+  year      = {1979},
+  publisher = {Wiley},
+  doi       = {10.1002/qua.560160825}
+}
+
+% ── Linear Algebra — Eigen ───────────────────────────────────
+
+@misc{guennebaud2010eigen,
+  title        = {Eigen v3},
+  author       = {Guennebaud, Ga{\"e}l and Jacob, Beno{\^i}t and others},
+  year         = {2010},
+  howpublished = {\url{http://eigen.tuxfamily.org}}
+}
+
+% ── Tensor Contraction — TBLIS ───────────────────────────────
+
+@article{matthews2017high,
+  title     = {High-Performance Tensor Contraction without Transposition},
+  author    = {Matthews, Devin A.},
+  journal   = {{SIAM} Journal on Scientific Computing},
+  volume    = {39},
+  number    = {6},
+  pages     = {C476--C509},
+  year      = {2017},
+  publisher = {SIAM},
+  doi       = {10.1137/16M108968X}
+}
+
+% ── HDF5 for I/O ─────────────────────────────────────────────
+
+@misc{hdfgroup1997hdf5,
+  title        = {Hierarchical Data Format, version 5},
+  author       = {{The HDF Group}},
+  year         = {1997},
+  howpublished = {\url{https://www.hdfgroup.org/HDF5/}},
+  note         = {Accessed 2024}
+}
+
+% ── OpenMP Parallelism ───────────────────────────────────────
+
+@article{dagum1998openmp,
+  title     = {{OpenMP}: An Industry Standard {API} for Shared-Memory Programming},
+  author    = {Dagum, Leonardo and Menon, Ramesh},
+  journal   = {{IEEE} Computational Science and Engineering},
+  volume    = {5},
+  number    = {1},
+  pages     = {46--55},
+  year      = {1998},
+  publisher = {IEEE},
+  doi       = {10.1109/99.660313}
+}
+
+% ── NumPy ────────────────────────────────────────────────────
+
+@article{harris2020array,
+  title     = {Array programming with {NumPy}},
+  author    = {Harris, Charles R. and Millman, K. Jarrod and
+               van der Walt, St{\'e}fan J. and Gommers, Ralf and
+               Virtanen, Pauli and Cournapeau, David and Wieser, Eric and
+               Taylor, Julian and Berg, Sebastian and Smith, Nathaniel J. and
+               others},
+  journal   = {Nature},
+  volume    = {585},
+  pages     = {357--362},
+  year      = {2020},
+  publisher = {Nature Publishing Group},
+  doi       = {10.1038/s41586-020-2649-2}
+}
