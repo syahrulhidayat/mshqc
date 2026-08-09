@@ -35,6 +35,7 @@ target_link_libraries(mshqc_compiler
     MLIRFuncDialect
     MLIRLinalgDialect
     MLIRSCFDialect
+    MLIRSCFUtils
     MLIRArithDialect
     MLIRMemRefDialect
     MLIRBufferizationDialect

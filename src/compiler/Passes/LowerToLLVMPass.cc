@@ -12,6 +12,7 @@
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/Conversion/VectorToLLVM/ConvertVectorToLLVM.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/SCF/Utils/Utils.h"
 #include "mlir/Dialect/MemRef/Transforms/Transforms.h"
 #include "mlir/Pass/Pass.h"
 #include "mlir/Transforms/DialectConversion.h"
@@ -29,6 +30,14 @@ struct LowerToLLVMPass : public impl::LowerToLLVMBase<LowerToLLVMPass> {
     }
 
     void runOnOperation() override {
+
+        getOperation().walk([](mlir::scf::ForOp forOp) {
+
+            if (forOp.getBody()->getOps<mlir::scf::ForOp>().empty()) {
+                (void)mlir::loopUnrollByFactor(forOp, 4);
+            }
+        });
+
         mlir::LLVMConversionTarget target(getContext());
         target.addLegalOp<mlir::ModuleOp>();
 
