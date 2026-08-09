@@ -51,9 +51,7 @@ struct LowerToLLVMPass : public impl::LowerToLLVMBase<LowerToLLVMPass> {
         mlir::memref::populateExpandStridedMetadataPatterns(patterns);
         mlir::populateAffineToStdConversionPatterns(patterns);
         mlir::populateSCFToControlFlowConversionPatterns(patterns);
-        // SCF -> OpenMP Worksharing Loops
-        mlir::populateSCFToOpenMPConversionPatterns(patterns);
-        // OpenMP -> LLVM IR
+
         mlir::populateOpenMPToLLVMConversionPatterns(typeConverter, patterns);
 
         mlir::arith::populateArithToLLVMConversionPatterns(typeConverter, patterns);

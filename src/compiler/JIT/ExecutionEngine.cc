@@ -17,18 +17,12 @@ llvm::Expected<std::unique_ptr<MshqcJIT>> MshqcJIT::create(mlir::ModuleOp module
     llvm::InitializeNativeTarget();
     llvm::InitializeNativeTargetAsmPrinter();
 
-    auto targetMachineBuilder = llvm::orc::JITTargetMachineBuilder::detectHost();
-    if (targetMachineBuilder) {
-        targetMachineBuilder->addFeatures("+avx512f,+avx512vl,+avx2,+fma");
-    }
-
     mlir::ExecutionEngineOptions engineOptions;
-    // Mengaitkan runtime OpenMP host ke memori JIT
-    std::vector<llvm::StringRef> sharedLibs = {"libomp.so"}; // Pastikan libomp.so ada di LD_LIBRARY_PATH host
+
+    std::vector<llvm::StringRef> sharedLibs = {"libomp.so"};
     engineOptions.sharedLibPaths = sharedLibs;
-    engineOptions.jitCodeGenOptLevel = llvm::CodeGenOpt::Aggressive;
-    engineOptions.transformer = mlir::makeOptimizingTransformer(
-        3, 0, targetMachineBuilder ? &targetMachineBuilder.get() : nullptr);
+    engineOptions.jitCodeGenOptLevel = llvm::CodeGenOptLevel::Aggressive;
+    engineOptions.transformer = mlir::makeOptimizingTransformer(3, 0, nullptr);
 
     mlir::registerBuiltinDialectTranslation(*module->getContext());
     mlir::registerLLVMDialectTranslation(*module->getContext());
