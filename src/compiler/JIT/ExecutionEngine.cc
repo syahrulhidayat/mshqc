@@ -38,7 +38,22 @@ llvm::Expected<std::unique_ptr<MshqcJIT>> MshqcJIT::create(mlir::ModuleOp module
     std::vector<llvm::StringRef> sharedLibs = {"libomp.so"};
     engineOptions.sharedLibPaths = sharedLibs;
     engineOptions.jitCodeGenOptLevel = llvm::CodeGenOptLevel::Aggressive;
-    engineOptions.transformer = mlir::makeOptimizingTransformer(3, 0, nullptr);
+    // Alokasi TargetMachine deterministik untuk LLVM IR PassManager
+    auto tmBuilderOrErr = llvm::orc::JITTargetMachineBuilder::detectHost();
+    if (!tmBuilderOrErr) return tmBuilderOrErr.takeError();
+    
+    // Sinkronisasi limitasi AVX2 pada level TargetMachine JIT
+    tmBuilderOrErr->getFeatures().AddFeature("avx512f", false);
+    tmBuilderOrErr->getFeatures().AddFeature("avx512vl", false);
+    tmBuilderOrErr->getFeatures().AddFeature("avx2", true);
+    
+    auto tmOrErr = tmBuilderOrErr->createTargetMachine();
+    if (!tmOrErr) return tmOrErr.takeError();
+    
+    // Injeksi kepemilikan TargetMachine (std::unique_ptr) ke dalam lambda transformer
+    engineOptions.transformer = [tm = std::move(tmOrErr.get())](llvm::Module *m) {
+        return mlir::makeOptimizingTransformer(3, 0, tm.get())(m);
+    };
 
     mlir::registerBuiltinDialectTranslation(*module->getContext());
     mlir::registerLLVMDialectTranslation(*module->getContext());
