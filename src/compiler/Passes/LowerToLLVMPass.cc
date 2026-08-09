@@ -19,7 +19,9 @@
 #include "mlir/Dialect/SCF/Utils/Utils.h"
 #include "mlir/Dialect/MemRef/Transforms/Transforms.h"
 #include "mlir/Pass/Pass.h"
+#include "mlir/Pass/PassManager.h"
 #include "mlir/Transforms/DialectConversion.h"
+#include "mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h"
 
 namespace mshqc {
 namespace compiler {
@@ -60,11 +62,20 @@ struct LowerToLLVMPass : public impl::LowerToLLVMBase<LowerToLLVMPass> {
         mlir::cf::populateControlFlowToLLVMConversionPatterns(typeConverter, patterns);
         mlir::populateVectorToLLVMConversionPatterns(typeConverter, patterns);
         mlir::populateFuncToLLVMConversionPatterns(typeConverter, patterns);
+        
 
         auto module = getOperation();
         if (mlir::failed(mlir::applyFullConversion(module, target, std::move(patterns)))) {
             signalPassFailure();
         }
+
+        // Resolusi native untuk memori artefak Unrealized Conversion Casts
+        mlir::PassManager pm(&getContext());
+        pm.addPass(mlir::createReconcileUnrealizedCastsPass());
+        if (mlir::failed(pm.run(module))) {
+            signalPassFailure();
+        }
+        
     }
 };
 }

@@ -93,11 +93,11 @@ struct ContractOpLowering : public mlir::OpRewritePattern<ContractOp> {
         auto rhsType = ::llvm::cast<mlir::ShapedType>(rhs.getType());
         auto resType = ::llvm::cast<mlir::ShapedType>(op.getResult().getType());
 
-        mlir::Value zero = rewriter.create<mlir::arith::ConstantOp>(
+        mlir::Value zero = mlir::arith::ConstantOp::create(
             loc, rewriter.getFloatAttr(resType.getElementType(), 0.0));
-        mlir::Value initTensor = rewriter.create<mlir::tensor::EmptyOp>(
+        mlir::Value initTensor = mlir::tensor::EmptyOp::create(
             loc, resType.getShape(), resType.getElementType());
-        mlir::Value filledTensor = rewriter.create<mlir::linalg::FillOp>(
+        mlir::Value filledTensor = mlir::linalg::FillOp::create(
             loc, mlir::ValueRange{zero}, mlir::ValueRange{initTensor}).result();
 
         llvm::SmallVector<mlir::utils::IteratorType, 5> iteratorTypes;
@@ -107,7 +107,7 @@ struct ContractOpLowering : public mlir::OpRewritePattern<ContractOp> {
             return op.emitError("Failed to parse einsum equation into AffineMaps");
         }
 
-        auto linalgOp = rewriter.create<mlir::linalg::GenericOp>(
+        auto linalgOp = mlir::linalg::GenericOp::create(
             loc,
             mlir::TypeRange{resType},
             mlir::ValueRange{lhs, rhs},
