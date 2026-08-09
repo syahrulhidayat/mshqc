@@ -12,6 +12,10 @@
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
 #include "mlir/Conversion/VectorToLLVM/ConvertVectorToLLVM.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/OpenMP/OpenMPDialect.h"
+#include "mlir/Conversion/SCFToOpenMP/SCFToOpenMP.h"
+#include "mlir/Conversion/OpenMPToLLVM/ConvertOpenMPToLLVM.h"
+
 #include "mlir/Dialect/SCF/Utils/Utils.h"
 #include "mlir/Dialect/MemRef/Transforms/Transforms.h"
 #include "mlir/Pass/Pass.h"
@@ -47,6 +51,11 @@ struct LowerToLLVMPass : public impl::LowerToLLVMBase<LowerToLLVMPass> {
         mlir::memref::populateExpandStridedMetadataPatterns(patterns);
         mlir::populateAffineToStdConversionPatterns(patterns);
         mlir::populateSCFToControlFlowConversionPatterns(patterns);
+        // SCF -> OpenMP Worksharing Loops
+        mlir::populateSCFToOpenMPConversionPatterns(patterns);
+        // OpenMP -> LLVM IR
+        mlir::populateOpenMPToLLVMConversionPatterns(typeConverter, patterns);
+
         mlir::arith::populateArithToLLVMConversionPatterns(typeConverter, patterns);
         mlir::populateFinalizeMemRefToLLVMConversionPatterns(typeConverter, patterns);
         mlir::cf::populateControlFlowToLLVMConversionPatterns(typeConverter, patterns);
