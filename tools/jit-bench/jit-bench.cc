@@ -100,9 +100,9 @@ int main(int argc, char **argv) {
     void* p_lhs = &lhs;
     void* p_rhs = &rhs;
     std::vector<void*> args = {
-        &p_res,
         &p_lhs,
-        &p_rhs
+        &p_rhs,
+        &p_res
     };
 
     std::cout << "[INFO] Memulai eksekusi JIT runtime...\n";
