@@ -14,53 +14,50 @@ namespace compiler {
 
 namespace {
 
-namespace {
 struct GenericVectorizationPattern : public mlir::OpInterfaceRewritePattern<mlir::linalg::LinalgOp> {
     using OpInterfaceRewritePattern<mlir::linalg::LinalgOp>::OpInterfaceRewritePattern;
     mlir::LogicalResult matchAndRewrite(mlir::linalg::LinalgOp op, mlir::PatternRewriter &rewriter) const override {
-
         if (mlir::failed(mlir::linalg::vectorize(rewriter, op))) {
             return mlir::failure();
         }
         return mlir::success();
     }
 };
-}
 
 struct LinalgTilingPass : public impl::LinalgTilingBase<LinalgTilingPass> {
     using LinalgTilingBase::LinalgTilingBase;
-
     void getDependentDialects(mlir::DialectRegistry &registry) const override {
         registry.insert<mlir::scf::SCFDialect, mlir::linalg::LinalgDialect, mlir::vector::VectorDialect>();
     }
-
     void runOnOperation() override {
         mlir::func::FuncOp funcOp = getOperation();
         mlir::IRRewriter rewriter(&getContext());
 
-        llvm::SmallVector<int64_t> tiles(tileSizes.begin(), tileSizes.end());
-        if (tiles.empty()) {
-
-            tiles = {8, 8, 8, 8};
+        llvm::SmallVector<int64_t> baseTiles(tileSizes.begin(), tileSizes.end());
+        if (baseTiles.empty()) {
+            baseTiles = {8, 8, 8, 8}; // Constraint L1 Cache FP64
         }
-
-        mlir::linalg::LinalgTilingOptions tilingOptions;
-        tilingOptions.setTileSizes(tiles);
-
-        tilingOptions.setLoopType(mlir::linalg::LinalgTilingLoopType::ParallelLoops);
 
         funcOp.walk([&](mlir::linalg::LinalgOp op) {
             if (op->hasAttr("tiled")) return mlir::WalkResult::advance();
-
+            
+            // Mitigasi absolut: Konfigurasi array rank secara dinamis
+            llvm::SmallVector<int64_t> opTiles = baseTiles;
+            unsigned numLoops = op.getNumLoops();
+            if (numLoops < opTiles.size()) {
+                opTiles.resize(numLoops);
+            }
+            
+            mlir::linalg::LinalgTilingOptions tilingOptions;
+            tilingOptions.setTileSizes(opTiles);
+            tilingOptions.setLoopType(mlir::linalg::LinalgTilingLoopType::ParallelLoops);
+            
             rewriter.setInsertionPoint(op);
-
             mlir::FailureOr<mlir::linalg::TiledLinalgOp> tilingResult =
                 mlir::linalg::tileLinalgOp(rewriter, op, tilingOptions);
-
+                
             if (mlir::succeeded(tilingResult)) {
-
                 tilingResult->op->setAttr("tiled", rewriter.getUnitAttr());
-
                 if (!tilingResult->tensorResults.empty()) {
                     rewriter.replaceOp(op, tilingResult->tensorResults);
                 } else {
@@ -77,11 +74,11 @@ struct LinalgTilingPass : public impl::LinalgTilingBase<LinalgTilingPass> {
         }
     }
 };
-}
+} // namespace
 
 std::unique_ptr<mlir::Pass> createLinalgTilingPass() {
     return std::make_unique<LinalgTilingPass>();
 }
 
-}
-}
+} // namespace compiler
+} // namespace mshqc
