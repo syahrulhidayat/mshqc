@@ -2,6 +2,7 @@
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 
 namespace mshqc {
 namespace compiler {
@@ -14,7 +15,7 @@ namespace {
 struct LinalgTilingPass : public impl::LinalgTilingBase<LinalgTilingPass> {
     using LinalgTilingBase::LinalgTilingBase;
     void getDependentDialects(mlir::DialectRegistry &registry) const override {
-        registry.insert<mlir::scf::SCFDialect, mlir::linalg::LinalgDialect>();
+        registry.insert<mlir::scf::SCFDialect, mlir::linalg::LinalgDialect>, mlir::vector::VectorDialect>();
     }
     void runOnOperation() override {
         mlir::func::FuncOp funcOp = getOperation();
@@ -33,7 +34,7 @@ struct LinalgTilingPass : public impl::LinalgTilingBase<LinalgTilingPass> {
                 if (iterType == mlir::utils::IteratorType::parallel) {
                     opTiles.push_back(8);
                 } else {
-                    opTiles.push_back(0);
+                    opTiles.push_back(8);
                 }
             }
 
@@ -52,6 +53,10 @@ struct LinalgTilingPass : public impl::LinalgTilingBase<LinalgTilingPass> {
                 } else {
                     rewriter.eraseOp(op);
                 }
+            
+                // [Fase 1] Vektorisasi LinalgOp terdalam pasca-tiling (Register SIMD)
+                rewriter.setInsertionPoint(tilingResult->op);
+                (void)mlir::linalg::vectorize(rewriter, tilingResult->op);
             }
         }
 

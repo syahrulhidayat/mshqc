@@ -81,18 +81,20 @@ int main(int argc, char **argv) {
 
     MemRef4D res = {res_ptr, res_ptr, 0, {10, 20, 10, 20}, {4000, 200, 20, 1}};
 
+    void* p_res = &res;
+    void* p_lhs = &lhs;
+    void* p_rhs = &rhs;
     std::vector<void*> args = {
-        &lhs,
-        &rhs,
-        &res
+        &p_res,
+        &p_lhs,
+        &p_rhs
     };
-
     std::cout << "[INFO] Memulai eksekusi JIT runtime...\n";
 
     unsigned int dummy;
     uint64_t start_cycles = __rdtscp(&dummy);
 
-    if (auto err = engine->invoke("test_mp2_contraction", args)) {
+    if (auto err = engine->invoke("_mlir_ciface_test_mp2_contraction", args)) {
         std::cerr << "[FATAL] Terjadi interupsi pada eksekusi JIT runtime.\n";
         return 1;
     }
