@@ -12,5 +12,7 @@ target_link_libraries(mshqc-jit-bench
      MLIRIR
      MLIRParser
      MLIRLLVMDialect
+     MLIROpenMPDialect
+     MLIRSCFDialect
      MLIRExecutionEngine
 )

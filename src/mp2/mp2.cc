@@ -5,6 +5,7 @@
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Conversion/SCFToOpenMP/SCFToOpenMP.h"
 #include "mlir/Conversion/LinalgToStandard/LinalgToStandard.h"
+#include "mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h"
 
 #include "mshqc/compiler/Frontend/GraphBuilder.h"
 #include "mshqc/integrals/eri_transformer.h"
@@ -122,6 +123,7 @@ void RMP2::compute_amplitudes_and_energy() {
     pm.addPass(mlir::createConvertLinalgToLoopsPass());
     pm.addPass(mlir::createConvertSCFToOpenMPPass());
     pm.addPass(mshqc::compiler::createLowerToLLVMPass());
+    pm.addPass(mlir::createReconcileUnrealizedCastsPass());
 
     if (mlir::failed(pm.run(mlir_builder.getModule()))) {
         std::cerr << "[FATAL] JIT Lowering Pipeline Gagal.

@@ -116,6 +116,32 @@ else()
 endif()
 
 # ==============================================================================
+# LLVM and MLIR Compiler Infrastructure (Injected Auto)
+# ==============================================================================
+find_package(LLVM REQUIRED CONFIG)
+message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
+message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")
+
+find_package(MLIR REQUIRED CONFIG)
+message(STATUS "Found MLIR ${MLIR_PACKAGE_VERSION}")
+message(STATUS "Using MLIRConfig.cmake in: ${MLIR_DIR}")
+
+list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
+list(APPEND CMAKE_MODULE_PATH "${MLIR_CMAKE_DIR}")
+include(TableGen)
+include(AddLLVM)
+include(AddMLIR)
+
+include_directories(${LLVM_INCLUDE_DIRS})
+include_directories(${MLIR_INCLUDE_DIRS})
+add_definitions(${LLVM_DEFINITIONS})
+
+llvm_map_components_to_libnames(llvm_libs support core orcjit native)
+
+add_subdirectory(src/compiler)
+add_subdirectory(tools)
+
+# ==============================================================================
 # 6. SOURCE FILES & TARGET CONFIGURATION
 # ==============================================================================
 if(JEMALLOC_LIB)
@@ -147,6 +173,7 @@ set_target_properties(mshqc PROPERTIES
 
 target_compile_definitions(mshqc PUBLIC 
     EIGEN_USE_MKL_ALL
+    MSHQC_ENABLE_MLIR
     EIGEN_NO_DEBUG 
     EIGEN_MPL2_ONLY
 )
@@ -154,6 +181,7 @@ target_compile_definitions(mshqc PUBLIC
 # TCI is optional in some setups, we handle if it exists or not
 set(MSHQC_LINK_LIBS 
     Eigen3::Eigen
+    mshqc_compiler
     ${CINT_LIBRARY}
     ${TBLIS_LIBRARY}
     ${HDF5_LIBRARIES} 
@@ -211,28 +239,3 @@ if(EXISTS "${CMAKE_SOURCE_DIR}/include/mshqc")
     install(DIRECTORY include/mshqc DESTINATION include)
 endif()
 
-# ==============================================================================
-# LLVM and MLIR Compiler Infrastructure (Injected Auto)
-# ==============================================================================
-find_package(LLVM REQUIRED CONFIG)
-message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
-message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")
-
-find_package(MLIR REQUIRED CONFIG)
-message(STATUS "Found MLIR ${MLIR_PACKAGE_VERSION}")
-message(STATUS "Using MLIRConfig.cmake in: ${MLIR_DIR}")
-
-list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
-list(APPEND CMAKE_MODULE_PATH "${MLIR_CMAKE_DIR}")
-include(TableGen)
-include(AddLLVM)
-include(AddMLIR)
-
-include_directories(${LLVM_INCLUDE_DIRS})
-include_directories(${MLIR_INCLUDE_DIRS})
-add_definitions(${LLVM_DEFINITIONS})
-
-llvm_map_components_to_libnames(llvm_libs support core orcjit native)
-
-add_subdirectory(src/compiler)
-add_subdirectory(tools)

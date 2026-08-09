@@ -4,6 +4,8 @@
 #include "mlir/IR/MLIRContext.h"
 #include "mlir/Parser/Parser.h"
 #include "mlir/Dialect/LLVMIR/LLVMDialect.h"
+#include "mlir/Dialect/OpenMP/OpenMPDialect.h"
+#include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/ExecutionEngine/ExecutionEngine.h"
 #include <iostream>
 #include <vector>
@@ -42,6 +44,8 @@ int main(int argc, char **argv) {
 
     mlir::MLIRContext context;
     context.getOrLoadDialect<mlir::LLVM::LLVMDialect>();
+    context.getOrLoadDialect<mlir::omp::OpenMPDialect>();
+    context.getOrLoadDialect<mlir::scf::SCFDialect>();
 
     auto module = mlir::parseSourceFile<mlir::ModuleOp>(argv[1], &context);
     if (!module) {
