@@ -20,6 +20,11 @@ llvm::Expected<std::unique_ptr<MshqcJIT>> MshqcJIT::create(mlir::ModuleOp module
 
     mlir::ExecutionEngineOptions engineOptions;
 
+    if (auto targetMachineBuilder = llvm::orc::JITTargetMachineBuilder::detectHost()) {
+        targetMachineBuilder->addFeatures("+avx512f,+fma");
+        engineOptions.jitTargetMachineBuilder = *targetMachineBuilder;
+    }
+
     std::vector<llvm::StringRef> sharedLibs = {"libomp.so"};
     engineOptions.sharedLibPaths = sharedLibs;
     engineOptions.jitCodeGenOptLevel = llvm::CodeGenOptLevel::Aggressive;

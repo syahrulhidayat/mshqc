@@ -3,6 +3,8 @@
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Dialect/Vector/IR/VectorOps.h"
+#include "mlir/Dialect/Linalg/Transforms/Transforms.h"
+#include "mlir/Dialect/Vector/IR/VectorOps.h"
 
 namespace mshqc {
 namespace compiler {
@@ -30,10 +32,14 @@ struct LinalgTilingPass : public impl::LinalgTilingBase<LinalgTilingPass> {
 
         for (auto op : targetOps) {
             llvm::SmallVector<int64_t> opTiles;
+
             for (auto iterType : op.getIteratorTypesArray()) {
                 if (iterType == mlir::utils::IteratorType::parallel) {
-                    opTiles.push_back(8);
+                    opTiles.push_back(32);
                 } else {
+                    opTiles.push_back(8);
+                }
+            } else {
                     opTiles.push_back(8);
                 }
             }
@@ -53,8 +59,7 @@ struct LinalgTilingPass : public impl::LinalgTilingBase<LinalgTilingPass> {
                 } else {
                     rewriter.eraseOp(op);
                 }
-            
-                // [Fase 1] Vektorisasi LinalgOp terdalam pasca-tiling (Register SIMD)
+
                 rewriter.setInsertionPoint(tilingResult->op);
                 (void)mlir::linalg::vectorize(rewriter, tilingResult->op);
             }
