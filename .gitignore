@@ -2,6 +2,10 @@
 # MSHQ Custom .gitignore (C++ / Python Bindings / Quantum Chemistry)
 # ====================================================================
 
+# --- Specific Scripts & Files ---
+patch_copyright.py
+lowered_graph.mlir
+
 # --- Environment and Virtual Environments ---
 venv/
 .venv/
@@ -35,7 +39,7 @@ CMakeFiles/
 Makefile
 cmake_install.cmake
 
-
+# --- Quantum Chemistry & Custom Logs ---
 psi.*.clean
 *.out
 *.log
@@ -46,11 +50,12 @@ hasil/
 deploy_self_hosted.sh
 test/
 scaffold_compiler.py
-!clean_all.py
-!recaftor.py
 *.mlir
 *.dat
-*.h5
 *.kunci
 include/python*/
 belajar_c++/
+
+# --- Exceptions (Force Tracked Files) ---
+!clean_all.py
+!recaftor.py
