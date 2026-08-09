@@ -14,16 +14,10 @@ MshqcJIT::MshqcJIT(std::unique_ptr<mlir::ExecutionEngine> engine)
     : engine_(std::move(engine)) {}
 
 llvm::Expected<std::unique_ptr<MshqcJIT>> MshqcJIT::create(mlir::ModuleOp module) {
-
     llvm::InitializeNativeTarget();
     llvm::InitializeNativeTargetAsmPrinter();
 
     mlir::ExecutionEngineOptions engineOptions;
-
-    if (auto targetMachineBuilder = llvm::orc::JITTargetMachineBuilder::detectHost()) {
-        targetMachineBuilder->addFeatures("+avx512f,+fma");
-        engineOptions.jitTargetMachineBuilder = *targetMachineBuilder;
-    }
 
     std::vector<llvm::StringRef> sharedLibs = {"libomp.so"};
     engineOptions.sharedLibPaths = sharedLibs;

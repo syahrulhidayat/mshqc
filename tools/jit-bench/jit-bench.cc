@@ -29,7 +29,6 @@ struct MemRef4D {
 
 extern "C" {
     void memrefCopy(int64_t elemSize, void* unrankedDescriptorSrc, void* unrankedDescriptorDst) {
-
         return;
     }
 }
@@ -89,11 +88,13 @@ int main(int argc, char **argv) {
         &p_lhs,
         &p_rhs
     };
+
     std::cout << "[INFO] Memulai eksekusi JIT runtime...\n";
 
     unsigned int dummy;
     uint64_t start_cycles = __rdtscp(&dummy);
 
+    // TARGET C-INTERFACE EKSPLISIT
     if (auto err = engine->invoke("_mlir_ciface_test_mp2_contraction", args)) {
         std::cerr << "[FATAL] Terjadi interupsi pada eksekusi JIT runtime.\n";
         return 1;

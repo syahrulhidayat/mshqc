@@ -48,3 +48,9 @@ test/
 scaffold_compiler.py
 !clean_all.py
 !recaftor.py
+*.mlir
+*.dat
+*.h5
+*.kunci
+include/python*/
+belajar_c++/
