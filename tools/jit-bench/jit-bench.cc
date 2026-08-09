@@ -82,12 +82,8 @@ int main(int argc, char **argv) {
     MemRef4D res = {res_ptr, res_ptr, 0, {10, 20, 10, 20}, {4000, 200, 20, 1}};
 
     std::vector<void*> args = {
-        &lhs.allocated, &lhs.aligned, &lhs.offset,
-        &lhs.sizes[0], &lhs.sizes[1], &lhs.sizes[2],
-        &lhs.strides[0], &lhs.strides[1], &lhs.strides[2],
-        &rhs.allocated, &rhs.aligned, &rhs.offset,
-        &rhs.sizes[0], &rhs.sizes[1], &rhs.sizes[2],
-        &rhs.strides[0], &rhs.strides[1], &rhs.strides[2],
+        &lhs,
+        &rhs,
         &res
     };
 

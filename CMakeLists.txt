@@ -1,244 +1,193 @@
-cmake_minimum_required(VERSION 3.14)
+cmake_minimum_required(VERSION 3.18)
 
 project(mshqc VERSION 1.0.0 LANGUAGES CXX C)
-
-if(NOT CMAKE_BUILD_TYPE)
-    set(CMAKE_BUILD_TYPE Release)
-endif()
-
-# Environment GITHUB_ACTIONS aktif di ubuntu-latest DAN self-hosted runner
-if(DEFINED ENV{GITHUB_ACTIONS})
-    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -mavx2 -mfma -mno-avx512f -funroll-loops -ftree-vectorize -mtune=generic -DNDEBUG -fno-math-errno")
-else()
-    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -march=native -funroll-loops -ftree-vectorize -DNDEBUG -fno-math-errno")
-endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-set(CMAKE_CXX_VISIBILITY_PRESET default)
-set(CMAKE_VISIBILITY_INLINES_HIDDEN 0)
-
-include(CheckIPOSupported)
-check_ipo_supported(RESULT ipo_supported OUTPUT error)
+# Standardize Symbol Visibility for Optimized IPO/LTO
+set(CMAKE_CXX_VISIBILITY_PRESET hidden)
+set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
 
 # ==============================================================================
-# 1. PYTHON & NANOBIND DISCOVERY
+# BUILD OPTIONS
 # ==============================================================================
-if(DEFINED ENV{CONDA_PREFIX})
-    set(Python_ROOT_DIR "$ENV{CONDA_PREFIX}")
-    set(Python_EXECUTABLE "$ENV{CONDA_PREFIX}/bin/python")
-    set(Python3_EXECUTABLE "$ENV{CONDA_PREFIX}/bin/python")
-    link_directories("$ENV{CONDA_PREFIX}/lib")
-elseif(EXISTS "/opt/conda")
-    set(Python_ROOT_DIR "/opt/conda")
-    link_directories("/opt/conda/lib")
+option(MSHQC_ENABLE_NATIVE_OPT "Enable hardware-specific optimization (-march=native)" ON)
+option(MSHQC_ENABLE_IPO "Enable Interprocedural Optimization (LTO)" ON)
+
+if(DEFINED ENV{GITHUB_ACTIONS})
+    set(MSHQC_ENABLE_NATIVE_OPT OFF CACHE BOOL "" FORCE)
 endif()
 
-find_package(Python COMPONENTS Interpreter Development REQUIRED)
+# ==============================================================================
+# DEPENDENCY DISCOVERY (HERMETIC & TARGET-BASED)
+# ==============================================================================
+# Python & Nanobind
+if(DEFINED ENV{CONDA_PREFIX})
+    list(APPEND CMAKE_PREFIX_PATH "$ENV{CONDA_PREFIX}")
+endif()
+
+find_package(Python 3.8 COMPONENTS Interpreter Development REQUIRED)
 find_package(nanobind CONFIG REQUIRED)
 find_package(OpenMP REQUIRED)
 
-# ==============================================================================
-# 2. BLAS / LAPACK / MKL DISCOVERY
-# ==============================================================================
-find_library(MKL_LIBRARY NAMES mkl_rt HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/local/lib" "/usr/lib/x86_64-linux-gnu" "/usr/lib")
-find_path(MKL_INCLUDE_DIR NAMES mkl.h HINTS "$ENV{CONDA_PREFIX}/include" "$ENV{CONDA_PREFIX}/include/mkl" "/opt/conda/include" "/usr/local/include" "/usr/include")
+# BLAS & LAPACK
+find_package(BLAS REQUIRED)
+find_package(LAPACK REQUIRED)
 
-if(MKL_LIBRARY AND MKL_INCLUDE_DIR)
-    set(BLAS_LIBRARIES ${MKL_LIBRARY})
-    set(LAPACK_LIBRARIES ${MKL_LIBRARY})
-else()
-    find_library(BLIS_LIBRARY NAMES blis-mt blis HINTS "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/lib/x86_64-linux-gnu" "/usr/lib")
-    find_library(FLAME_LIBRARY NAMES flame HINTS "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/lib/x86_64-linux-gnu" "/usr/lib")
+# LLVM & MLIR
+find_package(LLVM REQUIRED CONFIG)
+find_package(MLIR REQUIRED CONFIG)
 
-    if(BLIS_LIBRARY)
-        set(BLAS_LIBRARIES ${BLIS_LIBRARY})
-    else()
-        find_package(BLAS REQUIRED)
-    endif()
+list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}" "${MLIR_CMAKE_DIR}")
+include(TableGen)
+include(AddLLVM)
+include(AddMLIR)
 
-    if(FLAME_LIBRARY)
-        set(LAPACK_LIBRARIES ${FLAME_LIBRARY})
-    else()
-        find_package(LAPACK REQUIRED)
-        find_library(LAPACKE_LIBRARY NAMES lapacke HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/lib/x86_64-linux-gnu" "/usr/lib")
-        if(LAPACKE_LIBRARY)
-            list(APPEND LAPACK_LIBRARIES ${LAPACKE_LIBRARY})
-        else()
-            message(FATAL_ERROR "CRITICAL: LAPACKE tidak ditemukan di sistem!")
-        endif()
-    endif()
-endif()
-
-# ==============================================================================
-# 3. EIGEN DISCOVERY
-# ==============================================================================
+# Restorasi inklusi direktori secara global untuk utilitas TableGen (mlir-tblgen)
+include_directories(${LLVM_INCLUDE_DIRS} ${MLIR_INCLUDE_DIRS})
+# Domain Libraries: Eigen3, CINT, TBLIS, HDF5
+# Mekanisme fallback hermetis untuk melewati anomali versi registri Conda
 set(EIGEN_LOCAL_PATH "${CMAKE_SOURCE_DIR}/include/eigen-3.4.0")
 if(EXISTS "${EIGEN_LOCAL_PATH}/Eigen/Dense")
     add_library(Eigen3::Eigen INTERFACE IMPORTED)
     target_include_directories(Eigen3::Eigen INTERFACE "${EIGEN_LOCAL_PATH}")
 else()
-    find_package(Eigen3 CONFIG HINTS "$ENV{CONDA_PREFIX}/share/eigen3/cmake" "/opt/conda/share/eigen3/cmake" "/usr/share/eigen3/cmake")
-    if(NOT Eigen3_FOUND)
-        find_package(Eigen3 REQUIRED NO_MODULE)
-    endif()
+    find_package(Eigen3 CONFIG REQUIRED)
 endif()
 
 # ==============================================================================
-# 4. LIBCINT & TBLIS DISCOVERY (Support Fedora lib64)
+# Domain Libraries: CINT, TBLIS (Dengan Hermetic HPC Path Resolution)
 # ==============================================================================
-find_library(CINT_LIBRARY NAMES cint HINTS "$ENV{CONDA_PREFIX}/lib" "$ENV{HOME}/libcint_install/lib64" "$ENV{HOME}/libcint_install/lib" "/usr/local/lib64" "/usr/local/lib" "/usr/lib64" "/usr/lib")
-find_path(CINT_INCLUDE_DIR NAMES cint.h HINTS "$ENV{CONDA_PREFIX}/include" "$ENV{HOME}/libcint_install/include" "/usr/local/include" "/usr/include")
+find_path(CINT_INCLUDE_DIR NAMES cint.h 
+    HINTS "$ENV{CONDA_PREFIX}/include" "$ENV{HOME}/libcint_install/include" "/usr/local/include" "/usr/include" REQUIRED)
+find_library(CINT_LIBRARY NAMES cint 
+    HINTS "$ENV{CONDA_PREFIX}/lib" "$ENV{HOME}/libcint_install/lib64" "$ENV{HOME}/libcint_install/lib" "/usr/local/lib64" "/usr/local/lib" "/usr/lib64" "/usr/lib" REQUIRED)
 
-if(NOT CINT_LIBRARY OR NOT CINT_INCLUDE_DIR)
-    message(FATAL_ERROR "CRITICAL: libcint library atau cint.h header tidak ditemukan!")
-endif()
+find_path(TBLIS_INCLUDE_DIR NAMES tblis/tblis.h 
+    HINTS "$ENV{TBLIS_DIR}/include" "$ENV{CONDA_PREFIX}/include" "$ENV{HOME}/tblis_install/include" "/usr/local/include" "/usr/include" REQUIRED)
+find_library(TBLIS_LIBRARY NAMES tblis libtblis.a 
+    HINTS "$ENV{TBLIS_DIR}/lib64" "$ENV{TBLIS_DIR}/lib" "$ENV{CONDA_PREFIX}/lib" "$ENV{HOME}/tblis_install/lib64" "$ENV{HOME}/tblis_install/lib" "/usr/lib64" "/usr/lib" REQUIRED)
+find_library(TCI_LIBRARY NAMES tci libtci.a 
+    HINTS "$ENV{TBLIS_DIR}/lib64" "$ENV{TBLIS_DIR}/lib" "$ENV{CONDA_PREFIX}/lib" "$ENV{HOME}/tblis_install/lib64" "$ENV{HOME}/tblis_install/lib" "/usr/lib64" "/usr/lib")
 
-find_library(TBLIS_LIBRARY NAMES tblis libtblis.a HINTS "$ENV{TBLIS_DIR}/lib64" "$ENV{TBLIS_DIR}/lib" "$ENV{CONDA_PREFIX}/lib" "$ENV{HOME}/tblis_install/lib64" "$ENV{HOME}/tblis_install/lib" "/usr/lib64" "/usr/lib")
-find_library(TCI_LIBRARY NAMES tci libtci.a HINTS "$ENV{TBLIS_DIR}/lib64" "$ENV{TBLIS_DIR}/lib" "$ENV{CONDA_PREFIX}/lib" "$ENV{HOME}/tblis_install/lib64" "$ENV{HOME}/tblis_install/lib" "/usr/lib64" "/usr/lib")
-find_path(TBLIS_INCLUDE_DIR NAMES tblis/tblis.h HINTS "$ENV{TBLIS_DIR}/include" "$ENV{CONDA_PREFIX}/include" "$ENV{HOME}/tblis_install/include" "/usr/local/include" "/usr/include")
-
-if(NOT TBLIS_LIBRARY OR NOT TBLIS_INCLUDE_DIR)
-    message(FATAL_ERROR "CRITICAL: TBLIS library atau header tidak ditemukan!")
-endif()
-# ==============================================================================
-# 5. HDF5 DISCOVERY (Removed NO_DEFAULT_PATH restrictions)
-# ==============================================================================
-find_library(HDF5_C_LIB NAMES hdf5 HINTS "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/lib/x86_64-linux-gnu" "/usr/lib")
-find_library(HDF5_CXX_LIB NAMES hdf5_cpp HINTS "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/lib/x86_64-linux-gnu" "/usr/lib")
-
-if(HDF5_C_LIB AND HDF5_CXX_LIB)
-    set(HDF5_LIBRARIES ${HDF5_CXX_LIB} ${HDF5_C_LIB})
-else()
-    message(FATAL_ERROR "CRITICAL: HDF5 C/C++ libraries tidak ditemukan!")
-endif()
+find_package(HDF5 COMPONENTS C CXX REQUIRED)
 
 # ==============================================================================
-# LLVM and MLIR Compiler Infrastructure (Injected Auto)
+# COMPILER / SUBDIRECTORIES
 # ==============================================================================
-find_package(LLVM REQUIRED CONFIG)
-message(STATUS "Found LLVM ${LLVM_PACKAGE_VERSION}")
-message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")
-
-find_package(MLIR REQUIRED CONFIG)
-message(STATUS "Found MLIR ${MLIR_PACKAGE_VERSION}")
-message(STATUS "Using MLIRConfig.cmake in: ${MLIR_DIR}")
-
-list(APPEND CMAKE_MODULE_PATH "${LLVM_CMAKE_DIR}")
-list(APPEND CMAKE_MODULE_PATH "${MLIR_CMAKE_DIR}")
-include(TableGen)
-include(AddLLVM)
-include(AddMLIR)
-
-include_directories(${LLVM_INCLUDE_DIRS})
-include_directories(${MLIR_INCLUDE_DIRS})
-add_definitions(${LLVM_DEFINITIONS})
-
 llvm_map_components_to_libnames(llvm_libs support core orcjit native)
 
 add_subdirectory(src/compiler)
 add_subdirectory(tools)
 
 # ==============================================================================
-# 6. SOURCE FILES & TARGET CONFIGURATION
+# TARGET DEFINITION: mshqc STATIC LIBRARY
 # ==============================================================================
-if(JEMALLOC_LIB)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-builtin-malloc -fno-builtin-calloc -fno-builtin-realloc -fno-builtin-free")
+file(GLOB_RECURSE MSHQC_SOURCES CONFIGURE_DEPENDS
+    "${CMAKE_SOURCE_DIR}/src/core/*.cc"
+    "${CMAKE_SOURCE_DIR}/src/scf/*.cc"
+    "${CMAKE_SOURCE_DIR}/src/mp/*.cc"
+    "${CMAKE_SOURCE_DIR}/src/mp2/*.cc"
+    "${CMAKE_SOURCE_DIR}/src/mp3/*.cc"
+    "${CMAKE_SOURCE_DIR}/src/integrals/*.cc"
+    "${CMAKE_SOURCE_DIR}/src/ints/*.cc"
+    "${CMAKE_SOURCE_DIR}/src/gradient/*.cc"
+    "${CMAKE_SOURCE_DIR}/src/symmetry/*.cc"
+    "${CMAKE_SOURCE_DIR}/src/utils/*.cc"
+)
+
+add_library(mshqc STATIC ${MSHQC_SOURCES})
+
+# Target Compile Options (Compiler Agnostic & Scoped)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_compile_options(mshqc PRIVATE
+        -Wall -Wextra -Wpedantic
+        $<$<CONFIG:Release>:-O3 -funroll-loops -ftree-vectorize -fno-math-errno>
+    )
+    if(MSHQC_ENABLE_NATIVE_OPT)
+        target_compile_options(mshqc PRIVATE $<$<CONFIG:Release>:-march=native>)
+    else()
+        target_compile_options(mshqc PRIVATE $<$<CONFIG:Release>:-mavx2 -mfma -mno-avx512f -mtune=generic>)
+    endif()
 endif()
 
-file(GLOB_RECURSE SRC_CORE CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/core/*.cc")
-file(GLOB_RECURSE SRC_SCF CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/scf/*.cc")
-file(GLOB_RECURSE SRC_MP CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/mp/*.cc" "${CMAKE_SOURCE_DIR}/src/mp2/*.cc" "${CMAKE_SOURCE_DIR}/src/mp3/*.cc")
-file(GLOB_RECURSE SRC_INTEGRALS CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/integrals/*.cc" "${CMAKE_SOURCE_DIR}/src/ints/*.cc")
-file(GLOB_RECURSE SRC_GRADIENT CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/gradient/*.cc")
-file(GLOB_RECURSE SRC_SYMMETRY CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/symmetry/*.cc")
-file(GLOB_RECURSE SRC_UTILS CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/utils/*.cc")
-
-set(ALL_SOURCES
-    ${SRC_CORE} ${SRC_SCF} ${SRC_MP} 
-    ${SRC_INTEGRALS} ${SRC_GRADIENT}
-    ${SRC_SYMMETRY}
-    ${SRC_UTILS}
-)
-
-add_library(mshqc STATIC ${ALL_SOURCES})
-
-set_target_properties(mshqc PROPERTIES 
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/python/mshqc"
-    INSTALL_RPATH "$ORIGIN:$ORIGIN/../../.."
-    BUILD_WITH_INSTALL_RPATH TRUE
-)
-
-target_compile_definitions(mshqc PUBLIC 
+target_compile_definitions(mshqc PUBLIC
     EIGEN_USE_MKL_ALL
     MSHQC_ENABLE_MLIR
-    EIGEN_NO_DEBUG 
+    EIGEN_NO_DEBUG
     EIGEN_MPL2_ONLY
 )
 
-# TCI is optional in some setups, we handle if it exists or not
-set(MSHQC_LINK_LIBS 
+target_include_directories(mshqc PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+    PRIVATE
+    ${CINT_INCLUDE_DIR}
+    ${TBLIS_INCLUDE_DIR}
+    ${LLVM_INCLUDE_DIRS}
+    ${MLIR_INCLUDE_DIRS}
+)
+
+target_link_libraries(mshqc PUBLIC
     Eigen3::Eigen
-    -Wl,--whole-archive mshqc_compiler -Wl,--no-whole-archive
     MLIRIR
     MLIRSupport
-    LLVMSupport
+    ${llvm_libs}
     ${CINT_LIBRARY}
     ${TBLIS_LIBRARY}
-    ${HDF5_LIBRARIES} 
+    hdf5::hdf5 hdf5::hdf5_cpp
     ${BLAS_LIBRARIES}
     ${LAPACK_LIBRARIES}
-    OpenMP::OpenMP_CXX   
-    atomic
+    OpenMP::OpenMP_CXX
+    ${CMAKE_DL_LIBS}
 )
+
 if(TCI_LIBRARY)
-    list(APPEND MSHQC_LINK_LIBS ${TCI_LIBRARY})
+    target_link_libraries(mshqc PUBLIC ${TCI_LIBRARY})
 endif()
 
-target_link_libraries(mshqc PUBLIC ${MSHQC_LINK_LIBS})
-
-if(JEMALLOC_LIB)
-    target_link_libraries(mshqc PUBLIC ${JEMALLOC_LIB})
+# Whole-archive handling for mshqc_compiler layer (Platform Aware)
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+    target_link_libraries(mshqc PUBLIC -Wl,--whole-archive mshqc_compiler -Wl,--no-whole-archive)
+elseif(MSVC)
+    target_link_libraries(mshqc PUBLIC /WHOLEARCHIVE:mshqc_compiler)
 endif()
 
-target_include_directories(mshqc PUBLIC 
-    $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
-    $<BUILD_INTERFACE:${CINT_INCLUDE_DIR}>
-    $<BUILD_INTERFACE:${TBLIS_INCLUDE_DIR}>
-    $<BUILD_INTERFACE:${MKL_INCLUDE_DIR}>
-    $<BUILD_INTERFACE:$ENV{CONDA_PREFIX}/include>
-    $<INSTALL_INTERFACE:include>
-)
-
+# ==============================================================================
+# TARGET DEFINITION: PYTHON BINDINGS
+# ==============================================================================
 nanobind_add_module(_mshqc "python/bindings.cc")
 
-if(JEMALLOC_LIB)
-    target_link_libraries(_mshqc PRIVATE mshqc ${CINT_LIBRARY} ${TBLIS_LIBRARY} ${JEMALLOC_LIB} atomic) 
-else()
-    target_link_libraries(_mshqc PRIVATE mshqc ${CINT_LIBRARY} ${TBLIS_LIBRARY} atomic)
-endif()
+target_link_libraries(_mshqc PRIVATE mshqc)
 
-set_target_properties(_mshqc PROPERTIES 
+set_target_properties(mshqc _mshqc PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/python/mshqc"
-    PREFIX "" 
     INSTALL_RPATH "$ORIGIN:$ORIGIN/../../.."
     BUILD_WITH_INSTALL_RPATH TRUE
 )
 
-if(ipo_supported)
-    set_target_properties(mshqc PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
-    set_target_properties(_mshqc PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
+# Interprocedural Optimization Configuration
+if(MSHQC_ENABLE_IPO)
+    include(CheckIPOSupported)
+    check_ipo_supported(RESULT ipo_supported OUTPUT ipo_error)
+    if(ipo_supported)
+        set_target_properties(mshqc _mshqc PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
+    endif()
 endif()
 
+# ==============================================================================
+# INSTALLATION SPECIFICATION
+# ==============================================================================
+include(GNUInstallDirs)
+
 install(TARGETS mshqc _mshqc
-    LIBRARY DESTINATION lib
-    ARCHIVE DESTINATION lib
-    RUNTIME DESTINATION bin
+    ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
+    RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
 
 if(EXISTS "${CMAKE_SOURCE_DIR}/include/mshqc")
-    install(DIRECTORY include/mshqc DESTINATION include)
+    install(DIRECTORY include/mshqc DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 endif()
-

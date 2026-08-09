@@ -37,6 +37,10 @@ struct LowerToLLVMPass : public impl::LowerToLLVMBase<LowerToLLVMPass> {
 
     void runOnOperation() override {
 
+        getOperation().walk([&](mlir::func::FuncOp funcOp) {
+            funcOp->setAttr("llvm.emit_c_interface", mlir::UnitAttr::get(&getContext()));
+        });
+
         getOperation().walk([](mlir::scf::ForOp forOp) {
 
             if (forOp.getBody()->getOps<mlir::scf::ForOp>().empty()) {
