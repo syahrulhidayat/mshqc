@@ -4,6 +4,7 @@
 #include "mlir/Target/LLVMIR/Dialect/Builtin/BuiltinToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Export.h"
 #include "llvm/Support/TargetSelect.h"
+#include "llvm/ExecutionEngine/Orc/JITTargetMachineBuilder.h"
 
 namespace mshqc {
 namespace compiler {
@@ -16,9 +17,15 @@ llvm::Expected<std::unique_ptr<MshqcJIT>> MshqcJIT::create(mlir::ModuleOp module
     llvm::InitializeNativeTarget();
     llvm::InitializeNativeTargetAsmPrinter();
 
+    auto targetMachineBuilder = llvm::orc::JITTargetMachineBuilder::detectHost();
+    if (targetMachineBuilder) {
+        targetMachineBuilder->addFeatures("+avx512f,+avx512vl,+avx2,+fma");
+    }
+
     mlir::ExecutionEngineOptions engineOptions;
+    engineOptions.jitCodeGenOptLevel = llvm::CodeGenOpt::Aggressive;
     engineOptions.transformer = mlir::makeOptimizingTransformer(
-        3, 0, nullptr);
+        3, 0, targetMachineBuilder ? &targetMachineBuilder.get() : nullptr);
 
     mlir::registerBuiltinDialectTranslation(*module->getContext());
     mlir::registerLLVMDialectTranslation(*module->getContext());
