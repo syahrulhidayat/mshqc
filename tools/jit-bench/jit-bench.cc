@@ -75,8 +75,8 @@ int main(int argc, char **argv) {
     }
     auto engine = std::move(*engineOrErr);
 
-    size_t lhs_size = 10 * 20 * 30;
-    size_t rhs_size = 10 * 20 * 30;
+    size_t lhs_size = 32 * 32 * 32;
+    size_t rhs_size = 32 * 32 * 32;
 
     size_t lhs_bytes = (lhs_size * sizeof(double) + 63) & ~63;
     size_t rhs_bytes = (rhs_size * sizeof(double) + 63) & ~63;
@@ -87,22 +87,19 @@ int main(int argc, char **argv) {
     for(size_t i = 0; i < lhs_size; ++i) lhs_ptr[i] = 1.25;
     for(size_t i = 0; i < rhs_size; ++i) rhs_ptr[i] = 2.50;
 
-    MemRef3D lhs = {lhs_ptr, lhs_ptr, 0, {10, 20, 30}, {600, 30, 1}};
-    MemRef3D rhs = {rhs_ptr, rhs_ptr, 0, {10, 20, 30}, {600, 30, 1}};
+    MemRef3D lhs = {lhs_ptr, lhs_ptr, 0, {32, 32, 32}, {1024, 32, 1}};
+    MemRef3D rhs = {rhs_ptr, rhs_ptr, 0, {32, 32, 32}, {1024, 32, 1}};
 
-    size_t res_size = 10 * 20 * 10 * 20;
+    size_t res_size = 32 * 32 * 32 * 32;
     size_t res_bytes = (res_size * sizeof(double) + 63) & ~63;
     double* res_ptr = static_cast<double*>(std::aligned_alloc(64, res_bytes));
 
-    MemRef4D res = {res_ptr, res_ptr, 0, {10, 20, 10, 20}, {4000, 200, 20, 1}};
+    MemRef4D res = {res_ptr, res_ptr, 0, {32, 32, 32, 32}, {32768, 1024, 32, 1}};
 
-    void* p_res = &res;
-    void* p_lhs = &lhs;
-    void* p_rhs = &rhs;
-    std::vector<void*> args = {
-        &p_res,
-        &p_lhs,
-        &p_rhs
+                std::vector<void*> args = {
+        &res,
+        &lhs,
+        &rhs
     };
 
     std::cout << "[INFO] Memulai eksekusi JIT runtime...\n";

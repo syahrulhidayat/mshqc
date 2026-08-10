@@ -78,7 +78,7 @@ struct LinalgTilingPass : public impl::LinalgTilingBase<LinalgTilingPass> {
 
                 mlir::linalg::LinalgTilingOptions l1Options;
                 l1Options.setTileSizes(l1Tiles);
-                l1Options.setLoopType(mlir::linalg::LinalgTilingLoopType::ParallelLoops);
+                l1Options.setLoopType(mlir::linalg::LinalgTilingLoopType::Loops);
 
                 rewriter.setInsertionPoint(l2Result->op);
                 mlir::FailureOr<mlir::linalg::TiledLinalgOp> l1Result = 
