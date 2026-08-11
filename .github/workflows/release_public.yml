@@ -89,29 +89,42 @@ jobs:
         fi
 
     # =========================================================================
-    # 4. CCACHE & BUILD MSHQC WHEEL (Integrasi MLIR/LLVM)
+    # 4. EKSPLISIT KOMPILASI COMPILER MLIR/LLVM & CORE C++
     # =========================================================================
-    - name: Build Python Wheel (.whl)
+    - name: Compile MSHQC C++ Backend & Compiler
       shell: bash
       run: |
         source $HOME/miniconda3/etc/profile.d/conda.sh
         conda activate mshqc_314
-        rm -rf dist/ *.egg-info build/lib.* build/temp.*
+        rm -rf dist/ *.egg-info build/lib.* build/temp.* python/mshqc/*.so
 
         export CC="ccache $CONDA_PREFIX/bin/x86_64-conda-linux-gnu-cc"
         export CXX="ccache $CONDA_PREFIX/bin/x86_64-conda-linux-gnu-c++" 
         export CXXFLAGS="-std=c++17 -fopenmp -O3 -mavx2 -mfma -mno-avx512f -mtune=generic -DEIGEN_USE_MKL_ALL -DNDEBUG -I$HOME/tblis_install/include -I$HOME/libcint_install/include -I$CONDA_PREFIX/include"
         export LDFLAGS="-lquadmath"   
         export CMAKE_PREFIX_PATH=$HOME/libcint_install:$HOME/tblis_install:$CONDA_PREFIX
-        export TBLIS_DIR=$HOME/tblis_install
-        
-        # Ekspor variabel CMAKE_ARGS agar setup.py (via setuptools) menemukan LLVM/MLIR config
         export CMAKE_ARGS="-DLLVM_DIR=$CONDA_PREFIX/lib/cmake/llvm -DMLIR_DIR=$CONDA_PREFIX/lib/cmake/mlir"
         
+        # Eksekusi kompilasi secara terpisah dengan paralelisme maksimum (nproc)
+        # Langkah ini akan memisahkan log kompilasi C++ dari log pemaketan Wheel
+        python setup.py build_ext -j $(nproc)
+
+    # =========================================================================
+    # 5. PEMAKETAN MSHQC WHEEL (.whl)
+    # =========================================================================
+    - name: Build Python Wheel (.whl)
+      shell: bash
+      run: |
+        source $HOME/miniconda3/etc/profile.d/conda.sh
+        conda activate mshqc_314
+
+        export CMAKE_ARGS="-DLLVM_DIR=$CONDA_PREFIX/lib/cmake/llvm -DMLIR_DIR=$CONDA_PREFIX/lib/cmake/mlir"
+        
+       
         python setup.py bdist_wheel
 
     # =========================================================================
-    # 5. COMMIT KEMBALI KE REPO PRIVAT
+    # 6. COMMIT KEMBALI KE REPO PRIVAT
     # =========================================================================
     - name: Commit and Push Wheel to Private Repo
       shell: bash
@@ -128,6 +141,6 @@ jobs:
         if git diff-index --quiet HEAD --; then
           echo "Tidak ada perubahan biner baru untuk disimpan di repo privat."
         else
-          git commit -m "build(ci): inject llvm/mlir dependencies and build wheel [skip ci]"
+          git commit -m "build(ci): inject llvm/mlir dependencies, run explicit compiler build, and package wheel [skip ci]"
           git push origin mshqc-1.0.2
         fi
