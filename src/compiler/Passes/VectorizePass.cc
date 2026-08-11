@@ -16,22 +16,6 @@
 
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #include "mshqc/compiler/Passes/Passes.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
@@ -62,7 +46,6 @@ struct LinalgVectorizePass : public impl::LinalgVectorizeBase<LinalgVectorizePas
 
         for (auto op : targetOps) {
             rewriter.setInsertionPoint(op);
-
 
             (void)mlir::linalg::vectorize(rewriter, op);
             llvm::errs() << "[METRIK] SIMD Vectorization Pass dieksekusi pada node Linalg.\n";

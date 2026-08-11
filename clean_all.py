@@ -35,6 +35,10 @@ def clean_cpp_comments(filepath):
     # Resolusi trailing whitespace untuk mencegah akumulasi baris kosong kotor
     cleaned_body = re.sub(r'[ \t]+$', '', cleaned_body, flags=re.MULTILINE)
 
+    # Modifikasi: Normalisasi baris kosong berlebih (maksimal 1 baris kosong berturut-turut)
+    # Menjaga kerapatan struktur kode tanpa menghapus spasi antar fungsi/blok logika
+    cleaned_body = re.sub(r'\n\s*\n\s*\n+', '\n\n', cleaned_body)
+
     new_content = header + cleaned_body
 
     if new_content != content:

@@ -15,21 +15,6 @@
 // ==============================================================================
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #include "mshqc/ints/math_utils.h"
 #include <unsupported/Eigen/MatrixFunctions>
 

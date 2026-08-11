@@ -15,21 +15,6 @@
 // ==============================================================================
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #include "mshqc/gradient/optimizer.h"
 #include "mshqc/basis.h"
 #include "mshqc/ints/integrals.h"

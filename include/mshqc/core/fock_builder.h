@@ -15,21 +15,6 @@
 // ==============================================================================
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #ifndef MSHQC_CORE_FOCK_BUILDER_H
 #define MSHQC_CORE_FOCK_BUILDER_H
 

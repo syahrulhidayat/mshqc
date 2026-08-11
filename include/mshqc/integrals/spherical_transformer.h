@@ -15,21 +15,6 @@
 // ==============================================================================
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #ifndef MSHQC_SPHERICAL_TRANSFORMER_H
 #define MSHQC_SPHERICAL_TRANSFORMER_H
 

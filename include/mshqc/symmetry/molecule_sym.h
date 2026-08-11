@@ -15,21 +15,6 @@
 // ==============================================================================
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #ifndef MSHQC_SYMMETRY_MOLECULE_SYM_H
 #define MSHQC_SYMMETRY_MOLECULE_SYM_H
 

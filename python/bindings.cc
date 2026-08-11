@@ -15,21 +15,6 @@
 // ==============================================================================
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/string.h>
 #include <nanobind/stl/vector.h>
@@ -57,7 +42,6 @@
     #include <unordered_set>
 #endif
 
-
 #include "mshqc/core/molecule.h"
 #include "mshqc/basis.h"
 #include "mshqc/ints/integrals.h"
@@ -69,19 +53,12 @@
 #include "mshqc/integrals/screening.h"
 #include "mshqc/core/fock_builder.h"
 
-
 #include "mshqc/mp2/mp2.h"
 #include "mshqc/mp3/mp3.h"
 #include "mshqc/mp3/omp3.h"
 
-
-
-
-
-
 #include "mshqc/gradient/gradient.h"
 #include "mshqc/gradient/optimizer.h"
-
 
 #include "mshqc/integrals/cholesky_eri.h"
 #include "mshqc/integrals/eri_transformer.h"
@@ -89,9 +66,6 @@
 namespace nb = nanobind;
 using namespace mshqc;
 using namespace mshqc::integrals;
-
-
-
 
 namespace mshqc_auto_tune {
 
@@ -179,9 +153,6 @@ NB_MODULE(_mshqc, m) {
                    std::to_string(t.dimension(2)) + ", " +
                    std::to_string(t.dimension(3)) + ")>";
         });
-
-
-
 
     nb::class_<Atom>(m, "Atom")
         .def(nb::init<int, double, double, double>(),
@@ -272,9 +243,6 @@ NB_MODULE(_mshqc, m) {
         .def("is_decomposed", &integrals::CholeskyERI::is_decomposed)
         .def("decomposed", &integrals::CholeskyERI::decomposed);
 
-
-
-
     nb::enum_<SymOpType>(m, "SymOpType")
         .value("Identity", SymOpType::Identity)
         .value("Rotation", SymOpType::Rotation)
@@ -298,7 +266,6 @@ NB_MODULE(_mshqc, m) {
         .def("get_aligned_molecule", &PointGroup::get_aligned_molecule)
         .def("get_operations", &PointGroup::get_operations, nb::rv_policy::reference_internal);
 
-
     nb::class_<UniqueShellPair>(m, "UniqueShellPair")
         .def_rw("p", &UniqueShellPair::p)
         .def_rw("q", &UniqueShellPair::q)
@@ -312,9 +279,6 @@ NB_MODULE(_mshqc, m) {
     nb::class_<BasisSymmetrizer>(m, "BasisSymmetrizer")
         .def(nb::init<const BasisSet&, const PointGroup&, const PetiteList&>())
         .def("symmetrize", &BasisSymmetrizer::symmetrize);
-
-
-
 
     nb::class_<DIIS>(m, "DIIS")
         .def(nb::init<int>(), nb::arg("max_vectors") = 8)
@@ -346,9 +310,6 @@ NB_MODULE(_mshqc, m) {
              nb::arg("sh_a"), nb::arg("sh_b"), nb::arg("sh_c"), nb::arg("sh_d"), nb::arg("threshold"))
         .def("get_schwarz_val", &mshqc::integrals::Screening::get_schwarz_val)
         .def("max_schwarz", &mshqc::integrals::Screening::max_schwarz);
-
-
-
 
     nb::class_<SCFConfig>(m, "SCFConfig")
         .def(nb::init<>())
@@ -382,9 +343,6 @@ NB_MODULE(_mshqc, m) {
         .def_rw("converged", &SCFResult::converged)
         .def_rw("n_occ_alpha", &SCFResult::n_occ_alpha)
         .def_rw("n_occ_beta", &SCFResult::n_occ_beta);
-
-
-
 
     nb::class_<UHF>(m, "UHF")
         .def("__init__", [](UHF *t, const Molecule& mol, const BasisSet& basis,
@@ -443,9 +401,6 @@ NB_MODULE(_mshqc, m) {
         .def("compute", &ROHF::compute, nb::call_guard<nb::gil_scoped_release>())
         .def("energy", &ROHF::energy);
 
-
-
-
     nb::class_<MP2Config>(m, "MP2Config")
         .def(nb::init<>())
         .def_rw("scf_type", &MP2Config::scf_type)
@@ -499,8 +454,6 @@ NB_MODULE(_mshqc, m) {
              nb::arg("config"), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
         .def("compute", &OMP2::compute, nb::call_guard<nb::gil_scoped_release>(), "Run OMP2 optimization");
 
-
-
     nb::class_<MP3Result>(m, "MP3Result")
         .def(nb::init<>())
         .def_rw("e_hf", &MP3Result::e_hf)
@@ -524,15 +477,12 @@ NB_MODULE(_mshqc, m) {
              nb::arg("scf_guess"), nb::arg("mp2_guess"), nb::arg("config"), nb::arg("integrals"))
         .def("compute", &UMP3::compute, nb::call_guard<nb::gil_scoped_release>());
 
-
     nb::class_<OMP3>(m, "OMP3")
         .def(nb::init<const Molecule&, const BasisSet&, std::shared_ptr<IntegralEngine>,
                       const SCFResult&, const MP2Config&, std::shared_ptr<PointGroup>, std::shared_ptr<PetiteList>>(),
              nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
              nb::arg("config"), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
         .def("compute", &OMP3::compute_omp3, nb::call_guard<nb::gil_scoped_release>(), "Run Orbital-Optimized MP3");
-
-
 
     nb::class_<gradient::GradientResult>(m, "GradientResult")
         .def(nb::init<>())
@@ -549,14 +499,10 @@ NB_MODULE(_mshqc, m) {
         .def_rw("n_iterations", &gradient::OptResult::n_iterations)
         .def_rw("final_energy", &gradient::OptResult::final_energy);
 
-
-
-
     m.def("bohr_to_angstrom", [](double bohr) { return bohr * 0.529177210903; }, "Convert Bohr to Angstrom");
     m.def("angstrom_to_bohr", [](double angstrom) { return angstrom / 0.529177210903; }, "Convert Angstrom to Bohr");
     m.def("hartree_to_ev", [](double hartree) { return hartree * 27.211386245988; }, "Convert Hartree to eV");
     m.def("hartree_to_kcal", [](double hartree) { return hartree * 627.5094740631; }, "Convert Hartree to kcal/mol");
-
 
     m.def("map_jit_tensor_2d", [](uintptr_t ptr_address, size_t rows, size_t cols) {
         double* raw_ptr = reinterpret_cast<double*>(ptr_address);
@@ -566,11 +512,9 @@ NB_MODULE(_mshqc, m) {
     }, "Ekstraksi memori L-Value JIT 2D menjadi NumPy array zero-copy",
        nb::arg("ptr_address"), nb::arg("rows"), nb::arg("cols"));
 
-
     m.def("map_jit_tensor", [](uintptr_t ptr_address, size_t n1, size_t n2, size_t n3, size_t n4) {
         double* raw_ptr = reinterpret_cast<double*>(ptr_address);
         size_t shape[4] = {n1, n2, n3, n4};
-
 
         return nb::ndarray<nb::numpy, double, nb::c_contig>(
             raw_ptr, 4, shape);

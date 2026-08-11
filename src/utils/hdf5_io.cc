@@ -15,21 +15,6 @@
 // ==============================================================================
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #include "mshqc/utils/hdf5_io.h"
 #include <iostream>
 #include <stdexcept>

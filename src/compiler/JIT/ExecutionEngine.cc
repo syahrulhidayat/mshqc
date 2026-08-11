@@ -15,21 +15,6 @@
 // ==============================================================================
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #include "mshqc/compiler/JIT/ExecutionEngine.h"
 #include "mlir/ExecutionEngine/OptUtils.h"
 #include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
@@ -58,14 +43,12 @@ llvm::Expected<std::unique_ptr<MshqcJIT>> MshqcJIT::create(mlir::ModuleOp module
     auto tmBuilderOrErr = llvm::orc::JITTargetMachineBuilder::detectHost();
     if (!tmBuilderOrErr) return tmBuilderOrErr.takeError();
 
-
     tmBuilderOrErr->getFeatures().AddFeature("avx512f", false);
     tmBuilderOrErr->getFeatures().AddFeature("avx512vl", false);
     tmBuilderOrErr->getFeatures().AddFeature("avx2", true);
 
     auto tmOrErr = tmBuilderOrErr->createTargetMachine();
     if (!tmOrErr) return tmOrErr.takeError();
-
 
     engineOptions.transformer = [tm = std::move(tmOrErr.get())](llvm::Module *m) {
         return mlir::makeOptimizingTransformer(3, 0, tm.get())(m);
@@ -74,8 +57,6 @@ llvm::Expected<std::unique_ptr<MshqcJIT>> MshqcJIT::create(mlir::ModuleOp module
     mlir::registerBuiltinDialectTranslation(*module->getContext());
     mlir::registerLLVMDialectTranslation(*module->getContext());
     mlir::registerOpenMPDialectTranslation(*module->getContext());
-
-
 
     mlir::StringAttr targetFeatures = mlir::StringAttr::get(
         module->getContext(),

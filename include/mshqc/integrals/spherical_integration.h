@@ -15,21 +15,6 @@
 // ==============================================================================
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #ifndef MSHQC_SPHERICAL_INTEGRATION_H
 #define MSHQC_SPHERICAL_INTEGRATION_H
 

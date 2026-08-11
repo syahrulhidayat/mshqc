@@ -15,21 +15,6 @@
 // ==============================================================================
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #ifndef MSHQC_INTEGRALS_SCREENING_H
 #define MSHQC_INTEGRALS_SCREENING_H
 

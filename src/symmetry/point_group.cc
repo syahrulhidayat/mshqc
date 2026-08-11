@@ -15,21 +15,6 @@
 // ==============================================================================
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #include "mshqc/symmetry/point_group.h"
 #include <iostream>
 #include <cmath>

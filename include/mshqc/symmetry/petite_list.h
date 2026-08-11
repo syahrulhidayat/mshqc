@@ -15,21 +15,6 @@
 // ==============================================================================
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #ifndef MSHQC_SYMMETRY_PETITE_LIST_H
 #define MSHQC_SYMMETRY_PETITE_LIST_H
 

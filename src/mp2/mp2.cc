@@ -15,21 +15,6 @@
 // ==============================================================================
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #include <tblis/tblis.h>
 #include "mshqc/symmetry/salc_builder.h"
 #include "mshqc/mp2/mp2.h"
@@ -151,10 +136,8 @@ void RMP2::compute_amplitudes_and_energy() {
 
     mlir::PassManager pm(mlir_builder.getContext());
 
-
     mlir::OpPassManager &funcPM = pm.nest<mlir::func::FuncOp>();
     funcPM.addPass(mshqc::compiler::createLowerToLinalgPass());
-
 
     pm.addPass(mshqc::compiler::createBufferizePass());
 

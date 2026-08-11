@@ -15,21 +15,6 @@
 // ==============================================================================
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #include <x86intrin.h>
 #include <cstdlib>
 #include "mshqc/compiler/JIT/ExecutionEngine.h"

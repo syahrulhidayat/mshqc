@@ -15,21 +15,6 @@
 // ==============================================================================
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #ifndef MSHQC_ANALYTICAL_GRADIENT_H
 #define MSHQC_ANALYTICAL_GRADIENT_H
 

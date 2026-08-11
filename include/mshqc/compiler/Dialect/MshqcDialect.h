@@ -15,21 +15,6 @@
 // ==============================================================================
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #ifndef MSHQC_COMPILER_DIALECT_MSHQCDIALECT_H_
 #define MSHQC_COMPILER_DIALECT_MSHQCDIALECT_H_
 

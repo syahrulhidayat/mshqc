@@ -15,21 +15,6 @@
 // ==============================================================================
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #ifndef MSHQC_SYMMETRY_POINT_GROUP_H
 #define MSHQC_SYMMETRY_POINT_GROUP_H
 

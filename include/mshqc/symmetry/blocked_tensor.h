@@ -15,21 +15,6 @@
 // ==============================================================================
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #ifndef MSHQC_SYMMETRY_BLOCKED_TENSOR_H
 #define MSHQC_SYMMETRY_BLOCKED_TENSOR_H
 

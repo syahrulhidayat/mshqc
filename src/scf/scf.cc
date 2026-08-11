@@ -15,21 +15,6 @@
 // ==============================================================================
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #include "mshqc/scf/scf.h"
 #include "mshqc/scf/diis.h"
 #include "mshqc/scf/sad.h"

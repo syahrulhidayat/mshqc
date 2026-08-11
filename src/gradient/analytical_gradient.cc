@@ -15,21 +15,6 @@
 // ==============================================================================
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #include "mshqc/gradient/analytical_gradient.h"
 #include <iostream>
 #include <iomanip>

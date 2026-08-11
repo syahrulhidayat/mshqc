@@ -15,21 +15,6 @@
 // ==============================================================================
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #include "mshqc/integrals/eri_transformer.h"
 #include "mshqc/symmetry/blocked_tensor.h"
 #include "mshqc/utils/hdf5_io.h"

@@ -15,21 +15,6 @@
 // ==============================================================================
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #include "mshqc/mp2/mp2.h"
 #include "mshqc/integrals/eri_transformer.h"
 #include <omp.h>

@@ -15,21 +15,6 @@
 // ==============================================================================
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #include "mshqc/symmetry/petite_list.h"
 #include <iostream>
 #include <cmath>

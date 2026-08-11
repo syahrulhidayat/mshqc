@@ -15,21 +15,6 @@
 // ==============================================================================
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #include "mshqc/mp3/mp3.h"
 #include "mshqc/mp3/omp3.h"
 #include "mshqc/integrals/eri_transformer.h"

@@ -15,21 +15,6 @@
 // ==============================================================================
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #include "mshqc/symmetry/molecule_sym.h"
 #include <iostream>
 #include <cmath>

@@ -16,21 +16,6 @@
 
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #include "mshqc/compiler/Passes/Passes.h"
 #include "mshqc/compiler/Dialect/MshqcDialect.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"

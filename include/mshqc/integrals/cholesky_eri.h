@@ -15,21 +15,6 @@
 // ==============================================================================
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #ifndef MSHQC_INTEGRALS_CHOLESKY_ERI_H
 #define MSHQC_INTEGRALS_CHOLESKY_ERI_H
 

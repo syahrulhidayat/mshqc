@@ -15,21 +15,6 @@
 // ==============================================================================
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #include "mshqc/symmetry/salc_builder.h"
 #include <random>
 #include <iostream>

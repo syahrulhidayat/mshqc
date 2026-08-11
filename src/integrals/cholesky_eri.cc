@@ -15,21 +15,6 @@
 // ==============================================================================
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #include "mshqc/integrals/cholesky_eri.h"
 #include "mshqc/utils/hdf5_io.h"
 #include <iostream>

@@ -15,21 +15,6 @@
 // ==============================================================================
 
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 #ifndef MSHQC_INTEGRALS_ERI_TRANSFORMER_H
 #define MSHQC_INTEGRALS_ERI_TRANSFORMER_H
 
