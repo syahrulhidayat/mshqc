@@ -145,31 +145,56 @@ jobs:
 
 
     
-    - name: Commit Wheel and Telemetry Logs to Private Repo
-      if: always() 
+    # =========================================================================
+    # 6. INSTALASI DAN PENGUJIAN JIT MLIR VIA GDB TELEMETRY (ITERATIF)
+    # =========================================================================
+    - name: Install Wheel & Execute GDB Telemetry
       shell: bash
       run: |
-        git config --global user.name "MSHQC Automation"
-        git config --global user.email "automation@mshqc.internal"
-        
-        mkdir -p releases test_logs
-        rm -f releases/*.whl
-        
-        if ls dist/*.whl 1> /dev/null 2>&1; then
-          cp dist/*.whl releases/
-          git add -f releases/*.whl
-        fi
-        
-        if ls test_logs/*.log 1> /dev/null 2>&1; then
-          git add -f test_logs/*.log
-        fi
-        
-        if git diff-index --quiet HEAD --; then
-          echo "Tidak ada perubahan biner atau log baru untuk disimpan."
-        else
-          git commit -m "build(ci): compile release wheel and record gdb test telemetry [skip ci]"
-          
-          # Sinkronisasi state remote sebelum melakukan push untuk menghindari conflict
-          git pull origin mshqc-1.0.2 --rebase
-          git push origin mshqc-1.0.2
-        fi
+        source $HOME/miniconda3/etc/profile.d/conda.sh
+        conda activate mshqc_314
+
+        python -m pip uninstall -y mshqc
+        python -m pip install dist/*.whl
+
+        mkdir -p test_logs
+        TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+
+        echo "======================================================================="
+        echo " MENGEKSEKUSI PENGUJIAN GDB BATCH MODE PADA DIREKTORI tests/"
+        echo "======================================================================="
+
+        set +e
+        set +o pipefail
+
+        for TEST_FILE in tests/*.py; do
+            echo "--- Menguji: $TEST_FILE ---"
+            BASENAME=$(basename "$TEST_FILE" .py)
+            LOG_FILE="test_logs/gdb_telemetry_${BASENAME}_${TIMESTAMP}.log"
+            
+            gdb -return-child-result --batch \
+                -ex "run" \
+                -ex "echo \n--- FATAL MEMORY CRASH DETECTED ---\n" \
+                -ex "bt full" \
+                -ex "frame 0" \
+                -ex "info frame" \
+                -ex "x/10i \$rip" \
+                -ex "quit" \
+                --args python "$TEST_FILE" | tee "$LOG_FILE"
+                
+            EXIT_CODE=${PIPESTATUS[0]}
+            
+            if [ $EXIT_CODE -ne 0 ]; then
+              echo "❌ Pengujian $TEST_FILE gagal dengan Exit Code $EXIT_CODE."
+              # Aktifkan kembali proteksi bash sebelum melakukan abort
+              set -e
+              set -o pipefail
+              exit 1
+            else
+              echo "✅ Pengujian $TEST_FILE sukses."
+            fi
+        done
+
+        # Aktifkan kembali proteksi bash setelah loop selesai
+        set -e
+        set -o pipefail
