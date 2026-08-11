@@ -129,5 +129,5 @@ jobs:
           echo "Tidak ada perubahan biner baru untuk disimpan di repo privat."
         else
           git commit -m "build(ci): inject llvm/mlir dependencies and build wheel [skip ci]"
-          git push origin HEAD:debug2
+          git push origin mshqc-1.0.2
         fi
