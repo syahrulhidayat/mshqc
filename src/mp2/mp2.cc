@@ -177,10 +177,7 @@ void RMP2::compute_amplitudes_and_energy() {
         {dim_ov, dim_ov}, {1, dim_ov}
     };
 
-    void* p_B1 = &B_desc;
-    void* p_B2 = &B_desc;
-    void* p_G = &G_desc;
-    std::vector<void*> args = { &p_B1, &p_B2, &p_G };
+    std::vector<void*> args = { &B_desc, &B_desc, &G_desc };
 
     if (auto err = engine->invoke("contract_kernel", args)) {
         std::cerr << "[FATAL] Terjadi interupsi pada JIT Runtime.\n";
