@@ -49,7 +49,7 @@ mlir::Value GraphBuilder::emitContractOp(const std::vector<int64_t>& lhsShape,
     auto rhsTensorType = RankedTensorType::get(rhsShape, f64Type);
     auto resTensorType = RankedTensorType::get({lhsShape[0], rhsShape[0]}, f64Type);
 
-    auto funcType = builder.getFunctionType({lhsTensorType, rhsTensorType}, {resTensorType});
+    auto funcType = builder.getFunctionType({lhsTensorType, rhsTensorType, resTensorType}, {resTensorType});
     auto funcOp = builder.create<func::FuncOp>(loc, builder.getStringAttr("contract_kernel"), funcType);
 
     Block* entryBlock = funcOp.addEntryBlock();
@@ -57,8 +57,9 @@ mlir::Value GraphBuilder::emitContractOp(const std::vector<int64_t>& lhsShape,
 
     Value lhsArg = entryBlock->getArgument(0);
     Value rhsArg = entryBlock->getArgument(1);
+    Value outArg = entryBlock->getArgument(2);
 
-    auto contractNode = builder.create<mshqc::compiler::ContractOp>(loc, resTensorType, lhsArg, rhsArg, builder.getStringAttr(einsum_eq)
+    auto contractNode = builder.create<mshqc::compiler::ContractOp>(loc, resTensorType, lhsArg, rhsArg, outArg, builder.getStringAttr(einsum_eq)
     );
 
     builder.create<func::ReturnOp>(loc, contractNode.getResult());
