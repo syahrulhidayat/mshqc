@@ -59,21 +59,14 @@ struct LowerToLLVMPass : public impl::LowerToLLVMBase<LowerToLLVMPass> {
             funcOp->setAttr("llvm.emit_c_interface", mlir::UnitAttr::get(&getContext()));
         });
 
-        getOperation().walk([&](mlir::scf::ForOp forOp) {
-
-            if (forOp.getBody()->getOps<mlir::scf::ForOp>().empty()) {
-                (void)mlir::loopUnrollByFactor(forOp, 4);
-                forOp->setAttr("llvm.loop_unroll_enable", mlir::UnitAttr::get(&getContext()));
-            }
-        });
-
         mlir::LLVMTypeConverter typeConverter(&getContext());
 
         mlir::LLVMConversionTarget target(getContext());
         target.addLegalOp<mlir::ModuleOp>();
         target.addDynamicallyLegalDialect<mlir::omp::OpenMPDialect>([&](mlir::Operation *op) -> std::optional<bool> {
-        return typeConverter.isLegal(op);
-    });
+            return typeConverter.isLegal(op);
+        });
+
         mlir::RewritePatternSet patterns(&getContext());
 
         mlir::memref::populateExpandStridedMetadataPatterns(patterns);
