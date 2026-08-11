@@ -54,8 +54,8 @@ struct LowerToLLVMPass : public impl::LowerToLLVMBase<LowerToLLVMPass> {
         registry.insert<mlir::LLVM::LLVMDialect, 
                         mlir::scf::SCFDialect, 
                         mlir::vector::VectorDialect,
-                        mlir::cf::ControlFlowDialect,  // KOREKSI REGISTRASI
-                        mlir::omp::OpenMPDialect>();   // KOREKSI REGISTRASI
+                        mlir::cf::ControlFlowDialect,  
+                        mlir::omp::OpenMPDialect>();   
     }
 
     void runOnOperation() override {
@@ -68,7 +68,7 @@ struct LowerToLLVMPass : public impl::LowerToLLVMBase<LowerToLLVMPass> {
 
         mlir::LLVMConversionTarget target(getContext());
         target.addLegalOp<mlir::ModuleOp>();
-        target.addLegalOp<mlir::UnrealizedConversionCastOp>(); // KUNCI RESOLUSI SIGSEGV
+        target.addLegalOp<mlir::UnrealizedConversionCastOp>(); 
 
         target.addDynamicallyLegalDialect<mlir::omp::OpenMPDialect>([&](mlir::Operation *op) -> std::optional<bool> {
             return typeConverter.isLegal(op);
