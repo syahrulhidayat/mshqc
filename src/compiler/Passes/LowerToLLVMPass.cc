@@ -33,6 +33,7 @@
 #include "mlir/Dialect/OpenMP/OpenMPDialect.h"
 #include "mlir/Conversion/SCFToOpenMP/SCFToOpenMP.h"
 #include "mlir/Conversion/OpenMPToLLVM/ConvertOpenMPToLLVM.h"
+#include "mlir/Dialect/ControlFlow/IR/ControlFlow.h" // INJEKSI DEPENDENSI
 
 #include "mlir/Dialect/SCF/Utils/Utils.h"
 #include "mlir/Dialect/MemRef/Transforms/Transforms.h"
@@ -50,7 +51,11 @@ namespace compiler {
 namespace {
 struct LowerToLLVMPass : public impl::LowerToLLVMBase<LowerToLLVMPass> {
     void getDependentDialects(mlir::DialectRegistry &registry) const override {
-        registry.insert<mlir::LLVM::LLVMDialect, mlir::scf::SCFDialect, mlir::vector::VectorDialect>();
+        registry.insert<mlir::LLVM::LLVMDialect, 
+                        mlir::scf::SCFDialect, 
+                        mlir::vector::VectorDialect,
+                        mlir::cf::ControlFlowDialect,  // KOREKSI REGISTRASI
+                        mlir::omp::OpenMPDialect>();   // KOREKSI REGISTRASI
     }
 
     void runOnOperation() override {
@@ -63,6 +68,8 @@ struct LowerToLLVMPass : public impl::LowerToLLVMBase<LowerToLLVMPass> {
 
         mlir::LLVMConversionTarget target(getContext());
         target.addLegalOp<mlir::ModuleOp>();
+        target.addLegalOp<mlir::UnrealizedConversionCastOp>(); // KUNCI RESOLUSI SIGSEGV
+
         target.addDynamicallyLegalDialect<mlir::omp::OpenMPDialect>([&](mlir::Operation *op) -> std::optional<bool> {
             return typeConverter.isLegal(op);
         });
