@@ -15,7 +15,6 @@ jobs:
         token: ${{ secrets.MY_GITHUB_TOKEN }} 
         fetch-depth: 0 
 
-
     - name: Activate Local Environment & Verify Dependencies
       shell: bash
       run: |
@@ -24,7 +23,6 @@ jobs:
         
         conda install -y -c conda-forge cmake make compilers eigen pkg-config "hdf5=1.14.3" pip liblapacke mkl mkl-devel mkl-include llvmdev mlir
         python -m pip install build wheel nanobind setuptools
-
 
     - name: Ensure libcint is Compiled
       shell: bash
@@ -98,53 +96,6 @@ jobs:
         
         python setup.py bdist_wheel
 
-
-    - name: Install Wheel & Execute GDB Telemetry
-      id: test_phase
-      shell: bash
-      run: |
-        source $HOME/miniconda3/etc/profile.d/conda.sh
-        conda activate mshqc_314
-
-        python -m pip uninstall -y mshqc
-        python -m pip install dist/*.whl
-
-        mkdir -p test_logs
-        TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-        LOG_FILE="test_logs/gdb_telemetry_${TIMESTAMP}.log"
-
-        echo "======================================================================="
-        echo " MENGEKSEKUSI PENGUJIAN GDB BATCH MODE"
-        echo "======================================================================="
-
-        set +e
-        set +o pipefail
-        
-        gdb -return-child-result --batch \
-            -ex "run" \
-            -ex "echo \n--- FATAL MEMORY CRASH DETECTED ---\n" \
-            -ex "bt full" \
-            -ex "frame 0" \
-            -ex "info frame" \
-            -ex "x/10i \$rip" \
-            -ex "quit" \
-            --args python test/test_mp2_mshqc_soscf2.py | tee $LOG_FILE
-            
-        EXIT_CODE=${PIPESTATUS[0]}
-        
-        # Aktifkan kembali proteksi bash
-        set -e
-        set -o pipefail
-        
-        if [ $EXIT_CODE -ne 0 ]; then
-          echo "❌ Pengujian MP2 gagal dengan Exit Code $EXIT_CODE."
-          exit 1
-        else
-          echo "✅ Pengujian MP2 sukses."
-        fi
-
-
-    
     # =========================================================================
     # 6. INSTALASI DAN PENGUJIAN JIT MLIR VIA GDB TELEMETRY (ITERATIF)
     # =========================================================================
@@ -198,3 +149,34 @@ jobs:
         # Aktifkan kembali proteksi bash setelah loop selesai
         set -e
         set -o pipefail
+    
+    # =========================================================================
+    # 7. COMMIT ARTEFAK KEMBALI KE REPO PRIVAT
+    # =========================================================================
+    - name: Commit Wheel and Telemetry Logs to Private Repo
+      if: always() 
+      shell: bash
+      run: |
+        git config --global user.name "MSHQC Automation"
+        git config --global user.email "automation@mshqc.internal"
+        
+        mkdir -p releases test_logs
+        rm -f releases/*.whl
+        
+        if ls dist/*.whl 1> /dev/null 2>&1; then
+          cp dist/*.whl releases/
+          git add -f releases/*.whl
+        fi
+        
+        if ls test_logs/*.log 1> /dev/null 2>&1; then
+          git add -f test_logs/*.log
+        fi
+        
+        if git diff-index --quiet HEAD --; then
+          echo "Tidak ada perubahan biner atau log baru untuk disimpan."
+        else
+          git commit -m "build(ci): compile release wheel and record gdb test telemetry [skip ci]"
+          
+          git pull origin mshqc-1.0.2 --rebase
+          git push origin mshqc-1.0.2
+        fi
