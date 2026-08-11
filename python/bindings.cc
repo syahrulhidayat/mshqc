@@ -263,7 +263,7 @@ NB_MODULE(_mshqc, m) {
         .def("detect", &PointGroup::detect)
         .def("get_symbol", &PointGroup::get_symbol)
         .def("get_order", &PointGroup::get_order)
-        .def("get_aligned_molecule", &PointGroup::get_aligned_molecule)
+        .def("get_aligned_molecule", &PointGroup::get_aligned_molecule, nb::rv_policy::reference_internal)
         .def("get_operations", &PointGroup::get_operations, nb::rv_policy::reference_internal);
 
     nb::class_<UniqueShellPair>(m, "UniqueShellPair")

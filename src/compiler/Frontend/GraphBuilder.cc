@@ -47,7 +47,7 @@ mlir::Value GraphBuilder::emitContractOp(const std::vector<int64_t>& lhsShape,
 
     auto lhsTensorType = RankedTensorType::get(lhsShape, f64Type);
     auto rhsTensorType = RankedTensorType::get(rhsShape, f64Type);
-    auto resTensorType = RankedTensorType::get({lhsShape[0], lhsShape[1], rhsShape[0], rhsShape[1]}, f64Type);
+    auto resTensorType = RankedTensorType::get({lhsShape[0], rhsShape[0]}, f64Type);
 
     auto funcType = builder.getFunctionType({lhsTensorType, rhsTensorType}, {resTensorType});
     auto funcOp = builder.create<func::FuncOp>(loc, builder.getStringAttr("contract_kernel"), funcType);

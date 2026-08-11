@@ -57,6 +57,9 @@ target_link_libraries(mshqc_compiler
     MLIRMemRefDialect
     MLIRBufferizationDialect
     MLIRBufferizationTransforms
+    MLIRLinalgTransforms
+    MLIRTensorTransforms
+    MLIRFuncTransforms
     MLIRLLVMDialect
     MLIRBuiltinToLLVMIRTranslation
     MLIRLLVMCommonConversion

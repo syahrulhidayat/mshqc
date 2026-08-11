@@ -22,6 +22,13 @@
 #include "mlir/Dialect/Bufferization/Transforms/OneShotAnalysis.h"
 #include "mlir/Dialect/Bufferization/Transforms/OneShotModuleBufferize.h"
 #include "mlir/Dialect/MemRef/IR/MemRef.h"
+#include "mlir/Dialect/Linalg/Transforms/BufferizableOpInterfaceImpl.h"
+#include "mlir/Dialect/Tensor/Transforms/BufferizableOpInterfaceImpl.h"
+#include "mlir/Dialect/Bufferization/Transforms/FuncBufferizableOpInterfaceImpl.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+
 
 namespace mshqc {
 namespace compiler {
@@ -33,7 +40,14 @@ namespace {
 struct BufferizePass : public impl::BufferizeBase<BufferizePass> {
     void getDependentDialects(mlir::DialectRegistry &registry) const override {
         registry.insert<mlir::bufferization::BufferizationDialect,
-                        mlir::memref::MemRefDialect>();
+                        mlir::memref::MemRefDialect,
+                        mlir::linalg::LinalgDialect,
+                        mlir::tensor::TensorDialect,
+                        mlir::func::FuncDialect>();
+        
+        mlir::linalg::registerBufferizableOpInterfaceExternalModels(registry);
+        mlir::tensor::registerBufferizableOpInterfaceExternalModels(registry);
+        mlir::bufferization::func_ext::registerBufferizableOpInterfaceExternalModels(registry);
     }
 
     void runOnOperation() override {
