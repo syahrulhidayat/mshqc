@@ -344,58 +344,61 @@ NB_MODULE(_mshqc, m) {
         .def_rw("n_occ_alpha", &SCFResult::n_occ_alpha)
         .def_rw("n_occ_beta", &SCFResult::n_occ_beta);
 
+    // =========================================================================
+    // KOREKSI BINDING MODUL SCF
+    // =========================================================================
     nb::class_<UHF>(m, "UHF")
-        .def("__init__", [](UHF *t, const Molecule& mol, const BasisSet& basis,
+        .def("__init__", [](UHF *self, const Molecule& mol, const BasisSet& basis,
                             IntegralEngine* integrals, PointGroup* pg, PetiteList* pl,
                             int na, int nb, const SCFConfig& conf) {
             auto sp_int = std::shared_ptr<IntegralEngine>(integrals, [](IntegralEngine*){});
             auto sp_pg = pg ? std::shared_ptr<PointGroup>(pg, [](PointGroup*){}) : nullptr;
             auto sp_pl = pl ? std::shared_ptr<PetiteList>(pl, [](PetiteList*){}) : nullptr;
-            new (t) UHF(mol, basis, sp_int, sp_pg, sp_pl, na, nb, conf);
+            new (self) UHF(mol, basis, sp_int, sp_pg, sp_pl, na, nb, conf);
         }, nb::arg("molecule"), nb::arg("basis"), nb::arg("integrals"),
            nb::arg("pg"), nb::arg("pl"), nb::arg("n_alpha"), nb::arg("n_beta"),
            nb::arg("config") = SCFConfig())
-        .def("__init__", [](UHF *t, const Molecule& mol, const BasisSet& basis,
+        .def("__init__", [](UHF *self, const Molecule& mol, const BasisSet& basis,
                             IntegralEngine* integrals, int na, int nb, const SCFConfig& conf) {
             auto sp_int = std::shared_ptr<IntegralEngine>(integrals, [](IntegralEngine*){});
-            new (t) UHF(mol, basis, sp_int, nullptr, nullptr, na, nb, conf);
+            new (self) UHF(mol, basis, sp_int, nullptr, nullptr, na, nb, conf);
         }, nb::arg("molecule"), nb::arg("basis"), nb::arg("integrals"),
            nb::arg("n_alpha"), nb::arg("n_beta"), nb::arg("config") = SCFConfig())
         .def("compute", &UHF::compute, nb::call_guard<nb::gil_scoped_release>())
         .def("energy", &UHF::energy);
 
     nb::class_<RHF>(m, "RHF")
-        .def("__init__", [](RHF *t, const Molecule& mol, const BasisSet& basis,
+        .def("__init__", [](RHF *self, const Molecule& mol, const BasisSet& basis,
                             IntegralEngine* integrals, PointGroup* pg, PetiteList* pl,
                             const SCFConfig& conf) {
             auto sp_int = std::shared_ptr<IntegralEngine>(integrals, [](IntegralEngine*){});
             auto sp_pg = pg ? std::shared_ptr<PointGroup>(pg, [](PointGroup*){}) : nullptr;
             auto sp_pl = pl ? std::shared_ptr<PetiteList>(pl, [](PetiteList*){}) : nullptr;
-            new (t) RHF(mol, basis, sp_int, sp_pg, sp_pl, conf);
+            new (self) RHF(mol, basis, sp_int, sp_pg, sp_pl, conf);
         }, nb::arg("molecule"), nb::arg("basis"), nb::arg("integrals"),
            nb::arg("pg"), nb::arg("pl"), nb::arg("config") = SCFConfig())
-        .def("__init__", [](RHF *t, const Molecule& mol, const BasisSet& basis,
+        .def("__init__", [](RHF *self, const Molecule& mol, const BasisSet& basis,
                             IntegralEngine* integrals, const SCFConfig& conf) {
             auto sp_int = std::shared_ptr<IntegralEngine>(integrals, [](IntegralEngine*){});
-            new (t) RHF(mol, basis, sp_int, nullptr, nullptr, conf);
+            new (self) RHF(mol, basis, sp_int, nullptr, nullptr, conf);
         }, nb::arg("molecule"), nb::arg("basis"), nb::arg("integrals"), nb::arg("config") = SCFConfig())
         .def("compute", &RHF::compute, nb::call_guard<nb::gil_scoped_release>())
         .def("energy", &RHF::energy);
 
     nb::class_<ROHF>(m, "ROHF")
-        .def("__init__", [](ROHF *t, const Molecule& mol, const BasisSet& basis,
+        .def("__init__", [](ROHF *self, const Molecule& mol, const BasisSet& basis,
                             IntegralEngine* integrals, PointGroup* pg, PetiteList* pl,
                             int na, int nb, const SCFConfig& conf) {
             auto sp_int = std::shared_ptr<IntegralEngine>(integrals, [](IntegralEngine*){});
             auto sp_pg = pg ? std::shared_ptr<PointGroup>(pg, [](PointGroup*){}) : nullptr;
             auto sp_pl = pl ? std::shared_ptr<PetiteList>(pl, [](PetiteList*){}) : nullptr;
-            new (t) ROHF(mol, basis, sp_int, sp_pg, sp_pl, na, nb, conf);
+            new (self) ROHF(mol, basis, sp_int, sp_pg, sp_pl, na, nb, conf);
         }, nb::arg("molecule"), nb::arg("basis"), nb::arg("integrals"),
            nb::arg("pg"), nb::arg("pl"), nb::arg("n_alpha"), nb::arg("n_beta"), nb::arg("config") = SCFConfig())
-        .def("__init__", [](ROHF *t, const Molecule& mol, const BasisSet& basis,
+        .def("__init__", [](ROHF *self, const Molecule& mol, const BasisSet& basis,
                             IntegralEngine* integrals, int na, int nb, const SCFConfig& conf) {
             auto sp_int = std::shared_ptr<IntegralEngine>(integrals, [](IntegralEngine*){});
-            new (t) ROHF(mol, basis, sp_int, nullptr, nullptr, na, nb, conf);
+            new (self) ROHF(mol, basis, sp_int, nullptr, nullptr, na, nb, conf);
         }, nb::arg("molecule"), nb::arg("basis"), nb::arg("integrals"),
            nb::arg("n_alpha"), nb::arg("n_beta"), nb::arg("config") = SCFConfig())
         .def("compute", &ROHF::compute, nb::call_guard<nb::gil_scoped_release>())
@@ -433,25 +436,43 @@ NB_MODULE(_mshqc, m) {
         .def_rw("orbital_energies_alpha", &MP2Result::orbital_energies_alpha)
         .def_rw("orbital_energies_beta", &MP2Result::orbital_energies_beta);
 
+    // =========================================================================
+    // KOREKSI BINDING MODUL MP2
+    // =========================================================================
     nb::class_<foundation::RMP2>(m, "RMP2")
-        .def(nb::init<const Molecule&, const BasisSet&, std::shared_ptr<IntegralEngine>,
-                      const SCFResult&, const MP2Config&, std::shared_ptr<PointGroup>, std::shared_ptr<PetiteList>>(),
-             nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
-             nb::arg("config"), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
+        .def("__init__", [](foundation::RMP2 *self, const Molecule& mol, const BasisSet& basis,
+                            IntegralEngine* integrals, const SCFResult& scf_guess, 
+                            const MP2Config& config, PointGroup* pg, PetiteList* pl) {
+            auto sp_int = std::shared_ptr<IntegralEngine>(integrals, [](IntegralEngine*){});
+            auto sp_pg = pg ? std::shared_ptr<PointGroup>(pg, [](PointGroup*){}) : nullptr;
+            auto sp_pl = pl ? std::shared_ptr<PetiteList>(pl, [](PetiteList*){}) : nullptr;
+            new (self) foundation::RMP2(mol, basis, sp_int, scf_guess, config, sp_pg, sp_pl);
+        }, nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
+            nb::arg("config"), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
         .def("compute", &foundation::RMP2::compute, nb::call_guard<nb::gil_scoped_release>());
 
     nb::class_<mshqc::UMP2>(m, "UMP2")
-        .def(nb::init<const Molecule&, const BasisSet&, std::shared_ptr<IntegralEngine>,
-                      const SCFResult&, const MP2Config&, std::shared_ptr<PointGroup>, std::shared_ptr<PetiteList>>(),
-             nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
-             nb::arg("config"), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
+        .def("__init__", [](mshqc::UMP2 *self, const Molecule& mol, const BasisSet& basis,
+                            IntegralEngine* integrals, const SCFResult& scf_guess, 
+                            const MP2Config& config, PointGroup* pg, PetiteList* pl) {
+            auto sp_int = std::shared_ptr<IntegralEngine>(integrals, [](IntegralEngine*){});
+            auto sp_pg = pg ? std::shared_ptr<PointGroup>(pg, [](PointGroup*){}) : nullptr;
+            auto sp_pl = pl ? std::shared_ptr<PetiteList>(pl, [](PetiteList*){}) : nullptr;
+            new (self) mshqc::UMP2(mol, basis, sp_int, scf_guess, config, sp_pg, sp_pl);
+        }, nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
+            nb::arg("config"), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
         .def("compute", &mshqc::UMP2::compute, nb::call_guard<nb::gil_scoped_release>());
 
     nb::class_<OMP2>(m, "OMP2")
-        .def(nb::init<const Molecule&, const BasisSet&, std::shared_ptr<IntegralEngine>,
-                      const SCFResult&, const MP2Config&, std::shared_ptr<PointGroup>, std::shared_ptr<PetiteList>>(),
-             nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
-             nb::arg("config"), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
+        .def("__init__", [](OMP2 *self, const Molecule& mol, const BasisSet& basis,
+                            IntegralEngine* integrals, const SCFResult& scf_guess, 
+                            const MP2Config& config, PointGroup* pg, PetiteList* pl) {
+            auto sp_int = std::shared_ptr<IntegralEngine>(integrals, [](IntegralEngine*){});
+            auto sp_pg = pg ? std::shared_ptr<PointGroup>(pg, [](PointGroup*){}) : nullptr;
+            auto sp_pl = pl ? std::shared_ptr<PetiteList>(pl, [](PetiteList*){}) : nullptr;
+            new (self) OMP2(mol, basis, sp_int, scf_guess, config, sp_pg, sp_pl);
+        }, nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
+            nb::arg("config"), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
         .def("compute", &OMP2::compute, nb::call_guard<nb::gil_scoped_release>(), "Run OMP2 optimization");
 
     nb::class_<MP3Result>(m, "MP3Result")
