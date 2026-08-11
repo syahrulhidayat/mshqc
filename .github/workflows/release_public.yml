@@ -116,8 +116,10 @@ jobs:
         echo "======================================================================="
         echo " MENGEKSEKUSI PENGUJIAN GDB BATCH MODE"
         echo "======================================================================="
+
+        set +e
+        set +o pipefail
         
-        # Eksekusi GDB dan gandakan output ke layar sekaligus file log
         gdb -return-child-result --batch \
             -ex "run" \
             -ex "echo \n--- FATAL MEMORY CRASH DETECTED ---\n" \
@@ -128,15 +130,21 @@ jobs:
             -ex "quit" \
             --args python test/test_mp2_mshqc_soscf2.py | tee $LOG_FILE
             
-        # Periksa exit code aktual dari GDB (sebelum pipa ke tee)
-        if [ ${PIPESTATUS[0]} -ne 0 ]; then
-          echo "❌ Pengujian MP2 gagal dengan Segmentation Fault/Error."
+        EXIT_CODE=${PIPESTATUS[0]}
+        
+        # Aktifkan kembali proteksi bash
+        set -e
+        set -o pipefail
+        
+        if [ $EXIT_CODE -ne 0 ]; then
+          echo "❌ Pengujian MP2 gagal dengan Exit Code $EXIT_CODE."
           exit 1
         else
           echo "✅ Pengujian MP2 sukses."
         fi
 
 
+    
     - name: Commit Wheel and Telemetry Logs to Private Repo
       if: always() 
       shell: bash
@@ -147,13 +155,11 @@ jobs:
         mkdir -p releases test_logs
         rm -f releases/*.whl
         
-        # Ekstrak biner wheel jika tahapan pemaketan berhasil
         if ls dist/*.whl 1> /dev/null 2>&1; then
           cp dist/*.whl releases/
           git add -f releases/*.whl
         fi
         
-        # Ekstrak log telemetri jika dieksekusi
         if ls test_logs/*.log 1> /dev/null 2>&1; then
           git add -f test_logs/*.log
         fi
@@ -162,5 +168,8 @@ jobs:
           echo "Tidak ada perubahan biner atau log baru untuk disimpan."
         else
           git commit -m "build(ci): compile release wheel and record gdb test telemetry [skip ci]"
+          
+          # Sinkronisasi state remote sebelum melakukan push untuk menghindari conflict
+          git pull origin mshqc-1.0.2 --rebase
           git push origin mshqc-1.0.2
         fi
