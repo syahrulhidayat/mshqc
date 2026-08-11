@@ -150,10 +150,18 @@ void RMP2::compute_amplitudes_and_energy() {
     mlir_builder.emitContractOp(shape, shape, "mP,nP->mn");
 
     mlir::PassManager pm(mlir_builder.getContext());
-    pm.addPass(mshqc::compiler::createLowerToLinalgPass());
+
+
+    mlir::OpPassManager &funcPM = pm.nest<mlir::func::FuncOp>();
+    funcPM.addPass(mshqc::compiler::createLowerToLinalgPass());
+
+
     pm.addPass(mshqc::compiler::createBufferizePass());
-    pm.addPass(mshqc::compiler::createLinalgTilingPass());
-    pm.addPass(mlir::createConvertLinalgToLoopsPass());
+
+    mlir::OpPassManager &tilingPM = pm.nest<mlir::func::FuncOp>();
+    tilingPM.addPass(mshqc::compiler::createLinalgTilingPass());
+    tilingPM.addPass(mlir::createConvertLinalgToLoopsPass());
+
     pm.addPass(mlir::createConvertSCFToOpenMPPass());
     pm.addPass(mshqc::compiler::createLowerToLLVMPass());
     pm.addPass(mlir::createReconcileUnrealizedCastsPass());
