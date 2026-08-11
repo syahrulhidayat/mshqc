@@ -122,7 +122,7 @@ void RMP2::transform_integrals() {
 
 void RMP2::compute_amplitudes_and_energy() {
 
-    #ifdef MSHQC_ENABLE_MLIR
+    #if 0 // #ifdef MSHQC_ENABLE_MLIR (Isolated for compiler debugging)
     if (config_.print_level > 0) std::cout << "  [HPC] Menginisialisasi MLIR JIT Execution (Zero-Copy)...\n";
 
     mshqc::compiler::GraphBuilder mlir_builder;
