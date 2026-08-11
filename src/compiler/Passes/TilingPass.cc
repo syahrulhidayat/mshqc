@@ -1,5 +1,3 @@
-#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
-
 // ==============================================================================
 // Copyright (c) 2026 Muhamad Syahrul Hidayat and mshqc contributors
 //
@@ -15,6 +13,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 // ==============================================================================
+
+#pragma GCC diagnostic ignored "-Wdeprecated-declarations"
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 #include "mshqc/compiler/Passes/Passes.h"
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
@@ -47,11 +63,11 @@ struct LinalgTilingPass : public impl::LinalgTilingBase<LinalgTilingPass> {
         });
 
         for (auto op : targetOps) {
-            // Level 1: L2 Cache Macro-tiling (Parameter: 128)
+
             llvm::SmallVector<int64_t> l2Tiles;
             for (auto iterType : op.getIteratorTypesArray()) {
                 if (iterType == mlir::utils::IteratorType::parallel) {
-                    l2Tiles.push_back(128); 
+                    l2Tiles.push_back(32);
                 } else {
                     l2Tiles.push_back(0);
                 }
@@ -62,15 +78,15 @@ struct LinalgTilingPass : public impl::LinalgTilingBase<LinalgTilingPass> {
             l2Options.setLoopType(mlir::linalg::LinalgTilingLoopType::ParallelLoops);
 
             rewriter.setInsertionPoint(op);
-            mlir::FailureOr<mlir::linalg::TiledLinalgOp> l2Result = 
+            mlir::FailureOr<mlir::linalg::TiledLinalgOp> l2Result =
                 mlir::linalg::tileLinalgOp(rewriter, op, l2Options);
 
             if (mlir::succeeded(l2Result)) {
-                // Level 2: L1 Cache Micro-tiling (Parameter: 32)
+
                 llvm::SmallVector<int64_t> l1Tiles;
                 for (auto iterType : l2Result->op.getIteratorTypesArray()) {
                     if (iterType == mlir::utils::IteratorType::parallel) {
-                        l1Tiles.push_back(32);
+                        l1Tiles.push_back(4);
                     } else {
                         l1Tiles.push_back(0);
                     }
@@ -81,18 +97,18 @@ struct LinalgTilingPass : public impl::LinalgTilingBase<LinalgTilingPass> {
                 l1Options.setLoopType(mlir::linalg::LinalgTilingLoopType::Loops);
 
                 rewriter.setInsertionPoint(l2Result->op);
-                mlir::FailureOr<mlir::linalg::TiledLinalgOp> l1Result = 
+                mlir::FailureOr<mlir::linalg::TiledLinalgOp> l1Result =
                     mlir::linalg::tileLinalgOp(rewriter, l2Result->op, l1Options);
 
                 if (mlir::succeeded(l1Result)) {
                     l1Result->op->setAttr("tiled", rewriter.getUnitAttr());
-                    
+
                     if (!l1Result->tensorResults.empty()) {
                         rewriter.replaceOp(l2Result->op, l1Result->tensorResults);
                     } else {
                         rewriter.eraseOp(l2Result->op);
                     }
-                    
+
                     if (!l2Result->tensorResults.empty()) {
                         rewriter.replaceOp(op, l2Result->tensorResults);
                     } else {
@@ -103,11 +119,11 @@ struct LinalgTilingPass : public impl::LinalgTilingBase<LinalgTilingPass> {
         }
     }
 };
-} // end anonymous namespace
+}
 
 std::unique_ptr<mlir::Pass> createLinalgTilingPass() {
     return std::make_unique<LinalgTilingPass>();
 }
 
-} // namespace compiler
-} // namespace mshqc
+}
+}

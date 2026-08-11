@@ -71,11 +71,6 @@ class CMakeBuild(build_ext):
         for filepath in glob.glob(os.path.join(self.build_temp, "**/*.so"), recursive=True):
             shutil.copy(filepath, extdir)
             
-        # 2. Cari di dalam folder python/mshqc (karena CMakeLists.txt Anda mengarah ke sini)
-        for filepath in glob.glob(os.path.join(ext.sourcedir, "python", "mshqc", "*.so")):
-            # Jangan copy libmshqc.so lagi jika sudah ada (karena ukurannya besar)
-            if "_mshqc" in os.path.basename(filepath):
-                shutil.copy(filepath, extdir)
 # Read long description safely
 try:
     with open("README.md", "r", encoding="utf-8") as fh:

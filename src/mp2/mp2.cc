@@ -1,18 +1,34 @@
- // ==============================================================================
- // Copyright (c) 2026 Muhamad Syahrul Hidayat and mshqc contributors
- //
- // Licensed under the Apache License, Version 2.0 (the "License");
- // you may not use this file except in compliance with the License.
- // You may obtain a copy of the License at
- //
- //     http://www.apache.org/licenses/LICENSE-2.0
- //
- // Unless required by applicable law or agreed to in writing, software
- // distributed under the License is distributed on an "AS IS" BASIS,
- // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- // See the License for the specific language governing permissions and
- // limitations under the License.
- // ==============================================================================
+// ==============================================================================
+// Copyright (c) 2026 Muhamad Syahrul Hidayat and mshqc contributors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+// ==============================================================================
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 #include <tblis/tblis.h>
 #include "mshqc/symmetry/salc_builder.h"
@@ -22,6 +38,8 @@
 #include "mlir/Conversion/SCFToOpenMP/SCFToOpenMP.h"
 #include "mlir/Conversion/LinalgToStandard/LinalgToStandard.h"
 #include "mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h"
+#include "mlir/Dialect/Linalg/Passes.h"
+#include "mshqc/compiler/Passes/Passes.h"
 
 #include "mshqc/compiler/Frontend/GraphBuilder.h"
 #include "mshqc/integrals/eri_transformer.h"
@@ -120,8 +138,7 @@ void RMP2::transform_integrals() {
 void RMP2::compute_amplitudes_and_energy() {
 
     #ifdef MSHQC_ENABLE_MLIR
-    if (config_.print_level > 0) std::cout << "  [HPC] Menginisialisasi MLIR JIT Execution (Zero-Copy)...
-";
+    if (config_.print_level > 0) std::cout << "  [HPC] Menginisialisasi MLIR JIT Execution (Zero-Copy)...\n";
 
     mshqc::compiler::GraphBuilder mlir_builder;
     mlir_builder.initializeModule("rmp2_amplitude_module");
@@ -142,15 +159,13 @@ void RMP2::compute_amplitudes_and_energy() {
     pm.addPass(mlir::createReconcileUnrealizedCastsPass());
 
     if (mlir::failed(pm.run(mlir_builder.getModule()))) {
-        std::cerr << "[FATAL] JIT Lowering Pipeline Gagal.
-";
+        std::cerr << "[FATAL] JIT Lowering Pipeline Gagal.\n";
         exit(1);
     }
 
     auto engine_exp = mshqc::compiler::MshqcJIT::create(mlir_builder.getModule());
     if (!engine_exp) {
-        std::cerr << "[FATAL] JIT Execution Engine gagal diinisialisasi.
-";
+        std::cerr << "[FATAL] JIT Execution Engine gagal diinisialisasi.\n";
         exit(1);
     }
     auto engine = std::move(*engine_exp);
@@ -178,13 +193,11 @@ void RMP2::compute_amplitudes_and_energy() {
     };
 
     if (auto err = engine->invoke("contract_kernel", args)) {
-        std::cerr << "[FATAL] Terjadi interupsi pada JIT Runtime.
-";
+        std::cerr << "[FATAL] Terjadi interupsi pada JIT Runtime.\n";
         exit(1);
     }
 
-    if (config_.print_level > 0) std::cout << "  [HPC] Matriks Densitas Korelasi berhasil ditransformasi via MLIR.
-";
+    if (config_.print_level > 0) std::cout << "  [HPC] Matriks Densitas Korelasi berhasil ditransformasi via MLIR.\n";
     #endif
 
     const Eigen::VectorXd& eps = scf_.orbital_energies_alpha;

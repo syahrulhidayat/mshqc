@@ -1,18 +1,34 @@
- // ==============================================================================
- // Copyright (c) 2026 Muhamad Syahrul Hidayat and mshqc contributors
- //
- // Licensed under the Apache License, Version 2.0 (the "License");
- // you may not use this file except in compliance with the License.
- // You may obtain a copy of the License at
- //
- //     http://www.apache.org/licenses/LICENSE-2.0
- //
- // Unless required by applicable law or agreed to in writing, software
- // distributed under the License is distributed on an "AS IS" BASIS,
- // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- // See the License for the specific language governing permissions and
- // limitations under the License.
- // ==============================================================================
+// ==============================================================================
+// Copyright (c) 2026 Muhamad Syahrul Hidayat and mshqc contributors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+// ==============================================================================
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 #include "mshqc/compiler/JIT/ExecutionEngine.h"
 #include "mlir/ExecutionEngine/OptUtils.h"
@@ -38,19 +54,19 @@ llvm::Expected<std::unique_ptr<MshqcJIT>> MshqcJIT::create(mlir::ModuleOp module
     std::vector<llvm::StringRef> sharedLibs = {"libomp.so"};
     engineOptions.sharedLibPaths = sharedLibs;
     engineOptions.jitCodeGenOptLevel = llvm::CodeGenOptLevel::Aggressive;
-    // Alokasi TargetMachine deterministik untuk LLVM IR PassManager
+
     auto tmBuilderOrErr = llvm::orc::JITTargetMachineBuilder::detectHost();
     if (!tmBuilderOrErr) return tmBuilderOrErr.takeError();
-    
-    // Sinkronisasi limitasi AVX2 pada level TargetMachine JIT
+
+
     tmBuilderOrErr->getFeatures().AddFeature("avx512f", false);
     tmBuilderOrErr->getFeatures().AddFeature("avx512vl", false);
     tmBuilderOrErr->getFeatures().AddFeature("avx2", true);
-    
+
     auto tmOrErr = tmBuilderOrErr->createTargetMachine();
     if (!tmOrErr) return tmOrErr.takeError();
-    
-    // Injeksi kepemilikan TargetMachine (std::unique_ptr) ke dalam lambda transformer
+
+
     engineOptions.transformer = [tm = std::move(tmOrErr.get())](llvm::Module *m) {
         return mlir::makeOptimizingTransformer(3, 0, tm.get())(m);
     };
@@ -59,10 +75,10 @@ llvm::Expected<std::unique_ptr<MshqcJIT>> MshqcJIT::create(mlir::ModuleOp module
     mlir::registerLLVMDialectTranslation(*module->getContext());
     mlir::registerOpenMPDialectTranslation(*module->getContext());
 
-    
+
 
     mlir::StringAttr targetFeatures = mlir::StringAttr::get(
-        module->getContext(), 
+        module->getContext(),
         "+avx2,-avx512f,-avx512vl,-avx512bw,-avx512dq,-avx512cd"
     );
     mlir::StringAttr targetCPU = mlir::StringAttr::get(module->getContext(), "haswell");
@@ -85,9 +101,8 @@ llvm::Error MshqcJIT::invoke(llvm::StringRef name, llvm::MutableArrayRef<void *>
         return expectedFPtr.takeError();
     }
 
-    // Penyelarasan paksa System V AMD64 ABI untuk RDI, RSI, RDX
-    void (*fn)(void *, void *, void *) = reinterpret_cast<void (*)(void *, void *, void *)>(*expectedFPtr);
-    fn(args[0], args[1], args[2]);
+    void (*fn)(void **) = reinterpret_cast<void (*)(void **)>(*expectedFPtr);
+    fn(args.data());
 
     return llvm::Error::success();
 }

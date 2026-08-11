@@ -1,18 +1,34 @@
- // ==============================================================================
- // Copyright (c) 2026 Muhamad Syahrul Hidayat and mshqc contributors
- //
- // Licensed under the Apache License, Version 2.0 (the "License");
- // you may not use this file except in compliance with the License.
- // You may obtain a copy of the License at
- //
- //     http://www.apache.org/licenses/LICENSE-2.0
- //
- // Unless required by applicable law or agreed to in writing, software
- // distributed under the License is distributed on an "AS IS" BASIS,
- // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- // See the License for the specific language governing permissions and
- // limitations under the License.
- // ==============================================================================
+// ==============================================================================
+// Copyright (c) 2026 Muhamad Syahrul Hidayat and mshqc contributors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+// ==============================================================================
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 #include <x86intrin.h>
 #include <cstdlib>
@@ -96,10 +112,13 @@ int main(int argc, char **argv) {
 
     MemRef4D res = {res_ptr, res_ptr, 0, {32, 32, 32, 32}, {32768, 1024, 32, 1}};
 
-                std::vector<void*> args = {
-        &res,
-        &lhs,
-        &rhs
+                void* p_res = &res;
+    void* p_lhs = &lhs;
+    void* p_rhs = &rhs;
+    std::vector<void*> args = {
+        &p_lhs,
+        &p_rhs,
+        &p_res
     };
 
     std::cout << "[INFO] Memulai eksekusi JIT runtime...\n";

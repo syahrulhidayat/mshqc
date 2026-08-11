@@ -74,3 +74,5 @@ releases/
 
 # System includes
 include/python*/
+python/mshqc/mshqc-jit-bench
+python/mshqc/mshqc-opt

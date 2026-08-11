@@ -1,18 +1,34 @@
- // ==============================================================================
- // Copyright (c) 2026 Muhamad Syahrul Hidayat and mshqc contributors
- //
- // Licensed under the Apache License, Version 2.0 (the "License");
- // you may not use this file except in compliance with the License.
- // You may obtain a copy of the License at
- //
- //     http://www.apache.org/licenses/LICENSE-2.0
- //
- // Unless required by applicable law or agreed to in writing, software
- // distributed under the License is distributed on an "AS IS" BASIS,
- // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- // See the License for the specific language governing permissions and
- // limitations under the License.
- // ==============================================================================
+// ==============================================================================
+// Copyright (c) 2026 Muhamad Syahrul Hidayat and mshqc contributors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+// ==============================================================================
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 #include <nanobind/nanobind.h>
 #include <nanobind/stl/string.h>
@@ -21,6 +37,7 @@
 #include <nanobind/stl/tuple.h>
 #include <nanobind/stl/array.h>
 #include <nanobind/eigen/dense.h>
+#include <nanobind/ndarray.h>
 
 #include <thread>
 #include <omp.h>
@@ -83,7 +100,7 @@ namespace mshqc_auto_tune {
         #if defined(_WIN32)
             _putenv_s(name, value);
         #else
-            setenv(name, value, 0); 
+            setenv(name, value, 0);
         #endif
         }
     }
@@ -128,21 +145,21 @@ namespace mshqc_auto_tune {
         if (const char* env_omp = std::getenv("OMP_NUM_THREADS")) {
             num_threads = std::atoi(env_omp);
         }
-        
+
         omp_set_dynamic(0);
         omp_set_num_threads(num_threads);
-        
+
         set_env_if_empty("OPENBLAS_NUM_THREADS", "1");
         set_env_if_empty("MKL_NUM_THREADS", "1");
         set_env_if_empty("TBLIS_NUM_THREADS", "1");
         set_env_if_empty("VECLIB_MAXIMUM_THREADS", "1");
         set_env_if_empty("NUMEXPR_NUM_THREADS", "1");
-        set_env_if_empty("OMP_MAX_ACTIVE_LEVELS", "1"); 
+        set_env_if_empty("OMP_MAX_ACTIVE_LEVELS", "1");
     }
 }
 
 NB_MODULE(_mshqc, m) {
-    
+
     mshqc_auto_tune::initialize_hpc_environment();
 
     m.doc() = "MSHQC: Modern Quantum Chemistry Library";
@@ -156,16 +173,16 @@ NB_MODULE(_mshqc, m) {
             return std::make_tuple(t.dimension(0), t.dimension(1), t.dimension(2), t.dimension(3));
         })
         .def("__repr__", [](const ERITensor& t) {
-            return "<mshqc.ERITensor shape=(" + 
+            return "<mshqc.ERITensor shape=(" +
                    std::to_string(t.dimension(0)) + ", " +
                    std::to_string(t.dimension(1)) + ", " +
                    std::to_string(t.dimension(2)) + ", " +
                    std::to_string(t.dimension(3)) + ")>";
         });
 
-    
-    
-    
+
+
+
     nb::class_<Atom>(m, "Atom")
         .def(nb::init<int, double, double, double>(),
              nb::arg("atomic_number"), nb::arg("x"), nb::arg("y"), nb::arg("z"))
@@ -255,9 +272,9 @@ NB_MODULE(_mshqc, m) {
         .def("is_decomposed", &integrals::CholeskyERI::is_decomposed)
         .def("decomposed", &integrals::CholeskyERI::decomposed);
 
-    
-    
-    
+
+
+
     nb::enum_<SymOpType>(m, "SymOpType")
         .value("Identity", SymOpType::Identity)
         .value("Rotation", SymOpType::Rotation)
@@ -273,7 +290,7 @@ NB_MODULE(_mshqc, m) {
         .def_rw("name", &SymmetryOperation::name);
 
     nb::class_<PointGroup>(m, "PointGroup")
-        .def(nb::init<const Molecule&, double>(), "Initialize and auto-detect symmetry", 
+        .def(nb::init<const Molecule&, double>(), "Initialize and auto-detect symmetry",
             nb::arg("mol"), nb::arg("tolerance") = 1e-6)
         .def("detect", &PointGroup::detect)
         .def("get_symbol", &PointGroup::get_symbol)
@@ -296,9 +313,9 @@ NB_MODULE(_mshqc, m) {
         .def(nb::init<const BasisSet&, const PointGroup&, const PetiteList&>())
         .def("symmetrize", &BasisSymmetrizer::symmetrize);
 
-    
-    
-    
+
+
+
     nb::class_<DIIS>(m, "DIIS")
         .def(nb::init<int>(), nb::arg("max_vectors") = 8)
         .def("clear", &DIIS::clear)
@@ -309,9 +326,9 @@ NB_MODULE(_mshqc, m) {
         .def_rw("sh_a", &mshqc::integrals::ShellPair::sh_a)
         .def_rw("sh_b", &mshqc::integrals::ShellPair::sh_b)
         .def_rw("max_val", &mshqc::integrals::ShellPair::max_val)
-        .def_prop_rw("center", 
-            [](const mshqc::integrals::ShellPair& sp) { 
-                return std::make_tuple(sp.center(0), sp.center(1), sp.center(2)); 
+        .def_prop_rw("center",
+            [](const mshqc::integrals::ShellPair& sp) {
+                return std::make_tuple(sp.center(0), sp.center(1), sp.center(2));
             },
             [](mshqc::integrals::ShellPair& sp, const std::tuple<double,double,double>& t) {
                 sp.center = Eigen::Vector3d(std::get<0>(t), std::get<1>(t), std::get<2>(t));
@@ -324,18 +341,18 @@ NB_MODULE(_mshqc, m) {
         .def("compute", &mshqc::integrals::Screening::compute, nb::call_guard<nb::gil_scoped_release>(), nb::arg("integrals"))
         .def("print_stats", &mshqc::integrals::Screening::print_stats, nb::arg("threshold"))
         .def("get_significant_pairs", &mshqc::integrals::Screening::get_significant_pairs, nb::arg("threshold"))
-        .def("is_significant", 
+        .def("is_significant",
              static_cast<bool (mshqc::integrals::Screening::*)(int, int, int, int, double) const>(&mshqc::integrals::Screening::is_significant),
              nb::arg("sh_a"), nb::arg("sh_b"), nb::arg("sh_c"), nb::arg("sh_d"), nb::arg("threshold"))
         .def("get_schwarz_val", &mshqc::integrals::Screening::get_schwarz_val)
         .def("max_schwarz", &mshqc::integrals::Screening::max_schwarz);
 
-    
-    
-    
+
+
+
     nb::class_<SCFConfig>(m, "SCFConfig")
         .def(nb::init<>())
-        .def_rw("scf_type", &SCFConfig::scf_type) 
+        .def_rw("scf_type", &SCFConfig::scf_type)
         .def_rw("eri_method", &SCFConfig::eri_method)
         .def_rw("cholesky_threshold", &SCFConfig::cholesky_threshold)
         .def_rw("df_threshold", &SCFConfig::df_threshold)
@@ -366,21 +383,21 @@ NB_MODULE(_mshqc, m) {
         .def_rw("n_occ_alpha", &SCFResult::n_occ_alpha)
         .def_rw("n_occ_beta", &SCFResult::n_occ_beta);
 
-    
-    
-    
+
+
+
     nb::class_<UHF>(m, "UHF")
-        .def("__init__", [](UHF *t, const Molecule& mol, const BasisSet& basis, 
-                            IntegralEngine* integrals, PointGroup* pg, PetiteList* pl, 
+        .def("__init__", [](UHF *t, const Molecule& mol, const BasisSet& basis,
+                            IntegralEngine* integrals, PointGroup* pg, PetiteList* pl,
                             int na, int nb, const SCFConfig& conf) {
             auto sp_int = std::shared_ptr<IntegralEngine>(integrals, [](IntegralEngine*){});
             auto sp_pg = pg ? std::shared_ptr<PointGroup>(pg, [](PointGroup*){}) : nullptr;
             auto sp_pl = pl ? std::shared_ptr<PetiteList>(pl, [](PetiteList*){}) : nullptr;
             new (t) UHF(mol, basis, sp_int, sp_pg, sp_pl, na, nb, conf);
         }, nb::arg("molecule"), nb::arg("basis"), nb::arg("integrals"),
-           nb::arg("pg"), nb::arg("pl"), nb::arg("n_alpha"), nb::arg("n_beta"), 
+           nb::arg("pg"), nb::arg("pl"), nb::arg("n_alpha"), nb::arg("n_beta"),
            nb::arg("config") = SCFConfig())
-        .def("__init__", [](UHF *t, const Molecule& mol, const BasisSet& basis, 
+        .def("__init__", [](UHF *t, const Molecule& mol, const BasisSet& basis,
                             IntegralEngine* integrals, int na, int nb, const SCFConfig& conf) {
             auto sp_int = std::shared_ptr<IntegralEngine>(integrals, [](IntegralEngine*){});
             new (t) UHF(mol, basis, sp_int, nullptr, nullptr, na, nb, conf);
@@ -390,7 +407,7 @@ NB_MODULE(_mshqc, m) {
         .def("energy", &UHF::energy);
 
     nb::class_<RHF>(m, "RHF")
-        .def("__init__", [](RHF *t, const Molecule& mol, const BasisSet& basis, 
+        .def("__init__", [](RHF *t, const Molecule& mol, const BasisSet& basis,
                             IntegralEngine* integrals, PointGroup* pg, PetiteList* pl,
                             const SCFConfig& conf) {
             auto sp_int = std::shared_ptr<IntegralEngine>(integrals, [](IntegralEngine*){});
@@ -399,7 +416,7 @@ NB_MODULE(_mshqc, m) {
             new (t) RHF(mol, basis, sp_int, sp_pg, sp_pl, conf);
         }, nb::arg("molecule"), nb::arg("basis"), nb::arg("integrals"),
            nb::arg("pg"), nb::arg("pl"), nb::arg("config") = SCFConfig())
-        .def("__init__", [](RHF *t, const Molecule& mol, const BasisSet& basis, 
+        .def("__init__", [](RHF *t, const Molecule& mol, const BasisSet& basis,
                             IntegralEngine* integrals, const SCFConfig& conf) {
             auto sp_int = std::shared_ptr<IntegralEngine>(integrals, [](IntegralEngine*){});
             new (t) RHF(mol, basis, sp_int, nullptr, nullptr, conf);
@@ -408,27 +425,27 @@ NB_MODULE(_mshqc, m) {
         .def("energy", &RHF::energy);
 
     nb::class_<ROHF>(m, "ROHF")
-        .def("__init__", [](ROHF *t, const Molecule& mol, const BasisSet& basis, 
-                            IntegralEngine* integrals, PointGroup* pg, PetiteList* pl, 
+        .def("__init__", [](ROHF *t, const Molecule& mol, const BasisSet& basis,
+                            IntegralEngine* integrals, PointGroup* pg, PetiteList* pl,
                             int na, int nb, const SCFConfig& conf) {
             auto sp_int = std::shared_ptr<IntegralEngine>(integrals, [](IntegralEngine*){});
             auto sp_pg = pg ? std::shared_ptr<PointGroup>(pg, [](PointGroup*){}) : nullptr;
             auto sp_pl = pl ? std::shared_ptr<PetiteList>(pl, [](PetiteList*){}) : nullptr;
             new (t) ROHF(mol, basis, sp_int, sp_pg, sp_pl, na, nb, conf);
-        }, nb::arg("molecule"), nb::arg("basis"), nb::arg("integrals"), 
+        }, nb::arg("molecule"), nb::arg("basis"), nb::arg("integrals"),
            nb::arg("pg"), nb::arg("pl"), nb::arg("n_alpha"), nb::arg("n_beta"), nb::arg("config") = SCFConfig())
-        .def("__init__", [](ROHF *t, const Molecule& mol, const BasisSet& basis, 
+        .def("__init__", [](ROHF *t, const Molecule& mol, const BasisSet& basis,
                             IntegralEngine* integrals, int na, int nb, const SCFConfig& conf) {
             auto sp_int = std::shared_ptr<IntegralEngine>(integrals, [](IntegralEngine*){});
             new (t) ROHF(mol, basis, sp_int, nullptr, nullptr, na, nb, conf);
-        }, nb::arg("molecule"), nb::arg("basis"), nb::arg("integrals"), 
+        }, nb::arg("molecule"), nb::arg("basis"), nb::arg("integrals"),
            nb::arg("n_alpha"), nb::arg("n_beta"), nb::arg("config") = SCFConfig())
         .def("compute", &ROHF::compute, nb::call_guard<nb::gil_scoped_release>())
         .def("energy", &ROHF::energy);
 
-    
-    
-    
+
+
+
     nb::class_<MP2Config>(m, "MP2Config")
         .def(nb::init<>())
         .def_rw("scf_type", &MP2Config::scf_type)
@@ -439,10 +456,10 @@ NB_MODULE(_mshqc, m) {
         .def_rw("cholesky_threshold", &MP2Config::cholesky_threshold)
         .def_rw("max_iterations", &MP2Config::max_iterations)
         .def_rw("energy_threshold", &MP2Config::energy_threshold)
-        .def_rw("gradient_threshold", &MP2Config::gradient_threshold) 
+        .def_rw("gradient_threshold", &MP2Config::gradient_threshold)
         .def_rw("print_level", &MP2Config::print_level)
         .def_rw("opt_method", &MP2Config::opt_method);
-        
+
     nb::class_<MP2Result>(m, "MP2Result")
         .def(nb::init<>())
         .def_rw("energy_scf", &MP2Result::energy_scf)
@@ -462,28 +479,28 @@ NB_MODULE(_mshqc, m) {
         .def_rw("orbital_energies_beta", &MP2Result::orbital_energies_beta);
 
     nb::class_<foundation::RMP2>(m, "RMP2")
-        .def(nb::init<const Molecule&, const BasisSet&, std::shared_ptr<IntegralEngine>, 
+        .def(nb::init<const Molecule&, const BasisSet&, std::shared_ptr<IntegralEngine>,
                       const SCFResult&, const MP2Config&, std::shared_ptr<PointGroup>, std::shared_ptr<PetiteList>>(),
              nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
              nb::arg("config"), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
         .def("compute", &foundation::RMP2::compute, nb::call_guard<nb::gil_scoped_release>());
 
     nb::class_<mshqc::UMP2>(m, "UMP2")
-        .def(nb::init<const Molecule&, const BasisSet&, std::shared_ptr<IntegralEngine>, 
+        .def(nb::init<const Molecule&, const BasisSet&, std::shared_ptr<IntegralEngine>,
                       const SCFResult&, const MP2Config&, std::shared_ptr<PointGroup>, std::shared_ptr<PetiteList>>(),
              nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
              nb::arg("config"), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
         .def("compute", &mshqc::UMP2::compute, nb::call_guard<nb::gil_scoped_release>());
 
     nb::class_<OMP2>(m, "OMP2")
-        .def(nb::init<const Molecule&, const BasisSet&, std::shared_ptr<IntegralEngine>, 
-                      const SCFResult&, const MP2Config&, std::shared_ptr<PointGroup>, std::shared_ptr<PetiteList>>(), 
+        .def(nb::init<const Molecule&, const BasisSet&, std::shared_ptr<IntegralEngine>,
+                      const SCFResult&, const MP2Config&, std::shared_ptr<PointGroup>, std::shared_ptr<PetiteList>>(),
              nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
              nb::arg("config"), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
         .def("compute", &OMP2::compute, nb::call_guard<nb::gil_scoped_release>(), "Run OMP2 optimization");
-    
-    
-    
+
+
+
     nb::class_<MP3Result>(m, "MP3Result")
         .def(nb::init<>())
         .def_rw("e_hf", &MP3Result::e_hf)
@@ -509,14 +526,14 @@ NB_MODULE(_mshqc, m) {
 
 
     nb::class_<OMP3>(m, "OMP3")
-        .def(nb::init<const Molecule&, const BasisSet&, std::shared_ptr<IntegralEngine>, 
-                      const SCFResult&, const MP2Config&, std::shared_ptr<PointGroup>, std::shared_ptr<PetiteList>>(), 
+        .def(nb::init<const Molecule&, const BasisSet&, std::shared_ptr<IntegralEngine>,
+                      const SCFResult&, const MP2Config&, std::shared_ptr<PointGroup>, std::shared_ptr<PetiteList>>(),
              nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
              nb::arg("config"), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
         .def("compute", &OMP3::compute_omp3, nb::call_guard<nb::gil_scoped_release>(), "Run Orbital-Optimized MP3");
-    
-    
-    
+
+
+
     nb::class_<gradient::GradientResult>(m, "GradientResult")
         .def(nb::init<>())
         .def_rw("energy", &gradient::GradientResult::energy)
@@ -532,11 +549,31 @@ NB_MODULE(_mshqc, m) {
         .def_rw("n_iterations", &gradient::OptResult::n_iterations)
         .def_rw("final_energy", &gradient::OptResult::final_energy);
 
-    
-    
-    
+
+
+
     m.def("bohr_to_angstrom", [](double bohr) { return bohr * 0.529177210903; }, "Convert Bohr to Angstrom");
     m.def("angstrom_to_bohr", [](double angstrom) { return angstrom / 0.529177210903; }, "Convert Angstrom to Bohr");
     m.def("hartree_to_ev", [](double hartree) { return hartree * 27.211386245988; }, "Convert Hartree to eV");
     m.def("hartree_to_kcal", [](double hartree) { return hartree * 627.5094740631; }, "Convert Hartree to kcal/mol");
+
+
+    m.def("map_jit_tensor_2d", [](uintptr_t ptr_address, size_t rows, size_t cols) {
+        double* raw_ptr = reinterpret_cast<double*>(ptr_address);
+        size_t shape[2] = {rows, cols};
+        return nb::ndarray<nb::numpy, double, nb::c_contig>(
+            raw_ptr, 2, shape);
+    }, "Ekstraksi memori L-Value JIT 2D menjadi NumPy array zero-copy",
+       nb::arg("ptr_address"), nb::arg("rows"), nb::arg("cols"));
+
+
+    m.def("map_jit_tensor", [](uintptr_t ptr_address, size_t n1, size_t n2, size_t n3, size_t n4) {
+        double* raw_ptr = reinterpret_cast<double*>(ptr_address);
+        size_t shape[4] = {n1, n2, n3, n4};
+
+
+        return nb::ndarray<nb::numpy, double, nb::c_contig>(
+            raw_ptr, 4, shape);
+    }, "Fungsi ekstraksi memori JIT absolut",
+       nb::arg("ptr_address"), nb::arg("n1"), nb::arg("n2"), nb::arg("n3"), nb::arg("n4"));
 }

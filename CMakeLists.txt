@@ -142,6 +142,7 @@ target_link_libraries(mshqc PUBLIC
     ${LAPACK_LIBRARIES}
     OpenMP::OpenMP_CXX
     ${CMAKE_DL_LIBS}
+    atomic
 )
 
 if(TCI_LIBRARY)
@@ -163,7 +164,7 @@ nanobind_add_module(_mshqc "python/bindings.cc")
 target_link_libraries(_mshqc PRIVATE mshqc)
 
 set_target_properties(mshqc _mshqc PROPERTIES
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/python/mshqc"
+    # LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/python/mshqc" // Didelegasikan ke setuptools
     INSTALL_RPATH "$ORIGIN:$ORIGIN/../../.."
     BUILD_WITH_INSTALL_RPATH TRUE
 )
