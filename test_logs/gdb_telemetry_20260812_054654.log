@@ -1,0 +1,5 @@
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/lib64/libthread_db.so.1".
+[Inferior 1 (process 113213) exited with code 02]
+
+--- FATAL MEMORY CRASH DETECTED ---
