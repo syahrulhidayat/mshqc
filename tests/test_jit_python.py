@@ -32,7 +32,7 @@ def validate_jit_engine():
     
     # 4. Eksekusi SCF (Tebakan Awal)
     scf_config = mshqc.SCFConfig()
-    scf_config.scf_type = "rhf"
+    scf_config.scf_type = "direct"
     scf_config.print_level = 0
     scf_engine = mshqc.RHF(aligned_mol, basis, integrals, pg, pl, scf_config)
     scf_result = scf_engine.compute()
