@@ -127,7 +127,7 @@ void RMP2::compute_amplitudes_and_energy() {
     int64_t dim_ov = nocc_a_ * nvir_a_;
     
     // DEKLARASI LUAR: Mengamankan alokasi memori agar tidak hancur di luar scope JIT
-    Eigen::MatrixXd G_iajb;
+    Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> G_iajb;
     bool mlir_executed = false;
 
     #if 1 // MSHQC_ENABLE_MLIR (Isolated for compiler debugging)
@@ -180,16 +180,14 @@ void RMP2::compute_amplitudes_and_energy() {
     };
 
     // ALOKASI MEMORI O(N^4)
-    G_iajb = Eigen::MatrixXd::Zero(dim_ov, dim_ov);
+    Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>::Zero(dim_ov, dim_ov);
     MemRef2D G_desc = {
         G_iajb.data(), G_iajb.data(), 0,
-        {dim_ov, dim_ov}, {1, dim_ov}
+        {dim_ov, dim_ov}, {dim_ov, 1}
     };
 
     // REKONSTRUKSI ABI: Pointer-to-Pointer Indirection yang benar untuk LLVM invoke
-    MemRef2D* ptr_B = &B_desc;
-    MemRef2D* ptr_G = &G_desc;
-    std::vector<void*> args = { &ptr_B, &ptr_B, &ptr_G };
+    std::vector<void*> args = { &B_desc, &B_desc, &G_desc };
 
     if (auto err = engine->invoke("contract_kernel", args)) {
         std::cerr << "[FATAL] Terjadi interupsi pada JIT Runtime.\n";
