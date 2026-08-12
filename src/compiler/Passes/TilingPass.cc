@@ -85,20 +85,10 @@ struct LinalgTilingPass : public impl::LinalgTilingBase<LinalgTilingPass> {
                     mlir::linalg::tileLinalgOp(rewriter, l2Result->op, l1Options);
 
                 if (mlir::succeeded(l1Result)) {
-                    l1Result->op->setAttr("tiled", rewriter.getUnitAttr());
-
-                    if (!l1Result->tensorResults.empty()) {
-                        rewriter.replaceOp(l2Result->op, l1Result->tensorResults);
-                    } else {
-                        rewriter.eraseOp(l2Result->op);
-                    }
-
-                    if (!l2Result->tensorResults.empty()) {
-                        rewriter.replaceOp(op, l2Result->tensorResults);
-                    } else {
-                        rewriter.eraseOp(op);
-                    }
-                }
+        l1Result->op->setAttr("tiled", rewriter.getUnitAttr());
+        rewriter.replaceOp(op, l1Result->tensorResults);
+        rewriter.eraseOp(l2Result->op);
+    }
             }
         }
     }
