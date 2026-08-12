@@ -123,16 +123,21 @@ void RMP2::transform_integrals() {
 
 void RMP2::compute_amplitudes_and_energy() {
 
-    #if 1 // #ifdef MSHQC_ENABLE_MLIR (Isolated for compiler debugging)
+    int64_t n_aux = B_ia_P_alpha_.cols();
+    int64_t dim_ov = nocc_a_ * nvir_a_;
+    
+    // DEKLARASI LUAR: Mengamankan alokasi memori agar tidak hancur di luar scope JIT
+    Eigen::MatrixXd G_iajb;
+    bool mlir_executed = false;
+
+    #if 1 // MSHQC_ENABLE_MLIR (Isolated for compiler debugging)
     if (config_.print_level > 0) std::cout << "  [HPC] Menginisialisasi MLIR JIT Execution (Zero-Copy)...\n";
 
     mshqc::compiler::GraphBuilder mlir_builder;
     mlir_builder.initializeModule("rmp2_amplitude_module");
 
-    int64_t n_aux = B_ia_P_alpha_.cols();
-    int64_t dim_ov = nocc_a_ * nvir_a_;
-    // REKONSTRUKSI 1: Deklarasi Shape Dinamis untuk Sinkronisasi Strides C++ & MLIR
-    int64_t dyn = mlir::ShapedType::kDynamic;
+    // REKONSTRUKSI SHAPE DINAMIS
+    int64_t dyn = mlir::ShapedType::kDynamic; 
     std::vector<int64_t> lhs_shape = {dyn, dyn};
     std::vector<int64_t> res_shape = {dyn, dyn};
     mlir_builder.emitContractOp(lhs_shape, lhs_shape, res_shape, "mP,nP->mn");
@@ -174,20 +179,24 @@ void RMP2::compute_amplitudes_and_energy() {
         {dim_ov, n_aux}, {1, dim_ov}
     };
 
-    Eigen::MatrixXd G_iajb = Eigen::MatrixXd::Zero(dim_ov, dim_ov);
+    // ALOKASI MEMORI O(N^4)
+    G_iajb = Eigen::MatrixXd::Zero(dim_ov, dim_ov);
     MemRef2D G_desc = {
         G_iajb.data(), G_iajb.data(), 0,
         {dim_ov, dim_ov}, {1, dim_ov}
     };
 
-    // REKONSTRUKSI 2: Penghapusan ptr_B/ptr_G dan Transmisi MemRefDescriptor Absolut
-    std::vector<void*> args = { &B_desc, &B_desc, &G_desc };
+    // REKONSTRUKSI ABI: Pointer-to-Pointer Indirection yang benar untuk LLVM invoke
+    MemRef2D* ptr_B = &B_desc;
+    MemRef2D* ptr_G = &G_desc;
+    std::vector<void*> args = { &ptr_B, &ptr_B, &ptr_G };
 
     if (auto err = engine->invoke("contract_kernel", args)) {
         std::cerr << "[FATAL] Terjadi interupsi pada JIT Runtime.\n";
         exit(1);
     }
 
+    mlir_executed = true;
     if (config_.print_level > 0) std::cout << "  [HPC] Matriks Densitas Korelasi berhasil ditransformasi via MLIR.\n";
     #endif
 
@@ -224,8 +233,16 @@ void RMP2::compute_amplitudes_and_energy() {
                         int idx_ib = i * nvir_a_ + b;
                         int idx_ja = j * nvir_a_ + a;
 
-                        val_iajb = B_ia_P_alpha_.row(idx_ia).dot(B_ia_P_alpha_.row(idx_jb));
-                        val_ibja = B_ia_P_alpha_.row(idx_ib).dot(B_ia_P_alpha_.row(idx_ja));
+                        // INJEKSI EKSTRAKSI MEMORI MLIR PoC
+                        if (mlir_executed) {
+                            // Operasi baca O(1) dari hasil JIT MLIR
+                            val_iajb = G_iajb(idx_ia, idx_jb);
+                            val_ibja = G_iajb(idx_ib, idx_ja);
+                        } else {
+                            // Operasi komputasi vektor on-the-fly bawaan mshqc
+                            val_iajb = B_ia_P_alpha_.row(idx_ia).dot(B_ia_P_alpha_.row(idx_jb));
+                            val_ibja = B_ia_P_alpha_.row(idx_ib).dot(B_ia_P_alpha_.row(idx_ja));
+                        }
                     }
 
                     double t_val = val_iajb / denom;
