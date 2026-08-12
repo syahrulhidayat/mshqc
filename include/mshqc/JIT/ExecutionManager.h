@@ -1,6 +1,5 @@
 // ==============================================================================
-// MSHQC - MLIR JIT Execution Manager
-// Handles compilation, caching, and execution of MLIR modules
+// MSHQC - MLIR JIT Execution Manager (Centralized Singleton Registry)
 // ==============================================================================
 
 #pragma once
@@ -18,41 +17,39 @@ namespace jit {
 
 class ExecutionManager {
 public:
-    ExecutionManager() = default;
-    ~ExecutionManager() = default;
+    // Meyer's Singleton: C++11 Thread-Safe Initialization
+    static ExecutionManager& getInstance() {
+        static ExecutionManager instance;
+        return instance;
+    }
 
-    // Kompilasi dan simpan JIT Engine
+    // Mencegah Copy & Assignment
+    ExecutionManager(const ExecutionManager&) = delete;
+    ExecutionManager& operator=(const ExecutionManager&) = delete;
+
     void compileAndCache(const std::string& kernel_name, mlir::OwningOpRef<mlir::ModuleOp>& module) {
-        if (engine_cache_.find(kernel_name) != engine_cache_.end()) {
-            return; // Kernel sudah dikompilasi
-        }
+        if (engine_cache_.find(kernel_name) != engine_cache_.end()) return;
         
         mlir::ExecutionEngineOptions engineOptions;
         auto maybeEngine = mlir::ExecutionEngine::create(module.get(), engineOptions);
-        
-        if (!maybeEngine) {
-            throw std::runtime_error("JIT Compilation Failed for: " + kernel_name);
-        }
+        if (!maybeEngine) throw std::runtime_error("JIT Compilation Failed for: " + kernel_name);
         
         engine_cache_[kernel_name] = std::move(maybeEngine.get());
-        std::cout << "[JIT] Compiled and Cached Kernel: " << kernel_name << "\n";
     }
 
-    // Eksekusi fungsi dari engine yang ter-cache
     template <typename... Args>
     void execute(const std::string& kernel_name, const std::string& func_name, Args&... args) {
         auto it = engine_cache_.find(kernel_name);
-        if (it == engine_cache_.end()) {
-            throw std::runtime_error("JIT Engine not found for kernel: " + kernel_name);
-        }
+        if (it == engine_cache_.end()) throw std::runtime_error("JIT Engine not found: " + kernel_name);
         
-        auto error = it->second->invokePacked(func_name, args...);
-        if (error) {
+        if (auto error = it->second->invokePacked(func_name, args...)) {
             throw std::runtime_error("JIT Execution Failed for function: " + func_name);
         }
     }
 
 private:
+    ExecutionManager() = default;
+    ~ExecutionManager() = default;
     std::unordered_map<std::string, std::unique_ptr<mlir::ExecutionEngine>> engine_cache_;
 };
 
