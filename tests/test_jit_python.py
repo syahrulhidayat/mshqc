@@ -1,4 +1,8 @@
 import os
+os.environ["OMP_NUM_THREADS"] = "6"
+os.environ["OPENBLAS_NUM_THREADS"] = "6"
+os.environ["MKL_NUM_THREADS"] = "6"
+os.environ["TBLIS_ARCH"] = "x86_64"
 import mshqc
 import time
 
@@ -37,7 +41,7 @@ def validate_jit_engine():
     
     # 5. Eksekusi RMP2 (Pemicu JIT MLIR)
     mp2_config = mshqc.MP2Config()
-    mp2_config.eri_method = "df" 
+    mp2_config.eri_method = "exact" 
     mp2_config.print_level = 0 
     
     print("[METRIK] Mengeksekusi Modul RMP2 dengan MLIR JIT Backend...")

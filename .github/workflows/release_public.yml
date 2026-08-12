@@ -108,6 +108,8 @@ jobs:
         python -m pip uninstall -y mshqc
         python -m pip install dist/*.whl
 
+        # Hapus sisa log dari pengujian sebelumnya di local filesystem runner
+        rm -rf test_logs/
         mkdir -p test_logs
         TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
@@ -161,7 +163,8 @@ jobs:
         git config --global user.email "automation@mshqc.internal"
         
         mkdir -p releases test_logs
-        rm -f releases/*.whl
+        git rm -r --ignore-unmatch releases/*.whl 2>/dev/null || true
+        git rm -r --ignore-unmatch test_logs/*.log 2>/dev/null || true
         
         if ls dist/*.whl 1> /dev/null 2>&1; then
           cp dist/*.whl releases/
@@ -175,7 +178,8 @@ jobs:
         if git diff-index --quiet HEAD --; then
           echo "Tidak ada perubahan biner atau log baru untuk disimpan."
         else
-          git commit -m "build(ci): compile release wheel and record gdb test telemetry [skip ci]"
+   
+          git commit -m "ci(test): prune stale GDB telemetry logs prior to repository sync [skip ci]"
           
           git pull origin mshqc-1.0.2 --rebase
           git push origin mshqc-1.0.2
