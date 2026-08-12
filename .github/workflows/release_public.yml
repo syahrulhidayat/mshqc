@@ -177,6 +177,6 @@ jobs:
         else
           git commit -m "build(ci): compile release wheel and record gdb test telemetry [skip ci]"
           
-          git pull origin mshqc-1.0.2 --rebase
-          git push origin mshqc-1.0.2
+          git pull origin mshqc-JIT --rebase
+          git push origin mshqc-JIT
         fi
