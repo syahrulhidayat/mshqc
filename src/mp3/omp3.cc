@@ -4,28 +4,52 @@
 #include "mshqc/JIT/ExecutionManager.h"
 #include "mshqc/compiler/Frontend/GraphBuilder.h"
 #include "mshqc/Runtime/MemRefUtils.h"
+#include "mshqc/Runtime/AlignedAllocator.h"
 #include <iostream>
 
 namespace mshqc {
 
+double OMP3::get_correlation_energy() const {
+    return e_ss_ + e_os_ + e_mp3_tot_;
+}
+
+double OMP3::execute_micro_iterations() {
+    OMP2::execute_micro_iterations();
+    compute_mp3_correction();
+
+    bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
+    L2_aa_ = t2_3rd_aa_;
+    if (!is_restricted && nb_ > 0 && vb_ > 0) {
+        L2_bb_ = t2_3rd_bb_;
+        L2_ab_ = t2_3rd_ab_;
+    }
+
+    build_opdm_alpha();
+    if (!is_restricted && nb_ > 0) {
+        build_opdm_beta();
+    } else if (is_restricted && nb_ > 0) {
+        G_oo_beta_ = G_oo_alpha_;
+    }
+
+    return get_correlation_energy();
+}
+
 void OMP3::compute_mp3_correction() {
     if (na_ == 0 || va_ == 0) { e_mp3_tot_ = 0.0; return; }
 
-    static jit::ExecutionManager jit_mgr;
+    auto& jit_mgr = jit::ExecutionManager::getInstance();
     static bool is_mp3_ladder_compiled = false;
     const std::string kernel_name = "mp3_ladder_kernel";
 
     if (!is_mp3_ladder_compiled) {
         compiler::GraphBuilder builder;
         builder.initializeModule(kernel_name);
-
         builder.emitContractOp(
             {na_, na_, va_, va_},
             {na_, na_, na_, na_},
             {na_, na_, va_, va_},
             "mnab,minj->ijab"
         );
-
         jit_mgr.compileAndCache(kernel_name, builder.getModule());
         is_mp3_ladder_compiled = true;
     }
@@ -69,7 +93,6 @@ void OMP3::compute_mp3_correction() {
         std::cerr << "[FATAL] MSHQC JIT Trap: Eksekusi MP3 Ladder Contraction Gagal: " << e.what() << "\n";
         std::abort();
     }
-
 }
 
 }
