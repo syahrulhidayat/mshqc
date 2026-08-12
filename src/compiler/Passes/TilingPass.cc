@@ -47,11 +47,13 @@ struct LinalgTilingPass : public impl::LinalgTilingBase<LinalgTilingPass> {
         });
 
         for (auto op : targetOps) {
-
             llvm::SmallVector<int64_t> l2Tiles;
             for (auto iterType : op.getIteratorTypesArray()) {
                 if (iterType == mlir::utils::IteratorType::parallel) {
-                    l2Tiles.push_back(32);
+                    l2Tiles.push_back(32); // Optimasi batas spatial L2
+                } else if (iterType == mlir::utils::IteratorType::reduction) {
+                    // INJEKSI: Tiling dimensi reduksi untuk mencegah L3 cache miss
+                    l2Tiles.push_back(16); 
                 } else {
                     l2Tiles.push_back(0);
                 }
@@ -60,16 +62,18 @@ struct LinalgTilingPass : public impl::LinalgTilingBase<LinalgTilingPass> {
             mlir::linalg::LinalgTilingOptions l2Options;
             l2Options.setTileSizes(l2Tiles);
             l2Options.setLoopType(mlir::linalg::LinalgTilingLoopType::ParallelLoops);
-
+            
             rewriter.setInsertionPoint(op);
-            mlir::FailureOr<mlir::linalg::TiledLinalgOp> l2Result =
+            mlir::FailureOr<mlir::linalg::TiledLinalgOp> l2Result = 
                 mlir::linalg::tileLinalgOp(rewriter, op, l2Options);
 
             if (mlir::succeeded(l2Result)) {
-
                 llvm::SmallVector<int64_t> l1Tiles;
                 for (auto iterType : l2Result->op.getIteratorTypesArray()) {
                     if (iterType == mlir::utils::IteratorType::parallel) {
+                        l1Tiles.push_back(4); // Vektorisasi Register L1
+                    } else if (iterType == mlir::utils::IteratorType::reduction) {
+                        // INJEKSI: Reduksi mikroskopik untuk L1 cache
                         l1Tiles.push_back(4);
                     } else {
                         l1Tiles.push_back(0);
