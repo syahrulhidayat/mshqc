@@ -1,48 +1,66 @@
 // ==============================================================================
-// MSHQC - Main MP2 Execution Integration
+// MSHQC - Pure MLIR JIT Accelerated MP2 Tensor Transformation
 // ==============================================================================
 
 #include "mshqc/mp2/mp2.h"
 #include "mshqc/JIT/ExecutionManager.h"
 #include "mshqc/JIT/MP2MLIRBuilder.h"
-#include "mshqc/Runtime/AlignedAllocator.h"
 #include "mshqc/Runtime/MemRefUtils.h"
+#include "mshqc/Runtime/AlignedAllocator.h"
 #include <iostream>
+#include <vector>
 
 namespace mshqc {
+namespace foundation {
 
-void MP2::compute_correlation_energy() {
-    std::cout << "[MP2] Memulai transformasi AO-MO menggunakan MLIR-JIT...\n";
-    
-    int64_t nbasis = this->nbasis;
-    int64_t nvirt = this->nvirt;
+void OMP2::transform_integrals() {
+    static jit::ExecutionManager jit_mgr;
+    static bool is_compiled = false;
+    const std::string kernel_name = "mp2_transform_kernel";
 
-    mlir::MLIRContext context;
-    jit::MP2MLIRBuilder mp2Builder(&context);
+    if (!is_compiled) {
+        mlir::MLIRContext context;
+        jit::MP2MLIRBuilder builder(&context);
+        
+        builder.buildQuarterTransformGraph(nbf_, va_);
+        builder.optimizeAndLower();
+        
+        jit_mgr.compileAndCache(kernel_name, builder.getModule());
+        is_compiled = true;
+    }
+
+    // Alokasi memori ter-align 64-byte untuk target buffer SIMD AVX-512
+    std::vector<double, runtime::AlignedAllocator<double, 64>> eri_quarter(nbf_ * nbf_ * nbf_ * va_, 0.0);
+
+    runtime::StridedMemRefType<double, 4> memref_eri_ao;
+    memref_eri_ao.allocatedPtr = const_cast<double*>(integrals_->compute_eri().data());
+    memref_eri_ao.alignedPtr = memref_eri_ao.allocatedPtr;
+    memref_eri_ao.offset = 0;
+    for(int i=0; i<4; i++) memref_eri_ao.sizes[i] = nbf_;
+    memref_eri_ao.strides[3] = 1; memref_eri_ao.strides[2] = nbf_; 
+    memref_eri_ao.strides[1] = nbf_*nbf_; memref_eri_ao.strides[0] = nbf_*nbf_*nbf_;
+
+    auto memref_C = runtime::makeMemRef2D(scf_.C_alpha.rightCols(va_), nbf_, va_);
     
-    // 1. Bangun Graf Translasi Quarter & Terapkan Bufferization
-    mp2Builder.buildQuarterTransformGraph(nbasis, nvirt);
-    mp2Builder.optimizeAndLower();
-    
-    // 2. Registrasi dan Kompilasi Kernel
-    jit::ExecutionManager jit_mgr;
-    jit_mgr.compileAndCache("mp2_quarter_kernel", mp2Builder.getModule());
-    
-    // 3. Persiapan Memori Ter-align (64-byte untuk vektorisasi AVX-512)
-    // Asumsi: tensor ERI dan Koefisien C sudah teralokasi dengan AlignedAllocator
-    auto memref_eri_ao = runtime::makeMemRef4D(this->eri_ao.data(), nbasis, nbasis, nbasis, nbasis);
-    auto memref_c_mo   = runtime::makeMemRef2D(this->C_virt.data(), nbasis, nvirt);
-    
-    AlignedVector eri_quarter(nbasis * nbasis * nbasis * nvirt, 0.0);
-    auto memref_eri_q  = runtime::makeMemRef4D(eri_quarter.data(), nbasis, nbasis, nbasis, nvirt);
-    
-    void* args[] = { &memref_eri_ao, &memref_c_mo, &memref_eri_q };
-    
-    // 4. Eksekusi JIT Kernel
-    jit_mgr.execute("mp2_quarter_kernel", "mp2_quarter_transform", args);
-    
-    std::cout << "[MP2] 1/4 Transformasi selesai tanpa memory trap.\n";
-    // ... [Tahap transformasi setengah (1/2), tiga perempat (3/4), dan energi MP2 dilanjutkan] ...
+    runtime::StridedMemRefType<double, 4> memref_eri_q;
+    memref_eri_q.allocatedPtr = eri_quarter.data();
+    memref_eri_q.alignedPtr = eri_quarter.data();
+    memref_eri_q.offset = 0;
+    memref_eri_q.sizes[0] = memref_eri_q.sizes[1] = memref_eri_q.sizes[2] = nbf_; memref_eri_q.sizes[3] = va_;
+    memref_eri_q.strides[3] = 1; memref_eri_q.strides[2] = va_;
+    memref_eri_q.strides[1] = nbf_ * va_; memref_eri_q.strides[0] = nbf_ * nbf_ * va_;
+
+    void* args[] = { &memref_eri_ao, &memref_C, &memref_eri_q };
+
+    try {
+        jit_mgr.execute(kernel_name, "mp2_quarter_transform", args);
+    } catch(const std::exception& e) {
+        std::cerr << "[FATAL] MSHQC JIT Trap: Eksekusi MP2 Quarter-Transform Gagal: " << e.what() << "\n";
+        std::abort();
+    }
 }
 
+// ... Implementasi fungsi OMP2 lainnya (compute_t2_amplitudes, dll.) tetap dipertahankan ...
+
+} // namespace foundation
 } // namespace mshqc
