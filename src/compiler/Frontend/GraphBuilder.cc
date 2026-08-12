@@ -41,16 +41,20 @@ void GraphBuilder::initializeModule(const std::string& functionName) {
 
 mlir::Value GraphBuilder::emitContractOp(const std::vector<int64_t>& lhsShape,
                                          const std::vector<int64_t>& rhsShape,
+                                         const std::vector<int64_t>& resShape,
                                          const std::string& einsum_eq) {
     Location loc = builder.getUnknownLoc();
     auto f64Type = builder.getF64Type();
 
     auto lhsTensorType = RankedTensorType::get(lhsShape, f64Type);
     auto rhsTensorType = RankedTensorType::get(rhsShape, f64Type);
-    auto resTensorType = RankedTensorType::get({lhsShape[0], rhsShape[0]}, f64Type);
+    auto resTensorType = RankedTensorType::get(resShape, f64Type);
 
     auto funcType = builder.getFunctionType({lhsTensorType, rhsTensorType, resTensorType}, {});
     auto funcOp = builder.create<func::FuncOp>(loc, builder.getStringAttr("contract_kernel"), funcType);
+    // INJEKSI: Mengizinkan mutasi in-place pada buffer keluaran ke memori fisik C++
+    funcOp.setArgAttr(2, "bufferization.writable", builder.getBoolAttr(true));
+
 
     Block* entryBlock = funcOp.addEntryBlock();
     builder.setInsertionPointToEnd(entryBlock);
