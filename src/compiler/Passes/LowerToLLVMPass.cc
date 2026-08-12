@@ -94,12 +94,6 @@ struct LowerToLLVMPass : public impl::LowerToLLVMBase<LowerToLLVMPass> {
             return;
         }
 
-        mlir::PassManager pm(&getContext());
-        pm.addPass(mlir::createReconcileUnrealizedCastsPass());
-        if (mlir::failed(pm.run(module))) {
-            signalPassFailure();
-        }
-
     }
 };
 

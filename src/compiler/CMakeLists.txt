@@ -76,6 +76,10 @@ target_link_libraries(mshqc_compiler
     MLIRAffineDialect
     MLIRExecutionEngine
     MLIRTargetLLVMIRExport
+    MLIROpenMPDialect
+    MLIROpenMPToLLVM
+    MLIRSCFToOpenMP
+    MLIRReconcileUnrealizedCasts
     ${llvm_libs}
 )
 
