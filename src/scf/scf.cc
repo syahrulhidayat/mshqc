@@ -1,6 +1,4 @@
-// ==============================================================================
-// MSHQC - Pure MLIR JIT Accelerated Self-Consistent Field (SCF)
-// ==============================================================================
+
 
 #include "mshqc/scf/scf.h"
 #include "mshqc/Runtime/MemRefUtils.h"
@@ -16,14 +14,13 @@ void BaseSCF::build_fock_matrix() {
     static bool is_kernel_compiled = false;
     const std::string kernel_name = "fock_build_kernel";
 
-    // Kompilasi LLVM IR hanya pada iterasi pertama (JIT Caching)
     if (!is_kernel_compiled) {
         mlir::MLIRContext context;
         jit::FockMLIRBuilder builder(&context);
-        
+
         builder.buildGraph(nbasis_);
         builder.optimizeAndLower();
-        
+
         jit_mgr.compileAndCache(kernel_name, builder.getModule());
         is_kernel_compiled = true;
     }
@@ -34,10 +31,9 @@ void BaseSCF::build_fock_matrix() {
         return;
     }
 
-    // Pemetaan Memori C++ ke MemRef C-ABI
     auto memref_P = runtime::makeMemRef2D(dP, nbasis_, nbasis_);
     auto memref_G = runtime::makeMemRef2D(G_accum_, nbasis_, nbasis_);
-    
+
     runtime::StridedMemRefType<double, 4> memref_ERI;
     memref_ERI.allocatedPtr = const_cast<double*>(integrals_->compute_eri().data());
     memref_ERI.alignedPtr = memref_ERI.allocatedPtr;
@@ -61,6 +57,4 @@ void BaseSCF::build_fock_matrix() {
     P_old_ = P_alpha_;
 }
 
-// ... Implementasi fungsi BaseSCF lainnya (compute, init, dll.) tetap dipertahankan ...
-
-} // namespace mshqc
+}

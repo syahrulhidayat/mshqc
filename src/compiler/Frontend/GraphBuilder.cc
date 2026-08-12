@@ -52,9 +52,8 @@ mlir::Value GraphBuilder::emitContractOp(const std::vector<int64_t>& lhsShape,
 
     auto funcType = builder.getFunctionType({lhsTensorType, rhsTensorType, resTensorType}, {});
     auto funcOp = builder.create<func::FuncOp>(loc, builder.getStringAttr("contract_kernel"), funcType);
-    // INJEKSI: Mengizinkan mutasi in-place pada buffer keluaran ke memori fisik C++
-    funcOp.setArgAttr(2, "bufferization.writable", builder.getBoolAttr(true));
 
+    funcOp.setArgAttr(2, "bufferization.writable", builder.getBoolAttr(true));
 
     Block* entryBlock = funcOp.addEntryBlock();
     builder.setInsertionPointToEnd(entryBlock);

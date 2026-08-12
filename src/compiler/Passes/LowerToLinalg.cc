@@ -111,7 +111,7 @@ struct ContractOpLowering : public mlir::OpRewritePattern<ContractOp> {
         auto rhsType = ::llvm::cast<mlir::ShapedType>(rhs.getType());
         auto resType = ::llvm::cast<mlir::ShapedType>(op.getResult().getType());
 
-        mlir::Value filledTensor = op.getOuts(); // Pemetaan Zero-copy langsung ke memori fisik C++
+        mlir::Value filledTensor = op.getOuts();
 
         llvm::SmallVector<mlir::utils::IteratorType, 5> iteratorTypes;
         mlir::AffineMap lhsMap, rhsMap, resMap;

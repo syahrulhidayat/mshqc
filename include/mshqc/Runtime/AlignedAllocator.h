@@ -1,7 +1,4 @@
-// ==============================================================================
-// MSHQC - MLIR JIT Runtime Components
-// 64-byte Aligned Allocator for AVX-512 and Cache-Line Optimization
-// ==============================================================================
+
 
 #pragma once
 
@@ -25,9 +22,9 @@ struct AlignedAllocator {
             throw std::bad_alloc();
         }
         std::size_t size = n * sizeof(T);
-        // Memastikan ukuran merupakan kelipatan dari alignment
+
         std::size_t aligned_size = (size + Alignment - 1) & ~(Alignment - 1);
-        
+
         void* ptr = std::aligned_alloc(Alignment, aligned_size);
         if (!ptr) {
             throw std::bad_alloc();
@@ -46,5 +43,5 @@ bool operator==(const AlignedAllocator<T, Alignment>&, const AlignedAllocator<U,
 template <typename T, typename U, std::size_t Alignment>
 bool operator!=(const AlignedAllocator<T, Alignment>&, const AlignedAllocator<U, Alignment>&) { return false; }
 
-} // namespace runtime
-} // namespace mshqc
+}
+}

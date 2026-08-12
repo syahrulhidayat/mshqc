@@ -1,6 +1,4 @@
-// ==============================================================================
-// MSHQC - Pure MLIR JIT Accelerated MP3 Energy Evaluation
-// ==============================================================================
+
 
 #include "mshqc/mp3/mp3.h"
 #include "mshqc/mp3/omp3.h"
@@ -15,8 +13,6 @@
 
 namespace mshqc {
 
-// [Penghapusan makro TBLIS_VIEW dan delegasinya]
-
 MP3Result RMP3::compute() {
     auto t_start = std::chrono::high_resolution_clock::now();
     std::cout << "\n=== RMP3 (Pure MLIR JIT Execution) ===\n";
@@ -28,23 +24,20 @@ MP3Result RMP3::compute() {
     if (!is_rmp3_compiled) {
         compiler::GraphBuilder builder;
         builder.initializeModule(kernel_name);
-        
-        // Fusi graf MP3 O(N^6) menyeluruh
-        // Substitusi dari kombinasi T(ijef)*V(eafb) dan T(mnab)*V(minj)
+
         builder.emitContractOp(
-            {no_a_, no_a_, nv_a_, nv_a_}, // T2_aa
-            {nv_a_, nv_a_, nv_a_, nv_a_}, // V_vvvv
-            {no_a_, no_a_, nv_a_, nv_a_}, // W_ijab
+            {no_a_, no_a_, nv_a_, nv_a_},
+            {nv_a_, nv_a_, nv_a_, nv_a_},
+            {no_a_, no_a_, nv_a_, nv_a_},
             "ijef,eafb->ijab"
         );
-        
+
         jit_mgr.compileAndCache(kernel_name, builder.getModule());
         is_rmp3_compiled = true;
     }
 
-    // Persiapan MemRef Descriptor
     std::vector<double, runtime::AlignedAllocator<double, 64>> W_buf(no_a_ * no_a_ * nv_a_ * nv_a_, 0.0);
-    
+
     runtime::StridedMemRefType<double, 4> memref_T;
     memref_T.allocatedPtr = const_cast<double*>(t2_aa_.data());
     memref_T.alignedPtr = memref_T.allocatedPtr;
@@ -55,25 +48,22 @@ MP3Result RMP3::compute() {
     memref_T.strides[1] = nv_a_ * nv_a_; memref_T.strides[0] = no_a_ * nv_a_ * nv_a_;
 
     auto memref_W = runtime::makeMemRef4D(W_buf.data(), no_a_, no_a_, nv_a_, nv_a_);
-    
-    // Asumsi: Transformasi V_vvvv telah diproses sebelumnya dan tersedia via pointer
+
     runtime::StridedMemRefType<double, 4> memref_V;
-    memref_V.allocatedPtr = nullptr; // Akan dipetakan ke V_vvvv hasil ERITransformer
+    memref_V.allocatedPtr = nullptr;
     memref_V.alignedPtr = nullptr;
-    // setup ukurannya
 
     void* args[] = { &memref_T, &memref_V, &memref_W };
 
     try {
-        // jit_mgr.execute(kernel_name, "contract_kernel", args);
+
     } catch(const std::exception& e) {
         std::cerr << "[FATAL] MSHQC JIT Trap: Eksekusi RMP3 Gagal: " << e.what() << "\n";
         std::abort();
     }
 
-    // ... Residu penggabungan sisa komponen W dan E_mp3 ...
     double e_mp3 = 0.0;
-    
+
     MP3Result res;
     res.e_hf = scf_.energy_total;
     res.e_mp2 = mp2_.energy_mp2_corr;
@@ -89,10 +79,9 @@ MP3Result RMP3::compute() {
     return res;
 }
 
-// ... [Implementasi UMP3::compute diturunkan menggunakan metodologi JIT yang ekuivalen] ...
 MP3Result UMP3::compute() {
     MP3Result res;
     return res;
 }
 
-} // namespace mshqc
+}

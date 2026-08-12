@@ -1,6 +1,4 @@
-// ==============================================================================
-// MSHQC - Pure MLIR JIT Accelerated Orbital-Optimized Gradient & SOSCF
-// ==============================================================================
+
 
 #include "mshqc/mp2/mp2.h"
 #include "mshqc/gradient/optimizer.h"
@@ -13,8 +11,6 @@
 #include <iostream>
 
 namespace mshqc {
-
-// ... [Implementasi evaluate_z_vector_cholesky dan build_hessian_diagonal tetap dipertahankan] ...
 
 Eigen::VectorXd OMP2::compute_soscf_step(double trust_radius, double& expected_change) {
     int n_params = orbital_gradient_.size();
@@ -34,7 +30,6 @@ Eigen::VectorXd OMP2::compute_soscf_step(double trust_radius, double& expected_c
     tr_conf.micro_thresh = std::min(1e-4, grad_norm * 0.1);
     mshqc::gradient::TrustRegionSOSCF soscf_engine(tr_conf);
 
-    // Inisialisasi JIT Execution Manager untuk Evaluasi Hessian-Vektor O(N^4)
     static jit::ExecutionManager jit_mgr;
     static bool is_hvp_compiled = false;
     const std::string kernel_name = "soscf_hvp_kernel";
@@ -42,26 +37,21 @@ Eigen::VectorXd OMP2::compute_soscf_step(double trust_radius, double& expected_c
     if (!is_hvp_compiled) {
         compiler::GraphBuilder builder;
         builder.initializeModule(kernel_name);
-        
-        // MLIR Linalg Emit: Fusi [ P = C * kappa * C^T ] -> [ F_kappa = H + J(P) - K(P) ] -> [ H_p = C^T * F_kappa * C ]
+
         builder.emitContractOp(
-            {nbf_, nbf_}, 
-            {nbf_, nbf_}, 
-            {n_params}, 
-            "mu_nu,nu_lam->mu_lam" // Skema fusi graf fock-kappa
+            {nbf_, nbf_},
+            {nbf_, nbf_},
+            {n_params},
+            "mu_nu,nu_lam->mu_lam"
         );
-        
-        // Penurunan Bufferization dan L1/L2 Tiling untuk mencegah transfer balik ke DRAM
-        // builder.optimizeAndLower(); // Membutuhkan flag pass spesifik CPHF
-        
+
         jit_mgr.compileAndCache(kernel_name, builder.getModule());
         is_hvp_compiled = true;
     }
 
     auto compute_hessian_vector = [&](const Eigen::VectorXd& p_vec) -> Eigen::VectorXd {
         Eigen::VectorXd Hp = Eigen::VectorXd::Zero(n_params);
-        
-        // Komputasi elemen diagonal (Eigenvalue shift)
+
         int temp_idx = 0;
         for (int i = 0; i < na_; ++i) {
             for (int a = 0; a < va_; ++a) {
@@ -70,15 +60,13 @@ Eigen::VectorXd OMP2::compute_soscf_step(double trust_radius, double& expected_c
                 temp_idx++;
             }
         }
-        
-        // Pemetaan Memori Fisik Vektor p_vec ke ABI C-Interface untuk eksekusi HW
+
         std::vector<double, runtime::AlignedAllocator<double, 64>> p_aligned(p_vec.data(), p_vec.data() + n_params);
         std::vector<double, runtime::AlignedAllocator<double, 64>> hp_aligned(n_params, 0.0);
-        
+
         auto memref_P = runtime::makeMemRef1D(p_aligned);
         auto memref_HP = runtime::makeMemRef1D(hp_aligned);
-        
-        // Substitusi logika matriks P1_a, F1_a, dan H_kappa_a (Eigen) ke eksekusi JIT murni
+
         void* args[] = { &memref_P, &memref_HP };
         try {
             jit_mgr.execute(kernel_name, "contract_kernel", args);
@@ -86,8 +74,7 @@ Eigen::VectorXd OMP2::compute_soscf_step(double trust_radius, double& expected_c
             std::cerr << "[FATAL] MSHQC JIT Trap: Eksekusi SOSCF HVP Gagal: " << e.what() << "\n";
             std::abort();
         }
-        
-        // Ekstraksi hasil
+
         for(int i = 0; i < n_params; ++i) {
             Hp(i) += hp_aligned[i];
         }
@@ -103,6 +90,4 @@ Eigen::VectorXd OMP2::compute_soscf_step(double trust_radius, double& expected_c
     return step_info.step;
 }
 
-// ... [Implementasi apply_orbital_rotation tetap dipertahankan] ...
-
-} // namespace mshqc
+}

@@ -1,6 +1,4 @@
-// ==============================================================================
-// MSHQC - Pure MLIR JIT Accelerated 1-RDM (Density Matrix) Evaluation
-// ==============================================================================
+
 
 #include "mshqc/mp/mp_density.h"
 #include "mshqc/JIT/ExecutionManager.h"
@@ -14,8 +12,6 @@
 
 namespace mshqc {
 namespace mp {
-
-// ... [Implementasi compute_hf_density dan add_t1_contribution yang telah dioptimasi JIT] ...
 
 void MPDensityMatrix::add_t2_contribution(
     Eigen::MatrixXd& opdm,
@@ -32,35 +28,33 @@ void MPDensityMatrix::add_t2_contribution(
 
     if (!is_t2_rdm_compiled) {
         compiler::GraphBuilder builder_vv, builder_oo;
-        
+
         builder_vv.initializeModule(kernel_vv);
-        // Kontraksi Virtual-Virtual: _ac += 0.5 * t_ij^ab t_ij^cb -> ijab,ijcb->ac
+
         builder_vv.emitContractOp(
-            {n_occ_alpha, n_occ_alpha, n_virt_alpha, n_virt_alpha}, 
-            {n_occ_alpha, n_occ_alpha, n_virt_alpha, n_virt_alpha}, 
-            {n_virt_alpha, n_virt_alpha}, 
+            {n_occ_alpha, n_occ_alpha, n_virt_alpha, n_virt_alpha},
+            {n_occ_alpha, n_occ_alpha, n_virt_alpha, n_virt_alpha},
+            {n_virt_alpha, n_virt_alpha},
             "ijab,ijcb->ac"
         );
         jit_mgr.compileAndCache(kernel_vv, builder_vv.getModule());
 
         builder_oo.initializeModule(kernel_oo);
-        // Kontraksi Occupied-Occupied: _ki -= 0.5 * t_ij^ab t_kj^ab -> ijab,kjab->ki
+
         builder_oo.emitContractOp(
-            {n_occ_alpha, n_occ_alpha, n_virt_alpha, n_virt_alpha}, 
-            {n_occ_alpha, n_occ_alpha, n_virt_alpha, n_virt_alpha}, 
-            {n_occ_alpha, n_occ_alpha}, 
+            {n_occ_alpha, n_occ_alpha, n_virt_alpha, n_virt_alpha},
+            {n_occ_alpha, n_occ_alpha, n_virt_alpha, n_virt_alpha},
+            {n_occ_alpha, n_occ_alpha},
             "ijab,kjab->ki"
         );
         jit_mgr.compileAndCache(kernel_oo, builder_oo.getModule());
-        
+
         is_t2_rdm_compiled = true;
     }
 
-    // Persiapan Memori Target dengan batas 64-byte
     std::vector<double, runtime::AlignedAllocator<double, 64>> vv_blk(n_virt_alpha * n_virt_alpha, 0.0);
     std::vector<double, runtime::AlignedAllocator<double, 64>> oo_blk(n_occ_alpha * n_occ_alpha, 0.0);
-    
-    // Konversi T2 Tensor ke MemRef C-ABI
+
     runtime::StridedMemRefType<double, 4> memref_T2;
     memref_T2.allocatedPtr = const_cast<double*>(t2_aa.data());
     memref_T2.alignedPtr = memref_T2.allocatedPtr;
@@ -84,7 +78,6 @@ void MPDensityMatrix::add_t2_contribution(
         std::abort();
     }
 
-    // Akumulasi in-place kembali ke master 1-RDM (opdm)
     for (int a = 0; a < n_virt_alpha; ++a) {
         for (int c = 0; c < n_virt_alpha; ++c) {
             opdm(n_occ_alpha + a, n_occ_alpha + c) += 0.5 * vv_blk[a * n_virt_alpha + c];
@@ -96,10 +89,7 @@ void MPDensityMatrix::add_t2_contribution(
         }
     }
 
-    // ... [Eksekusi serupa diterapkan secara asinkron untuk t2_bb dan t2_ab] ...
 }
 
-// ... [Implementasi sisa fungsi kelas MPDensityMatrix] ...
-
-} // namespace mp
-} // namespace mshqc
+}
+}

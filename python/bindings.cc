@@ -344,9 +344,6 @@ NB_MODULE(_mshqc, m) {
         .def_rw("n_occ_alpha", &SCFResult::n_occ_alpha)
         .def_rw("n_occ_beta", &SCFResult::n_occ_beta);
 
-    // =========================================================================
-    // KOREKSI BINDING MODUL SCF
-    // =========================================================================
     nb::class_<UHF>(m, "UHF")
         .def("__init__", [](UHF *self, const Molecule& mol, const BasisSet& basis,
                             IntegralEngine* integrals, PointGroup* pg, PetiteList* pl,
@@ -436,12 +433,9 @@ NB_MODULE(_mshqc, m) {
         .def_rw("orbital_energies_alpha", &MP2Result::orbital_energies_alpha)
         .def_rw("orbital_energies_beta", &MP2Result::orbital_energies_beta);
 
-    // =========================================================================
-    // KOREKSI BINDING MODUL MP2
-    // =========================================================================
     nb::class_<foundation::RMP2>(m, "RMP2")
         .def("__init__", [](foundation::RMP2 *self, const Molecule& mol, const BasisSet& basis,
-                            IntegralEngine* integrals, const SCFResult& scf_guess, 
+                            IntegralEngine* integrals, const SCFResult& scf_guess,
                             const MP2Config& config, PointGroup* pg, PetiteList* pl) {
             auto sp_int = std::shared_ptr<IntegralEngine>(integrals, [](IntegralEngine*){});
             auto sp_pg = pg ? std::shared_ptr<PointGroup>(pg, [](PointGroup*){}) : nullptr;
@@ -453,7 +447,7 @@ NB_MODULE(_mshqc, m) {
 
     nb::class_<mshqc::UMP2>(m, "UMP2")
         .def("__init__", [](mshqc::UMP2 *self, const Molecule& mol, const BasisSet& basis,
-                            IntegralEngine* integrals, const SCFResult& scf_guess, 
+                            IntegralEngine* integrals, const SCFResult& scf_guess,
                             const MP2Config& config, PointGroup* pg, PetiteList* pl) {
             auto sp_int = std::shared_ptr<IntegralEngine>(integrals, [](IntegralEngine*){});
             auto sp_pg = pg ? std::shared_ptr<PointGroup>(pg, [](PointGroup*){}) : nullptr;
@@ -465,7 +459,7 @@ NB_MODULE(_mshqc, m) {
 
     nb::class_<OMP2>(m, "OMP2")
         .def("__init__", [](OMP2 *self, const Molecule& mol, const BasisSet& basis,
-                            IntegralEngine* integrals, const SCFResult& scf_guess, 
+                            IntegralEngine* integrals, const SCFResult& scf_guess,
                             const MP2Config& config, PointGroup* pg, PetiteList* pl) {
             auto sp_int = std::shared_ptr<IntegralEngine>(integrals, [](IntegralEngine*){});
             auto sp_pg = pg ? std::shared_ptr<PointGroup>(pg, [](PointGroup*){}) : nullptr;

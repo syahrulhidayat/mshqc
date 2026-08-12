@@ -1,6 +1,4 @@
-// ==============================================================================
-// MSHQC - Pure MLIR JIT Accelerated MP3 Tensor Contractions
-// ==============================================================================
+
 
 #include "mshqc/mp3/omp3.h"
 #include "mshqc/JIT/ExecutionManager.h"
@@ -17,32 +15,24 @@ void OMP3::compute_mp3_correction() {
     static bool is_mp3_ladder_compiled = false;
     const std::string kernel_name = "mp3_ladder_kernel";
 
-    // 1. Kompilasi JIT Graf Kontraksi O(N^6) pada iterasi pertama
     if (!is_mp3_ladder_compiled) {
         compiler::GraphBuilder builder;
         builder.initializeModule(kernel_name);
-        
-        // Translasi ekuivalen dari tblis::mult("mnab", "minj" -> "ijab")
-        // Dimensi: T2_aa(na_, na_, va_, va_), V_oooo(na_, na_, na_, na_), W_ladder(na_, na_, va_, va_)
+
         builder.emitContractOp(
-            {na_, na_, va_, va_}, 
-            {na_, na_, na_, na_}, 
-            {na_, na_, va_, va_}, 
+            {na_, na_, va_, va_},
+            {na_, na_, na_, na_},
+            {na_, na_, va_, va_},
             "mnab,minj->ijab"
         );
-        
-        // Asumsi: Optimasi pass pipeline LLVM (Tiling, Vectorization, Buffer Deallocation) 
-        // diaplikasikan melalui mekanisme eksternal atau metode GraphBuilder::optimizeAndLower()
-        
+
         jit_mgr.compileAndCache(kernel_name, builder.getModule());
         is_mp3_ladder_compiled = true;
     }
 
-    // Ekstraksi data mentah dari Dense Tensor (Sebelumnya bergantung pada tblis_view)
     auto* t2_aa_dense = t2_aa_.get_block(0,0,0,0);
     if (!t2_aa_dense) throw std::runtime_error("OMP3 missing T2 dense block.");
 
-    // 2. Pemetaan Memori Fisik ke MLIR C-Interface ABI
     runtime::StridedMemRefType<double, 4> memref_T2;
     memref_T2.allocatedPtr = t2_aa_dense->data();
     memref_T2.alignedPtr = memref_T2.allocatedPtr;
@@ -52,7 +42,6 @@ void OMP3::compute_mp3_correction() {
     memref_T2.strides[3] = 1; memref_T2.strides[2] = va_;
     memref_T2.strides[1] = va_ * va_; memref_T2.strides[0] = na_ * va_ * va_;
 
-    // (Asumsi V_oooo_aa telah dipetakan sebagai flat array 1D/4D dari B_ij_a)
     std::vector<double, runtime::AlignedAllocator<double, 64>> V_oooo_buf(na_*na_*na_*na_, 0.0);
     runtime::StridedMemRefType<double, 4> memref_V;
     memref_V.allocatedPtr = V_oooo_buf.data();
@@ -74,7 +63,6 @@ void OMP3::compute_mp3_correction() {
 
     void* args[] = { &memref_T2, &memref_V, &memref_W };
 
-    // 3. Eksekusi Hardware Kernel O(N^6) secara natif via MLIR-LLVM JIT
     try {
         jit_mgr.execute(kernel_name, "contract_kernel", args);
     } catch(const std::exception& e) {
@@ -82,7 +70,6 @@ void OMP3::compute_mp3_correction() {
         std::abort();
     }
 
-    // ... Residu implementasi OMP3 (eksekusi ring contraction dan evaluasi energi) ...
 }
 
-} // namespace mshqc
+}

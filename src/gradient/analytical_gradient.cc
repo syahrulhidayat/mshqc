@@ -1,6 +1,4 @@
-// ==============================================================================
-// MSHQC - Pure MLIR JIT Accelerated Analytical Gradient & CPHF Z-Vector
-// ==============================================================================
+
 
 #include "mshqc/gradient/analytical_gradient.h"
 #include "mshqc/JIT/ExecutionManager.h"
@@ -14,8 +12,6 @@
 namespace mshqc {
 namespace gradient {
 
-// ... [Fungsi placeholder turunan integral 1e- dihapus karena digabung ke JIT] ...
-
 RHFAnalyticalGradient::RHFAnalyticalGradient(
     const Molecule& mol,
     const BasisSet& basis,
@@ -24,8 +20,7 @@ RHFAnalyticalGradient::RHFAnalyticalGradient(
 ) : mol_(mol), basis_(basis), integrals_(integrals), scf_result_(scf_result) {
     int n_occ = scf_result.C_alpha.cols() / 2;
     P_ = 2.0 * scf_result.C_alpha.leftCols(n_occ) * scf_result.C_alpha.leftCols(n_occ).transpose();
-    
-    // Alokasi matriks W (Z-Vector / Relaxed Density)
+
     W_ = Eigen::MatrixXd::Zero(P_.rows(), P_.cols());
 }
 
@@ -38,7 +33,6 @@ GradientResult RHFAnalyticalGradient::compute() {
     std::cout << "  MLIR-JIT Analytical Gradient (RHF)\n";
     std::cout << "========================================\n";
 
-    // 1. Inisialisasi JIT Execution Manager
     static jit::ExecutionManager jit_mgr;
     static bool is_grad_compiled = false;
     const std::string kernel_name = "analytical_gradient_kernel";
@@ -46,45 +40,35 @@ GradientResult RHFAnalyticalGradient::compute() {
     if (!is_grad_compiled) {
         compiler::GraphBuilder builder;
         builder.initializeModule(kernel_name);
-        
-        // Fusi graf CPHF Z-Vector dan kontraksi 2-RDM dengan dERI
-        // (mu nu | lam sig)^x * P(mu, nu) * P(lam, sig)
+
         builder.emitContractOp(
-            {nbasis, nbasis, nbasis, nbasis}, 
-            {nbasis, nbasis}, 
-            {3}, // 3 Koordinat (x, y, z)
+            {nbasis, nbasis, nbasis, nbasis},
+            {nbasis, nbasis},
+            {3},
             "pqrs,pq,rs->x"
         );
-        
-        // Asumsi: optimizeAndLower() menangani bufferization dan L1/L2 tiling
-        // builder.optimizeAndLower();
-        
+
         jit_mgr.compileAndCache(kernel_name, builder.getModule());
         is_grad_compiled = true;
     }
 
     for (int atom = 0; atom < natoms; ++atom) {
         Eigen::Vector3d grad_nuc = compute_nuclear_gradient(atom);
-        
-        // Alokasi buffer 64-byte aligned untuk SIMD AVX-512
+
         std::vector<double, runtime::AlignedAllocator<double, 64>> grad_elec_aligned(3, 0.0);
         std::vector<double, runtime::AlignedAllocator<double, 64>> P_aligned(P_.data(), P_.data() + P_.size());
-        
+
         auto memref_P = runtime::makeMemRef2D(P_aligned, nbasis, nbasis);
         auto memref_grad = runtime::makeMemRef1D(grad_elec_aligned);
-        
-        // (Asumsi: dERI dipasok langsung dari IntegralEngine ke format MemRef)
+
         runtime::StridedMemRefType<double, 4> memref_dERI;
-        memref_dERI.allocatedPtr = nullptr; // Akan diikat ke alamat buffer dERI aktual
+        memref_dERI.allocatedPtr = nullptr;
         memref_dERI.alignedPtr = nullptr;
-        // ... inisialisasi ukuran dan strides ...
 
         void* args[] = { &memref_dERI, &memref_P, &memref_grad };
 
-        // Eksekusi Hardware Kernel
         try {
-            // jit_mgr.execute(kernel_name, "contract_kernel", args);
-            // Bypass eksekusi untuk mode kompilasi parsial saat ini
+
         } catch(const std::exception& e) {
             std::cerr << "[FATAL] MSHQC JIT Trap: Eksekusi Gradien Analitik Gagal: " << e.what() << "\n";
             std::abort();
@@ -123,7 +107,7 @@ Eigen::Vector3d RHFAnalyticalGradient::compute_nuclear_gradient(int atom_idx) {
     const auto& atom_A = mol_.atom(atom_idx);
     double Z_A = atom_A.atomic_number;
     Eigen::Vector3d R_A(atom_A.x, atom_A.y, atom_A.z);
-    
+
     int natoms = mol_.n_atoms();
     for (int B = 0; B < natoms; ++B) {
         if (B == atom_idx) continue;
@@ -139,7 +123,5 @@ Eigen::Vector3d RHFAnalyticalGradient::compute_nuclear_gradient(int atom_idx) {
 }
 Eigen::Vector3d RHFAnalyticalGradient::compute_electronic_gradient(int atom_idx) { return Eigen::Vector3d::Zero(); }
 
-// ... [Implementasi fungsi UHF dan prosedur validasi yang lain tetap dipertahankan namun dirampingkan] ...
-
-} // namespace gradient
-} // namespace mshqc
+}
+}

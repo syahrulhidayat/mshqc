@@ -1,7 +1,4 @@
-// ==============================================================================
-// MSHQC - MP2 Matrix MLIR Builder
-// Lowering O(N^5) AO-MO Quarter Transformation to Linalg Dialect
-// ==============================================================================
+
 
 #pragma once
 
@@ -25,8 +22,7 @@ public:
 
     void buildQuarterTransformGraph(int64_t nbasis, int64_t nvirt) {
         auto f64 = builder_.getF64Type();
-        
-        // MemRef Type untuk ERI AO (N^4), Koefisien MO (N x V), dan ERI Quarter (N^3 x V)
+
         auto memref_eri_ao = mlir::MemRefType::get({nbasis, nbasis, nbasis, nbasis}, f64);
         auto memref_c_mo   = mlir::MemRefType::get({nbasis, nvirt}, f64);
         auto memref_eri_q  = mlir::MemRefType::get({nbasis, nbasis, nbasis, nvirt}, f64);
@@ -42,8 +38,6 @@ public:
         auto c_mo_arg   = entryBlock->getArgument(1);
         auto eri_q_arg  = entryBlock->getArgument(2);
 
-        // Affine Maps untuk kontraksi O(N^5)
-        // W(mu, nu, lam, b) += ERI(mu, nu, lam, sig) * C(sig, b)
         llvm::SmallVector<mlir::AffineMap, 3> indexingMaps = {
             mlir::AffineMap::parse("(mu, nu, lam, sig, b) -> (mu, nu, lam, sig)", context_),
             mlir::AffineMap::parse("(mu, nu, lam, sig, b) -> (sig, b)", context_),
@@ -73,16 +67,13 @@ public:
 
     void optimizeAndLower() {
         mlir::PassManager pm(context_);
-        
-        // Tiling spesifik untuk mereduksi cache misses pada L1/L2
+
         mlir::linalg::LinalgTilingOptions tilingOptions;
-        tilingOptions.setTileSizes({32, 32, 32, 32, 32}); 
+        tilingOptions.setTileSizes({32, 32, 32, 32, 32});
         pm.addPass(mlir::createLinalgStrategyTilePass("mp2_quarter_transform", tilingOptions));
-        
-        // Kewajiban Buffer Deallocation: Memetakan tensor O(N^4) ke Heap (malloc/free)
-        // Eliminasi risiko Stack Overflow secara absolut.
+
         pm.addPass(mlir::bufferization::createBufferDeallocationPass());
-        
+
         if (mlir::failed(pm.run(module_))) {
             throw std::runtime_error("MLIR Pass Manager failed to optimize MP2 graph.");
         }
@@ -96,5 +87,5 @@ private:
     mlir::OwningOpRef<mlir::ModuleOp> module_;
 };
 
-} // namespace jit
-} // namespace mshqc
+}
+}
