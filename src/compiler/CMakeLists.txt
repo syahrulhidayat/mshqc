@@ -30,6 +30,9 @@ set(LLVM_TARGET_DEFINITIONS ${CMAKE_SOURCE_DIR}/include/mshqc/compiler/Passes/Pa
 mlir_tablegen(Passes.h.inc -gen-pass-decls -name Mshqc)
 add_custom_target(MshqcPassIncGen DEPENDS Passes.h.inc)
 
+# INJEKSI ALIGNMENT: 32-Byte AVX2 Memory Boundary untuk Vectorization
+add_compile_definitions(EIGEN_MAX_ALIGN_BYTES=32)
+
 add_library(mshqc_compiler STATIC
     Dialect/MshqcDialect.cc
     Dialect/MshqcOps.cc

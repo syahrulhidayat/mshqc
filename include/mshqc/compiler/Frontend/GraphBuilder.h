@@ -38,6 +38,7 @@ public:
 
     mlir::Value emitContractOp(const std::vector<int64_t>& lhsShape,
                                const std::vector<int64_t>& rhsShape,
+                               const std::vector<int64_t>& resShape,
                                const std::string& einsum_eq);
 
     bool verifyGraph();
