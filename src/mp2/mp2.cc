@@ -19,6 +19,7 @@
 #include "mshqc/symmetry/salc_builder.h"
 #include "mshqc/mp2/mp2.h"
 #include "mshqc/compiler/JIT/ExecutionEngine.h"
+#include "mlir/IR/BuiltinTypes.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Conversion/SCFToOpenMP/SCFToOpenMP.h"
 #include "mlir/Conversion/LinalgToStandard/LinalgToStandard.h"
@@ -130,8 +131,10 @@ void RMP2::compute_amplitudes_and_energy() {
 
     int64_t n_aux = B_ia_P_alpha_.cols();
     int64_t dim_ov = nocc_a_ * nvir_a_;
-    std::vector<int64_t> lhs_shape = {dim_ov, n_aux};
-    std::vector<int64_t> res_shape = {dim_ov, dim_ov};
+    // REKONSTRUKSI 1: Deklarasi Shape Dinamis untuk Sinkronisasi Strides C++ & MLIR
+    int64_t dyn = mlir::ShapedType::kDynamic;
+    std::vector<int64_t> lhs_shape = {dyn, dyn};
+    std::vector<int64_t> res_shape = {dyn, dyn};
     mlir_builder.emitContractOp(lhs_shape, lhs_shape, res_shape, "mP,nP->mn");
 
     mlir::PassManager pm(mlir_builder.getContext());
@@ -177,10 +180,8 @@ void RMP2::compute_amplitudes_and_energy() {
         {dim_ov, dim_ov}, {1, dim_ov}
     };
 
-    // INJEKSI ABI KOREKSI: Menerapkan pointer-to-pointer indirection
-    MemRef2D* ptr_B = &B_desc;
-    MemRef2D* ptr_G = &G_desc;
-    std::vector<void*> args = { &ptr_B, &ptr_B, &ptr_G };
+    // REKONSTRUKSI 2: Penghapusan ptr_B/ptr_G dan Transmisi MemRefDescriptor Absolut
+    std::vector<void*> args = { &B_desc, &B_desc, &G_desc };
 
     if (auto err = engine->invoke("contract_kernel", args)) {
         std::cerr << "[FATAL] Terjadi interupsi pada JIT Runtime.\n";
