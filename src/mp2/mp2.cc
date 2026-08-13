@@ -127,7 +127,8 @@ void RMP2::compute_amplitudes_and_energy() {
     int64_t dim_ov = nocc_a_ * nvir_a_;
     
     // DEKLARASI LUAR: Mengamankan alokasi memori agar tidak hancur di luar scope JIT
-    Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> G_iajb;
+    std::vector<double, mshqc::runtime::AlignedAllocator<double, 64>> G_iajb_buf(dim_ov * dim_ov, 0.0);
+    Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> G_iajb(G_iajb_buf.data(), dim_ov, dim_ov);
     bool mlir_executed = false;
 
     #if 1 // MSHQC_ENABLE_MLIR (Isolated for compiler debugging)
@@ -180,9 +181,9 @@ void RMP2::compute_amplitudes_and_energy() {
     };
 
     // ALOKASI MEMORI O(N^4)
-    G_iajb = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>::Zero(dim_ov, dim_ov);
+    // G_iajb dipetakan secara statis pada memory heap 64-byte
     MemRef2D G_desc = {
-        G_iajb.data(), G_iajb.data(), 0,
+        G_iajb_buf.data(), G_iajb_buf.data(), 0,
         {dim_ov, dim_ov}, {dim_ov, 1}
     };
 
