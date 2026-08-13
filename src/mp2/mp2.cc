@@ -180,7 +180,7 @@ void RMP2::compute_amplitudes_and_energy() {
     };
 
     // ALOKASI MEMORI O(N^4)
-    Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>::Zero(dim_ov, dim_ov);
+    G_iajb = Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>::Zero(dim_ov, dim_ov);
     MemRef2D G_desc = {
         G_iajb.data(), G_iajb.data(), 0,
         {dim_ov, dim_ov}, {dim_ov, 1}
@@ -189,7 +189,7 @@ void RMP2::compute_amplitudes_and_energy() {
     // REKONSTRUKSI ABI: Pointer-to-Pointer Indirection yang benar untuk LLVM invoke
     std::vector<void*> args = { &B_desc, &B_desc, &G_desc };
 
-    if (auto err = engine->invoke("contract_kernel", args)) {
+    if (auto err = engine->invoke("_mlir_ciface_contract_kernel", args)) {
         std::cerr << "[FATAL] Terjadi interupsi pada JIT Runtime.\n";
         exit(1);
     }

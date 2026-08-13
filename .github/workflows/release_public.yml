@@ -2,7 +2,7 @@ name: Compile, Test, and Release Wheel to Public Repo
 
 on:
   push:
-    branches: [ "mshqc-1.0.2" ]
+    branches: [ "..." ]
   workflow_dispatch:
 
 jobs:
@@ -177,6 +177,6 @@ jobs:
         else
           git commit -m "build(ci): compile release wheel and record gdb test telemetry [skip ci]"
           
-          git pull origin mshqc-1.0.2 --rebase
-          git push origin mshqc-1.0.2
+          git pull origin debug2 --rebase
+          git push origin debug2
         fi
