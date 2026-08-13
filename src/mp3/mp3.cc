@@ -38,7 +38,7 @@ MP3Result RMP3::compute() {
             "ijef,eafb->ijab"
         );
         
-        jit_mgr.compileAndCache(kernel_name, builder.getModule());
+        jit_mgr.compileAndCache(kernel_name, builder.getModule().release());
         is_rmp3_compiled = true;
     }
 
@@ -62,8 +62,7 @@ MP3Result RMP3::compute() {
     memref_V.alignedPtr = nullptr;
     // setup ukurannya
 
-    void* args[] = { &memref_T, &memref_V, &memref_W };
-
+    
     try {
         // jit_mgr.execute(kernel_name, "contract_kernel", args);
     } catch(const std::exception& e) {

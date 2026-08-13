@@ -49,21 +49,20 @@ struct BufferizePass : public impl::BufferizeBase<BufferizePass> {
         // 1. Konfigurasi One-Shot Bufferize
         mlir::bufferization::OneShotBufferizationOptions options;
         options.bufferizeFunctionBoundaries = true;
-        options.allowReturnAllocs = true; // Mengizinkan pengembalian buffer jika diperlukan sebagai output
 
-        if (mlir::failed(mlir::bufferization::runOneShotModuleBufferize(module, options))) {
+        // 2. Deklarasi BufferizationState (Default Constructor: 0 argumen)
+        mlir::bufferization::BufferizationState state;
+
+        // 3. Eksekusi Bufferisasi Terpadu
+        if (mlir::failed(mlir::bufferization::runOneShotModuleBufferize(module, options, state))) {
             signalPassFailure();
             return;
         }
 
-        // 2. Terapkan Buffer Deallocation secara Global
+        // 4. Terapkan Buffer Deallocation secara Global
         mlir::PassManager pm(context);
         
-        // Injeksi pass de-alokasi berbasis kepemilikan (Ownership-based Buffer Deallocation)
-        // Menganalisis siklus hidup memref dan menyuntikkan operasi memref.dealloc secara otomatis
         pm.addPass(mlir::bufferization::createOwnershipBasedBufferDeallocationPass());
-        
-        // Canonicalization dan CSE membersihkan pointer dangling dan operasi memref yang berulang
         pm.addPass(mlir::createCanonicalizerPass());
         pm.addPass(mlir::createCSEPass());
 

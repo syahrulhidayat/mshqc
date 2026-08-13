@@ -25,7 +25,7 @@ void OMP2::transform_integrals() {
         builder.buildQuarterTransformGraph(nbf_, va_);
         builder.optimizeAndLower();
         
-        jit_mgr.compileAndCache(kernel_name, builder.getModule());
+        jit_mgr.compileAndCache(kernel_name, builder.getModule().release());
         is_compiled = true;
     }
 
@@ -50,8 +50,7 @@ void OMP2::transform_integrals() {
     memref_eri_q.strides[3] = 1; memref_eri_q.strides[2] = va_;
     memref_eri_q.strides[1] = nbf_ * va_; memref_eri_q.strides[0] = nbf_ * nbf_ * va_;
 
-    void* args[] = { &memref_eri_ao, &memref_C, &memref_eri_q };
-
+    
     try {
         jit_mgr.execute(kernel_name, "mp2_quarter_transform", args);
     } catch(const std::exception& e) {

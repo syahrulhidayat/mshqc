@@ -59,7 +59,7 @@ GradientResult RHFAnalyticalGradient::compute() {
         // Asumsi: optimizeAndLower() menangani bufferization dan L1/L2 tiling
         // builder.optimizeAndLower();
         
-        jit_mgr.compileAndCache(kernel_name, builder.getModule());
+        jit_mgr.compileAndCache(kernel_name, builder.getModule().release());
         is_grad_compiled = true;
     }
 
@@ -79,8 +79,7 @@ GradientResult RHFAnalyticalGradient::compute() {
         memref_dERI.alignedPtr = nullptr;
         // ... inisialisasi ukuran dan strides ...
 
-        void* args[] = { &memref_dERI, &memref_P, &memref_grad };
-
+        
         // Eksekusi Hardware Kernel
         try {
             // jit_mgr.execute(kernel_name, "contract_kernel", args);

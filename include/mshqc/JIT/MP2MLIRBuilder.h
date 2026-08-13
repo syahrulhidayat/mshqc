@@ -45,9 +45,9 @@ public:
         // Affine Maps untuk kontraksi O(N^5)
         // W(mu, nu, lam, b) += ERI(mu, nu, lam, sig) * C(sig, b)
         llvm::SmallVector<mlir::AffineMap, 3> indexingMaps = {
-            mlir::AffineMap::parse("(mu, nu, lam, sig, b) -> (mu, nu, lam, sig)", context_),
-            mlir::AffineMap::parse("(mu, nu, lam, sig, b) -> (sig, b)", context_),
-            mlir::AffineMap::parse("(mu, nu, lam, sig, b) -> (mu, nu, lam, b)", context_)
+            mlir::parseAffineMap("(mu, nu, lam, sig, b) -> (mu, nu, lam, sig)", context_),
+            mlir::parseAffineMap("(mu, nu, lam, sig, b) -> (sig, b)", context_),
+            mlir::parseAffineMap("(mu, nu, lam, sig, b) -> (mu, nu, lam, b)", context_)
         };
 
         llvm::SmallVector<llvm::StringRef, 5> iteratorTypes = {
@@ -56,9 +56,9 @@ public:
 
         auto genericOp = builder_.create<mlir::linalg::GenericOp>(
             builder_.getUnknownLoc(),
-            mlir::TypeRange{},
-            mlir::ValueRange{eri_ao_arg, c_mo_arg},
-            mlir::ValueRange{eri_q_arg},
+            mlir::TypeRange(),
+            mlir::ValueRange(eri_ao_arg, c_mo_arg),
+            mlir::ValueRange(eri_q_arg),
             indexingMaps,
             iteratorTypes,
             [&](mlir::OpBuilder& b, mlir::Location loc, mlir::ValueRange args) {
@@ -77,13 +77,14 @@ public:
         // Tiling spesifik untuk mereduksi cache misses pada L1/L2
         mlir::linalg::LinalgTilingOptions tilingOptions;
         tilingOptions.setTileSizes({32, 32, 32, 32, 32}); 
-        pm.addPass(mlir::createLinalgStrategyTilePass("mp2_quarter_transform", tilingOptions));
+        // mlir::createLinalgStrategyTilePass is deprecated
+        // pm.addPass(mlir::createLinalgStrategyTilePass("mp2_quarter_transform", tilingOptions));
         
         // Kewajiban Buffer Deallocation: Memetakan tensor O(N^4) ke Heap (malloc/free)
         // Eliminasi risiko Stack Overflow secara absolut.
-        pm.addPass(mlir::bufferization::createBufferDeallocationPass());
+        pm.addPass(mlir::bufferization::createOwnershipBasedBufferDeallocationPass());
         
-        if (mlir::failed(pm.run(module_))) {
+        if (mlir::failed(pm.run(module_.get()))) {
             throw std::runtime_error("MLIR Pass Manager failed to optimize MP2 graph.");
         }
     }

@@ -32,7 +32,7 @@ double OMP2::compute_mp2_energy() {
             {1},                  // Skalar Energi
             "iajb,iajb->e" 
         );
-        jit_mgr.compileAndCache(kernel_name, builder.getModule());
+        jit_mgr.compileAndCache(kernel_name, builder.getModule().release());
         is_compiled = true;
     }
 
@@ -56,8 +56,7 @@ double OMP2::compute_mp2_energy() {
             // ... setup sizes & strides ...
 
             auto memref_E = runtime::makeMemRef1D(e_buf);
-            void* args[] = { &memref_T, &memref_G, &memref_E };
-
+            
             try {
                 jit_mgr.execute(kernel_name, "contract_kernel", args);
                 E_corr += e_buf[0];

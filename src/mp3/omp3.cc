@@ -52,7 +52,7 @@ void OMP3::compute_mp3_correction() {
             {na_, na_, va_, va_}, 
             "mnab,minj->ijab"
         );
-        jit_mgr.compileAndCache(kernel_name, builder.getModule());
+        jit_mgr.compileAndCache(kernel_name, builder.getModule().release());
         is_mp3_ladder_compiled = true;
     }
 
@@ -87,8 +87,7 @@ void OMP3::compute_mp3_correction() {
     memref_W.strides[3] = 1; memref_W.strides[2] = va_;
     memref_W.strides[1] = va_ * va_; memref_W.strides[0] = na_ * va_ * va_;
 
-    void* args[] = { &memref_T2, &memref_V, &memref_W };
-
+    
     try {
         jit_mgr.execute(kernel_name, "contract_kernel", args);
     } catch(const std::exception& e) {

@@ -23,13 +23,22 @@ endif()
 # ==============================================================================
 # DEPENDENCY DISCOVERY (HERMETIC & TARGET-BASED)
 # ==============================================================================
-# Python & Nanobind
+# Python
 if(DEFINED ENV{CONDA_PREFIX})
     list(APPEND CMAKE_PREFIX_PATH "$ENV{CONDA_PREFIX}")
 endif()
 
 find_package(Python 3.8 COMPONENTS Interpreter Development REQUIRED)
-find_package(nanobind CONFIG REQUIRED)
+
+# Nanobind Dynamic Resolution via Python Interpreter
+execute_process(
+    COMMAND ${Python_EXECUTABLE} -c "import nanobind; print(nanobind.cmake_dir())"
+    OUTPUT_VARIABLE nanobind_DIR
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+    COMMAND_ERROR_IS_FATAL ANY
+)
+find_package(nanobind CONFIG REQUIRED PATHS ${nanobind_DIR} NO_DEFAULT_PATH)
+
 find_package(OpenMP REQUIRED)
 
 # BLAS & LAPACK
@@ -103,7 +112,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     if(MSHQC_ENABLE_NATIVE_OPT)
         target_compile_options(mshqc PRIVATE $<$<CONFIG:Release>:-march=native>)
     else()
-        # Mengizinkan AVX-512 jika didukung, minimal AVX2. Menghapus batasan -mno-avx512f.
+        # Mengizinkan AVX-512 jika didukung, minimal AVX2.
         target_compile_options(mshqc PRIVATE $<$<CONFIG:Release>:-mavx2 -mfma -mtune=generic>)
     endif()
 endif()
@@ -153,7 +162,6 @@ nanobind_add_module(_mshqc "python/bindings.cc")
 target_link_libraries(_mshqc PRIVATE mshqc)
 
 set_target_properties(mshqc _mshqc PROPERTIES
-    # LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/python/mshqc" // Didelegasikan ke setuptools
     INSTALL_RPATH "$ORIGIN:$ORIGIN/../../.."
     BUILD_WITH_INSTALL_RPATH TRUE
 )

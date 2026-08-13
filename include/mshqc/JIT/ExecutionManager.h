@@ -10,7 +10,8 @@
 #include <stdexcept>
 #include <iostream>
 #include "mlir/ExecutionEngine/ExecutionEngine.h"
-#include "mlir/IR/Module.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/OwningOpRef.h"
 
 namespace mshqc {
 namespace jit {
@@ -27,7 +28,7 @@ public:
     ExecutionManager(const ExecutionManager&) = delete;
     ExecutionManager& operator=(const ExecutionManager&) = delete;
 
-    void compileAndCache(const std::string& kernel_name, mlir::OwningOpRef<mlir::ModuleOp>& module) {
+    void compileAndCache(const std::string& kernel_name, mlir::OwningOpRef<mlir::ModuleOp> module) {
         if (engine_cache_.find(kernel_name) != engine_cache_.end()) return;
         
         mlir::ExecutionEngineOptions engineOptions;
@@ -47,9 +48,10 @@ public:
         }
     }
 
-private:
+public:
     ExecutionManager() = default;
     ~ExecutionManager() = default;
+private:
     std::unordered_map<std::string, std::unique_ptr<mlir::ExecutionEngine>> engine_cache_;
 };
 

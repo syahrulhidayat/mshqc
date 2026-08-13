@@ -36,12 +36,13 @@ public:
         // Injeksi Tiling O(N^4) ke 64x64 untuk L1d Cache Locality
         mlir::linalg::LinalgTilingOptions tilingOptions;
         tilingOptions.setTileSizes({64, 64, 64});
-        pm.addPass(mlir::createLinalgStrategyTilePass("scf_build_fock", tilingOptions));
+        // mlir::createLinalgStrategyTilePass is deprecated
+        // pm.addPass(mlir::createLinalgStrategyTilePass("scf_build_fock", tilingOptions));
         
         // Mencegah Stack Overflow pada operasi kompilator
-        pm.addPass(mlir::bufferization::createBufferDeallocationPass());
+        pm.addPass(mlir::bufferization::createOwnershipBasedBufferDeallocationPass());
         
-        if (mlir::failed(pm.run(module_))) {
+        if (mlir::failed(pm.run(module_.get()))) {
             throw std::runtime_error("MLIR Pass Manager failed to optimize Fock graph.");
         }
     }
