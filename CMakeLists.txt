@@ -47,7 +47,8 @@ include(AddMLIR)
 
 # Restorasi inklusi direktori secara global untuk utilitas TableGen (mlir-tblgen)
 include_directories(${LLVM_INCLUDE_DIRS} ${MLIR_INCLUDE_DIRS})
-# Domain Libraries: Eigen3, CINT, TBLIS, HDF5
+
+# Domain Libraries: Eigen3, CINT, HDF5
 # Mekanisme fallback hermetis untuk melewati anomali versi registri Conda
 set(EIGEN_LOCAL_PATH "${CMAKE_SOURCE_DIR}/include/eigen-3.4.0")
 if(EXISTS "${EIGEN_LOCAL_PATH}/Eigen/Dense")
@@ -58,19 +59,12 @@ else()
 endif()
 
 # ==============================================================================
-# Domain Libraries: CINT, TBLIS (Dengan Hermetic HPC Path Resolution)
+# Domain Libraries: CINT (Dengan Hermetic HPC Path Resolution)
 # ==============================================================================
 find_path(CINT_INCLUDE_DIR NAMES cint.h 
     HINTS "$ENV{CONDA_PREFIX}/include" "$ENV{HOME}/libcint_install/include" "/usr/local/include" "/usr/include" REQUIRED)
 find_library(CINT_LIBRARY NAMES cint 
     HINTS "$ENV{CONDA_PREFIX}/lib" "$ENV{HOME}/libcint_install/lib64" "$ENV{HOME}/libcint_install/lib" "/usr/local/lib64" "/usr/local/lib" "/usr/lib64" "/usr/lib" REQUIRED)
-
-find_path(TBLIS_INCLUDE_DIR NAMES tblis/tblis.h 
-    HINTS "$ENV{TBLIS_DIR}/include" "$ENV{CONDA_PREFIX}/include" "$ENV{HOME}/tblis_install/include" "/usr/local/include" "/usr/include" REQUIRED)
-find_library(TBLIS_LIBRARY NAMES tblis libtblis.a 
-    HINTS "$ENV{TBLIS_DIR}/lib64" "$ENV{TBLIS_DIR}/lib" "$ENV{CONDA_PREFIX}/lib" "$ENV{HOME}/tblis_install/lib64" "$ENV{HOME}/tblis_install/lib" "/usr/lib64" "/usr/lib" REQUIRED)
-find_library(TCI_LIBRARY NAMES tci libtci.a 
-    HINTS "$ENV{TBLIS_DIR}/lib64" "$ENV{TBLIS_DIR}/lib" "$ENV{CONDA_PREFIX}/lib" "$ENV{HOME}/tblis_install/lib64" "$ENV{HOME}/tblis_install/lib" "/usr/lib64" "/usr/lib")
 
 find_package(HDF5 COMPONENTS C CXX REQUIRED)
 
@@ -109,7 +103,8 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     if(MSHQC_ENABLE_NATIVE_OPT)
         target_compile_options(mshqc PRIVATE $<$<CONFIG:Release>:-march=native>)
     else()
-        target_compile_options(mshqc PRIVATE $<$<CONFIG:Release>:-mavx2 -mfma -mno-avx512f -mtune=generic>)
+        # Mengizinkan AVX-512 jika didukung, minimal AVX2. Menghapus batasan -mno-avx512f.
+        target_compile_options(mshqc PRIVATE $<$<CONFIG:Release>:-mavx2 -mfma -mtune=generic>)
     endif()
 endif()
 
@@ -125,7 +120,6 @@ target_include_directories(mshqc PUBLIC
     $<INSTALL_INTERFACE:include>
     PRIVATE
     ${CINT_INCLUDE_DIR}
-    ${TBLIS_INCLUDE_DIR}
     ${LLVM_INCLUDE_DIRS}
     ${MLIR_INCLUDE_DIRS}
 )
@@ -136,7 +130,6 @@ target_link_libraries(mshqc PUBLIC
     MLIRSupport
     ${llvm_libs}
     ${CINT_LIBRARY}
-    ${TBLIS_LIBRARY}
     hdf5::hdf5 hdf5::hdf5_cpp
     ${BLAS_LIBRARIES}
     ${LAPACK_LIBRARIES}
@@ -144,10 +137,6 @@ target_link_libraries(mshqc PUBLIC
     ${CMAKE_DL_LIBS}
     atomic
 )
-
-if(TCI_LIBRARY)
-    target_link_libraries(mshqc PUBLIC ${TCI_LIBRARY})
-endif()
 
 # Whole-archive handling for mshqc_compiler layer (Platform Aware)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
