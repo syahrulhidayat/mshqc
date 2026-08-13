@@ -1,31 +1,25 @@
 // ==============================================================================
 // Copyright (c) 2026 Muhamad Syahrul Hidayat and mshqc contributors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// MSHQC - Integral Engine (64-byte Aligned for MLIR-JIT Interaction)
 // ==============================================================================
-
 
 #ifndef MSHQC_INTEGRALS_H
 #define MSHQC_INTEGRALS_H
 
 #include "mshqc/core/molecule.h"
 #include "mshqc/basis.h"
+#include "mshqc/Runtime/AlignedAllocator.h"
 #include <Eigen/Dense>
 #include <unsupported/Eigen/CXX11/Tensor>
 #include <vector>
 
 namespace mshqc {
 
+// Aliasing vector dengan custom AVX-512 allocator
+using AlignedDoubleVec = std::vector<double, runtime::AlignedAllocator<double, 64>>;
+
+// Eigen::Tensor standar tidak menjamin 64-byte alignment, namun karena ERIs penuh jarang
+// dieksekusi di Ultra-HPC (lebih sering direct shell-block), kita pertahankan untuk fallback API.
 using ERITensor = Eigen::Tensor<double, 4>;
 
 class IntegralEngine {
@@ -53,12 +47,13 @@ public:
     Eigen::VectorXd compute_eri_diagonal();
     Eigen::VectorXd compute_eri_column(int pivot_index);
 
-    std::vector<double> compute_2c2e_block(int sh_P, int sh_Q);
+    AlignedDoubleVec compute_2c2e_block(int sh_P, int sh_Q);
 
-    std::vector<double> compute_3c2e_block(int sh_i, int sh_j, int sh_P);
+    AlignedDoubleVec compute_3c2e_block(int sh_i, int sh_j, int sh_P);
 
     const double* compute_shell_block_ptr(int sh_a, int sh_b, int sh_c, int sh_d, size_t& size_out);
-    const std::vector<double>& compute_shell_block(int sh_a, int sh_b, int sh_c, int sh_d);
+    const AlignedDoubleVec& compute_shell_block(int sh_a, int sh_b, int sh_c, int sh_d);
+    
     const std::vector<int>& get_bas() const { return bas_; }
     const std::vector<int>& get_atm() const { return atm_; }
     const std::vector<double>& get_env() const { return env_; }
@@ -69,6 +64,7 @@ private:
     size_t nbasis_;
     bool cache_valid = false;
     Eigen::Tensor<double, 4> cached_eri;
+    
     std::vector<int> atm_;
     std::vector<int> bas_;
     std::vector<double> env_;
@@ -76,10 +72,9 @@ private:
     void* opt_ = nullptr;
 
     void convert_basis_to_libcint();
-
     int find_atom_index(const std::array<double, 3>& center);
 };
 
-}
+} // namespace mshqc
 
 #endif

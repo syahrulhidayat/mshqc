@@ -1,19 +1,7 @@
 // ==============================================================================
 // Copyright (c) 2026 Muhamad Syahrul Hidayat and mshqc contributors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// MSHQC - Integral Engine Implementation (64-byte Aligned Buffers)
 // ==============================================================================
-
 
 #include "mshqc/ints/integrals.h"
 
@@ -69,6 +57,7 @@ int IntegralEngine::find_atom_index(const std::array<double, 3>& center) {
     }
     return best_i;
 }
+
 void IntegralEngine::convert_basis_to_libcint() {
     int natm = mol_.n_atoms();
     int nbas = basis_.n_shells();
@@ -113,7 +102,7 @@ Eigen::MatrixXd IntegralEngine::compute_overlap() {
 
     #pragma omp parallel
     {
-        std::vector<double> buf(10000);
+        AlignedDoubleVec buf(10000);
         #pragma omp for schedule(dynamic)
         for (int s1 = 0; s1 < nbas; s1++) {
             for (int s2 = 0; s2 <= s1; s2++) {
@@ -146,7 +135,7 @@ Eigen::MatrixXd IntegralEngine::compute_kinetic() {
 
     #pragma omp parallel
     {
-        std::vector<double> buf(10000);
+        AlignedDoubleVec buf(10000);
         #pragma omp for schedule(dynamic)
         for (int s1 = 0; s1 < nbas; s1++) {
             for (int s2 = 0; s2 <= s1; s2++) {
@@ -179,7 +168,7 @@ Eigen::MatrixXd IntegralEngine::compute_nuclear() {
 
     #pragma omp parallel
     {
-        std::vector<double> buf(10000);
+        AlignedDoubleVec buf(10000);
         #pragma omp for schedule(dynamic)
         for (int s1 = 0; s1 < nbas; s1++) {
             for (int s2 = 0; s2 <= s1; s2++) {
@@ -217,10 +206,11 @@ const Eigen::Tensor<double, 4>& IntegralEngine::compute_eri() {
     cached_eri.setZero();
     auto shell2bf = basis_.shell_to_basis_function_map();
     int nbas = basis_.n_shells();
-    std::vector<double> schwarz_max(nbas * nbas, 0.0);
+    AlignedDoubleVec schwarz_max(nbas * nbas, 0.0);
+    
     #pragma omp parallel
     {
-        std::vector<double> buf(10000);
+        AlignedDoubleVec buf(10000);
         #pragma omp for schedule(dynamic)
         for (int s1 = 0; s1 < nbas; ++s1) {
             for (int s2 = 0; s2 <= s1; ++s2) {
@@ -241,7 +231,7 @@ const Eigen::Tensor<double, 4>& IntegralEngine::compute_eri() {
     const double screen_thresh = 1e-12;
     #pragma omp parallel
     {
-        std::vector<double> buf(10000);
+        AlignedDoubleVec buf(10000);
         #pragma omp for schedule(dynamic, 1)
         for (int s1 = 0; s1 < nbas; ++s1) {
             for (int s2 = 0; s2 <= s1; ++s2) {
@@ -293,8 +283,8 @@ const Eigen::Tensor<double, 4>& IntegralEngine::compute_eri() {
     return cached_eri;
 }
 
-const std::vector<double>& IntegralEngine::compute_shell_block(int sh_a, int sh_b, int sh_c, int sh_d) {
-    thread_local std::vector<double> t_buffer;
+const AlignedDoubleVec& IntegralEngine::compute_shell_block(int sh_a, int sh_b, int sh_c, int sh_d) {
+    thread_local AlignedDoubleVec t_buffer;
 
     int dim1 = CINTcgto_spheric(sh_a, bas_.data());
     int dim2 = CINTcgto_spheric(sh_b, bas_.data());
@@ -322,8 +312,8 @@ const double* IntegralEngine::compute_shell_block_ptr(int sh_a, int sh_b, int sh
     return buf.data();
 }
 
-std::vector<double> IntegralEngine::compute_2c2e_block(int sh_P, int sh_Q) {
-    std::vector<double> t_buffer;
+AlignedDoubleVec IntegralEngine::compute_2c2e_block(int sh_P, int sh_Q) {
+    AlignedDoubleVec t_buffer;
 
     int dimP = CINTcgto_spheric(sh_P, bas_.data());
     int dimQ = CINTcgto_spheric(sh_Q, bas_.data());
@@ -343,8 +333,8 @@ std::vector<double> IntegralEngine::compute_2c2e_block(int sh_P, int sh_Q) {
     return t_buffer;
 }
 
-std::vector<double> IntegralEngine::compute_3c2e_block(int sh_i, int sh_j, int sh_P) {
-    std::vector<double> t_buffer;
+AlignedDoubleVec IntegralEngine::compute_3c2e_block(int sh_i, int sh_j, int sh_P) {
+    AlignedDoubleVec t_buffer;
 
     int dim1 = CINTcgto_spheric(sh_i, bas_.data());
     int dim2 = CINTcgto_spheric(sh_j, bas_.data());
@@ -369,4 +359,4 @@ double IntegralEngine::compute_single_eri(int, int, int, int) { return 0.0; }
 Eigen::VectorXd IntegralEngine::compute_eri_diagonal() { return Eigen::VectorXd::Zero(nbasis_); }
 Eigen::VectorXd IntegralEngine::compute_eri_column(int) { return Eigen::VectorXd::Zero(nbasis_); }
 
-}
+} // namespace mshqc
