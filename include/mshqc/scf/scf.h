@@ -145,6 +145,9 @@ public:
 
 class RHF : public BaseSCF {
 public:
+    SCFResult compute() override;
+
+public:
     RHF(const Molecule& mol, const BasisSet& basis,
         std::shared_ptr<IntegralEngine> integrals,
         std::shared_ptr<PointGroup> pg,
@@ -171,6 +174,9 @@ private:
 
 class ROHF : public BaseSCF {
 public:
+    SCFResult compute() override;
+
+public:
     ROHF(const Molecule& mol, const BasisSet& basis,
          std::shared_ptr<IntegralEngine> integrals,
          std::shared_ptr<PointGroup> pg,
@@ -182,7 +188,6 @@ public:
          int n_alpha, int n_beta, const SCFConfig& config)
          : ROHF(mol, basis, integrals, nullptr, nullptr, n_alpha, n_beta, config) {}
 
-    SCFResult compute() override;
     SCFResult run() { return compute(); }
 
 protected:
@@ -200,6 +205,9 @@ private:
 };
 
 class UHF : public BaseSCF {
+public:
+    SCFResult compute() override;
+
 public:
     UHF(const Molecule& mol, const BasisSet& basis,
         std::shared_ptr<IntegralEngine> integrals,

@@ -13,6 +13,7 @@
 namespace mshqc {
 namespace foundation {
 
+namespace mshqc {
 void OMP2::transform_integrals() {
     static jit::ExecutionManager jit_mgr;
     static bool is_compiled = false;
@@ -25,7 +26,7 @@ void OMP2::transform_integrals() {
         builder.buildQuarterTransformGraph(nbf_, va_);
         builder.optimizeAndLower();
         
-        jit_mgr.compileAndCache(kernel_name, builder.getModule().release());
+        jit_mgr.compileAndCache(kernel_name, builder.getModule().get());
         is_compiled = true;
     }
 
@@ -52,6 +53,7 @@ void OMP2::transform_integrals() {
 
     
     try {
+        void* args[] = { &memref_eri, &memref_C, &memref_out };
         jit_mgr.execute(kernel_name, "mp2_quarter_transform", args);
     } catch(const std::exception& e) {
         std::cerr << "[FATAL] MSHQC JIT Trap: Eksekusi MP2 Quarter-Transform Gagal: " << e.what() << "\n";

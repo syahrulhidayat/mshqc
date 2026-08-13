@@ -23,22 +23,13 @@ endif()
 # ==============================================================================
 # DEPENDENCY DISCOVERY (HERMETIC & TARGET-BASED)
 # ==============================================================================
-# Python
+# Python & Nanobind
 if(DEFINED ENV{CONDA_PREFIX})
     list(APPEND CMAKE_PREFIX_PATH "$ENV{CONDA_PREFIX}")
 endif()
 
 find_package(Python 3.8 COMPONENTS Interpreter Development REQUIRED)
-
-# Nanobind Dynamic Resolution via Python Interpreter
-execute_process(
-    COMMAND ${Python_EXECUTABLE} -c "import nanobind; print(nanobind.cmake_dir())"
-    OUTPUT_VARIABLE nanobind_DIR
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-    COMMAND_ERROR_IS_FATAL ANY
-)
-find_package(nanobind CONFIG REQUIRED PATHS ${nanobind_DIR} NO_DEFAULT_PATH)
-
+find_package(nanobind CONFIG REQUIRED)
 find_package(OpenMP REQUIRED)
 
 # BLAS & LAPACK
@@ -56,8 +47,7 @@ include(AddMLIR)
 
 # Restorasi inklusi direktori secara global untuk utilitas TableGen (mlir-tblgen)
 include_directories(${LLVM_INCLUDE_DIRS} ${MLIR_INCLUDE_DIRS})
-
-# Domain Libraries: Eigen3, CINT, HDF5
+# Domain Libraries: Eigen3, CINT, TBLIS, HDF5
 # Mekanisme fallback hermetis untuk melewati anomali versi registri Conda
 set(EIGEN_LOCAL_PATH "${CMAKE_SOURCE_DIR}/include/eigen-3.4.0")
 if(EXISTS "${EIGEN_LOCAL_PATH}/Eigen/Dense")
@@ -68,12 +58,19 @@ else()
 endif()
 
 # ==============================================================================
-# Domain Libraries: CINT (Dengan Hermetic HPC Path Resolution)
+# Domain Libraries: CINT, TBLIS (Dengan Hermetic HPC Path Resolution)
 # ==============================================================================
 find_path(CINT_INCLUDE_DIR NAMES cint.h 
     HINTS "$ENV{CONDA_PREFIX}/include" "$ENV{HOME}/libcint_install/include" "/usr/local/include" "/usr/include" REQUIRED)
 find_library(CINT_LIBRARY NAMES cint 
     HINTS "$ENV{CONDA_PREFIX}/lib" "$ENV{HOME}/libcint_install/lib64" "$ENV{HOME}/libcint_install/lib" "/usr/local/lib64" "/usr/local/lib" "/usr/lib64" "/usr/lib" REQUIRED)
+
+find_path(TBLIS_INCLUDE_DIR NAMES tblis/tblis.h 
+    HINTS "$ENV{TBLIS_DIR}/include" "$ENV{CONDA_PREFIX}/include" "$ENV{HOME}/tblis_install/include" "/usr/local/include" "/usr/include" REQUIRED)
+find_library(TBLIS_LIBRARY NAMES tblis libtblis.a 
+    HINTS "$ENV{TBLIS_DIR}/lib64" "$ENV{TBLIS_DIR}/lib" "$ENV{CONDA_PREFIX}/lib" "$ENV{HOME}/tblis_install/lib64" "$ENV{HOME}/tblis_install/lib" "/usr/lib64" "/usr/lib" REQUIRED)
+find_library(TCI_LIBRARY NAMES tci libtci.a 
+    HINTS "$ENV{TBLIS_DIR}/lib64" "$ENV{TBLIS_DIR}/lib" "$ENV{CONDA_PREFIX}/lib" "$ENV{HOME}/tblis_install/lib64" "$ENV{HOME}/tblis_install/lib" "/usr/lib64" "/usr/lib")
 
 find_package(HDF5 COMPONENTS C CXX REQUIRED)
 
@@ -91,9 +88,9 @@ add_subdirectory(tools)
 file(GLOB_RECURSE MSHQC_SOURCES CONFIGURE_DEPENDS
     "${CMAKE_SOURCE_DIR}/src/core/*.cc"
     "${CMAKE_SOURCE_DIR}/src/scf/*.cc"
-    "${CMAKE_SOURCE_DIR}/src/mp/*.cc"
-    "${CMAKE_SOURCE_DIR}/src/mp2/*.cc"
-    "${CMAKE_SOURCE_DIR}/src/mp3/*.cc"
+    #"${CMAKE_SOURCE_DIR}/src/mp/*.cc"
+    #"${CMAKE_SOURCE_DIR}/src/mp2/*.cc"
+    #"${CMAKE_SOURCE_DIR}/src/mp3/*.cc"
     "${CMAKE_SOURCE_DIR}/src/integrals/*.cc"
     "${CMAKE_SOURCE_DIR}/src/ints/*.cc"
     "${CMAKE_SOURCE_DIR}/src/gradient/*.cc"
@@ -112,8 +109,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     if(MSHQC_ENABLE_NATIVE_OPT)
         target_compile_options(mshqc PRIVATE $<$<CONFIG:Release>:-march=native>)
     else()
-        # Mengizinkan AVX-512 jika didukung, minimal AVX2.
-        target_compile_options(mshqc PRIVATE $<$<CONFIG:Release>:-mavx2 -mfma -mtune=generic>)
+        target_compile_options(mshqc PRIVATE $<$<CONFIG:Release>:-mavx2 -mfma -mno-avx512f -mtune=generic>)
     endif()
 endif()
 
@@ -129,6 +125,7 @@ target_include_directories(mshqc PUBLIC
     $<INSTALL_INTERFACE:include>
     PRIVATE
     ${CINT_INCLUDE_DIR}
+    ${TBLIS_INCLUDE_DIR}
     ${LLVM_INCLUDE_DIRS}
     ${MLIR_INCLUDE_DIRS}
 )
@@ -139,6 +136,7 @@ target_link_libraries(mshqc PUBLIC
     MLIRSupport
     ${llvm_libs}
     ${CINT_LIBRARY}
+    ${TBLIS_LIBRARY}
     hdf5::hdf5 hdf5::hdf5_cpp
     ${BLAS_LIBRARIES}
     ${LAPACK_LIBRARIES}
@@ -146,6 +144,10 @@ target_link_libraries(mshqc PUBLIC
     ${CMAKE_DL_LIBS}
     atomic
 )
+
+if(TCI_LIBRARY)
+    target_link_libraries(mshqc PUBLIC ${TCI_LIBRARY})
+endif()
 
 # Whole-archive handling for mshqc_compiler layer (Platform Aware)
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -162,6 +164,7 @@ nanobind_add_module(_mshqc "python/bindings.cc")
 target_link_libraries(_mshqc PRIVATE mshqc)
 
 set_target_properties(mshqc _mshqc PROPERTIES
+    # LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/python/mshqc" // Didelegasikan ke setuptools
     INSTALL_RPATH "$ORIGIN:$ORIGIN/../../.."
     BUILD_WITH_INSTALL_RPATH TRUE
 )

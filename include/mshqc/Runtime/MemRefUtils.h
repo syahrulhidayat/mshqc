@@ -68,5 +68,37 @@ StridedMemRefType<T, 2> makeMemRef2D(std::vector<T, AlignedAllocator<T>>& vec, i
     return memref;
 }
 
+
+// ==============================================================================
+// Eigen ABI Abstraction (Matrix & Block Expression)
+// ==============================================================================
+#include <Eigen/Dense>
+
+template <typename Derived>
+StridedMemRefType<typename Derived::Scalar, 2> makeMemRef2D(Eigen::DenseBase<Derived>& mat, int64_t rows, int64_t cols) {
+    StridedMemRefType<typename Derived::Scalar, 2> memref;
+    memref.allocatedPtr = const_cast<typename Derived::Scalar*>(mat.derived().data());
+    memref.alignedPtr = memref.allocatedPtr;
+    memref.offset = 0;
+    memref.sizes[0] = rows;
+    memref.sizes[1] = cols;
+    memref.strides[0] = mat.derived().outerStride();
+    memref.strides[1] = mat.derived().innerStride();
+    return memref;
+}
+
+template <typename Derived>
+StridedMemRefType<typename Derived::Scalar, 2> makeMemRef2D(const Eigen::DenseBase<Derived>& mat, int64_t rows, int64_t cols) {
+    StridedMemRefType<typename Derived::Scalar, 2> memref;
+    memref.allocatedPtr = const_cast<typename Derived::Scalar*>(mat.derived().data());
+    memref.alignedPtr = memref.allocatedPtr;
+    memref.offset = 0;
+    memref.sizes[0] = rows;
+    memref.sizes[1] = cols;
+    memref.strides[0] = mat.derived().outerStride();
+    memref.strides[1] = mat.derived().innerStride();
+    return memref;
+}
+
 } // namespace runtime
 } // namespace mshqc

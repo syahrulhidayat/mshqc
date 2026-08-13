@@ -54,7 +54,7 @@ Eigen::VectorXd OMP2::compute_soscf_step(double trust_radius, double& expected_c
         // Penurunan Bufferization dan L1/L2 Tiling untuk mencegah transfer balik ke DRAM
         // builder.optimizeAndLower(); // Membutuhkan flag pass spesifik CPHF
         
-        jit_mgr.compileAndCache(kernel_name, builder.getModule().release());
+        jit_mgr.compileAndCache(kernel_name, builder.getModule().get());
         is_hvp_compiled = true;
     }
 
@@ -80,7 +80,8 @@ Eigen::VectorXd OMP2::compute_soscf_step(double trust_radius, double& expected_c
         
         // Substitusi logika matriks P1_a, F1_a, dan H_kappa_a (Eigen) ke eksekusi JIT murni
                 try {
-            jit_mgr.execute(kernel_name, "contract_kernel", args);
+            void* args[] = { &memref_T, &memref_eri_mo, &memref_P };
+        jit_mgr.execute(kernel_name, "contract_kernel", args);
         } catch(const std::exception& e) {
             std::cerr << "[FATAL] MSHQC JIT Trap: Eksekusi SOSCF HVP Gagal: " << e.what() << "\n";
             std::abort();

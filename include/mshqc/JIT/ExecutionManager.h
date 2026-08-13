@@ -28,11 +28,11 @@ public:
     ExecutionManager(const ExecutionManager&) = delete;
     ExecutionManager& operator=(const ExecutionManager&) = delete;
 
-    void compileAndCache(const std::string& kernel_name, mlir::OwningOpRef<mlir::ModuleOp> module) {
+    void compileAndCache(const std::string& kernel_name, mlir::ModuleOp module) {
         if (engine_cache_.find(kernel_name) != engine_cache_.end()) return;
         
         mlir::ExecutionEngineOptions engineOptions;
-        auto maybeEngine = mlir::ExecutionEngine::create(module.get(), engineOptions);
+        auto maybeEngine = mlir::ExecutionEngine::create(module, engineOptions);
         if (!maybeEngine) throw std::runtime_error("JIT Compilation Failed for: " + kernel_name);
         
         engine_cache_[kernel_name] = std::move(maybeEngine.get());

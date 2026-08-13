@@ -376,7 +376,7 @@ void RHF::build_fock_matrix() {
             jit::FockMLIRBuilder builder(&context);
             builder.buildGraph(nbasis_);
             builder.optimizeAndLower();
-            jit_mgr.compileAndCache(kernel_name, builder.getModule());
+            jit_mgr.compileAndCache(kernel_name, builder.getModule().get());
             is_kernel_compiled = true;
         }
 

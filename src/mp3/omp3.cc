@@ -52,7 +52,7 @@ void OMP3::compute_mp3_correction() {
             {na_, na_, va_, va_}, 
             "mnab,minj->ijab"
         );
-        jit_mgr.compileAndCache(kernel_name, builder.getModule().release());
+        jit_mgr.compileAndCache(kernel_name, builder.getModule().get());
         is_mp3_ladder_compiled = true;
     }
 
@@ -89,6 +89,7 @@ void OMP3::compute_mp3_correction() {
 
     
     try {
+        void* args[] = { &memref_T2, &memref_V, &memref_W };
         jit_mgr.execute(kernel_name, "contract_kernel", args);
     } catch(const std::exception& e) {
         std::cerr << "[FATAL] MSHQC JIT Trap: Eksekusi MP3 Ladder Contraction Gagal: " << e.what() << "\n";

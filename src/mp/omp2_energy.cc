@@ -32,7 +32,7 @@ double OMP2::compute_mp2_energy() {
             {1},                  // Skalar Energi
             "iajb,iajb->e" 
         );
-        jit_mgr.compileAndCache(kernel_name, builder.getModule().release());
+        jit_mgr.compileAndCache(kernel_name, builder.getModule().get());
         is_compiled = true;
     }
 
@@ -58,7 +58,8 @@ double OMP2::compute_mp2_energy() {
             auto memref_E = runtime::makeMemRef1D(e_buf);
             
             try {
-                jit_mgr.execute(kernel_name, "contract_kernel", args);
+                void* args[] = { &memref_eri_mo, &memref_T };
+        jit_mgr.execute(kernel_name, "contract_kernel", args);
                 E_corr += e_buf[0];
             } catch(const std::exception& e) {
                 std::cerr << "[FATAL] MSHQC JIT Trap: Eksekusi Energi MP2 Gagal: " << e.what() << "\n";

@@ -41,7 +41,7 @@ void OMP2::build_opdm_alpha() {
             {na_, na_}, 
             "iakb,jakb->ij"
         );
-        jit_mgr.compileAndCache(kernel_oo, b_oo.getModule().release());
+        jit_mgr.compileAndCache(kernel_oo, b_oo.getModule().get());
 
         b_vv.initializeModule(kernel_vv);
         // Gvv(a, b) = 0.5 * sum_{i,j,c} T(i, a, j, c) * T(i, b, j, c)
@@ -51,7 +51,7 @@ void OMP2::build_opdm_alpha() {
             {va_, va_}, 
             "iajc,ibjc->ab"
         );
-        jit_mgr.compileAndCache(kernel_vv, b_vv.getModule().release());
+        jit_mgr.compileAndCache(kernel_vv, b_vv.getModule().get());
         
         is_opdm_compiled = true;
     }

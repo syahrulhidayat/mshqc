@@ -38,7 +38,7 @@ MP3Result RMP3::compute() {
             "ijef,eafb->ijab"
         );
         
-        jit_mgr.compileAndCache(kernel_name, builder.getModule().release());
+        jit_mgr.compileAndCache(kernel_name, builder.getModule().get());
         is_rmp3_compiled = true;
     }
 
