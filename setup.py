@@ -1,13 +1,8 @@
-"""
-Setup script for MSHQC Python bindings
-File: /workspaces/mshqc/setup.py
-"""
-
+import os
+import sys
+import subprocess
 from setuptools import setup, Extension
 from setuptools.command.build_ext import build_ext
-import sys
-import os
-import subprocess
 
 class CMakeExtension(Extension):
     def __init__(self, name, sourcedir=''):
@@ -15,92 +10,41 @@ class CMakeExtension(Extension):
         self.sourcedir = os.path.abspath(sourcedir)
 
 class CMakeBuild(build_ext):
-    def run(self):
-        try:
-            subprocess.check_output(['cmake', '--version'])
-        except OSError:
-            raise RuntimeError("CMake must be installed to build extensions")
-
-        for ext in self.extensions:
-            self.build_extension(ext)
-
     def build_extension(self, ext):
         extdir = os.path.abspath(os.path.dirname(self.get_ext_fullpath(ext.name)))
         
-        # Pastikan output dari cmake masuk tepat ke dalam folder 'mshqc'
-        if not extdir.endswith("mshqc"):
-            extdir = os.path.join(extdir, "mshqc")
-        os.makedirs(extdir, exist_ok=True)
-        
-        import nanobind
-        nanobind_cmake_path = nanobind.cmake_dir()
+        # Diwajibkan oleh setuptools agar library diletakkan pada folder yang benar
+        if not extdir.endswith(os.path.sep):
+            extdir += os.path.sep
 
-        # CMake config
         cmake_args = [
-            f'-DCMAKE_LIBRARY_OUTPUT_DIRECTORY={extdir}',
-            f'-DCMAKE_RUNTIME_OUTPUT_DIRECTORY={extdir}', 
-            f'-DPYTHON_EXECUTABLE={sys.executable}',
-            f'-Dnanobind_DIR={nanobind_cmake_path}',  
-            '-DCMAKE_BUILD_TYPE=Release',
+            f"-DCMAKE_LIBRARY_OUTPUT_DIRECTORY={extdir}",
+            f"-DPYTHON_EXECUTABLE={sys.executable}",
+            "-DCMAKE_BUILD_TYPE=Release",
+            "-DMSHQC_ENABLE_NATIVE_OPT=OFF", # Pastikan hermetic di CI/CD
+            "-DMSHQC_ENABLE_IPO=ON"
         ]
-        
-        build_args = ['--config', 'Release']
-        
-        if 'CMAKE_BUILD_PARALLEL_LEVEL' not in os.environ:
-            build_args += ['-j4']
-        
+
+        build_args = ['-j', str(os.cpu_count() or 2)]
+
+        # Menerima Injeksi Variabel Lingkungan dari CI/CD
+        env_cmake_args = os.environ.get('CMAKE_ARGS')
+        if env_cmake_args:
+            cmake_args.extend(env_cmake_args.split())
+
         if not os.path.exists(self.build_temp):
             os.makedirs(self.build_temp)
-            
-        env = os.environ.copy()
-        env['CXXFLAGS'] = '{} -DVERSION_INFO=\\"{}\\"'.format(
-            env.get('CXXFLAGS', ''),
-            self.distribution.get_version())
 
-        # Configure & Build
-        subprocess.check_call(['cmake', ext.sourcedir] + cmake_args, cwd=self.build_temp, env=env)
+        subprocess.check_call(['cmake', ext.sourcedir] + cmake_args, cwd=self.build_temp)
         subprocess.check_call(['cmake', '--build', '.'] + build_args, cwd=self.build_temp)
-
-        # === TAMBAHAN KUNCI: PEMINDAHAN PAKSA ===
-        # Terkadang CMake mengabaikan CMAKE_LIBRARY_OUTPUT_DIRECTORY untuk modul Python.
-        # Kita paksa cari semua .so yang baru jadi dan pindahkan ke extdir (folder perakitan Wheel)
-        import glob
-        import shutil
-        
-        # 1. Cari di dalam folder build/temp
-        for filepath in glob.glob(os.path.join(self.build_temp, "**/*.so"), recursive=True):
-            shutil.copy(filepath, extdir)
-            
-# Read long description safely
-try:
-    with open("README.md", "r", encoding="utf-8") as fh:
-        long_description = fh.read()
-except FileNotFoundError:
-    long_description = "MSHQC Quantum Mechanics Library"
 
 setup(
     name="mshqc",
     version="1.0.0",
     author="Muhamad Syahrul Hidayat",
-    description="Multi-State High-Quality Calculations",
-    long_description=long_description,
-    long_description_content_type="text/markdown",
-    packages=['mshqc'],
-    package_dir={'': 'python'},
-    
-    # Memastikan file biner terbungkus dengan aman (zip_safe=False sangat penting untuk C++)
-    package_data={
-        "mshqc": ["*.so", "*.pyi"],
-    },
-    include_package_data=True,
-    zip_safe=False,
-    
-    ext_modules=[CMakeExtension('mshqc._mshqc')],
+    description="Modern Quantum Chemistry Library (Pure MLIR JIT Backend)",
+    ext_modules=[CMakeExtension('_mshqc')],
     cmdclass=dict(build_ext=CMakeBuild),
-    install_requires=[
-        'numpy>=1.20.0',
-        'scipy>=1.7.0',
-        'nanobind>=1.9.0',
-    ],
-    python_requires='>=3.8',
+    zip_safe=False,
+    python_requires=">=3.8",
 )
