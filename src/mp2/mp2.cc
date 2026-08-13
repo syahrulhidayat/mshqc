@@ -14,7 +14,6 @@
 // limitations under the License.
 // ==============================================================================
 
-
 #include <tblis/tblis.h>
 #include "mshqc/symmetry/salc_builder.h"
 #include "mshqc/mp2/mp2.h"
@@ -36,6 +35,7 @@
 #include <cmath>
 #include <chrono>
 #include <omp.h>
+#include "mshqc/Runtime/AlignedAllocator.h"
 
 namespace mshqc {
 using integrals::ERITransformer;

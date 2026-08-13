@@ -2,7 +2,7 @@ name: Compile, Test, and Release Wheel to Public Repo
 
 on:
   push:
-    branches: [ "..." ]
+    branches: [ "debug2" ]
   workflow_dispatch:
 
 jobs:

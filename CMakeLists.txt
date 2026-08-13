@@ -23,12 +23,19 @@ endif()
 # ==============================================================================
 # DEPENDENCY DISCOVERY (HERMETIC & TARGET-BASED)
 # ==============================================================================
-# Python & Nanobind
+
 if(DEFINED ENV{CONDA_PREFIX})
     list(APPEND CMAKE_PREFIX_PATH "$ENV{CONDA_PREFIX}")
 endif()
 
 find_package(Python 3.8 COMPONENTS Interpreter Development REQUIRED)
+execute_process(
+    COMMAND "${Python_EXECUTABLE}" -m nanobind --cmake_dir
+    OUTPUT_VARIABLE nanobind_ROOT
+    OUTPUT_STRIP_TRAILING_WHITESPACE
+)
+list(APPEND CMAKE_PREFIX_PATH "${nanobind_ROOT}")
+
 find_package(nanobind CONFIG REQUIRED)
 find_package(OpenMP REQUIRED)
 
