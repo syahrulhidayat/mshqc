@@ -1,24 +1,13 @@
 // ==============================================================================
 // Copyright (c) 2026 Muhamad Syahrul Hidayat and mshqc contributors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
+// MSHQC - Basis Set Data Structures (Aligned for MLIR-JIT SIMD Vectorization)
 // ==============================================================================
-
 
 #ifndef MSHQC_BASIS_H
 #define MSHQC_BASIS_H
 
 #include "mshqc/core/molecule.h"
+#include "mshqc/Runtime/AlignedAllocator.h"
 #include <vector>
 #include <string>
 #include <array>
@@ -49,11 +38,15 @@ inline int n_spherical_functions(AngularMomentum am) {
     return 2 * l + 1;
 }
 
-struct GaussianPrimitive {
+// Struct 16-byte yang aman untuk boundary memory alignment 64-byte
+struct alignas(16) GaussianPrimitive {
     double exponent;
     double coefficient;
     GaussianPrimitive(double exp, double coef) : exponent(exp), coefficient(coef) {}
 };
+
+// Aliasing vector dengan custom AVX-512 allocator
+using PrimitiveVector = std::vector<GaussianPrimitive, runtime::AlignedAllocator<GaussianPrimitive, 64>>;
 
 class Shell {
 public:
@@ -66,13 +59,13 @@ public:
     int center() const { return center_; }
     const std::array<double, 3>& position() const { return position_; }
 
-    std::vector<double> origin() const {
+    std::vector<double, runtime::AlignedAllocator<double, 64>> origin() const {
         return {position_[0], position_[1], position_[2]};
     }
 
     size_t n_primitives() const { return primitives_.size(); }
     const GaussianPrimitive& primitive(size_t i) const { return primitives_[i]; }
-    const std::vector<GaussianPrimitive>& primitives() const { return primitives_; }
+    const PrimitiveVector& primitives() const { return primitives_; }
 
     int center_index() const { return center_; }
     int n_functions() const;
@@ -86,9 +79,11 @@ private:
     AngularMomentum am_;
     int center_;
     std::array<double, 3> position_;
-    std::vector<GaussianPrimitive> primitives_;
+    PrimitiveVector primitives_;
     bool spherical_;
 };
+
+using ShellVector = std::vector<Shell, runtime::AlignedAllocator<Shell, 64>>;
 
 class BasisSet {
 public:
@@ -102,7 +97,7 @@ public:
 
     size_t n_shells() const { return shells_.size(); }
     const Shell& shell(size_t i) const { return shells_[i]; }
-    const std::vector<Shell>& shells() const { return shells_; }
+    const ShellVector& shells() const { return shells_; }
 
     size_t n_basis_functions() const;
 
@@ -115,12 +110,14 @@ public:
 
     void print() const;
     int max_angular_momentum() const;
-    std::vector<int> shell_to_basis_function_map() const;
+    
+    // Pemetaan indeks orbital dengan memory ter-align
+    std::vector<int, runtime::AlignedAllocator<int, 64>> shell_to_basis_function_map() const;
     void append(const BasisSet& other);
 
 private:
     std::string name_;
-    std::vector<Shell> shells_;
+    ShellVector shells_;
     bool spherical_;
     size_t n_basis_ = 0;
 
@@ -138,6 +135,6 @@ double primitive_overlap_s(double alpha_a, double alpha_b,
                           const std::array<double, 3>& Rb);
 std::string get_element_symbol(int Z);
 
-}
+} // namespace mshqc
 
 #endif
