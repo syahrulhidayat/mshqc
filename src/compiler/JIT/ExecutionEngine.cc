@@ -16,6 +16,8 @@
 
 
 #include "mshqc/compiler/JIT/ExecutionEngine.h"
+#include <cstdlib>
+#include <string>
 #include "mlir/ExecutionEngine/OptUtils.h"
 #include "mlir/Target/LLVMIR/Dialect/LLVMIR/LLVMToLLVMIRTranslation.h"
 #include "mlir/Target/LLVMIR/Dialect/OpenMP/OpenMPToLLVMIRTranslation.h"
@@ -37,6 +39,27 @@ llvm::Expected<std::unique_ptr<MshqcJIT>> MshqcJIT::create(mlir::ModuleOp module
     mlir::ExecutionEngineOptions engineOptions;
 
     std::vector<llvm::StringRef> sharedLibs = {"libomp.so"};
+    // INJEKSI AMAN: Resolusi dinamis pustaka MLIR Runner Utils berbasis eksistensi fisik
+    static std::string mlir_runner_path;
+    if (const char* conda_prefix = std::getenv("CONDA_PREFIX")) {
+        std::string path_base = std::string(conda_prefix) + "/lib/libmlir_runner_utils.so";
+        std::string path_c    = std::string(conda_prefix) + "/lib/libmlir_c_runner_utils.so";
+        
+        // Verifikasi fisik menggunakan standar I/O C untuk mencegah MemoryBuffer Crash
+        if (FILE* f = fopen(path_base.c_str(), "r")) { 
+            fclose(f); 
+            mlir_runner_path = path_base; 
+        } else if (FILE* f = fopen(path_c.c_str(), "r")) { 
+            fclose(f); 
+            mlir_runner_path = path_c; 
+        }
+    }
+    if (!mlir_runner_path.empty()) {
+        sharedLibs.push_back(mlir_runner_path);
+    }
+
+    
+
     engineOptions.sharedLibPaths = sharedLibs;
     engineOptions.jitCodeGenOptLevel = llvm::CodeGenOptLevel::Aggressive;
 
