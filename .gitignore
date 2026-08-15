@@ -33,6 +33,9 @@ CMakeCache.txt
 CMakeFiles/
 Makefile
 cmake_install.cmake
+test/
+test/
+
 
 
 # --- Quantum Chemistry Output & Temporary Logs ---
