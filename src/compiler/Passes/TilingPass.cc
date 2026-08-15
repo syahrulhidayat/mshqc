@@ -1,17 +1,5 @@
 // ==============================================================================
 // Copyright (c) 2026 Muhamad Syahrul Hidayat and mshqc contributors
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.
 // ==============================================================================
 
 #pragma GCC diagnostic ignored "-Wdeprecated-declarations"
@@ -20,6 +8,7 @@
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "mlir/Dialect/Linalg/Transforms/Transforms.h"
 #include "mlir/Dialect/SCF/IR/SCF.h"
+#include "mlir/Dialect/Affine/IR/AffineOps.h"
 
 namespace mshqc {
 namespace compiler {
@@ -32,7 +21,7 @@ struct LinalgTilingPass : public impl::LinalgTilingBase<LinalgTilingPass> {
     using LinalgTilingBase::LinalgTilingBase;
 
     void getDependentDialects(mlir::DialectRegistry &registry) const override {
-        registry.insert<mlir::scf::SCFDialect, mlir::linalg::LinalgDialect>();
+        registry.insert<mlir::scf::SCFDialect, mlir::linalg::LinalgDialect, mlir::affine::AffineDialect>();
     }
 
     void runOnOperation() override {
@@ -50,9 +39,8 @@ struct LinalgTilingPass : public impl::LinalgTilingBase<LinalgTilingPass> {
             llvm::SmallVector<int64_t> l2Tiles;
             for (auto iterType : op.getIteratorTypesArray()) {
                 if (iterType == mlir::utils::IteratorType::parallel) {
-                    l2Tiles.push_back(32); // Optimasi batas spatial L2
+                    l2Tiles.push_back(32); 
                 } else if (iterType == mlir::utils::IteratorType::reduction) {
-                    // INJEKSI: Tiling dimensi reduksi untuk mencegah L3 cache miss
                     l2Tiles.push_back(16); 
                 } else {
                     l2Tiles.push_back(0);
@@ -68,16 +56,11 @@ struct LinalgTilingPass : public impl::LinalgTilingBase<LinalgTilingPass> {
                 mlir::linalg::tileLinalgOp(rewriter, op, l2Options);
 
             if (mlir::succeeded(l2Result)) {
-                // SUBSTITUSI LEVEL 2: Ganti operasi penuh dengan rakitan tensor L2
-                // replaceOp secara otomatis memperbarui semua referensi dan menghapus 'op' secara hierarkis
-                rewriter.replaceOp(op, l2Result->tensorResults);
-
                 llvm::SmallVector<int64_t> l1Tiles;
                 for (auto iterType : l2Result->op.getIteratorTypesArray()) {
                     if (iterType == mlir::utils::IteratorType::parallel) {
-                        l1Tiles.push_back(4); // Vektorisasi Register L1
+                        l1Tiles.push_back(4); // Preservasi kapasitas register AVX
                     } else if (iterType == mlir::utils::IteratorType::reduction) {
-                        // INJEKSI: Reduksi mikroskopik untuk L1 cache
                         l1Tiles.push_back(4);
                     } else {
                         l1Tiles.push_back(0);
@@ -94,9 +77,11 @@ struct LinalgTilingPass : public impl::LinalgTilingBase<LinalgTilingPass> {
 
                 if (mlir::succeeded(l1Result)) {
                     l1Result->op->setAttr("tiled", rewriter.getUnitAttr());
-                    // SUBSTITUSI LEVEL 1: Ganti blok komputasi L2 dengan rakitan tensor L1
+                    // SUBSTITUSI SSA LEVEL 1 (Bottom-Up)
                     rewriter.replaceOp(l2Result->op, l1Result->tensorResults);
                 }
+                // SUBSTITUSI SSA LEVEL 2 (Menjaga root node tetap hidup untuk L1 builder)
+                rewriter.replaceOp(op, l2Result->tensorResults);
             }
         }
     }
