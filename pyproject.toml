@@ -1,43 +1,44 @@
 [build-system]
 requires = [
-    "setuptools>=64", 
-    "wheel", 
-    "nanobind>=1.9.0", 
-    "numpy>=1.22", 
-    "cmake>=3.18", 
+    "setuptools>=77.0.0",
+    "wheel",
+    "nanobind>=1.9.0",
+    "cmake>=3.18",
     "ninja"
 ]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "mshqc"
-version = "1.0.0"
-authors = [
-    {name = "Muhamad Syahrul Hidayat"},
-]
-description = "Python bindings for MSH-QC quantum mechanics library"
+version = "1.0.3"
+description = "Multi-State High-Quality Calculations: Modern C++20 Quantum Chemistry Architecture"
 readme = "README.md"
-license = {text = "MIT"}
-requires-python = ">=3.8"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE*"]
+authors = [
+    {name = "Muhamad Syahrul Hidayat"}
+]
 classifiers = [
-    "Development Status :: 3 - Alpha",
+    "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent",
+    "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
     "Programming Language :: C++",
-    "Topic :: Scientific/Engineering :: Chemistry",
+    "Topic :: Scientific/Engineering :: Chemistry"
 ]
 dependencies = [
-    "numpy>=1.22",
-    "scipy>=1.7.0",
+    "numpy>=1.22.0",
+    "scipy>=1.8.0",
+    "h5py>=3.8.0",
+    "nanobind>=1.9.0"
 ]
 
 [project.optional-dependencies]
 dev = [
-    "pytest>=6.0",
-    "sphinx>=3.0",
-    "matplotlib",
+    "pytest>=7.0",
+    "sphinx>=4.0",
+    "matplotlib>=3.5"
 ]
 
 [project.urls]
@@ -49,5 +50,4 @@ package-dir = {"" = "python"}
 packages = ["mshqc"]
 
 [tool.setuptools.package-data]
-# Memaksa setuptools memasukkan file biner (.so) dan type hints (.pyi)
 mshqc = ["*.so", "*.pyi", "py.typed"]

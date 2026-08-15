@@ -31,12 +31,16 @@ jobs:
         source $HOME/miniconda3/etc/profile.d/conda.sh
         conda activate mshqc_314
         
-        # Tambahkan ccache ke dalam environment conda
-        conda install -y -c conda-forge cmake make compilers eigen pkg-config "hdf5=1.14.3" pip liblapacke mkl mkl-devel mkl-include ccache
-        python -m pip install --upgrade pip build wheel nanobind setuptools
+        # Install build dependencies, compilers, and acceleration libraries
+        conda install -y -c conda-forge \
+          cmake make ninja compilers pkg-config ccache \
+          eigen "hdf5=1.14.3" liblapacke mkl mkl-devel mkl-include
+          
+        python -m pip install --upgrade pip
+        python -m pip install cmake ninja build wheel nanobind setuptools
 
     # =========================================================================
-    # 2. KOMPILASI LIBCINT (Deterministic Check)
+    # 2. KOMPILASI LIBCINT (Deterministic Header & Static Lib Check)
     # =========================================================================
     - name: Ensure libcint is Compiled
       run: |
@@ -44,7 +48,7 @@ jobs:
         conda activate mshqc_314
         
         if [ -f "$HOME/libcint_install/lib/libcint.a" ] || [ -f "$HOME/libcint_install/lib64/libcint.a" ]; then
-          echo "libcint binary found. Skipping build."
+          echo "libcint binary found. Skipping compilation."
         else
           echo "libcint binary missing. Compiling from source..."
           rm -rf /tmp/libcint
@@ -66,7 +70,7 @@ jobs:
         fi
 
     # =========================================================================
-    # 3. KOMPILASI TBLIS (Deterministic Check)
+    # 3. KOMPILASI TBLIS (Deterministic Header & Static Lib Check)
     # =========================================================================
     - name: Ensure TBLIS is Compiled
       run: |
@@ -74,7 +78,7 @@ jobs:
         conda activate mshqc_314
         
         if [ -f "$HOME/tblis_install/lib/libtblis.a" ] || [ -f "$HOME/tblis_install/lib64/libtblis.a" ]; then
-          echo "TBLIS binary found. Skipping build."
+          echo "TBLIS binary found. Skipping compilation."
         else
           echo "TBLIS binary missing. Compiling from source..."
           rm -rf /tmp/tblis
@@ -82,7 +86,7 @@ jobs:
           cd /tmp/tblis
           git submodule update --init --recursive
           
-          # GCC compatibility patches
+          # Patch compatibility for strict GCC versions
           sed -i 's/SIGSTKSZ/8192/g' src/external/catch/catch.hpp
           sed -i '1i #include <limits>' src/external/marray/include/short_vector.hpp
           sed -i '1i #include <limits>' src/external/marray/include/range.hpp
@@ -101,13 +105,13 @@ jobs:
         fi
 
     # =========================================================================
-    # 4. BUILD WHEEL DENGAN PEP 517
+    # 4. BUILD MSHQC WHEEL (PEP 517 / No-Isolation)
     # =========================================================================
     - name: Build Python Wheel (.whl)
       run: |
         source $HOME/miniconda3/etc/profile.d/conda.sh
         conda activate mshqc_314
-        rm -rf dist/ build/ *.egg-info
+        rm -rf dist/ build/ python/*.egg-info *.egg-info
 
         export CC="ccache gcc"
         export CXX="ccache g++"
@@ -120,11 +124,12 @@ jobs:
         export LDFLAGS="-L$LIBCINT_LIB -L$TBLIS_LIB -L$CONDA_PREFIX/lib -lquadmath"
         export CMAKE_PREFIX_PATH="$HOME/libcint_install:$HOME/tblis_install:$CONDA_PREFIX"
         export TBLIS_DIR="$HOME/tblis_install"
+        export CMAKE_BUILD_PARALLEL_LEVEL=$(nproc)
         
         python -m build --wheel --no-isolation
 
     # =========================================================================
-    # 5. COMMIT & PUSH BINER KE REPO PRIVAT
+    # 5. COMMIT & PUSH BINER KE REPO
     # =========================================================================
     - name: Commit and Push Wheel to Private Repo
       run: |
@@ -138,7 +143,7 @@ jobs:
         git add -f releases/*.whl
         
         if git diff-index --quiet HEAD --; then
-          echo "No changes detected. Skipping push."
+          echo "No binary changes detected. Skipping commit."
         else
           git commit -m "chore(release): update prebuilt wheel distribution [skip ci]"
           git remote set-url origin https://x-access-token:${{ secrets.MY_GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
