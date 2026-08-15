@@ -127,7 +127,7 @@ void RMP2::compute_amplitudes_and_energy() {
     int64_t dim_ov = nocc_a_ * nvir_a_;
     
     // DEKLARASI LUAR: Mengamankan alokasi memori agar tidak hancur di luar scope JIT
-    std::vector<double, mshqc::runtime::AlignedAllocator<double, 64>> G_iajb_buf(dim_ov * dim_ov, 0.0);
+    std::vector<double, ::mshqc::runtime::AlignedAllocator<double, 64>> G_iajb_buf(dim_ov * dim_ov, 0.0);
     Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> G_iajb(G_iajb_buf.data(), dim_ov, dim_ov);
     bool mlir_executed = false;
 
