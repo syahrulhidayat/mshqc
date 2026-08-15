@@ -134,7 +134,7 @@ void RMP2::compute_amplitudes_and_energy() {
     #if 1 // MSHQC_ENABLE_MLIR (Isolated for compiler debugging)
     if (config_.print_level > 0) std::cout << "  [HPC] Menginisialisasi MLIR JIT Execution (Zero-Copy)...\n";
 
-    mshqc::compiler::GraphBuilder mlir_builder;
+    static mshqc::compiler::GraphBuilder mlir_builder;
     mlir_builder.initializeModule("rmp2_amplitude_module");
 
     // REKONSTRUKSI SHAPE DINAMIS
