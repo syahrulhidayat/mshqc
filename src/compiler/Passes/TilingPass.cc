@@ -68,6 +68,10 @@ struct LinalgTilingPass : public impl::LinalgTilingBase<LinalgTilingPass> {
                 mlir::linalg::tileLinalgOp(rewriter, op, l2Options);
 
             if (mlir::succeeded(l2Result)) {
+                // SUBSTITUSI LEVEL 2: Ganti operasi penuh dengan rakitan tensor L2
+                // replaceOp secara otomatis memperbarui semua referensi dan menghapus 'op' secara hierarkis
+                rewriter.replaceOp(op, l2Result->tensorResults);
+
                 llvm::SmallVector<int64_t> l1Tiles;
                 for (auto iterType : l2Result->op.getIteratorTypesArray()) {
                     if (iterType == mlir::utils::IteratorType::parallel) {
@@ -89,10 +93,10 @@ struct LinalgTilingPass : public impl::LinalgTilingBase<LinalgTilingPass> {
                     mlir::linalg::tileLinalgOp(rewriter, l2Result->op, l1Options);
 
                 if (mlir::succeeded(l1Result)) {
-        l1Result->op->setAttr("tiled", rewriter.getUnitAttr());
-        rewriter.replaceOp(op, l1Result->tensorResults);
-        rewriter.eraseOp(l2Result->op);
-    }
+                    l1Result->op->setAttr("tiled", rewriter.getUnitAttr());
+                    // SUBSTITUSI LEVEL 1: Ganti blok komputasi L2 dengan rakitan tensor L1
+                    rewriter.replaceOp(l2Result->op, l1Result->tensorResults);
+                }
             }
         }
     }
