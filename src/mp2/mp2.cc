@@ -152,13 +152,16 @@ void RMP2::compute_amplitudes_and_energy() {
 
         mlir::OpPassManager &funcPM = pm.nest<mlir::func::FuncOp>();
         funcPM.addPass(::mshqc::compiler::createLowerToLinalgPass());
+        funcPM.addPass(::mshqc::compiler::createLinalgTilingPass()); // TILING HARUS SEBELUM BUFFERIZE
+
         pm.addPass(::mshqc::compiler::createBufferizePass());
 
-        mlir::OpPassManager &tilingPM = pm.nest<mlir::func::FuncOp>();
-        tilingPM.addPass(::mshqc::compiler::createLinalgTilingPass());
-        tilingPM.addPass(mlir::createConvertLinalgToLoopsPass());
+        mlir::OpPassManager &loopPM = pm.nest<mlir::func::FuncOp>();
+        loopPM.addPass(mlir::createConvertLinalgToLoopsPass());
 
-        pm.addPass(mlir::createConvertSCFToOpenMPPass());
+        // Mencegah Nested OpenMP Segfault (libgomp vs libomp collision)
+        // pm.addPass(mlir::createConvertSCFToOpenMPPass()); 
+
         pm.addPass(::mshqc::compiler::createLowerToLLVMPass());
         pm.addPass(mlir::createReconcileUnrealizedCastsPass());
 
