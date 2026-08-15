@@ -132,15 +132,14 @@ void RMP2::compute_amplitudes_and_energy() {
     bool mlir_executed = false;
 
     #if 1 // MSHQC_ENABLE_MLIR (Isolated for compiler debugging)
-    if (config_.print_level > 0) std::cout << "  [HPC] Menginisialisasi MLIR JIT Execution (Zero-Copy)..
-";
+    if (config_.print_level > 0) std::cout << "  [HPC] Menginisialisasi MLIR JIT Execution (Zero-Copy)...\n";
 
     // HEAP LEAK INTENSIONAL: Mencegah SIGABRT (Double Free) saat proses Python exit()
-    static mshqc::compiler::GraphBuilder* mlir_builder = nullptr;
-    static mshqc::compiler::MshqcJIT* jit_engine = nullptr;
+    static ::mshqc::compiler::GraphBuilder* mlir_builder = nullptr;
+    static ::mshqc::compiler::MshqcJIT* jit_engine = nullptr;
 
     if (!mlir_builder) {
-        mlir_builder = new mshqc::compiler::GraphBuilder();
+        mlir_builder = new ::mshqc::compiler::GraphBuilder();
         mlir_builder->initializeModule("rmp2_amplitude_module");
 
         // REKONSTRUKSI SHAPE DINAMIS
@@ -152,27 +151,25 @@ void RMP2::compute_amplitudes_and_energy() {
         mlir::PassManager pm(mlir_builder->getContext());
 
         mlir::OpPassManager &funcPM = pm.nest<mlir::func::FuncOp>();
-        funcPM.addPass(mshqc::compiler::createLowerToLinalgPass());
-        pm.addPass(mshqc::compiler::createBufferizePass());
+        funcPM.addPass(::mshqc::compiler::createLowerToLinalgPass());
+        pm.addPass(::mshqc::compiler::createBufferizePass());
 
         mlir::OpPassManager &tilingPM = pm.nest<mlir::func::FuncOp>();
-        tilingPM.addPass(mshqc::compiler::createLinalgTilingPass());
+        tilingPM.addPass(::mshqc::compiler::createLinalgTilingPass());
         tilingPM.addPass(mlir::createConvertLinalgToLoopsPass());
 
         pm.addPass(mlir::createConvertSCFToOpenMPPass());
-        pm.addPass(mshqc::compiler::createLowerToLLVMPass());
+        pm.addPass(::mshqc::compiler::createLowerToLLVMPass());
         pm.addPass(mlir::createReconcileUnrealizedCastsPass());
 
         if (mlir::failed(pm.run(mlir_builder->getModule()))) {
-            std::cerr << "[FATAL] JIT Lowering Pipeline Gagal.
-";
+            std::cerr << "[FATAL] JIT Lowering Pipeline Gagal.\n";
             exit(1);
         }
 
-        auto engine_exp = mshqc::compiler::MshqcJIT::create(mlir_builder->getModule());
+        auto engine_exp = ::mshqc::compiler::MshqcJIT::create(mlir_builder->getModule());
         if (!engine_exp) {
-            std::cerr << "[FATAL] JIT Execution Engine gagal diinisialisasi.
-";
+            std::cerr << "[FATAL] JIT Execution Engine gagal diinisialisasi.\n";
             exit(1);
         }
         jit_engine = engine_exp->release();
@@ -184,7 +181,6 @@ void RMP2::compute_amplitudes_and_energy() {
     };
 
     // RESOLUSI SIGSEGV: Transposisi Eigen Column-Major ke Row-Major 64-byte
-    // Vektorisasi SIMD mewajibkan sumbu innermost (P) berada sejajar secara kontigu di memori.
     std::vector<double, ::mshqc::runtime::AlignedAllocator<double, 64>> B_rm_buf(dim_ov * n_aux, 0.0);
     Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> B_rm(B_rm_buf.data(), dim_ov, n_aux);
     B_rm = B_ia_P_alpha_;
@@ -202,14 +198,12 @@ void RMP2::compute_amplitudes_and_energy() {
     std::vector<void*> args = { &B_desc, &B_desc, &G_desc };
 
     if (auto err = jit_engine->invoke("_mlir_ciface_contract_kernel", args)) {
-        std::cerr << "[FATAL] Terjadi interupsi pada JIT Runtime.
-";
+        std::cerr << "[FATAL] Terjadi interupsi pada JIT Runtime.\n";
         exit(1);
     }
 
     mlir_executed = true;
-    if (config_.print_level > 0) std::cout << "  [HPC] Matriks Densitas Korelasi berhasil ditransformasi via MLIR.
-";
+    if (config_.print_level > 0) std::cout << "  [HPC] Matriks Densitas Korelasi berhasil ditransformasi via MLIR.\n";
     #endif
 
     const Eigen::VectorXd& eps = scf_.orbital_energies_alpha;
