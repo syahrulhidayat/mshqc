@@ -36,6 +36,7 @@
 #include <chrono>
 #include <omp.h>
 #include "mshqc/Runtime/AlignedAllocator.h"
+#include <map>
 
 namespace mshqc {
 using integrals::ERITransformer;
@@ -132,50 +133,57 @@ void RMP2::compute_amplitudes_and_energy() {
     bool mlir_executed = false;
 
     #if 1 // MSHQC_ENABLE_MLIR (Isolated for compiler debugging)
-    if (config_.print_level > 0) std::cout << "  [HPC] Menginisialisasi MLIR JIT Execution (Zero-Copy)...\n";
+    if (config_.print_level > 0) std::cout << "  [HPC] Menginisialisasi MLIR JIT Execution (Zero-Copy)...";
 
-    // HEAP LEAK INTENSIONAL: Mencegah SIGABRT (Double Free) saat proses Python exit()
-    static ::mshqc::compiler::GraphBuilder* mlir_builder = nullptr;
-    static ::mshqc::compiler::MshqcJIT* jit_engine = nullptr;
+    // CACHE ENGINE: Menyimpan JIT berdasarkan dimensi (Bake Exact Shapes)
+    // Mencegah error verifikasi Bufferize (InsertSliceOp) pada dynamic shapes
+    static std::map<std::pair<int64_t, int64_t>, ::mshqc::compiler::MshqcJIT*> jit_cache;
+    auto shape_key = std::make_pair((int64_t)dim_ov, (int64_t)n_aux);
 
-    if (!mlir_builder) {
-        mlir_builder = new ::mshqc::compiler::GraphBuilder();
+    ::mshqc::compiler::MshqcJIT* jit_engine = nullptr;
+
+    if (jit_cache.find(shape_key) == jit_cache.end()) {
+        auto* mlir_builder = new ::mshqc::compiler::GraphBuilder();
         mlir_builder->initializeModule("rmp2_amplitude_module");
 
-        // REKONSTRUKSI SHAPE DINAMIS
-        int64_t dyn = mlir::ShapedType::kDynamic; 
-        std::vector<int64_t> lhs_shape = {dyn, dyn};
-        std::vector<int64_t> res_shape = {dyn, dyn};
+        // STATIC SHAPE: Jauh lebih stabil untuk LinalgTiling & Bufferization
+        // MENGHANCURKAN overhead runtime loop bound saat eksekusi AVX!
+        std::vector<int64_t> lhs_shape = {dim_ov, n_aux};
+        std::vector<int64_t> res_shape = {dim_ov, dim_ov};
         mlir_builder->emitContractOp(lhs_shape, lhs_shape, res_shape, "mP,nP->mn");
 
         mlir::PassManager pm(mlir_builder->getContext());
 
+        // PIPELINE URUTAN BENAR (Tiling -> Bufferize -> Loops)
         mlir::OpPassManager &funcPM = pm.nest<mlir::func::FuncOp>();
         funcPM.addPass(::mshqc::compiler::createLowerToLinalgPass());
-        funcPM.addPass(::mshqc::compiler::createLinalgTilingPass()); // TILING HARUS SEBELUM BUFFERIZE
+        funcPM.addPass(::mshqc::compiler::createLinalgTilingPass()); // TILING MUTLAK SEBELUM BUFFERIZE!
 
         pm.addPass(::mshqc::compiler::createBufferizePass());
 
         mlir::OpPassManager &loopPM = pm.nest<mlir::func::FuncOp>();
         loopPM.addPass(mlir::createConvertLinalgToLoopsPass());
 
-        // Mencegah Nested OpenMP Segfault (libgomp vs libomp collision)
+        // BYPASS OPENMP PASS: Mencegah kolisi libomp vs libgomp yang menyebabkan SIGSEGV
         // pm.addPass(mlir::createConvertSCFToOpenMPPass()); 
 
         pm.addPass(::mshqc::compiler::createLowerToLLVMPass());
         pm.addPass(mlir::createReconcileUnrealizedCastsPass());
 
         if (mlir::failed(pm.run(mlir_builder->getModule()))) {
-            std::cerr << "[FATAL] JIT Lowering Pipeline Gagal.\n";
+            std::cerr << "[FATAL] JIT Lowering Pipeline Gagal.";
             exit(1);
         }
 
         auto engine_exp = ::mshqc::compiler::MshqcJIT::create(mlir_builder->getModule());
         if (!engine_exp) {
-            std::cerr << "[FATAL] JIT Execution Engine gagal diinisialisasi.\n";
+            std::cerr << "[FATAL] JIT Execution Engine gagal diinisialisasi.";
             exit(1);
         }
         jit_engine = engine_exp->release();
+        jit_cache[shape_key] = jit_engine;
+    } else {
+        jit_engine = jit_cache[shape_key];
     }
 
     struct MemRef2D {
@@ -201,12 +209,12 @@ void RMP2::compute_amplitudes_and_energy() {
     std::vector<void*> args = { &B_desc, &B_desc, &G_desc };
 
     if (auto err = jit_engine->invoke("_mlir_ciface_contract_kernel", args)) {
-        std::cerr << "[FATAL] Terjadi interupsi pada JIT Runtime.\n";
+        std::cerr << "[FATAL] Terjadi interupsi pada JIT Runtime.";
         exit(1);
     }
 
     mlir_executed = true;
-    if (config_.print_level > 0) std::cout << "  [HPC] Matriks Densitas Korelasi berhasil ditransformasi via MLIR.\n";
+    if (config_.print_level > 0) std::cout << "  [HPC] Matriks Densitas Korelasi berhasil ditransformasi via MLIR.";
     #endif
 
     const Eigen::VectorXd& eps = scf_.orbital_energies_alpha;
