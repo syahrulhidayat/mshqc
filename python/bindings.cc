@@ -53,10 +53,6 @@
 #include "mshqc/mp2/mp2.h"
 #include "mshqc/mp3/mp3.h"
 #include "mshqc/mp3/omp3.h"
-#include "mshqc/foundation/fcidump.h"
-#include "mshqc/foundation/wavefunction.h"
-
-
 
 #include "mshqc/gradient/gradient.h"
 #include "mshqc/gradient/optimizer.h"
@@ -356,11 +352,6 @@ NB_MODULE(_mshqc, m) {
         .def_rw("n_occ_alpha", &SCFResult::n_occ_alpha)
         .def_rw("n_occ_beta", &SCFResult::n_occ_beta);
    
-    m.def("export_fcidump", &mshqc::export_fcidump,
-          nb::arg("filename"), nb::arg("mol"), nb::arg("scf"), 
-          nb::arg("integrals"), nb::arg("tol") = 1e-10,
-          nb::call_guard<nb::gil_scoped_release>(),
-          "Export SCF and Integral results to standard FCIDUMP format");
     
     nb::class_<UHF>(m, "UHF")
         .def("__init__", [](UHF *t, const Molecule& mol, const BasisSet& basis, 
