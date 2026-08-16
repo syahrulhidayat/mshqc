@@ -129,23 +129,15 @@ jobs:
         python -m build --wheel --no-isolation
 
     # =========================================================================
-    # 5. COMMIT & PUSH BINER KE REPO
+    # 5. UPLOAD WHEEL KE GITHUB RELEASES
     # =========================================================================
-    - name: Commit and Push Wheel to Private Repo
-      run: |
-        git config --global user.name "github-actions[bot]"
-        git config --global user.email "github-actions[bot]@users.noreply.github.com"
-        
-        mkdir -p releases
-        rm -f releases/*.whl
-        cp dist/*.whl releases/
-        
-        git add -f releases/*.whl
-        
-        if git diff-index --quiet HEAD --; then
-          echo "No binary changes detected. Skipping commit."
-        else
-          git commit -m "chore(release): update prebuilt wheel distribution [skip ci]"
-          git remote set-url origin https://x-access-token:${{ secrets.MY_GITHUB_TOKEN }}@github.com/${{ github.repository }}.git
-          git push origin HEAD:mshqc-1.0.3
-        fi
+    - name: Create or Update Release and Upload Wheel
+      uses: softprops/action-gh-release@v2
+      with:
+        tag_name: "v1.0.3-nightly"
+        name: "MSHQC 1.0.3 (AOT Build)"
+        body: "Automated build of MSHQC natively compiled without MLIR/JIT dependency."
+        files: dist/*.whl
+        prerelease: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.MY_GITHUB_TOKEN }}
