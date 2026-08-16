@@ -696,7 +696,8 @@ void OMP2::build_generalized_fock() {
     F_gen_a_ = F_HF_mo_a + G_gamma_mo_a;
     if (na_ > 0 && va_ > 0) {
         Eigen::MatrixXd F_HF_vo_a = F_HF_mo_a.block(na_, 0, va_, na_); 
-        Eigen::MatrixXd L_sep_a = G_vv_alpha_ * F_HF_vo_a - F_HF_vo_a * G_oo_alpha_;
+       
+        Eigen::MatrixXd L_sep_a = F_HF_vo_a * G_oo_alpha_ - G_vv_alpha_ * F_HF_vo_a;
         F_gen_a_.block(na_, 0, va_, na_) += L_sep_a;
         F_gen_a_.block(0, na_, na_, va_) += L_sep_a.transpose();
         F_gen_a_.block(na_, 0, va_, na_) += Z_mat_a;
@@ -706,7 +707,8 @@ void OMP2::build_generalized_fock() {
     F_gen_b_ = F_HF_mo_b + G_gamma_mo_b;
     if (nb_ > 0 && vb_ > 0) {
         Eigen::MatrixXd F_HF_vo_b = F_HF_mo_b.block(nb_, 0, vb_, nb_); 
-        Eigen::MatrixXd L_sep_b = G_vv_beta_ * F_HF_vo_b - F_HF_vo_b * G_oo_beta_;
+      
+        Eigen::MatrixXd L_sep_b = F_HF_vo_b * G_oo_beta_ - G_vv_beta_ * F_HF_vo_b;
         F_gen_b_.block(nb_, 0, vb_, nb_) += L_sep_b;
         F_gen_b_.block(0, nb_, nb_, vb_) += L_sep_b.transpose();
         F_gen_b_.block(nb_, 0, vb_, nb_) += Z_mat_b;
