@@ -3,7 +3,7 @@ import sys
 
 FILE_PATH = "src/mp3/mp3.cc"
 
-def fix_tblis_indices():
+def apply_topological_factors():
     if not os.path.exists(FILE_PATH):
         print(f"[FATAL] Fail {FILE_PATH} tidak ditemukan.")
         sys.exit(1)
@@ -11,40 +11,41 @@ def fix_tblis_indices():
     with open(FILE_PATH, 'r') as f:
         content = f.read()
 
-    # Koreksi Blok Restricted AA
+    # 1. Faktor Topologis 4.0 untuk blok VVVV (Alpha & Beta)
     content = content.replace(
-        'tblis::mult<double>( 0.25*scale, t_Tt, "ijac", t_T, "ijbd", 1.0, t_Gvvvv_aa, "abcd");',
-        'tblis::mult<double>( 0.25*scale, t_Tt, "ijab", t_T, "ijcd", 1.0, t_Gvvvv_aa, "abcd");'
+        'tblis::mult<double>( 1.0, t_Gvvvv_s, "abcd", t_Bvv_a, "cdP", 0.0, t_Xvv_a, "abP");',
+        'tblis::mult<double>( 4.0, t_Gvvvv_s, "abcd", t_Bvv_a, "cdP", 0.0, t_Xvv_a, "abP");'
     )
     content = content.replace(
-        'tblis::mult<double>( 0.25*scale, t_Tt, "ikab", t_T, "jlab", 1.0, t_Goooo_aa, "ijkl");',
-        'tblis::mult<double>( 0.25*scale, t_Tt, "ijab", t_T, "klab", 1.0, t_Goooo_aa, "ijkl");'
-    )
-
-    # Koreksi Blok Unrestricted AA
-    content = content.replace(
-        'tblis::mult<double>( 0.125*scale, t_Tleft, "ijac", t_Tright, "ijbd", 1.0, t_Gvvvv_aa, "abcd");',
-        'tblis::mult<double>( 0.125*scale, t_Tleft, "ijab", t_Tright, "ijcd", 1.0, t_Gvvvv_aa, "abcd");'
-    )
-    content = content.replace(
-        'tblis::mult<double>( 0.125*scale, t_Tleft, "ikab", t_Tright, "jlab", 1.0, t_Goooo_aa, "ijkl");',
-        'tblis::mult<double>( 0.125*scale, t_Tleft, "ijab", t_Tright, "klab", 1.0, t_Goooo_aa, "ijkl");'
+        'tblis::mult<double>( 1.0, t_Gvvvv_b_s, "abcd", t_Bvv_b, "cdP", 0.0, t_Xvv_b, "abP");',
+        'tblis::mult<double>( 4.0, t_Gvvvv_b_s, "abcd", t_Bvv_b, "cdP", 0.0, t_Xvv_b, "abP");'
     )
 
-    # Koreksi Blok Unrestricted BB
+    # 2. Faktor Topologis 4.0 untuk blok OOOO (Alpha & Beta)
     content = content.replace(
-        'tblis::mult<double>( 0.125*scale, t_Tleft, "ijac", t_Tright, "ijbd", 1.0, t_Gvvvv_bb, "abcd");',
-        'tblis::mult<double>( 0.125*scale, t_Tleft, "ijab", t_Tright, "ijcd", 1.0, t_Gvvvv_bb, "abcd");'
+        'tblis::mult<double>(-1.0, t_Goooo_s, "ijkl", t_Boo_a, "klP", 0.0, t_Xoo_a, "ijP");',
+        'tblis::mult<double>(-4.0, t_Goooo_s, "ijkl", t_Boo_a, "klP", 0.0, t_Xoo_a, "ijP");'
     )
     content = content.replace(
-        'tblis::mult<double>( 0.125*scale, t_Tleft, "ikab", t_Tright, "jlab", 1.0, t_Goooo_bb, "ijkl");',
-        'tblis::mult<double>( 0.125*scale, t_Tleft, "ijab", t_Tright, "klab", 1.0, t_Goooo_bb, "ijkl");'
+        'tblis::mult<double>(-1.0, t_Goooo_b_s, "ijkl", t_Boo_b, "klP", 0.0, t_Xoo_b, "ijP");',
+        'tblis::mult<double>(-4.0, t_Goooo_b_s, "ijkl", t_Boo_b, "klP", 0.0, t_Xoo_b, "ijP");'
+    )
+
+    # 3. Restorasi Faktor Topologis 2.0 untuk blok OVOV (Alpha-Alpha & Beta-Beta)
+    # Merubah pengali dari -0.25 (yang tereduksi) menjadi -0.5 untuk menyeimbangkan Z_mat
+    content = content.replace(
+        'tblis::mult<double>(-0.25*scale,  t_Tleft, "imae", t_Tright, "jmbe", 1.0, t_Govov_aa, "iajb");',
+        'tblis::mult<double>(-0.5*scale,  t_Tleft, "imae", t_Tright, "jmbe", 1.0, t_Govov_aa, "iajb");'
+    )
+    content = content.replace(
+        'tblis::mult<double>(-0.25*scale,  t_Tleft, "imae", t_Tright, "jmbe", 1.0, t_Govov_bb, "iajb");',
+        'tblis::mult<double>(-0.5*scale,  t_Tleft, "imae", t_Tright, "jmbe", 1.0, t_Govov_bb, "iajb");'
     )
 
     with open(FILE_PATH, 'w') as f:
         f.write(content)
     
-    print("[METRIK] Koreksi indeks TBLIS 2-RDM sukses diaplikasikan.")
+    print("[METRIK] Injeksi Faktor Topologis 2-RDM MP3 sukses diaplikasikan.")
 
 if __name__ == "__main__":
-    fix_tblis_indices()
+    apply_topological_factors()
