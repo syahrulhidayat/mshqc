@@ -660,8 +660,9 @@ void OMP3::compute_mp3_correction() {
 
 void OMP3::build_opdm_alpha() {
     if (L2_aa_.size() == 0) { OMP2::build_opdm_alpha(); return; }
+
     auto* t2_aa_dense = t2_aa_.get_block(0,0,0,0);
-    if (!t2_aa_dense) return;
+    if(!t2_aa_dense) return;
 
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     G_oo_alpha_ = Eigen::MatrixXd::Zero(na_, na_);
@@ -669,11 +670,11 @@ void OMP3::build_opdm_alpha() {
     
     Eigen::Tensor<double, 4> T2_aa_ijab(na_, na_, va_, va_);
     #pragma omp parallel for collapse(4) schedule(static)
-    for (int i = 0; i < na_; ++i)
-        for (int j = 0; j < na_; ++j)
-            for (int a = 0; a < va_; ++a)
-                for (int b = 0; b < va_; ++b)
-                    T2_aa_ijab(i, j, a, b) = (*t2_aa_dense)(i, a, j, b);
+    for(int i=0; i<na_; ++i)
+        for(int j=0; j<na_; ++j)
+            for(int a=0; a<va_; ++a)
+                for(int b=0; b<va_; ++b)
+                    T2_aa_ijab(i,j,a,b) = (*t2_aa_dense)(i,a,j,b);
                     
     if (is_restricted) {
         Eigen::Tensor<double, 4> T2_tilde(na_, na_, va_, va_);
@@ -689,6 +690,7 @@ void OMP3::build_opdm_alpha() {
                 }
             }
         }
+        
         TBLIS_VIEW_4D(t_T2, T2_aa_ijab, na_, na_, va_, va_);
         TBLIS_VIEW_4D(t_L2, L2_aa_, na_, na_, va_, va_);
         TBLIS_VIEW_4D(t_T2t, T2_tilde, na_, na_, va_, va_);
@@ -710,7 +712,7 @@ void OMP3::build_opdm_alpha() {
     TBLIS_VIEW_4D(t_T3aa, L2_aa_, na_, na_, va_, va_);
     TBLIS_VIEW_2D(t_Goo_a, G_oo_alpha_.data(), na_, na_);
     TBLIS_VIEW_2D(t_Gvv_a, G_vv_alpha_.data(), va_, va_);
-    
+
     tblis::mult<double>(-0.5, t_T2aa, "ikab", t_T2aa, "jkab", 1.0, t_Goo_a, "ij");
     tblis::mult<double>(-0.5, t_T2aa, "ikab", t_T3aa, "jkab", 1.0, t_Goo_a, "ij"); 
     tblis::mult<double>(-0.5, t_T3aa, "ikab", t_T2aa, "jkab", 1.0, t_Goo_a, "ij"); 
@@ -741,7 +743,19 @@ void OMP3::build_opdm_beta() {
     
     if (is_restricted || nb_ == 0 || vb_ == 0) return; 
     auto* t2_bb_dense = t2_bb_.get_block(0,0,0,0);
+    Eigen::Tensor<double, 4> dummy_bb;
+    if (!t2_bb_dense && nb_ > 0 && vb_ > 0) {
+        dummy_bb = Eigen::Tensor<double, 4>(nb_, nb_, vb_, vb_);
+        dummy_bb.setZero();
+        t2_bb_dense = &dummy_bb;
+    }
     auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
+    Eigen::Tensor<double, 4> dummy_ab;
+    if (!t2_ab_dense && nb_ > 0 && vb_ > 0) {
+        dummy_ab = Eigen::Tensor<double, 4>(na_, nb_, va_, vb_);
+        dummy_ab.setZero();
+        t2_ab_dense = &dummy_ab;
+    }
 
     TBLIS_VIEW_4D(t_T2bb, (*t2_bb_dense), nb_, nb_, vb_, vb_);
     TBLIS_VIEW_4D(t_T3bb, L2_bb_, nb_, nb_, vb_, vb_);
@@ -777,6 +791,7 @@ void OMP3::build_generalized_fock() {
     
     Eigen::MatrixXd G_full_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
     Eigen::MatrixXd P_corr_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
+    
     if (!is_restricted && nb_ > 0) {
         G_full_b.block(0, 0, nb_, nb_) = G_oo_beta_;
         G_full_b.block(nb_, nb_, vb_, vb_) = G_vv_beta_;
@@ -806,6 +821,7 @@ void OMP3::build_generalized_fock() {
     F_gen_a_ = F_HF_mo_a + G_gamma_mo_a;
     if (na_ > 0 && va_ > 0) {
         Eigen::MatrixXd F_HF_vo_a = F_HF_mo_a.block(na_, 0, va_, na_);
+        // KOREKSI KUNCI: F_vo * G_oo - G_vv * F_vo
         Eigen::MatrixXd L_sep_a = F_HF_vo_a * G_oo_alpha_ - G_vv_alpha_ * F_HF_vo_a;
         F_gen_a_.block(na_, 0, va_, na_) += L_sep_a;
         F_gen_a_.block(0, na_, na_, va_) += L_sep_a.transpose();
@@ -814,6 +830,7 @@ void OMP3::build_generalized_fock() {
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
         F_gen_b_ = F_HF_mo_b + G_gamma_mo_b;
         Eigen::MatrixXd F_HF_vo_b = F_HF_mo_b.block(nb_, 0, vb_, nb_);
+        // KOREKSI KUNCI: F_vo * G_oo - G_vv * F_vo
         Eigen::MatrixXd L_sep_b = F_HF_vo_b * G_oo_beta_ - G_vv_beta_ * F_HF_vo_b;
         F_gen_b_.block(nb_, 0, vb_, nb_) += L_sep_b;
         F_gen_b_.block(0, nb_, nb_, vb_) += L_sep_b.transpose();
@@ -823,6 +840,7 @@ void OMP3::build_generalized_fock() {
     Eigen::MatrixXd B_oo_a = Eigen::MatrixXd::Zero(na_*na_, n_aux);
     Eigen::MatrixXd B_vv_a = Eigen::MatrixXd::Zero(va_*va_, n_aux);
     Eigen::MatrixXd B_oo_b, B_vv_b;
+    
     if (!is_restricted && nb_ > 0 && vb_ > 0) { 
         B_oo_b = Eigen::MatrixXd::Zero(nb_*nb_, n_aux); 
         B_vv_b = Eigen::MatrixXd::Zero(vb_*vb_, n_aux); 
@@ -884,6 +902,9 @@ void OMP3::build_generalized_fock() {
     TBLIS_VIEW_2D(t_Za, Z_mat_a.data(), va_, na_);
     TBLIS_VIEW_3D(t_Bia_a, B_ia_P_alpha_.data(), va_, na_, n_aux); 
 
+    // =========================================================================
+    // RESTRICTED FDF EXACT RESTORATION
+    // =========================================================================
     if (is_restricted) {
         Eigen::Tensor<double, 4> T2_tilde(na_, na_, va_, va_);
         #pragma omp parallel for collapse(4) schedule(static)
@@ -898,17 +919,13 @@ void OMP3::build_generalized_fock() {
         }
         TBLIS_VIEW_4D(t_T2t, T2_tilde, na_, na_, va_, va_);
 
-        // ====================================================================
-        // REVISI BLOK RESTRICTED (is_restricted == true)
-        // ====================================================================
-
-        // Gamma OVOV Explicit
+        // OVOV
         Eigen::Tensor<double, 4> Gamma_ovov_aa(na_, va_, na_, va_); Gamma_ovov_aa.setZero();
         TBLIS_VIEW_4D(t_Govov_aa, Gamma_ovov_aa, na_, va_, na_, va_);
-        tblis::mult<double>(0.5, t_T2t, "imae", t_Taa, "jmeb", 1.0, t_Govov_aa, "iajb"); 
-        tblis::mult<double>(0.5, t_T2t, "mjea", t_Taa, "mibe", 1.0, t_Govov_aa, "iajb"); 
-        tblis::mult<double>(-0.25, t_T2t, "mjea", t_Taa, "miba", 1.0, t_Govov_aa, "iajb"); 
-        tblis::mult<double>(-0.25, t_T2t, "imae", t_Taa, "jmba", 1.0, t_Govov_aa, "iajb"); 
+        tblis::mult<double>(-0.5, t_T2t, "imae", t_Taa, "jmeb", 1.0, t_Govov_aa, "iajb"); 
+        tblis::mult<double>(-0.5, t_T2t, "mjea", t_Taa, "mibe", 1.0, t_Govov_aa, "iajb"); 
+        tblis::mult<double>(0.25, t_T2t, "mjea", t_Taa, "miba", 1.0, t_Govov_aa, "iajb"); 
+        tblis::mult<double>(0.25, t_T2t, "imae", t_Taa, "jmba", 1.0, t_Govov_aa, "iajb"); 
         
         Eigen::MatrixXd G_mat_aa(na_ * va_, na_ * va_);
         #pragma omp parallel for collapse(2) schedule(static)
@@ -923,27 +940,26 @@ void OMP3::build_generalized_fock() {
         tblis::mult<double>(-2.0, t_Y_aa, "amP", t_Boo_a, "miP", 1.0, t_Za, "ai");
         tblis::mult<double>( 2.0, t_Y_aa, "eiP", t_Bvv_a, "aeP", 1.0, t_Za, "ai");
 
-        // Gamma VVVV Explicit
-        Eigen::Tensor<double, 4> Gvvvv_a(va_, va_, va_, va_); Gvvvv_a.setZero();
-        TBLIS_VIEW_4D(t_Gvvvv_a, Gvvvv_a, va_, va_, va_, va_);
-        tblis::mult<double>(1.0, t_T2t, "ijab", t_Taa, "ijcd", 0.0, t_Gvvvv_a, "acbd");
-        
-        Eigen::Tensor<double, 3> Yvv_a(va_, va_, n_aux); Yvv_a.setZero();
-        TBLIS_VIEW_3D(t_Yvv_a, Yvv_a.data(), va_, va_, n_aux);
-        tblis::mult<double>(1.0, t_Gvvvv_a, "acbd", t_Bvv_a, "bdP", 0.0, t_Yvv_a, "acP");
-        tblis::mult<double>(2.0, t_Yvv_a, "acP", t_Bia_a, "ciP", 1.0, t_Za, "ai");
+        // VVVV O(N^5) FDF
+        Eigen::Tensor<double, 3> X_ij_P_a(na_, na_, n_aux);
+        TBLIS_VIEW_3D(t_Wij_a, X_ij_P_a.data(), na_, na_, n_aux);
+        tblis::mult<double>(1.0, t_Taa, "ijcd", t_Bvv_a, "cdP", 0.0, t_Wij_a, "ijP");
 
-        // Gamma OOOO Explicit
-        Eigen::Tensor<double, 4> Goooo_a(na_, na_, na_, na_); Goooo_a.setZero();
-        TBLIS_VIEW_4D(t_Goooo_a, Goooo_a, na_, na_, na_, na_);
-        tblis::mult<double>(1.0, t_T2t, "ilab", t_Taa, "knab", 0.0, t_Goooo_a, "ikln");
-        
-        Eigen::Tensor<double, 3> Yoo_a(na_, na_, n_aux); Yoo_a.setZero();
-        TBLIS_VIEW_3D(t_Yoo_a, Yoo_a.data(), na_, na_, n_aux);
-        tblis::mult<double>(1.0, t_Goooo_a, "ikln", t_Boo_a, "lnP", 0.0, t_Yoo_a, "ikP");
-        tblis::mult<double>(-2.0, t_Yoo_a, "ikP", t_Bia_a, "akP", 1.0, t_Za, "ai");
+        Eigen::Tensor<double, 3> Y_ab_P_a(va_, va_, n_aux);
+        TBLIS_VIEW_3D(t_Xab_a, Y_ab_P_a.data(), va_, va_, n_aux);
+        tblis::mult<double>(0.25, t_T2t, "ijab", t_Wij_a, "ijP", 0.0, t_Xab_a, "abP");
+        tblis::mult<double>(4.0, t_Xab_a, "abP", t_Bia_a, "biP", 1.0, t_Za, "ai");
 
-        // T_eff (Lambda Z-vector separable response) = T2 + 2 * T3
+        // OOOO O(N^5) FDF
+        Eigen::Tensor<double, 3> W_ab_P_a(va_, va_, n_aux);
+        TBLIS_VIEW_3D(t_Wab_a, W_ab_P_a.data(), va_, va_, n_aux);
+        tblis::mult<double>(1.0, t_Taa, "klab", t_Boo_a, "klP", 0.0, t_Wab_a, "abP");
+
+        Eigen::Tensor<double, 3> X_ij_P_a_oo(na_, na_, n_aux);
+        TBLIS_VIEW_3D(t_Xij_a, X_ij_P_a_oo.data(), na_, na_, n_aux);
+        tblis::mult<double>(0.25, t_T2t, "ijab", t_Wab_a, "abP", 0.0, t_Xij_a, "ijP");
+        tblis::mult<double>(-4.0, t_Xij_a, "ijP", t_Bia_a, "ajP", 1.0, t_Za, "ai");
+
         Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> Teff_aa(na_*va_, na_*va_);
         #pragma omp parallel for collapse(2) schedule(static)
         for (int i = 0; i < na_; ++i) {
@@ -954,7 +970,7 @@ void OMP3::build_generalized_fock() {
                         double t2_dir = L2_aa_(i, j, a, b);
                         double t1_ex = T2_aa_ijab(i, j, b, a);
                         double t2_ex = L2_aa_(i, j, b, a); 
-                        Teff_aa(i*va_+a, j*va_+b) = 1.0 * (2.0 * t1_dir - 1.0 * t1_ex) + 2.0 * (2.0 * t2_dir - 1.0 * t2_ex);
+                        Teff_aa(i*va_+a, j*va_+b) = 1.0 * (2.0 * t1_dir - 1.0 * t1_ex) + 1.0 * (2.0 * t2_dir - 1.0 * t2_ex);
                     }
                 }
             }
@@ -968,18 +984,20 @@ void OMP3::build_generalized_fock() {
             Z_mat_a.noalias() += V_a * XT_a - XT_a * O_a;
         }
     } 
+    // =========================================================================
+    // UNRESTRICTED FDF EXACT RESTORATION
+    // =========================================================================
     else {
         auto* t2_bb_dense = t2_bb_.get_block(0,0,0,0);
         auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
+        Eigen::Tensor<double, 4> dummy_bb_global(nb_, nb_, vb_, vb_); dummy_bb_global.setZero();
+        Eigen::Tensor<double, 4> dummy_ab_global(na_, nb_, va_, vb_); dummy_ab_global.setZero();
+        if (!t2_bb_dense) t2_bb_dense = &dummy_bb_global;
+        if (!t2_ab_dense) t2_ab_dense = &dummy_ab_global;
 
         TBLIS_VIEW_4D(t_Tbb, (*t2_bb_dense), nb_, nb_, vb_, vb_);
         TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
         
-        // ====================================================================
-        // REVISI BLOK UNRESTRICTED (is_restricted == false)
-        // ====================================================================
-
-        // Gamma OVOV Explicit
         Eigen::Tensor<double, 4> Gamma_ovov_aa(na_, va_, na_, va_); Gamma_ovov_aa.setZero();
         Eigen::Tensor<double, 4> Gamma_ovov_bb(nb_, vb_, nb_, vb_); Gamma_ovov_bb.setZero();
         Eigen::Tensor<double, 4> Gamma_ovov_ab(na_, va_, nb_, vb_); Gamma_ovov_ab.setZero();
@@ -987,67 +1005,51 @@ void OMP3::build_generalized_fock() {
         TBLIS_VIEW_4D(t_Govov_bb, Gamma_ovov_bb, nb_, vb_, nb_, vb_);
         TBLIS_VIEW_4D(t_Govov_ab, Gamma_ovov_ab, na_, va_, nb_, vb_);
 
-        tblis::mult<double>(0.5, t_Taa, "imae", t_Taa, "jmbe", 1.0, t_Govov_aa, "iajb"); 
-        tblis::mult<double>(0.5, t_Tbb, "imae", t_Tbb, "jmbe", 1.0, t_Govov_bb, "iajb"); 
-        tblis::mult<double>(1.0, t_Tab, "miea", t_Tab, "mjeb", 1.0, t_Govov_bb, "iajb"); 
-        tblis::mult<double>(1.0, t_Taa, "imae", t_Tab, "mjeb", 1.0, t_Govov_ab, "iajb"); 
-        tblis::mult<double>(1.0, t_Tab, "imae", t_Tbb, "mjeb", 1.0, t_Govov_ab, "iajb"); 
-        tblis::mult<double>(1.0, t_Tab, "imae", t_Tab, "jmbe", 1.0, t_Govov_aa, "iajb"); 
+        tblis::mult<double>(-0.5, t_Taa, "imae", t_Taa, "jmbe", 1.0, t_Govov_aa, "iajb"); 
+        tblis::mult<double>(-0.5, t_Tbb, "imae", t_Tbb, "jmbe", 1.0, t_Govov_bb, "iajb"); 
+        tblis::mult<double>(-0.5, t_Tab, "miea", t_Tab, "mjeb", 1.0, t_Govov_bb, "iajb"); 
+        tblis::mult<double>(-0.5, t_Taa, "imae", t_Tab, "mjeb", 1.0, t_Govov_ab, "iajb"); 
+        tblis::mult<double>(-0.5, t_Tab, "imae", t_Tbb, "mjeb", 1.0, t_Govov_ab, "iajb"); 
+        tblis::mult<double>(-0.5, t_Tab, "imae", t_Tab, "jmbe", 1.0, t_Govov_aa, "iajb"); 
 
         TBLIS_VIEW_3D(t_Bvv_b, B_vv_b.data(), vb_, vb_, n_aux);
         TBLIS_VIEW_3D(t_Boo_b, B_oo_b.data(), nb_, nb_, n_aux);
         TBLIS_VIEW_2D(t_Zb, Z_mat_b.data(), vb_, nb_);
         TBLIS_VIEW_3D(t_Bia_b, B_ia_P_beta_.data(), vb_, nb_, n_aux);
 
-        // Gamma VVVV Explicit
-        Eigen::Tensor<double, 4> Gvvvv_aa(va_, va_, va_, va_); Gvvvv_aa.setZero();
-        TBLIS_VIEW_4D(t_Gvvvv_aa, Gvvvv_aa, va_, va_, va_, va_);
-        tblis::mult<double>(0.5, t_Taa, "ijab", t_Taa, "ijcd", 0.0, t_Gvvvv_aa, "acbd");
-        
-        Eigen::Tensor<double, 4> Gvvvv_bb(vb_, vb_, vb_, vb_); Gvvvv_bb.setZero();
-        TBLIS_VIEW_4D(t_Gvvvv_bb, Gvvvv_bb, vb_, vb_, vb_, vb_);
-        tblis::mult<double>(0.5, t_Tbb, "ijab", t_Tbb, "ijcd", 0.0, t_Gvvvv_bb, "acbd");
-        
-        Eigen::Tensor<double, 4> Gvvvv_ab(va_, va_, vb_, vb_); Gvvvv_ab.setZero();
-        TBLIS_VIEW_4D(t_Gvvvv_ab, Gvvvv_ab, va_, va_, vb_, vb_);
-        tblis::mult<double>(1.0, t_Tab, "ijab", t_Tab, "ijcd", 0.0, t_Gvvvv_ab, "acbd");
+        // VVVV FDF O(N^5)
+        Eigen::Tensor<double, 3> X_ij_P_a(na_, na_, n_aux);
+        TBLIS_VIEW_3D(t_Xij_a, X_ij_P_a.data(), na_, na_, n_aux); 
+        tblis::mult<double>(1.0, t_Taa, "ijcd", t_Bvv_a, "cdP", 0.0, t_Xij_a, "ijP");
+        Eigen::Tensor<double, 3> Y_ab_P_a(va_, va_, n_aux);
+        TBLIS_VIEW_3D(t_Yab_a, Y_ab_P_a.data(), va_, va_, n_aux);
+        tblis::mult<double>(0.125, t_Taa, "ijab", t_Xij_a, "ijP", 0.0, t_Yab_a, "abP");
+        tblis::mult<double>(4.0, t_Bia_a, "biP", t_Yab_a, "abP", 1.0, t_Za, "ai");
 
-        Eigen::Tensor<double, 3> Yvv_a(va_, va_, n_aux); Yvv_a.setZero();
-        TBLIS_VIEW_3D(t_Yvv_a, Yvv_a.data(), va_, va_, n_aux);
-        tblis::mult<double>(1.0, t_Gvvvv_aa, "acbd", t_Bvv_a, "bdP", 0.0, t_Yvv_a, "acP");
-        tblis::mult<double>(1.0, t_Gvvvv_ab, "acbd", t_Bvv_b, "bdP", 1.0, t_Yvv_a, "acP");
-        tblis::mult<double>(2.0, t_Yvv_a, "acP", t_Bia_a, "ciP", 1.0, t_Za, "ai");
+        Eigen::Tensor<double, 3> X_ij_P_b(nb_, nb_, n_aux);
+        TBLIS_VIEW_3D(t_Xij_b, X_ij_P_b.data(), nb_, nb_, n_aux); 
+        tblis::mult<double>(1.0, t_Tbb, "ijcd", t_Bvv_b, "cdP", 0.0, t_Xij_b, "ijP");
+        Eigen::Tensor<double, 3> Y_ab_P_b(vb_, vb_, n_aux);
+        TBLIS_VIEW_3D(t_Yab_b, Y_ab_P_b.data(), vb_, vb_, n_aux);
+        tblis::mult<double>(0.125, t_Tbb, "ijab", t_Xij_b, "ijP", 0.0, t_Yab_b, "abP");
+        tblis::mult<double>(4.0, t_Bia_b, "biP", t_Yab_b, "abP", 1.0, t_Zb, "ai");
 
-        Eigen::Tensor<double, 3> Yvv_b(vb_, vb_, n_aux); Yvv_b.setZero();
-        TBLIS_VIEW_3D(t_Yvv_b, Yvv_b.data(), vb_, vb_, n_aux);
-        tblis::mult<double>(1.0, t_Gvvvv_bb, "acbd", t_Bvv_b, "bdP", 0.0, t_Yvv_b, "acP");
-        tblis::mult<double>(1.0, t_Gvvvv_ab, "acbd", t_Bvv_a, "acP", 1.0, t_Yvv_b, "bdP"); 
-        tblis::mult<double>(2.0, t_Yvv_b, "bdP", t_Bia_b, "diP", 1.0, t_Zb, "bi"); 
+        // OOOO FDF O(N^5)
+        Eigen::Tensor<double, 3> X_ab_P_a(va_, va_, n_aux);
+        TBLIS_VIEW_3D(t_Xab_a, X_ab_P_a.data(), va_, va_, n_aux); 
+        tblis::mult<double>(1.0, t_Taa, "klab", t_Boo_a, "klP", 0.0, t_Xab_a, "abP");
+        Eigen::Tensor<double, 3> Y_ij_P_a(na_, na_, n_aux);
+        TBLIS_VIEW_3D(t_Yij_a, Y_ij_P_a.data(), na_, na_, n_aux);
+        tblis::mult<double>(0.125, t_Taa, "ijab", t_Xab_a, "abP", 0.0, t_Yij_a, "ijP");
+        tblis::mult<double>(-4.0, t_Yij_a, "ijP", t_Bia_a, "ajP", 1.0, t_Za, "ai");
 
-        // Gamma OOOO Explicit
-        Eigen::Tensor<double, 4> Goooo_aa(na_, na_, na_, na_); Goooo_aa.setZero();
-        TBLIS_VIEW_4D(t_Goooo_aa, Goooo_aa, na_, na_, na_, na_);
-        tblis::mult<double>(0.5, t_Taa, "ilab", t_Taa, "knab", 0.0, t_Goooo_aa, "ikln");
-
-        Eigen::Tensor<double, 4> Goooo_bb(nb_, nb_, nb_, nb_); Goooo_bb.setZero();
-        TBLIS_VIEW_4D(t_Goooo_bb, Goooo_bb, nb_, nb_, nb_, nb_);
-        tblis::mult<double>(0.5, t_Tbb, "ilab", t_Tbb, "knab", 0.0, t_Goooo_bb, "ikln");
-
-        Eigen::Tensor<double, 4> Goooo_ab(na_, na_, nb_, nb_); Goooo_ab.setZero();
-        TBLIS_VIEW_4D(t_Goooo_ab, Goooo_ab, na_, na_, nb_, nb_);
-        tblis::mult<double>(1.0, t_Tab, "ilab", t_Tab, "knab", 0.0, t_Goooo_ab, "ikln");
-
-        Eigen::Tensor<double, 3> Yoo_a(na_, na_, n_aux); Yoo_a.setZero();
-        TBLIS_VIEW_3D(t_Yoo_a, Yoo_a.data(), na_, na_, n_aux);
-        tblis::mult<double>(1.0, t_Goooo_aa, "ikln", t_Boo_a, "lnP", 0.0, t_Yoo_a, "ikP");
-        tblis::mult<double>(1.0, t_Goooo_ab, "ikln", t_Boo_b, "lnP", 1.0, t_Yoo_a, "ikP");
-        tblis::mult<double>(-2.0, t_Yoo_a, "ikP", t_Bia_a, "akP", 1.0, t_Za, "ai");
-
-        Eigen::Tensor<double, 3> Yoo_b(nb_, nb_, n_aux); Yoo_b.setZero();
-        TBLIS_VIEW_3D(t_Yoo_b, Yoo_b.data(), nb_, nb_, n_aux);
-        tblis::mult<double>(1.0, t_Goooo_bb, "ikln", t_Boo_b, "lnP", 0.0, t_Yoo_b, "ikP");
-        tblis::mult<double>(1.0, t_Goooo_ab, "lnik", t_Boo_a, "lnP", 1.0, t_Yoo_b, "ikP"); 
-        tblis::mult<double>(-2.0, t_Yoo_b, "lnP", t_Bia_b, "alP", 1.0, t_Zb, "an"); 
+        Eigen::Tensor<double, 3> X_ab_P_b(vb_, vb_, n_aux);
+        TBLIS_VIEW_3D(t_Xab_b, X_ab_P_b.data(), vb_, vb_, n_aux); 
+        tblis::mult<double>(1.0, t_Tbb, "klab", t_Boo_b, "klP", 0.0, t_Xab_b, "abP");
+        Eigen::Tensor<double, 3> Y_ij_P_b(nb_, nb_, n_aux);
+        TBLIS_VIEW_3D(t_Yij_b, Y_ij_P_b.data(), nb_, nb_, n_aux);
+        tblis::mult<double>(0.125, t_Tbb, "ijab", t_Xab_b, "abP", 0.0, t_Yij_b, "ijP");
+        tblis::mult<double>(-4.0, t_Yij_b, "ijP", t_Bia_b, "ajP", 1.0, t_Zb, "ai");
 
         Eigen::MatrixXd G_mat_aa(na_ * va_, na_ * va_);
         Eigen::MatrixXd G_mat_bb(nb_ * vb_, nb_ * vb_);
@@ -1082,14 +1084,13 @@ void OMP3::build_generalized_fock() {
         tblis::mult<double>(-2.0, t_Y_ab_b, "bmP", t_Boo_b, "mjP", 1.0, t_Zb, "bj");
         tblis::mult<double>( 2.0, t_Y_ab_b, "ejP", t_Bvv_b, "beP", 1.0, t_Zb, "bj");
 
-        // T_eff (Lambda Z-vector separable response) = T2 + 2 * T3
         Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor> Teff_aa(na_*va_, na_*va_);
         #pragma omp parallel for collapse(2) schedule(static)
         for (int i = 0; i < na_; ++i) {
             for (int a = 0; a < va_; ++a) {
                 for (int j = 0; j < na_; ++j) {
                     for (int b = 0; b < va_; ++b) {
-                        Teff_aa(i*va_+a, j*va_+b) = 1.0 * T2_aa_ijab(i, j, a, b) + 2.0 * L2_aa_(i, j, a, b);
+                        Teff_aa(i*va_+a, j*va_+b) = 1.0 * T2_aa_ijab(i, j, a, b) + 1.0 * L2_aa_(i, j, a, b);
                     }
                 }
             }
@@ -1101,7 +1102,7 @@ void OMP3::build_generalized_fock() {
             for (int a = 0; a < va_; ++a) {
                 for (int j = 0; j < nb_; ++j) {
                     for (int b = 0; b < vb_; ++b) {
-                        Teff_ab(i*va_+a, j*vb_+b) = 1.0 * (*t2_ab_dense)(i, j, a, b) + 2.0 * L2_ab_(i, j, a, b); 
+                        Teff_ab(i*va_+a, j*vb_+b) = 1.0 * (*t2_ab_dense)(i, j, a, b) + 1.0 * L2_ab_(i, j, a, b); 
                     }
                 }
             }
@@ -1111,7 +1112,7 @@ void OMP3::build_generalized_fock() {
             for (int a = 0; a < vb_; ++a) {
                 for (int j = 0; j < nb_; ++j) {
                     for (int b = 0; b < vb_; ++b) {
-                        Teff_bb(i*vb_+a, j*vb_+b) = 1.0 * (*t2_bb_dense)(i, j, a, b) + 2.0 * L2_bb_(i, j, a, b); 
+                        Teff_bb(i*vb_+a, j*vb_+b) = 1.0 * (*t2_bb_dense)(i, j, a, b) + 1.0 * L2_bb_(i, j, a, b); 
                     }
                 }
             }
