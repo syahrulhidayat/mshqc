@@ -439,6 +439,7 @@ void OMP3::compute_mp3_correction() {
 
     double e3_aa = 0.0, e3_bb = 0.0, e3_ab = 0.0;
     TBLIS_VIEW_4D(t_Taa, T2_aa_ijab, na_, na_, va_, va_);
+    TBLIS_VIEW_4D(t_T3aa, L2_aa_, na_, na_, va_, va_);
     auto* t2_bb_dense = t2_bb_.get_block(0,0,0,0);
     Eigen::Tensor<double, 4> dummy_bb;
     if (!t2_bb_dense && !is_restricted && nb_ > 0 && vb_ > 0) {
@@ -482,6 +483,8 @@ void OMP3::compute_mp3_correction() {
             Eigen::Tensor<double, 4> V_ovov_ab = map_4d(B_ia_P_alpha_ * B_ia_P_beta_.transpose(), na_, va_, nb_, vb_);
             TBLIS_VIEW_4D(t_Vovov_ab, V_ovov_ab, na_, va_, nb_, vb_);
             TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
+        TBLIS_VIEW_4D(t_T3bb, L2_bb_, nb_, nb_, vb_, vb_);
+        TBLIS_VIEW_4D(t_T3ab, L2_ab_, na_, nb_, va_, vb_);
             tblis::mult<double>(1.0, t_Vovov_ab, "iakc", t_Tab, "jkbc", 1.0, t_Waa_ring, "ijab");
         }
 
@@ -530,6 +533,8 @@ void OMP3::compute_mp3_correction() {
 
         TBLIS_VIEW_4D(t_Tbb, (*t2_bb_dense), nb_, nb_, vb_, vb_);
         TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
+        TBLIS_VIEW_4D(t_T3bb, L2_bb_, nb_, nb_, vb_, vb_);
+        TBLIS_VIEW_4D(t_T3ab, L2_ab_, na_, nb_, va_, vb_);
 
        
         {
@@ -675,12 +680,14 @@ void OMP3::build_opdm_alpha() {
     if (is_restricted) {
         Eigen::Tensor<double, 4> T2_tilde(na_, na_, va_, va_);
         Eigen::Tensor<double, 4> L2_tilde(na_, na_, va_, va_);
+        Eigen::Tensor<double, 4> L2_tilde(na_, na_, va_, va_);
         #pragma omp parallel for collapse(4) schedule(static)
         for (int i=0; i<na_; ++i) {
             for (int j=0; j<na_; ++j) {
                 for (int a=0; a<va_; ++a) {
                     for (int b=0; b<va_; ++b) {
                         T2_tilde(i,j,a,b) = 2.0 * T2_aa_ijab(i,j,a,b) - T2_aa_ijab(i,j,b,a);
+                        L2_tilde(i,j,a,b) = 2.0 * L2_aa_(i,j,a,b) - L2_aa_(i,j,b,a);
                         L2_tilde(i,j,a,b) = 2.0 * L2_aa_(i,j,a,b) - L2_aa_(i,j,b,a);
                     }
                 }
@@ -689,6 +696,7 @@ void OMP3::build_opdm_alpha() {
         TBLIS_VIEW_4D(t_T2, T2_aa_ijab, na_, na_, va_, va_);
         TBLIS_VIEW_4D(t_L2, L2_aa_, na_, na_, va_, va_);
         TBLIS_VIEW_4D(t_T2t, T2_tilde, na_, na_, va_, va_);
+        TBLIS_VIEW_4D(t_L2t, L2_tilde, na_, na_, va_, va_);
         TBLIS_VIEW_4D(t_L2t, L2_tilde, na_, na_, va_, va_);
         TBLIS_VIEW_2D(t_Goo, G_oo_alpha_.data(), na_, na_);
         TBLIS_VIEW_2D(t_Gvv, G_vv_alpha_.data(), va_, va_);
@@ -881,6 +889,7 @@ void OMP3::build_generalized_fock() {
                 for(int b=0; b<va_; ++b)
                     T2_aa_ijab(i,j,a,b) = (*t2_aa_dense)(i,a,j,b);
     TBLIS_VIEW_4D(t_Taa, T2_aa_ijab, na_, na_, va_, va_);
+    TBLIS_VIEW_4D(t_T3aa, L2_aa_, na_, na_, va_, va_);
     
     Eigen::MatrixXd Z_mat_a = Eigen::MatrixXd::Zero(va_, na_);
     Eigen::MatrixXd Z_mat_b;
@@ -893,17 +902,20 @@ void OMP3::build_generalized_fock() {
 
     if (is_restricted) {
         Eigen::Tensor<double, 4> T2_tilde(na_, na_, va_, va_);
+        Eigen::Tensor<double, 4> L2_tilde(na_, na_, va_, va_);
         #pragma omp parallel for collapse(4) schedule(static)
         for(int i=0; i<na_; ++i) {
             for(int j=0; j<na_; ++j) {
                 for(int a=0; a<va_; ++a) {
                     for(int b=0; b<va_; ++b) {
                         T2_tilde(i,j,a,b) = 2.0 * T2_aa_ijab(i,j,a,b) - T2_aa_ijab(i,j,b,a);
+                        L2_tilde(i,j,a,b) = 2.0 * L2_aa_(i,j,a,b) - L2_aa_(i,j,b,a);
                     }
                 }
             }
         }
         TBLIS_VIEW_4D(t_T2t, T2_tilde, na_, na_, va_, va_);
+        TBLIS_VIEW_4D(t_L2t, L2_tilde, na_, na_, va_, va_);
 
         Eigen::Tensor<double, 4> Gamma_ovov_aa(na_, va_, na_, va_); Gamma_ovov_aa.setZero();
         TBLIS_VIEW_4D(t_Govov_aa, Gamma_ovov_aa, na_, va_, na_, va_);
@@ -995,6 +1007,8 @@ void OMP3::build_generalized_fock() {
 
         TBLIS_VIEW_4D(t_Tbb, (*t2_bb_dense), nb_, nb_, vb_, vb_);
         TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
+        TBLIS_VIEW_4D(t_T3bb, L2_bb_, nb_, nb_, vb_, vb_);
+        TBLIS_VIEW_4D(t_T3ab, L2_ab_, na_, nb_, va_, vb_);
         
         Eigen::Tensor<double, 4> Gamma_ovov_aa(na_, va_, na_, va_); Gamma_ovov_aa.setZero();
         Eigen::Tensor<double, 4> Gamma_ovov_bb(nb_, vb_, nb_, vb_); Gamma_ovov_bb.setZero();

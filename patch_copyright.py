@@ -2,56 +2,55 @@ import re
 import os
 import sys
 
-def apply_omp3_gamma_theory(filepath="src/mp3/mp3.cc"):
+def fix_omp3_tblis_views(filepath="src/mp3/mp3.cc"):
     if not os.path.exists(filepath):
-        print(f"[ERROR] File {filepath} tidak ditemukan!")
+        print(f"[ERROR] File {filepath} tidak ditemukan.")
         sys.exit(1)
 
     with open(filepath, 'r') as file:
         content = file.read()
 
-    # Pemetaan tensor T2 ke T3
-    tensor_map = {
-        "t_Taa": "t_T3aa",
-        "t_Tbb": "t_T3bb",
-        "t_Tab": "t_T3ab",
-        "t_T2t": "t_L2t"
-    }
+    # 1. Deklarasi TBLIS_VIEW_4D untuk t_T3aa
+    content = re.sub(
+        r'(TBLIS_VIEW_4D\(t_Taa,\s*T2_aa_ijab,\s*na_,\s*na_,\s*va_,\s*va_\);)',
+        r'\1\n    TBLIS_VIEW_4D(t_T3aa, L2_aa_, na_, na_, va_, va_);',
+        content
+    )
 
-    def process_line(match):
-        val = float(match.group(1))
-        t_a = match.group(2)
-        str_a = match.group(3)
-        t_b = match.group(4)
-        str_b = match.group(5)
-        beta = match.group(6)
-        t_out = match.group(7)
-        str_out = match.group(8)
+    # 2. Deklarasi TBLIS_VIEW_4D untuk t_T3bb dan t_T3ab
+    content = re.sub(
+        r'(TBLIS_VIEW_4D\(t_Tab,\s*\(\*t2_ab_dense\),\s*na_,\s*nb_,\s*va_,\s*vb_\);)',
+        r'\1\n        TBLIS_VIEW_4D(t_T3bb, L2_bb_, nb_, nb_, vb_, vb_);\n        TBLIS_VIEW_4D(t_T3ab, L2_ab_, na_, nb_, va_, vb_);',
+        content
+    )
 
-        t3_a = tensor_map[t_a]
-        t3_b = tensor_map[t_b]
-
-        # Bobot T2*T2 digandakan (mengakomodasi derivatif eksplisit Gamma_W)
-        val_w = val * 2.0
-        val_d = val
-
-        # Injeksi term T2*T3 dan T3*T2 (mengakomodasi derivatif denominator Gamma_D)
-        res = f'tblis::mult<double>({val_w}, {t_a}, "{str_a}", {t_b}, "{str_b}", {beta}, {t_out}, "{str_out}");\n'
-        res += f'        tblis::mult<double>({val_d}, {t_a}, "{str_a}", {t3_b}, "{str_b}", 1.0, {t_out}, "{str_out}");\n'
-        res += f'        tblis::mult<double>({val_d}, {t3_a}, "{str_a}", {t_b}, "{str_b}", 1.0, {t_out}, "{str_out}");'
-        return res
-
-    # Hanya menargetkan matriks Gvvvv, Goooo, dan Govov. (Mengecualikan T_eff dan OPDM)
-    pattern = r'tblis::mult<double>\(([-0-9.]+),\s*(t_T(?:aa|bb|ab|2t)),\s*"([^"]+)",\s*(t_T(?:aa|bb|ab|2t)),\s*"([^"]+)",\s*([0-9.]+),\s*(t_G(?:vvvv|oooo|ovov)[a-z_]*),\s*"([^"]+)"\);'
+    # 3. Deklarasi alokasi Eigen dan TBLIS_VIEW_4D untuk t_L2t (Sistem Restricted)
+    restricted_pattern = r"(Eigen::Tensor<double, 4> T2_tilde\(na_, na_, va_, va_\);[\s\S]*?T2_tilde\(i,j,a,b\) = 2\.0 \* T2_aa_ijab\(i,j,a,b\) - T2_aa_ijab\(i,j,b,a\);[\s\S]*?TBLIS_VIEW_4D\(t_T2t, T2_tilde, na_, na_, va_, va_\);)"
     
-    new_content, num_subs = re.subn(pattern, process_line, content)
+    def repl_restricted(match):
+        text = match.group(1)
+        text = text.replace(
+            "Eigen::Tensor<double, 4> T2_tilde(na_, na_, va_, va_);",
+            "Eigen::Tensor<double, 4> T2_tilde(na_, na_, va_, va_);\n        Eigen::Tensor<double, 4> L2_tilde(na_, na_, va_, va_);"
+        )
+        text = text.replace(
+            "T2_tilde(i,j,a,b) = 2.0 * T2_aa_ijab(i,j,a,b) - T2_aa_ijab(i,j,b,a);",
+            "T2_tilde(i,j,a,b) = 2.0 * T2_aa_ijab(i,j,a,b) - T2_aa_ijab(i,j,b,a);\n                        L2_tilde(i,j,a,b) = 2.0 * L2_aa_(i,j,a,b) - L2_aa_(i,j,b,a);"
+        )
+        text = text.replace(
+            "TBLIS_VIEW_4D(t_T2t, T2_tilde, na_, na_, va_, va_);",
+            "TBLIS_VIEW_4D(t_T2t, T2_tilde, na_, na_, va_, va_);\n        TBLIS_VIEW_4D(t_L2t, L2_tilde, na_, na_, va_, va_);"
+        )
+        return text
 
-    if num_subs == 0:
-        print("[-] Tidak ada tensor yang dimodifikasi. Pastikan kode OMP3 Anda tidak diubah strukturnya.")
+    new_content = re.sub(restricted_pattern, repl_restricted, content)
+
+    if new_content == content:
+        print("[-] Tidak ada perbaikan yang diterapkan. Pastikan struktur blok tidak berubah.")
     else:
         with open(filepath, 'w') as file:
             file.write(new_content)
-        print(f"[+] TEORI OMP3 TBLIS SEMPURNA! {num_subs} kontraksi berhasil dimutasi untuk mengakomodasi Gamma_W dan Gamma_D.")
+        print("[+] Definisi TBLIS View untuk tensor T3 (L2) berhasil ditambahkan.")
 
 if __name__ == "__main__":
-    apply_omp3_gamma_theory()
+    fix_omp3_tblis_views()
