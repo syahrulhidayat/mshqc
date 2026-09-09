@@ -70,8 +70,7 @@ jobs:
     # =========================================================================
     - name: Build Python Wheel (.whl)
       run: |
-        source $HOME/miniconda3/etc/profile.d/conda.sh
-        conda activate mshqc_314
+        # HAPUS baris source $HOME/... dan conda activate
         
         # Bersihkan direktori artefak lama untuk menghindari over-write korup
         rm -rf dist/ build/ release/ python/*.egg-info *.egg-info
@@ -93,7 +92,6 @@ jobs:
         
         # Routing direct I/O output ke direktori 'release'
         python -m build --wheel --no-isolation --outdir release
-
     # =========================================================================
     # 5. UPLOAD WHEEL KE GITHUB RELEASES
     # =========================================================================
