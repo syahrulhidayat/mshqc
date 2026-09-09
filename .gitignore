@@ -51,3 +51,6 @@ hasil/
 !recaftor.py
 *.sh
 
+*.whl
+releases/
+dist/
