@@ -65,37 +65,20 @@ jobs:
               -DENABLE_EXAMPLE=0 -DENABLE_TEST=0 -DBUILD_SHARED_LIBS=OFF ..
         make -j$(nproc) && make install
 
-    # 4. CACHE & KOMPILASI TBLIS
-    - name: Cache TBLIS
-      id: cache-tblis
-      uses: actions/cache@v4
-      with:
-        path: ~/tblis_install
-        key: ${{ runner.os }}-tblis-v1.2.0
-
-    - name: Compile TBLIS
-      if: steps.cache-tblis.outputs.cache-hit != 'true'
-      run: |
-        git clone --depth 1 -b v1.2.0 https://github.com/devinamatthews/tblis.git /tmp/tblis
-        cd /tmp/tblis && git submodule update --init --recursive
-        
-        sed -i 's/SIGSTKSZ/8192/g' src/external/catch/catch.hpp
-        sed -i '1i #include <limits>' src/external/marray/include/short_vector.hpp
-        sed -i '1i #include <limits>' src/external/marray/include/range.hpp
-        sed -i '1i #include <limits>' src/util/thread.h
-        
-        export CFLAGS="-O3 -fPIC -mno-avx512f -mno-avx512vl -mno-avx512dq -mno-avx512bw -mno-avx512cd -Wno-incompatible-pointer-types -std=gnu17"
-        export CXXFLAGS="-O3 -fPIC -mno-avx512f -mno-avx512vl -mno-avx512dq -mno-avx512bw -mno-avx512cd -Wno-incompatible-pointer-types -std=gnu++17"
-        ./configure --prefix=$HOME/tblis_install --enable-static --disable-shared \
-                    --without-hwloc --enable-config=haswell,zen,core2,sandybridge,bulldozer,piledriver,excavator,reference \
-                    CXXFLAGS="$CXXFLAGS" CFLAGS="$CFLAGS"
-        make -j$(nproc) && make install
-
-    # 5. BUILD MSHQC WHEEL
+   # =========================================================================
+    # 4. BUILD MSHQC WHEEL (PEP 517 / No-Isolation)
+    # =========================================================================
     - name: Build Python Wheel (.whl)
       run: |
-        rm -rf dist/ build/ python/*.egg-info *.egg-info
+        source $HOME/miniconda3/etc/profile.d/conda.sh
+        conda activate mshqc_314
         
+        # Bersihkan direktori artefak lama untuk menghindari over-write korup
+        rm -rf dist/ build/ release/ python/*.egg-info *.egg-info
+        
+        # Alokasi direktori target
+        mkdir -p release
+
         export CC="ccache gcc"
         export CXX="ccache g++"
         export CXXFLAGS="-std=c++20 -fopenmp -O3 -mavx2 -mfma -mno-avx512f -mtune=generic -DEIGEN_USE_MKL_ALL -DNDEBUG -I$HOME/tblis_install/include -I$HOME/libcint_install/include -I$CONDA_PREFIX/include"
@@ -108,17 +91,30 @@ jobs:
         export TBLIS_DIR="$HOME/tblis_install"
         export CMAKE_BUILD_PARALLEL_LEVEL=$(nproc)
         
-        python -m build --wheel --no-isolation
-        ccache -s # Memeriksa rasio cache hit
+        # Routing direct I/O output ke direktori 'release'
+        python -m build --wheel --no-isolation --outdir release
 
-    # 6. UPLOAD WHEEL
+    # =========================================================================
+    # 5. UPLOAD WHEEL KE GITHUB RELEASES
+    # =========================================================================
     - name: Create or Update Release and Upload Wheel
       uses: softprops/action-gh-release@v2
       with:
         tag_name: "v1.0.3-nightly"
         name: "MSHQC 1.0.3 (AOT Build)"
         body: "Automated build of MSHQC natively compiled without MLIR/JIT dependency."
-        files: dist/*.whl
+        # Update path observasi rilis ke direktori yang baru
+        files: release/*.whl
         prerelease: true
       env:
         GITHUB_TOKEN: ${{ secrets.MY_GITHUB_TOKEN }}
+
+    # =========================================================================
+    # 6. EXPOSE ARTIFACT DIRECTORY KE GITHUB ACTIONS UI (Opsional)
+    # =========================================================================
+    - name: Expose Release Artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: mshqc-release-binaries
+        path: release/
+        retention-days: 7
