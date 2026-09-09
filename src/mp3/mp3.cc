@@ -14,7 +14,7 @@
 
 /**
  * @file src/mp3/mp3.cc
- * @brief Unified MP3 Implementation Powered by Native TBLIS
+ * @brief Unified MP3 Implementation Powered by Native TBLISS
  */
 
 #include "mshqc/mp3/mp3.h"

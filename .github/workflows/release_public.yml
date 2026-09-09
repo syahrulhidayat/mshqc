@@ -2,7 +2,7 @@ name: Compile and Release Wheel to Public Repo
 
 on:
   push:
-    branches: [ "...." ]
+    branches: [ "mshqc-1.0.3" ]
   workflow_dispatch:
 
 permissions:
@@ -10,8 +10,7 @@ permissions:
 
 jobs:
   build-and-deploy:
-    runs-on: self-hosted
-
+    runs-on: ubuntu-latest 
     defaults:
       run:
         shell: bash -el {0}
