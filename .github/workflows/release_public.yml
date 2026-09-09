@@ -22,101 +22,86 @@ jobs:
         token: ${{ secrets.MY_GITHUB_TOKEN }}
         fetch-depth: 1
 
-    # =========================================================================
-    # 1. SETUP ENVIRONMENT & DEPENDENCIES
-    # =========================================================================
-    - name: Activate Local Conda Environment & Install Toolchain
+    # 1. SETUP ENVIRONMENT DETERMINISTIK
+    - name: Setup Miniconda
+      uses: conda-incubator/setup-miniconda@v3
+      with:
+        auto-update-conda: true
+        python-version: "3.10"
+        activate-environment: mshqc_314
+        channels: conda-forge, defaults
+        use-only-tar-bz2: true # Optimasi I/O Conda
+
+    - name: Install Toolchain & Dependencies
       run: |
-        source $HOME/miniconda3/etc/profile.d/conda.sh
-        conda activate mshqc_314
-        
-        # Install build dependencies, compilers, and acceleration libraries
-        conda install -y -c conda-forge \
-          cmake make ninja compilers pkg-config ccache \
+        conda install -y cmake make ninja compilers pkg-config ccache \
           eigen "hdf5=1.14.3" liblapacke mkl mkl-devel mkl-include
-          
         python -m pip install --upgrade pip
         python -m pip install cmake ninja build wheel nanobind setuptools
 
-    # =========================================================================
-    # 2. KOMPILASI LIBCINT (Deterministic Header & Static Lib Check)
-    # =========================================================================
-    - name: Ensure libcint is Compiled
+    # 2. KONFIGURASI CCACHE
+    - name: Setup ccache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/ccache
+        key: ${{ runner.os }}-ccache-${{ github.sha }}
+        restore-keys: |
+          ${{ runner.os }}-ccache-
+
+    # 3. CACHE & KOMPILASI LIBCINT
+    - name: Cache libcint
+      id: cache-libcint
+      uses: actions/cache@v4
+      with:
+        path: ~/libcint_install
+        key: ${{ runner.os }}-libcint-v6.1.2
+
+    - name: Compile libcint
+      if: steps.cache-libcint.outputs.cache-hit != 'true'
       run: |
-        source $HOME/miniconda3/etc/profile.d/conda.sh
-        conda activate mshqc_314
-        
-        if [ -f "$HOME/libcint_install/lib/libcint.a" ] || [ -f "$HOME/libcint_install/lib64/libcint.a" ]; then
-          echo "libcint binary found. Skipping compilation."
-        else
-          echo "libcint binary missing. Compiling from source..."
-          rm -rf /tmp/libcint
-          git clone --depth 1 -b v6.1.2 https://github.com/sunqm/libcint.git /tmp/libcint
-          cd /tmp/libcint
-          mkdir build && cd build
-          
-          export CFLAGS="-O3 -fPIC -mavx2 -mfma -mno-avx512f -funroll-loops -fno-math-errno -Wno-incompatible-pointer-types -std=gnu17"
-          export CXXFLAGS="-O3 -fPIC -mavx2 -mfma -mno-avx512f -funroll-loops -fno-math-errno -Wno-incompatible-pointer-types -std=gnu++17"
+        git clone --depth 1 -b v6.1.2 https://github.com/sunqm/libcint.git /tmp/libcint
+        cd /tmp/libcint && mkdir build && cd build
+        export CFLAGS="-O3 -fPIC -mavx2 -mfma -mno-avx512f -funroll-loops -fno-math-errno -Wno-incompatible-pointer-types -std=gnu17"
+        cmake -DCMAKE_INSTALL_PREFIX=$HOME/libcint_install \
+              -DCMAKE_C_FLAGS="$CFLAGS" \
+              -DENABLE_EXAMPLE=0 -DENABLE_TEST=0 -DBUILD_SHARED_LIBS=OFF ..
+        make -j$(nproc) && make install
 
-          cmake -DCMAKE_INSTALL_PREFIX=$HOME/libcint_install \
-                -DCMAKE_C_FLAGS="$CFLAGS" \
-                -DCMAKE_CXX_FLAGS="$CXXFLAGS" \
-                -DENABLE_EXAMPLE=0 \
-                -DENABLE_TEST=0 \
-                -DBUILD_SHARED_LIBS=OFF ..
-          
-          make -j$(nproc) && make install
-        fi
+    # 4. CACHE & KOMPILASI TBLIS
+    - name: Cache TBLIS
+      id: cache-tblis
+      uses: actions/cache@v4
+      with:
+        path: ~/tblis_install
+        key: ${{ runner.os }}-tblis-v1.2.0
 
-    # =========================================================================
-    # 3. KOMPILASI TBLIS (Deterministic Header & Static Lib Check)
-    # =========================================================================
-    - name: Ensure TBLIS is Compiled
+    - name: Compile TBLIS
+      if: steps.cache-tblis.outputs.cache-hit != 'true'
       run: |
-        source $HOME/miniconda3/etc/profile.d/conda.sh
-        conda activate mshqc_314
+        git clone --depth 1 -b v1.2.0 https://github.com/devinamatthews/tblis.git /tmp/tblis
+        cd /tmp/tblis && git submodule update --init --recursive
         
-        if [ -f "$HOME/tblis_install/lib/libtblis.a" ] || [ -f "$HOME/tblis_install/lib64/libtblis.a" ]; then
-          echo "TBLIS binary found. Skipping compilation."
-        else
-          echo "TBLIS binary missing. Compiling from source..."
-          rm -rf /tmp/tblis
-          git clone --depth 1 -b v1.2.0 https://github.com/devinamatthews/tblis.git /tmp/tblis
-          cd /tmp/tblis
-          git submodule update --init --recursive
-          
-          # Patch compatibility for strict GCC versions
-          sed -i 's/SIGSTKSZ/8192/g' src/external/catch/catch.hpp
-          sed -i '1i #include <limits>' src/external/marray/include/short_vector.hpp
-          sed -i '1i #include <limits>' src/external/marray/include/range.hpp
-          sed -i '1i #include <limits>' src/util/thread.h
-          
-          export CFLAGS="-O3 -fPIC -mno-avx512f -mno-avx512vl -mno-avx512dq -mno-avx512bw -mno-avx512cd -Wno-incompatible-pointer-types -std=gnu17"
-          export CXXFLAGS="-O3 -fPIC -mno-avx512f -mno-avx512vl -mno-avx512dq -mno-avx512bw -mno-avx512cd -Wno-incompatible-pointer-types -std=gnu++17"
+        sed -i 's/SIGSTKSZ/8192/g' src/external/catch/catch.hpp
+        sed -i '1i #include <limits>' src/external/marray/include/short_vector.hpp
+        sed -i '1i #include <limits>' src/external/marray/include/range.hpp
+        sed -i '1i #include <limits>' src/util/thread.h
+        
+        export CFLAGS="-O3 -fPIC -mno-avx512f -mno-avx512vl -mno-avx512dq -mno-avx512bw -mno-avx512cd -Wno-incompatible-pointer-types -std=gnu17"
+        export CXXFLAGS="-O3 -fPIC -mno-avx512f -mno-avx512vl -mno-avx512dq -mno-avx512bw -mno-avx512cd -Wno-incompatible-pointer-types -std=gnu++17"
+        ./configure --prefix=$HOME/tblis_install --enable-static --disable-shared \
+                    --without-hwloc --enable-config=haswell,zen,core2,sandybridge,bulldozer,piledriver,excavator,reference \
+                    CXXFLAGS="$CXXFLAGS" CFLAGS="$CFLAGS"
+        make -j$(nproc) && make install
 
-          ./configure --prefix=$HOME/tblis_install \
-                      --enable-static --disable-shared \
-                      --without-hwloc \
-                      --enable-config=haswell,zen,core2,sandybridge,bulldozer,piledriver,excavator,reference \
-                      CXXFLAGS="$CXXFLAGS" CFLAGS="$CFLAGS"
-                      
-          make -j$(nproc) && make install
-        fi
-
-    # =========================================================================
-    # 4. BUILD MSHQC WHEEL (PEP 517 / No-Isolation)
-    # =========================================================================
+    # 5. BUILD MSHQC WHEEL
     - name: Build Python Wheel (.whl)
       run: |
-        source $HOME/miniconda3/etc/profile.d/conda.sh
-        conda activate mshqc_314
         rm -rf dist/ build/ python/*.egg-info *.egg-info
-
+        
         export CC="ccache gcc"
         export CXX="ccache g++"
         export CXXFLAGS="-std=c++20 -fopenmp -O3 -mavx2 -mfma -mno-avx512f -mtune=generic -DEIGEN_USE_MKL_ALL -DNDEBUG -I$HOME/tblis_install/include -I$HOME/libcint_install/include -I$CONDA_PREFIX/include"
         
-        # Resolusi dynamic path direktori lib/lib64
         LIBCINT_LIB=$( [ -d "$HOME/libcint_install/lib64" ] && echo "$HOME/libcint_install/lib64" || echo "$HOME/libcint_install/lib" )
         TBLIS_LIB=$( [ -d "$HOME/tblis_install/lib64" ] && echo "$HOME/tblis_install/lib64" || echo "$HOME/tblis_install/lib" )
         
@@ -126,10 +111,9 @@ jobs:
         export CMAKE_BUILD_PARALLEL_LEVEL=$(nproc)
         
         python -m build --wheel --no-isolation
+        ccache -s # Memeriksa rasio cache hit
 
-    # =========================================================================
-    # 5. UPLOAD WHEEL KE GITHUB RELEASES
-    # =========================================================================
+    # 6. UPLOAD WHEEL
     - name: Create or Update Release and Upload Wheel
       uses: softprops/action-gh-release@v2
       with:
