@@ -54,3 +54,6 @@ hasil/
 *.whl
 releases/
 dist/
+*.whl
+releases/
+dist/
