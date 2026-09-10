@@ -919,8 +919,8 @@ void OMP3::build_generalized_fock() {
         
         tblis::mult<double>(-0.5, t_T2t, "imae", t_Taa, "jmeb", 1.0, t_Govov_aa, "iajb");
         tblis::mult<double>(-0.5, t_T2t, "mjea", t_Taa, "mibe", 1.0, t_Govov_aa, "iajb");
-        tblis::mult<double>(0.25, t_T2t, "mjea", t_Taa, "miba", 1.0, t_Govov_aa, "iajb");
-        tblis::mult<double>(0.25, t_T2t, "imae", t_Taa, "jmba", 1.0, t_Govov_aa, "iajb");
+        tblis::mult<double>( 0.25, t_T2t, "mjea", t_Taa, "miba", 1.0, t_Govov_aa, "iajb");
+        tblis::mult<double>( 0.25, t_T2t, "imae", t_Taa, "jmba", 1.0, t_Govov_aa, "iajb");
                 
         Eigen::MatrixXd G_mat_aa(na_ * va_, na_ * va_);
         #pragma omp parallel for collapse(2) schedule(static)
@@ -968,7 +968,7 @@ void OMP3::build_generalized_fock() {
                         double t1_ex = T2_aa_ijab(i, j, b, a);
                         double t2_ex = L2_aa_(i, j, b, a); 
                         // KOREKSI FINAL 2: T_eff adalah 2.0 * T1 + 2.0 * T2
-                        Teff_aa(i*va_+a, j*va_+b) = 1.0 * (2.0 * t1_dir - 1.0 * t1_ex) + 2.0 * (2.0 * t2_dir - 1.0 * t2_ex);
+                        Teff_aa(i*va_+a, j*va_+b) = 1.0 * (2.0 * t1_dir - 1.0 * t1_ex) + 1.0 * (2.0 * t2_dir - 1.0 * t2_ex);
                     }
                 }
             }
@@ -1003,10 +1003,11 @@ void OMP3::build_generalized_fock() {
         // KOREKSI FINAL 1: Govov Unrestricted Murni Orde Ke-2 dan POSITIF
         tblis::mult<double>(-0.25, t_Taa, "imae", t_Taa, "jmbe", 1.0, t_Govov_aa, "iajb");
         tblis::mult<double>(-0.25, t_Tbb, "imae", t_Tbb, "jmbe", 1.0, t_Govov_bb, "iajb");
-        tblis::mult<double>(-0.25, t_Tab, "miea", t_Tab, "mjeb", 1.0, t_Govov_bb, "iajb");
-        tblis::mult<double>(-0.25, t_Taa, "imae", t_Tab, "mjeb", 1.0, t_Govov_ab, "iajb");
-        tblis::mult<double>(-0.25, t_Tab, "imae", t_Tbb, "mjeb", 1.0, t_Govov_ab, "iajb");
-        tblis::mult<double>(-0.25, t_Tab, "imae", t_Tab, "jmbe", 1.0, t_Govov_aa, "iajb");
+
+        tblis::mult<double>(-0.5, t_Tab, "miea", t_Tab, "mjeb", 1.0, t_Govov_bb, "iajb");
+        tblis::mult<double>(-0.5, t_Taa, "imae", t_Tab, "mjeb", 1.0, t_Govov_ab, "iajb");
+        tblis::mult<double>(-0.5, t_Tab, "imae", t_Tbb, "mjeb", 1.0, t_Govov_ab, "iajb");
+        tblis::mult<double>(-0.5, t_Tab, "imae", t_Tab, "jmbe", 1.0, t_Govov_aa, "iajb");
 
         TBLIS_VIEW_3D(t_Bvv_b, B_vv_b.data(), vb_, vb_, n_aux);
         TBLIS_VIEW_3D(t_Boo_b, B_oo_b.data(), nb_, nb_, n_aux);
@@ -1103,7 +1104,7 @@ void OMP3::build_generalized_fock() {
                 for (int j = 0; j < na_; ++j) {
                     for (int b = 0; b < va_; ++b) {
                         // KOREKSI FINAL 2: T_eff adalah 2.0 * T1 + 2.0 * T2
-                        Teff_aa(i*va_+a, j*va_+b) = 1.0 * T2_aa_ijab(i, j, a, b) + 2.0 * L2_aa_(i, j, a, b);
+                        Teff_aa(i*va_+a, j*va_+b) = 1.0 * T2_aa_ijab(i, j, a, b) + 1.0 * L2_aa_(i, j, a, b);
                     }
                 }
             }
@@ -1113,7 +1114,7 @@ void OMP3::build_generalized_fock() {
             for (int a = 0; a < va_; ++a) {
                 for (int j = 0; j < nb_; ++j) {
                     for (int b = 0; b < vb_; ++b) {
-                        Teff_ab(i*va_+a, j*vb_+b) = 1.0 * (*t2_ab_dense)(i, j, a, b) + 2.0 * L2_ab_(i, j, a, b);
+                        Teff_ab(i*va_+a, j*vb_+b) = 1.0 * (*t2_ab_dense)(i, j, a, b) + 1.0 * L2_ab_(i, j, a, b);
                     }
                 }
             }
@@ -1123,7 +1124,7 @@ void OMP3::build_generalized_fock() {
             for (int a = 0; a < vb_; ++a) {
                 for (int j = 0; j < nb_; ++j) {
                     for (int b = 0; b < vb_; ++b) {
-                        Teff_bb(i*vb_+a, j*vb_+b) = 1.0 * (*t2_bb_dense)(i, j, a, b) + 2.0 * L2_bb_(i, j, a, b);
+                        Teff_bb(i*vb_+a, j*vb_+b) = 1.0 * (*t2_bb_dense)(i, j, a, b) + 1.0 * L2_bb_(i, j, a, b);
                     }
                 }
             }
