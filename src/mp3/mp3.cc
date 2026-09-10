@@ -917,10 +917,9 @@ void OMP3::build_generalized_fock() {
         Eigen::Tensor<double, 4> Gamma_ovov_aa(na_, va_, na_, va_); Gamma_ovov_aa.setZero();
         TBLIS_VIEW_4D(t_Govov_aa, Gamma_ovov_aa, na_, va_, na_, va_);
         
-        tblis::mult<double>(-0.5,  t_T2t, "imae", t_Taa, "jmeb", 1.0, t_Govov_aa, "iajb");
-        tblis::mult<double>(-0.5,  t_T2t, "mjea", t_Taa, "mibe", 1.0, t_Govov_aa, "iajb");
-        tblis::mult<double>( 0.25, t_T2t, "mjea", t_Taa, "miba", 1.0, t_Govov_aa, "iajb");
-        tblis::mult<double>( 0.25, t_T2t, "imae", t_Taa, "jmba", 1.0, t_Govov_aa, "iajb");
+        // KOREKSI FINAL: Govov Restricted (Positif)
+        tblis::mult<double>( 2.0, t_T2t, "imae", t_Taa, "jmbe", 1.0, t_Govov_aa, "iajb");
+        tblis::mult<double>(-1.0, t_T2t, "imbe", t_Taa, "jmae", 1.0, t_Govov_aa, "iajb");
                         
         Eigen::MatrixXd G_mat_aa(na_ * va_, na_ * va_);
         #pragma omp parallel for collapse(2) schedule(static)
@@ -937,9 +936,8 @@ void OMP3::build_generalized_fock() {
 
         Eigen::Tensor<double, 4> Gvvvv_a(va_, va_, va_, va_); Gvvvv_a.setZero();
         TBLIS_VIEW_4D(t_Gvvvv_a, Gvvvv_a, va_, va_, va_, va_);
-        // KOREKSI FINAL 1: Gvvvv Murni orde ke-2
-        tblis::mult<double>(0.5, t_T2t, "ijcb", t_Taa, "ijad", 0.0, t_Gvvvv_a, "acbd");
-        tblis::mult<double>(0.5, t_T2t, "ijbc", t_Taa, "ijda", 1.0, t_Gvvvv_a, "acbd");
+        // KOREKSI FINAL: Gvvvv Restricted dengan Indeks Sejajar
+        tblis::mult<double>(1.0, t_T2t, "ijab", t_Taa, "ijcd", 0.0, t_Gvvvv_a, "acbd");
         
         Eigen::Tensor<double, 3> Yvv_a(va_, va_, n_aux); Yvv_a.setZero();
         TBLIS_VIEW_3D(t_Yvv_a, Yvv_a.data(), va_, va_, n_aux);
@@ -948,9 +946,8 @@ void OMP3::build_generalized_fock() {
 
         Eigen::Tensor<double, 4> Goooo_a(na_, na_, na_, na_); Goooo_a.setZero();
         TBLIS_VIEW_4D(t_Goooo_a, Goooo_a, na_, na_, na_, na_);
-        // KOREKSI FINAL 1: Goooo Murni orde ke-2
-        tblis::mult<double>(0.5, t_T2t, "inab", t_Taa, "klab", 0.0, t_Goooo_a, "ikln");
-        tblis::mult<double>(0.5, t_T2t, "lnab", t_Taa, "kiab", 1.0, t_Goooo_a, "ikln");
+        // KOREKSI FINAL: Goooo Restricted dengan Indeks Sejajar
+        tblis::mult<double>(1.0, t_T2t, "ikab", t_Taa, "jlab", 0.0, t_Goooo_a, "ijkl");
         
         Eigen::Tensor<double, 3> Yoo_a(na_, na_, n_aux); Yoo_a.setZero();
         TBLIS_VIEW_3D(t_Yoo_a, Yoo_a.data(), na_, na_, n_aux);
@@ -967,7 +964,6 @@ void OMP3::build_generalized_fock() {
                         double t2_dir = L2_aa_(i, j, a, b);
                         double t1_ex = T2_aa_ijab(i, j, b, a);
                         double t2_ex = L2_aa_(i, j, b, a); 
-                        // KOREKSI FINAL 2: T_eff adalah 2.0 * T1 + 2.0 * T2
                         Teff_aa(i*va_+a, j*va_+b) = 1.0 * (2.0 * t1_dir - 1.0 * t1_ex) + 1.0 * (2.0 * t2_dir - 1.0 * t2_ex);
                     }
                 }
@@ -1000,14 +996,14 @@ void OMP3::build_generalized_fock() {
         TBLIS_VIEW_4D(t_Govov_bb, Gamma_ovov_bb, nb_, vb_, nb_, vb_);
         TBLIS_VIEW_4D(t_Govov_ab, Gamma_ovov_ab, na_, va_, nb_, vb_);
 
-        // KOREKSI FINAL 1: Govov Unrestricted Murni Orde Ke-2 dan POSITIF
-        tblis::mult<double>(-0.25, t_Taa, "imae", t_Taa, "jmbe", 1.0, t_Govov_aa, "iajb");
-        tblis::mult<double>(-0.25, t_Tbb, "imae", t_Tbb, "jmbe", 1.0, t_Govov_bb, "iajb");
+        // KOREKSI FINAL: Govov Unrestricted Murni Orde Ke-2 (Positif)
+        tblis::mult<double>(0.5, t_Taa, "imae", t_Taa, "jmbe", 1.0, t_Govov_aa, "iajb");
+        tblis::mult<double>(0.5, t_Tbb, "imae", t_Tbb, "jmbe", 1.0, t_Govov_bb, "iajb");
 
-        tblis::mult<double>(-0.5,  t_Tab, "miea", t_Tab, "mjeb", 1.0, t_Govov_bb, "iajb");
-        tblis::mult<double>(-0.5,  t_Taa, "imae", t_Tab, "mjeb", 1.0, t_Govov_ab, "iajb");
-        tblis::mult<double>(-0.5,  t_Tab, "imae", t_Tbb, "mjeb", 1.0, t_Govov_ab, "iajb");
-        tblis::mult<double>(-0.5,  t_Tab, "imae", t_Tab, "jmbe", 1.0, t_Govov_aa, "iajb");
+        tblis::mult<double>(1.0, t_Tab, "miea", t_Tab, "mjeb", 1.0, t_Govov_bb, "iajb");
+        tblis::mult<double>(1.0, t_Taa, "imae", t_Tab, "mjeb", 1.0, t_Govov_ab, "iajb");
+        tblis::mult<double>(1.0, t_Tab, "imae", t_Tbb, "mjeb", 1.0, t_Govov_ab, "iajb");
+        tblis::mult<double>(1.0, t_Tab, "imae", t_Tab, "jmbe", 1.0, t_Govov_aa, "iajb");
 
         TBLIS_VIEW_3D(t_Bvv_b, B_vv_b.data(), vb_, vb_, n_aux);
         TBLIS_VIEW_3D(t_Boo_b, B_oo_b.data(), nb_, nb_, n_aux);
@@ -1021,10 +1017,10 @@ void OMP3::build_generalized_fock() {
         Eigen::Tensor<double, 4> Gvvvv_ab(va_, va_, vb_, vb_); Gvvvv_ab.setZero();
         TBLIS_VIEW_4D(t_Gvvvv_ab, Gvvvv_ab, va_, va_, vb_, vb_);
 
-        // KOREKSI FINAL 1: Gvvvv Murni orde ke-2
-        tblis::mult<double>(0.25, t_Taa, "ijcb", t_Taa, "ijad", 0.0, t_Gvvvv_aa, "acbd");
-        tblis::mult<double>(0.25, t_Tbb, "ijcb", t_Tbb, "ijad", 0.0, t_Gvvvv_bb, "acbd");
-        tblis::mult<double>(2.0,  t_Tab, "ijcb", t_Tab, "ijad", 0.0, t_Gvvvv_ab, "acbd");
+        // KOREKSI FINAL: Gvvvv Murni orde ke-2 (Indeks Sejajar)
+        tblis::mult<double>(0.5, t_Taa, "ijab", t_Taa, "ijcd", 0.0, t_Gvvvv_aa, "acbd");
+        tblis::mult<double>(0.5, t_Tbb, "ijab", t_Tbb, "ijcd", 0.0, t_Gvvvv_bb, "acbd");
+        tblis::mult<double>(1.0, t_Tab, "ijab", t_Tab, "ijcd", 0.0, t_Gvvvv_ab, "acbd");
 
         Eigen::Tensor<double, 3> Yvv_a(va_, va_, n_aux); Yvv_a.setZero();
         TBLIS_VIEW_3D(t_Yvv_a, Yvv_a.data(), va_, va_, n_aux);
@@ -1045,10 +1041,10 @@ void OMP3::build_generalized_fock() {
         Eigen::Tensor<double, 4> Goooo_ab(na_, na_, nb_, nb_); Goooo_ab.setZero();
         TBLIS_VIEW_4D(t_Goooo_ab, Goooo_ab, na_, na_, nb_, nb_);
 
-        // KOREKSI FINAL 1: Goooo Murni orde ke-2
-        tblis::mult<double>(0.25, t_Taa, "inab", t_Taa, "klab", 0.0, t_Goooo_aa, "ikln");
-        tblis::mult<double>(0.25, t_Tbb, "inab", t_Tbb, "klab", 0.0, t_Goooo_bb, "ikln");
-        tblis::mult<double>(2.0,  t_Tab, "inab", t_Tab, "klab", 0.0, t_Goooo_ab, "ikln");
+        // KOREKSI FINAL: Goooo Murni orde ke-2 (Indeks Sejajar)
+        tblis::mult<double>(0.5, t_Taa, "ikab", t_Taa, "jlab", 0.0, t_Goooo_aa, "ijkl");
+        tblis::mult<double>(0.5, t_Tbb, "ikab", t_Tbb, "jlab", 0.0, t_Goooo_bb, "ijkl");
+        tblis::mult<double>(1.0, t_Tab, "ikab", t_Tab, "jlab", 0.0, t_Goooo_ab, "ijkl");
 
         Eigen::Tensor<double, 3> Yoo_a(na_, na_, n_aux); Yoo_a.setZero();
         TBLIS_VIEW_3D(t_Yoo_a, Yoo_a.data(), na_, na_, n_aux);
@@ -1103,7 +1099,6 @@ void OMP3::build_generalized_fock() {
             for (int a = 0; a < va_; ++a) {
                 for (int j = 0; j < na_; ++j) {
                     for (int b = 0; b < va_; ++b) {
-                        // KOREKSI FINAL 2: T_eff adalah 2.0 * T1 + 2.0 * T2
                         Teff_aa(i*va_+a, j*va_+b) = 1.0 * T2_aa_ijab(i, j, a, b) + 1.0 * L2_aa_(i, j, a, b);
                     }
                 }
@@ -1158,7 +1153,7 @@ void OMP3::build_generalized_fock() {
         F_gen_b_.block(nb_, 0, vb_, nb_) += Z_mat_b;
         F_gen_b_.block(0, nb_, nb_, vb_) += Z_mat_b.transpose();
     } else if (is_restricted) {
-        F_gen_b_ = F_gen_a_; // Tersinkronisasi sempurna dengan memuat kontribusi Z_mat_a
+        F_gen_b_ = F_gen_a_; 
     }
 }
 void OMP3::build_hessian_diagonal(Eigen::VectorXd& diag_H, double grad_norm) {
