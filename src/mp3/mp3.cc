@@ -923,9 +923,8 @@ void OMP3::build_generalized_fock() {
         Eigen::Tensor<double, 4> Gamma_ovov_aa(na_, va_, na_, va_); Gamma_ovov_aa.setZero();
         TBLIS_VIEW_4D(t_Govov_aa, Gamma_ovov_aa, na_, va_, na_, va_);
         
-        // --- RESTRICTED: Skalar Govov Eksak ---
-        tblis::mult<double>( 1.0, t_T2t, "imae", t_Taa, "jmbe", 1.0, t_Govov_aa, "iajb");
-        tblis::mult<double>(-0.5, t_T2t, "imbe", t_Taa, "jmae", 1.0, t_Govov_aa, "iajb");
+        // --- RESTRICTED: Skalar Govov Eksak (Cukup SATU suku berkat T2_tilde) ---
+        tblis::mult<double>(-0.5, t_T2t, "imae", t_Taa, "jmbe", 1.0, t_Govov_aa, "iajb");
                         
         Eigen::MatrixXd G_mat_aa(na_ * va_, na_ * va_);
         #pragma omp parallel for collapse(2) schedule(static)
@@ -942,8 +941,8 @@ void OMP3::build_generalized_fock() {
 
         Eigen::Tensor<double, 4> Gvvvv_a(va_, va_, va_, va_); Gvvvv_a.setZero();
         TBLIS_VIEW_4D(t_Gvvvv_a, Gvvvv_a, va_, va_, va_, va_);
-        // --- RESTRICTED: Gvvvv (Skalar 1.0, Indeks "ijab" & "ijcd") ---
-        tblis::mult<double>(1.0, t_T2t, "ijab", t_Taa, "ijcd", 0.0, t_Gvvvv_a, "acbd");
+        // --- RESTRICTED: Gvvvv Eksak (Skalar 0.5, Indeks ijac, ijbd -> acbd) ---
+        tblis::mult<double>(0.5, t_T2t, "ijac", t_Taa, "ijbd", 0.0, t_Gvvvv_a, "acbd");
         
         Eigen::Tensor<double, 3> Yvv_a(va_, va_, n_aux); Yvv_a.setZero();
         TBLIS_VIEW_3D(t_Yvv_a, Yvv_a.data(), va_, va_, n_aux);
@@ -952,8 +951,8 @@ void OMP3::build_generalized_fock() {
 
         Eigen::Tensor<double, 4> Goooo_a(na_, na_, na_, na_); Goooo_a.setZero();
         TBLIS_VIEW_4D(t_Goooo_a, Goooo_a, na_, na_, na_, na_);
-        // --- RESTRICTED: Goooo (Skalar 1.0, Indeks "ijab" & "klab") ---
-        tblis::mult<double>(1.0, t_T2t, "ijab", t_Taa, "klab", 0.0, t_Goooo_a, "ikjl");
+        // --- RESTRICTED: Goooo Eksak (Skalar 0.5, Indeks ikac, jlad -> ijkl) ---
+        tblis::mult<double>(0.5, t_T2t, "ikac", t_Taa, "jlad", 0.0, t_Goooo_a, "ijkl");
         
         Eigen::Tensor<double, 3> Yoo_a(na_, na_, n_aux); Yoo_a.setZero();
         TBLIS_VIEW_3D(t_Yoo_a, Yoo_a.data(), na_, na_, n_aux);
@@ -1003,7 +1002,7 @@ void OMP3::build_generalized_fock() {
         TBLIS_VIEW_4D(t_Govov_bb, Gamma_ovov_bb, nb_, vb_, nb_, vb_);
         TBLIS_VIEW_4D(t_Govov_ab, Gamma_ovov_ab, na_, va_, nb_, vb_);
 
-        // --- UNRESTRICTED: Skalar Govov Eksak (-0.25 dan -0.5) ---
+        // --- UNRESTRICTED: Skalar Govov Eksak KEMBALI KE mp3_5.cc (-0.25 dan -0.5) ---
         tblis::mult<double>(-0.25, t_Taa, "imae", t_Taa, "jmbe", 1.0, t_Govov_aa, "iajb");
         tblis::mult<double>(-0.25, t_Tbb, "imae", t_Tbb, "jmbe", 1.0, t_Govov_bb, "iajb");
 
@@ -1024,10 +1023,10 @@ void OMP3::build_generalized_fock() {
         Eigen::Tensor<double, 4> Gvvvv_ab(va_, va_, vb_, vb_); Gvvvv_ab.setZero();
         TBLIS_VIEW_4D(t_Gvvvv_ab, Gvvvv_ab, va_, va_, vb_, vb_);
 
-        // --- UNRESTRICTED: Skalar Gvvvv Eksak (0.125 dan 0.5) ---
-        tblis::mult<double>(0.125, t_Taa, "ijab", t_Taa, "ijcd", 0.0, t_Gvvvv_aa, "acbd");
-        tblis::mult<double>(0.125, t_Tbb, "ijab", t_Tbb, "ijcd", 0.0, t_Gvvvv_bb, "acbd");
-        tblis::mult<double>(0.5,   t_Tab, "ijab", t_Tab, "ijcd", 0.0, t_Gvvvv_ab, "acbd");
+        // --- UNRESTRICTED: Skalar Gvvvv Eksak KEMBALI KE mp3_5.cc (0.125 dan 0.5) ---
+        tblis::mult<double>(0.125, t_Taa, "ijac", t_Taa, "ijbd", 0.0, t_Gvvvv_aa, "acbd");
+        tblis::mult<double>(0.125, t_Tbb, "ijac", t_Tbb, "ijbd", 0.0, t_Gvvvv_bb, "acbd");
+        tblis::mult<double>(0.5,   t_Tab, "ijac", t_Tab, "ijbd", 0.0, t_Gvvvv_ab, "acbd");
 
         Eigen::Tensor<double, 3> Yvv_a(va_, va_, n_aux); Yvv_a.setZero();
         TBLIS_VIEW_3D(t_Yvv_a, Yvv_a.data(), va_, va_, n_aux);
@@ -1048,10 +1047,10 @@ void OMP3::build_generalized_fock() {
         Eigen::Tensor<double, 4> Goooo_ab(na_, na_, nb_, nb_); Goooo_ab.setZero();
         TBLIS_VIEW_4D(t_Goooo_ab, Goooo_ab, na_, na_, nb_, nb_);
 
-        // --- UNRESTRICTED: Skalar Goooo Eksak (0.125 dan 0.5) ---
-        tblis::mult<double>(0.125, t_Taa, "ijab", t_Taa, "klab", 0.0, t_Goooo_aa, "ikjl");
-        tblis::mult<double>(0.125, t_Tbb, "ijab", t_Tbb, "klab", 0.0, t_Goooo_bb, "ikjl");
-        tblis::mult<double>(0.5,   t_Tab, "ijab", t_Tab, "klab", 0.0, t_Goooo_ab, "ikjl");
+        // --- UNRESTRICTED: Skalar Goooo Eksak KEMBALI KE mp3_5.cc (0.125 dan 0.5) ---
+        tblis::mult<double>(0.125, t_Taa, "ikac", t_Taa, "jlad", 0.0, t_Goooo_aa, "ijkl");
+        tblis::mult<double>(0.125, t_Tbb, "ikac", t_Tbb, "jlad", 0.0, t_Goooo_bb, "ijkl");
+        tblis::mult<double>(0.5,   t_Tab, "ikac", t_Tab, "jlad", 0.0, t_Goooo_ab, "ijkl");
 
         Eigen::Tensor<double, 3> Yoo_a(na_, na_, n_aux); Yoo_a.setZero();
         TBLIS_VIEW_3D(t_Yoo_a, Yoo_a.data(), na_, na_, n_aux);
@@ -1106,7 +1105,6 @@ void OMP3::build_generalized_fock() {
             for (int a = 0; a < va_; ++a) {
                 for (int j = 0; j < na_; ++j) {
                     for (int b = 0; b < va_; ++b) {
-                        // --- KOREKSI MUTLAK: T_eff Rasio 1.0 : 1.0 ---
                         Teff_aa(i*va_+a, j*va_+b) = 1.0 * T2_aa_ijab(i, j, a, b) + 1.0 * L2_aa_(i, j, a, b);
                     }
                 }
