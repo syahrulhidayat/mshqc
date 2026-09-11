@@ -1192,6 +1192,11 @@ void OMP3::debug_gradient_fd(int i_target, int a_target) {
     pseudocanonicalize(); 
     Eigen::MatrixXd C_a_orig = scf_.C_alpha;
     Eigen::MatrixXd C_b_orig = scf_.C_beta;
+    Eigen::MatrixXd P_a_orig = scf_.P_alpha;
+    Eigen::MatrixXd P_b_orig = scf_.P_beta;
+    Eigen::VectorXd ea_orig = scf_.orbital_energies_alpha;
+    Eigen::VectorXd eb_orig = scf_.orbital_energies_beta;
+    double e_hf_orig = scf_.energy_total;
     
     transform_integrals();
     compute_t2_amplitudes();
@@ -1213,50 +1218,42 @@ void OMP3::debug_gradient_fd(int i_target, int a_target) {
     double grad_ana_tot = is_restricted ? -4.0 * F_gen_a_(na_ + a_target, i_target) : -2.0 * F_gen_a_(na_ + a_target, i_target);
     
     // Ekstrak Gradien Analitik HF murni
-    Eigen::MatrixXd F_ao_a, F_ao_b;
-    build_fock_fast(scf_.P_alpha, scf_.P_beta, F_ao_a, F_ao_b);
-    Eigen::MatrixXd F_mo_a = scf_.C_alpha.transpose() * F_ao_a * scf_.C_alpha;
-    double grad_ana_hf = is_restricted ? -4.0 * F_mo_a(na_ + a_target, i_target) : -2.0 * F_mo_a(na_ + a_target, i_target);
+    Eigen::MatrixXd F_ao_a_base, F_ao_b_base;
+    build_fock_fast(scf_.P_alpha, scf_.P_beta, F_ao_a_base, F_ao_b_base);
+    Eigen::MatrixXd F_mo_a_base = scf_.C_alpha.transpose() * F_ao_a_base * scf_.C_alpha;
+    double grad_ana_hf = is_restricted ? -4.0 * F_mo_a_base(na_ + a_target, i_target) : -2.0 * F_mo_a_base(na_ + a_target, i_target);
     double grad_ana_corr = grad_ana_tot - grad_ana_hf;
 
-    // 2. Loop Finite Difference per Komponen menggunakan instance OMP3 sementara
+    // 2. Loop Finite Difference per Komponen dengan Mutasi Aman
     double theta = 1e-5;
-    
     auto calc_energy_components = [&](double t, double& e_hf, double& e_mp2, double& e_mp3) {
         Eigen::MatrixXd U = Eigen::MatrixXd::Identity(nbf_, nbf_);
         U(i_target, na_ + a_target) = t;
         U(na_ + a_target, i_target) = -t;
         
-        SCFResult scf_tmp = scf_;
-        scf_tmp.C_alpha = C_a_orig * U;
-        if (!is_restricted) scf_tmp.C_beta = C_b_orig * U; 
-        else scf_tmp.C_beta = scf_tmp.C_alpha;
+        scf_.C_alpha = C_a_orig * U;
+        if (!is_restricted) scf_.C_beta = C_b_orig * U; 
+        else scf_.C_beta = scf_.C_alpha;
         
-        scf_tmp.P_alpha = scf_tmp.C_alpha.leftCols(na_) * scf_tmp.C_alpha.leftCols(na_).transpose();
-        if (!is_restricted) scf_tmp.P_beta = scf_tmp.C_beta.leftCols(nb_) * scf_tmp.C_beta.leftCols(nb_).transpose();
-        else scf_tmp.P_beta = scf_tmp.P_alpha;
+        scf_.P_alpha = scf_.C_alpha.leftCols(na_) * scf_.C_alpha.leftCols(na_).transpose();
+        if (!is_restricted) scf_.P_beta = scf_.C_beta.leftCols(nb_) * scf_.C_beta.leftCols(nb_).transpose();
+        else scf_.P_beta = scf_.P_alpha;
+        
+        pseudocanonicalize(); // Update struktur C dan epsilon untuk FD
 
         Eigen::MatrixXd F_ao_a_tmp, F_ao_b_tmp;
-        build_fock_fast(scf_tmp.P_alpha, scf_tmp.P_beta, F_ao_a_tmp, F_ao_b_tmp);
-        e_hf = 0.5 * (scf_tmp.P_alpha.cwiseProduct(H_core_ + F_ao_a_tmp).sum() + 
-                      scf_tmp.P_beta.cwiseProduct(H_core_ + F_ao_b_tmp).sum()) 
+        build_fock_fast(scf_.P_alpha, scf_.P_beta, F_ao_a_tmp, F_ao_b_tmp);
+        e_hf = 0.5 * (scf_.P_alpha.cwiseProduct(H_core_ + F_ao_a_tmp).sum() + 
+                      scf_.P_beta.cwiseProduct(H_core_ + F_ao_b_tmp).sum()) 
                + mol_.nuclear_repulsion_energy();
+                       
+        transform_integrals(); 
+        compute_t2_amplitudes();
+        compute_mp2_energy();
+        compute_mp3_correction();
         
-        scf_tmp.energy_total = e_hf;
-
-        // Bikin instance OMP3 sementara agar memory TBLIS aman
-        MP2Config conf_tmp = config_;
-        MP2Result res_dummy; 
-        OMP3 omp3_tmp(mol_, scf_tmp, res_dummy, conf_tmp, ints_);
-        
-        omp3_tmp.pseudocanonicalize();
-        omp3_tmp.transform_integrals();
-        omp3_tmp.compute_t2_amplitudes();
-        omp3_tmp.compute_mp2_energy();
-        omp3_tmp.compute_mp3_correction();
-        
-        e_mp2 = omp3_tmp.get_e_ss() + omp3_tmp.get_e_os();
-        e_mp3 = omp3_tmp.get_e_mp3_tot();
+        e_mp2 = e_ss_ + e_os_;
+        e_mp3 = e_mp3_tot_;
     };
 
     double hf_plus, mp2_plus, mp3_plus;
@@ -1264,7 +1261,32 @@ void OMP3::debug_gradient_fd(int i_target, int a_target) {
     
     double hf_minus, mp2_minus, mp3_minus;
     calc_energy_components(-theta, hf_minus, mp2_minus, mp3_minus);
+
+    // 3. KEMBALIKAN STATE KE KONDISI ORISINAL (Mencegah Segfault)
+    scf_.C_alpha = C_a_orig;
+    scf_.C_beta = C_b_orig;
+    scf_.P_alpha = P_a_orig;
+    scf_.P_beta = P_b_orig;
+    scf_.orbital_energies_alpha = ea_orig;
+    scf_.orbital_energies_beta = eb_orig;
+    scf_.energy_total = e_hf_orig;
     
+    transform_integrals();
+    compute_t2_amplitudes();
+    compute_mp2_energy();
+    compute_mp3_correction();
+    
+    L2_aa_ = t2_3rd_aa_; 
+    if (!is_restricted && nb_ > 0 && vb_ > 0) {
+        L2_bb_ = t2_3rd_bb_;
+        L2_ab_ = t2_3rd_ab_;
+    }
+    build_opdm_alpha();
+    if (!is_restricted && nb_ > 0) build_opdm_beta();
+    else if (is_restricted) G_oo_beta_ = G_oo_alpha_;
+    build_generalized_fock();
+    
+    // 4. Kalkulasi hasil Numerik vs Analitik
     double g_num_hf  = (hf_plus - hf_minus) / (2.0 * theta);
     double g_num_mp2 = (mp2_plus - mp2_minus) / (2.0 * theta);
     double g_num_mp3 = (mp3_plus - mp3_minus) / (2.0 * theta);
