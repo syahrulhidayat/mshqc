@@ -1185,12 +1185,14 @@ void OMP3::build_hessian_diagonal(Eigen::VectorXd& diag_H, double grad_norm) {
 }
 
 void OMP3::debug_gradient_fd(int i_target, int a_target) {
-    std::cout << "\n--- [DEBUG] Memulai Uji Finite-Difference OMP3 (Total Energy) ---\n";
+    std::cout << "\n--- [DEBUG] Membedah Komponen Gradien OMP3 ---\n";
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     
+    // 1. Evaluasi Base State (theta = 0)
     pseudocanonicalize(); 
-    C_a_current_ = scf_.C_alpha;
-    C_b_current_ = scf_.C_beta;
+    Eigen::MatrixXd C_a_orig = scf_.C_alpha;
+    Eigen::MatrixXd C_b_orig = scf_.C_beta;
+    
     transform_integrals();
     compute_t2_amplitudes();
     compute_mp2_energy();
@@ -1207,29 +1209,20 @@ void OMP3::debug_gradient_fd(int i_target, int a_target) {
     else if (is_restricted) G_oo_beta_ = G_oo_alpha_;
     build_generalized_fock();
 
-    double max_grad = -1.0;
-    for(int i=0; i<na_; ++i) {
-        for(int a=0; a<va_; ++a) {
-            double val = std::abs(F_gen_a_(na_ + a, i));
-            if (val > max_grad) {
-                max_grad = val;
-                i_target = i;
-                a_target = a;
-            }
-        }
-    }
+    // Ekstrak Gradien Analitik
+    double grad_ana_tot = is_restricted ? -4.0 * F_gen_a_(na_ + a_target, i_target) : -2.0 * F_gen_a_(na_ + a_target, i_target);
     
-    double grad_ana = 0.0;
-    if (is_restricted) grad_ana = -4.0 * F_gen_a_(na_ + a_target, i_target);
-    else grad_ana = -2.0 * F_gen_a_(na_ + a_target, i_target);
-    
+    // Ekstrak Gradien Analitik HF murni
+    Eigen::MatrixXd F_ao_a, F_ao_b;
+    build_fock_fast(scf_.P_alpha, scf_.P_beta, F_ao_a, F_ao_b);
+    Eigen::MatrixXd F_mo_a = scf_.C_alpha.transpose() * F_ao_a * scf_.C_alpha;
+    double grad_ana_hf = is_restricted ? -4.0 * F_mo_a(na_ + a_target, i_target) : -2.0 * F_mo_a(na_ + a_target, i_target);
+    double grad_ana_corr = grad_ana_tot - grad_ana_hf;
+
+    // 2. Loop Finite Difference per Komponen
     double theta = 1e-5;
-    Eigen::MatrixXd C_a_orig = scf_.C_alpha;
-    Eigen::MatrixXd C_b_orig = scf_.C_beta;
-    Eigen::MatrixXd P_a_orig = scf_.P_alpha;
-    Eigen::MatrixXd P_b_orig = scf_.P_beta;
     
-    auto calc_total_energy = [&](double t) -> double {
+    auto calc_energy_components = [&](double t, double& e_hf, double& e_mp2, double& e_mp3) {
         Eigen::MatrixXd U = Eigen::MatrixXd::Identity(nbf_, nbf_);
         U(i_target, na_ + a_target) = t;
         U(na_ + a_target, i_target) = -t;
@@ -1248,42 +1241,49 @@ void OMP3::debug_gradient_fd(int i_target, int a_target) {
         C_a_current_ = scf_.C_alpha;
         C_b_current_ = scf_.C_beta;
 
-        Eigen::MatrixXd F_ao_a, F_ao_b;
-        build_fock_fast(scf_.P_alpha, scf_.P_beta, F_ao_a, F_ao_b);
-        double e_scf = 0.5 * (scf_.P_alpha.cwiseProduct(H_core_ + F_ao_a).sum() + 
-                              scf_.P_beta.cwiseProduct(H_core_ + F_ao_b).sum()) 
-                       + mol_.nuclear_repulsion_energy();
+        Eigen::MatrixXd F_ao_a_tmp, F_ao_b_tmp;
+        build_fock_fast(scf_.P_alpha, scf_.P_beta, F_ao_a_tmp, F_ao_b_tmp);
+        e_hf = 0.5 * (scf_.P_alpha.cwiseProduct(H_core_ + F_ao_a_tmp).sum() + 
+                      scf_.P_beta.cwiseProduct(H_core_ + F_ao_b_tmp).sum()) 
+               + mol_.nuclear_repulsion_energy();
                        
         transform_integrals(); 
         compute_t2_amplitudes();
         compute_mp2_energy();
         compute_mp3_correction();
         
-        return e_scf + e_ss_ + e_os_ + e_mp3_tot_;
+        e_mp2 = e_ss_ + e_os_;
+        e_mp3 = e_mp3_tot_;
     };
 
-    double E_plus = calc_total_energy(theta);
-    double E_minus = calc_total_energy(-theta);
+    double hf_plus, mp2_plus, mp3_plus;
+    calc_energy_components(theta, hf_plus, mp2_plus, mp3_plus);
     
-    double grad_num = (E_plus - E_minus) / (2.0 * theta);
+    double hf_minus, mp2_minus, mp3_minus;
+    calc_energy_components(-theta, hf_minus, mp2_minus, mp3_minus);
     
+    double g_num_hf  = (hf_plus - hf_minus) / (2.0 * theta);
+    double g_num_mp2 = (mp2_plus - mp2_minus) / (2.0 * theta);
+    double g_num_mp3 = (mp3_plus - mp3_minus) / (2.0 * theta);
+    double g_num_corr = g_num_mp2 + g_num_mp3;
+    double g_num_tot = g_num_hf + g_num_corr;
+
     std::cout << std::fixed << std::setprecision(10);
     std::cout << "Target Rotasi        : (i=" << i_target << " [Occ], a=" << a_target << " [Vir])\n";
-    std::cout << "Energi (+theta)      : " << E_plus << " Ha\n";
-    std::cout << "Energi (-theta)      : " << E_minus << " Ha\n";
-    std::cout << "Gradien Numerik (FD) : " << std::scientific << grad_num << "\n";
-    std::cout << "Gradien Analitik     : " << std::scientific << grad_ana << "\n";
-    
-    double selisih = std::abs(grad_num - grad_ana);
-    std::cout << "Selisih Absolut      : " << selisih << "\n";
-    
-    if (selisih > 1e-5) {
-        std::cout << ">>> KESIMPULAN: FATAL! Faktor turunan analitik MP3 Anda salah.\n";
-    } else {
-        std::cout << ">>> KESIMPULAN: AMAN! Turunan MP3 cocok.\n";
-    }
+    std::cout << "--- Finite Difference (NUMERIK) ---\n";
+    std::cout << "Gradien HF Numerik   : " << std::scientific << g_num_hf << "\n";
+    std::cout << "Gradien MP2 Numerik  : " << std::scientific << g_num_mp2 << "\n";
+    std::cout << "Gradien MP3 Numerik  : " << std::scientific << g_num_mp3 << "\n";
+    std::cout << "Korelasi Numerik     : " << std::scientific << g_num_corr << "\n";
+    std::cout << "TOTAL Numerik        : " << std::scientific << g_num_tot << "\n";
+    std::cout << "--- Rumus Analitik (KODE) ---\n";
+    std::cout << "Gradien HF Analitik  : " << std::scientific << grad_ana_hf << "\n";
+    std::cout << "Korelasi Analitik    : " << std::scientific << grad_ana_corr << "\n";
+    std::cout << "TOTAL Analitik       : " << std::scientific << grad_ana_tot << "\n";
+    std::cout << "--- EVALUASI SELISIH ---\n";
+    std::cout << "Selisih HF           : " << std::abs(g_num_hf - grad_ana_hf) << "\n";
+    std::cout << "Selisih Korelasi     : " << std::abs(g_num_corr - grad_ana_corr) << "\n";
     std::cout << "-------------------------------------------------------------------\n";
- 
 }
 
 MP3Result OMP3::compute_omp3() {
