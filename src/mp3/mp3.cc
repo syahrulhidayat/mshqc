@@ -1219,7 +1219,7 @@ void OMP3::debug_gradient_fd(int i_target, int a_target) {
     double grad_ana_hf = is_restricted ? -4.0 * F_mo_a(na_ + a_target, i_target) : -2.0 * F_mo_a(na_ + a_target, i_target);
     double grad_ana_corr = grad_ana_tot - grad_ana_hf;
 
-    // 2. Loop Finite Difference per Komponen
+    // 2. Loop Finite Difference per Komponen menggunakan instance OMP3 sementara
     double theta = 1e-5;
     
     auto calc_energy_components = [&](double t, double& e_hf, double& e_mp2, double& e_mp3) {
@@ -1227,33 +1227,36 @@ void OMP3::debug_gradient_fd(int i_target, int a_target) {
         U(i_target, na_ + a_target) = t;
         U(na_ + a_target, i_target) = -t;
         
-        C_a_current_ = C_a_orig * U;
-        if (!is_restricted) C_b_current_ = C_b_orig * U; 
-        else C_b_current_ = C_a_current_;
+        SCFResult scf_tmp = scf_;
+        scf_tmp.C_alpha = C_a_orig * U;
+        if (!is_restricted) scf_tmp.C_beta = C_b_orig * U; 
+        else scf_tmp.C_beta = scf_tmp.C_alpha;
         
-        scf_.C_alpha = C_a_current_;
-        scf_.C_beta = C_b_current_;
-        scf_.P_alpha = scf_.C_alpha.leftCols(na_) * scf_.C_alpha.leftCols(na_).transpose();
-        if (!is_restricted) scf_.P_beta = scf_.C_beta.leftCols(nb_) * scf_.C_beta.leftCols(nb_).transpose();
-        else scf_.P_beta = scf_.P_alpha;
-        
-        pseudocanonicalize();
-        C_a_current_ = scf_.C_alpha;
-        C_b_current_ = scf_.C_beta;
+        scf_tmp.P_alpha = scf_tmp.C_alpha.leftCols(na_) * scf_tmp.C_alpha.leftCols(na_).transpose();
+        if (!is_restricted) scf_tmp.P_beta = scf_tmp.C_beta.leftCols(nb_) * scf_tmp.C_beta.leftCols(nb_).transpose();
+        else scf_tmp.P_beta = scf_tmp.P_alpha;
 
         Eigen::MatrixXd F_ao_a_tmp, F_ao_b_tmp;
-        build_fock_fast(scf_.P_alpha, scf_.P_beta, F_ao_a_tmp, F_ao_b_tmp);
-        e_hf = 0.5 * (scf_.P_alpha.cwiseProduct(H_core_ + F_ao_a_tmp).sum() + 
-                      scf_.P_beta.cwiseProduct(H_core_ + F_ao_b_tmp).sum()) 
+        build_fock_fast(scf_tmp.P_alpha, scf_tmp.P_beta, F_ao_a_tmp, F_ao_b_tmp);
+        e_hf = 0.5 * (scf_tmp.P_alpha.cwiseProduct(H_core_ + F_ao_a_tmp).sum() + 
+                      scf_tmp.P_beta.cwiseProduct(H_core_ + F_ao_b_tmp).sum()) 
                + mol_.nuclear_repulsion_energy();
-                       
-        transform_integrals(); 
-        compute_t2_amplitudes();
-        compute_mp2_energy();
-        compute_mp3_correction();
         
-        e_mp2 = e_ss_ + e_os_;
-        e_mp3 = e_mp3_tot_;
+        scf_tmp.energy_total = e_hf;
+
+        // Bikin instance OMP3 sementara agar memory TBLIS aman
+        MP2Config conf_tmp = config_;
+        MP2Result res_dummy; 
+        OMP3 omp3_tmp(mol_, scf_tmp, res_dummy, conf_tmp, ints_);
+        
+        omp3_tmp.pseudocanonicalize();
+        omp3_tmp.transform_integrals();
+        omp3_tmp.compute_t2_amplitudes();
+        omp3_tmp.compute_mp2_energy();
+        omp3_tmp.compute_mp3_correction();
+        
+        e_mp2 = omp3_tmp.get_e_ss() + omp3_tmp.get_e_os();
+        e_mp3 = omp3_tmp.get_e_mp3_tot();
     };
 
     double hf_plus, mp2_plus, mp3_plus;
