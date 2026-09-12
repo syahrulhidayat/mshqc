@@ -1188,10 +1188,10 @@ void OMP3::debug_gradient_fd(int i_target, int a_target) {
     std::cout << "\n--- [DEBUG] Membedah Komponen Gradien OMP3 ---\n";
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     
+    // 1. Eksekusi state awal (tanpa rotasi)
     pseudocanonicalize(); 
-    Eigen::MatrixXd C_a_orig = scf_.C_alpha;
-    Eigen::MatrixXd C_b_orig = scf_.C_beta;
-    
+    C_a_current_ = scf_.C_alpha;
+    C_b_current_ = scf_.C_beta;
     transform_integrals();
     compute_t2_amplitudes();
     compute_mp2_energy();
@@ -1208,6 +1208,20 @@ void OMP3::debug_gradient_fd(int i_target, int a_target) {
     else if (is_restricted) G_oo_beta_ = G_oo_alpha_;
     build_generalized_fock();
 
+    // Otomatis cari target gradien terbesar (Sama seperti kode Anda yang aman)
+    double max_grad = -1.0;
+    for(int i=0; i<na_; ++i) {
+        for(int a=0; a<va_; ++a) {
+            double val = std::abs(F_gen_a_(na_ + a, i));
+            if (val > max_grad) {
+                max_grad = val;
+                i_target = i;
+                a_target = a;
+            }
+        }
+    }
+    
+    // Gradien Analitik
     double grad_ana_tot = is_restricted ? -4.0 * F_gen_a_(na_ + a_target, i_target) : -2.0 * F_gen_a_(na_ + a_target, i_target);
     
     Eigen::MatrixXd F_ao_a, F_ao_b;
@@ -1215,17 +1229,25 @@ void OMP3::debug_gradient_fd(int i_target, int a_target) {
     Eigen::MatrixXd F_mo_a = scf_.C_alpha.transpose() * F_ao_a * scf_.C_alpha;
     double grad_ana_hf = is_restricted ? -4.0 * F_mo_a(na_ + a_target, i_target) : -2.0 * F_mo_a(na_ + a_target, i_target);
     double grad_ana_corr = grad_ana_tot - grad_ana_hf;
-
+    
     double theta = 1e-5;
+    Eigen::MatrixXd C_a_orig = scf_.C_alpha;
+    Eigen::MatrixXd C_b_orig = scf_.C_beta;
+    Eigen::MatrixXd P_a_orig = scf_.P_alpha;
+    Eigen::MatrixXd P_b_orig = scf_.P_beta;
+    
+    // 2. Lambda Fungsi FD (Persis seperti kode Anda, tapi memecah output energinya)
     auto calc_energy_components = [&](double t, double& e_hf, double& e_mp2, double& e_mp3) {
         Eigen::MatrixXd U = Eigen::MatrixXd::Identity(nbf_, nbf_);
         U(i_target, na_ + a_target) = t;
         U(na_ + a_target, i_target) = -t;
         
-        scf_.C_alpha = C_a_orig * U;
-        if (!is_restricted) scf_.C_beta = C_b_orig * U; 
-        else scf_.C_beta = scf_.C_alpha;
+        C_a_current_ = C_a_orig * U;
+        if (!is_restricted) C_b_current_ = C_b_orig * U; 
+        else C_b_current_ = C_a_current_;
         
+        scf_.C_alpha = C_a_current_;
+        scf_.C_beta = C_b_current_;
         scf_.P_alpha = scf_.C_alpha.leftCols(na_) * scf_.C_alpha.leftCols(na_).transpose();
         if (!is_restricted) scf_.P_beta = scf_.C_beta.leftCols(nb_) * scf_.C_beta.leftCols(nb_).transpose();
         else scf_.P_beta = scf_.P_alpha;
@@ -1249,6 +1271,7 @@ void OMP3::debug_gradient_fd(int i_target, int a_target) {
         e_mp3 = e_mp3_tot_;
     };
 
+    // 3. Kalkulasi Numerik (+ dan -)
     double hf_plus, mp2_plus, mp3_plus;
     calc_energy_components(theta, hf_plus, mp2_plus, mp3_plus);
     
@@ -1261,14 +1284,23 @@ void OMP3::debug_gradient_fd(int i_target, int a_target) {
     double g_num_corr = g_num_mp2 + g_num_mp3;
     double g_num_tot = g_num_hf + g_num_corr;
 
+    // 4. Cetak Hasil Dekomposisi
     std::cout << std::fixed << std::setprecision(10);
     std::cout << "Target Rotasi        : (i=" << i_target << " [Occ], a=" << a_target << " [Vir])\n";
     std::cout << "--- Finite Difference (NUMERIK) ---\n";
+    std::cout << "Gradien HF Numerik   : " << std::scientific << g_num_hf << "\n";
+    std::cout << "Gradien MP2 Numerik  : " << std::scientific << g_num_mp2 << "\n";
+    std::cout << "Gradien MP3 Numerik  : " << std::scientific << g_num_mp3 << "\n";
+    std::cout << "Korelasi Numerik     : " << std::scientific << g_num_corr << "\n";
     std::cout << "TOTAL Numerik        : " << std::scientific << g_num_tot << "\n";
     std::cout << "--- Rumus Analitik (KODE) ---\n";
+    std::cout << "Gradien HF Analitik  : " << std::scientific << grad_ana_hf << "\n";
+    std::cout << "Korelasi Analitik    : " << std::scientific << grad_ana_corr << "\n";
     std::cout << "TOTAL Analitik       : " << std::scientific << grad_ana_tot << "\n";
     std::cout << "--- EVALUASI SELISIH ---\n";
+    std::cout << "Selisih HF           : " << std::abs(g_num_hf - grad_ana_hf) << "\n";
     std::cout << "Selisih Korelasi     : " << std::abs(g_num_corr - grad_ana_corr) << "\n";
+    std::cout << "Selisih TOTAL        : " << std::abs(g_num_tot - grad_ana_tot) << "\n";
     std::cout << "-------------------------------------------------------------------\n";
 }
 MP3Result OMP3::compute_omp3() {
