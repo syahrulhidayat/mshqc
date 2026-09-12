@@ -667,12 +667,43 @@ void OMP3::build_opdm_alpha() {
     G_oo_alpha_ = Eigen::MatrixXd::Zero(na_, na_);
     G_vv_alpha_ = Eigen::MatrixXd::Zero(va_, va_);
     
-    Eigen::Tensor T2_aa_ijab(na_, na_, va_, va_);
+    Eigen::Tensor<double, 4> T2_aa_ijab(na_, na_, va_, va_);
     #pragma omp parallel for collapse(4) schedule(static)
-    for(int i=0; i T2_tilde(na_, na_, va_, va_);
-        Eigen::Tensor L2_tilde(na_, na_, va_, va_);
+    for(int i = 0; i < na_; ++i) {
+        for(int j = 0; j < na_; ++j) {
+            for(int a = 0; a < va_; ++a) {
+                for(int b = 0; b < va_; ++b) {
+                    T2_aa_ijab(i,j,a,b) = (*t2_aa_dense)(i,a,j,b);
+                }
+            }
+        }
+    }
+
+    if (is_restricted) {
+        Eigen::Tensor<double, 4> T2_tilde(na_, na_, va_, va_);
+        Eigen::Tensor<double, 4> L2_tilde(na_, na_, va_, va_);
+        
         #pragma omp parallel for collapse(4) schedule(static)
-        for (int i=0; i(-1.0, t_T2, "ikab", t_T2t, "jkab", 0.0, t_Goo, "ij"); 
+        for (int i = 0; i < na_; ++i) {
+            for (int j = 0; j < na_; ++j) {
+                for (int a = 0; a < va_; ++a) {
+                    for (int b = 0; b < va_; ++b) {
+                        T2_tilde(i,j,a,b) = 2.0 * T2_aa_ijab(i,j,a,b) - T2_aa_ijab(i,j,b,a);
+                        L2_tilde(i,j,a,b) = 2.0 * L2_aa_(i,j,a,b) - L2_aa_(i,j,b,a);
+                    }
+                }
+            }
+        }
+
+        TBLIS_VIEW_4D(t_T2t, T2_tilde, na_, na_, va_, va_);
+        TBLIS_VIEW_4D(t_L2t, L2_tilde, na_, na_, va_, va_);
+        TBLIS_VIEW_4D(t_T2, T2_aa_ijab, na_, na_, va_, va_);
+        TBLIS_VIEW_4D(t_L2, L2_aa_, na_, na_, va_, va_);
+
+        TBLIS_VIEW_2D(t_Goo, G_oo_alpha_.data(), na_, na_);
+        TBLIS_VIEW_2D(t_Gvv, G_vv_alpha_.data(), va_, va_);
+
+        tblis::mult(-1.0, t_T2, "ikab", t_T2t, "jkab", 0.0, t_Goo, "ij"); 
         tblis::mult(-0.5, t_T2, "ikab", t_L2t, "jkab", 1.0, t_Goo, "ij"); 
         tblis::mult(-0.5, t_L2, "ikab", t_T2t, "jkab", 1.0, t_Goo, "ij");  
 
@@ -718,15 +749,19 @@ void OMP3::build_opdm_beta() {
     
     if (is_restricted || nb_ == 0 || vb_ == 0) return; 
     auto* t2_bb_dense = t2_bb_.get_block(0,0,0,0);
-    Eigen::Tensor dummy_bb;
+    
+    Eigen::Tensor<double, 4> dummy_bb;
     if (!t2_bb_dense) {
-        dummy_bb = Eigen::Tensor(nb_, nb_, vb_, vb_); dummy_bb.setZero();
+        dummy_bb = Eigen::Tensor<double, 4>(nb_, nb_, vb_, vb_); 
+        dummy_bb.setZero();
         t2_bb_dense = &dummy_bb;
     }
+    
     auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
-    Eigen::Tensor dummy_ab;
+    Eigen::Tensor<double, 4> dummy_ab;
     if (!t2_ab_dense) {
-        dummy_ab = Eigen::Tensor(na_, nb_, va_, vb_); dummy_ab.setZero();
+        dummy_ab = Eigen::Tensor<double, 4>(na_, nb_, va_, vb_); 
+        dummy_ab.setZero();
         t2_ab_dense = &dummy_ab;
     }
 
