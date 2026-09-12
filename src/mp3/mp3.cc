@@ -717,8 +717,14 @@ void OMP3::build_opdm_alpha() {
                         double t1_ex  = T2_aa_ijab(i, j, b, a);
                         double t2_dir = L2_aa_(i, j, a, b);
                         double t2_ex  = L2_aa_(i, j, b, a);
-                        double tau = (2.0 * t1_dir - t1_ex) + 2.0 * (2.0 * t2_dir - t2_ex);
-                        diag_oo += (tau * t1_dir) / D;
+                        
+                        double t1_antisym = 2.0 * t1_dir - t1_ex;
+                        double t2_antisym = 2.0 * t2_dir - t2_ex;
+                        
+                        // Eksak Murni Quotient Rule: tau = t^(1) + t^(2)
+                        double tau = t1_antisym + t2_antisym; 
+                        
+                        diag_oo += 0.5 * (tau * t1_dir) / D;
                     }
                 }
             }
@@ -736,8 +742,14 @@ void OMP3::build_opdm_alpha() {
                         double t1_ex  = T2_aa_ijab(i, j, b, a);
                         double t2_dir = L2_aa_(i, j, a, b);
                         double t2_ex  = L2_aa_(i, j, b, a);
-                        double tau = (2.0 * t1_dir - t1_ex) + 2.0 * (2.0 * t2_dir - t2_ex);
-                        diag_vv += (tau * t1_dir) / D;
+                        
+                        double t1_antisym = 2.0 * t1_dir - t1_ex;
+                        double t2_antisym = 2.0 * t2_dir - t2_ex;
+                        
+                        // Eksak Murni Quotient Rule: tau = t^(1) + t^(2)
+                        double tau = t1_antisym + t2_antisym;
+                        
+                        diag_vv += 0.5 * (tau * t1_dir) / D;
                     }
                 }
             }
@@ -784,7 +796,7 @@ void OMP3::build_opdm_alpha() {
                 for (int b = 0; b < va_; ++b) {
                     double D = ea(i) + ea(j) - ea(na_+a) - ea(na_+b);
                     double t1 = T2_aa_ijab(i, j, a, b);
-                    double tau = t1 + 2.0 * L2_aa_(i, j, a, b);
+                    double tau = t1 + L2_aa_(i, j, a, b); // Tereduksi: Tidak ada 2.0
                     diag_oo += 0.5 * (tau * t1) / D;
                 }
             }
@@ -795,7 +807,7 @@ void OMP3::build_opdm_alpha() {
                     for (int b = 0; b < vb_; ++b) {
                         double D = ea(i) + eb(j) - ea(na_+a) - eb(nb_+b);
                         double t1 = (*t2_ab_dense)(i, j, a, b);
-                        double tau = t1 + 2.0 * L2_ab_(i, j, a, b);
+                        double tau = t1 + L2_ab_(i, j, a, b); // Tereduksi: Tidak ada 2.0
                         diag_oo += 1.0 * (tau * t1) / D;
                     }
                 }
@@ -812,7 +824,7 @@ void OMP3::build_opdm_alpha() {
                 for (int b = 0; b < va_; ++b) {
                     double D = ea(i) + ea(j) - ea(na_+a) - ea(na_+b);
                     double t1 = T2_aa_ijab(i, j, a, b);
-                    double tau = t1 + 2.0 * L2_aa_(i, j, a, b);
+                    double tau = t1 + L2_aa_(i, j, a, b);
                     diag_vv += 0.5 * (tau * t1) / D;
                 }
             }
@@ -823,7 +835,7 @@ void OMP3::build_opdm_alpha() {
                     for (int b = 0; b < vb_; ++b) {
                         double D = ea(i) + eb(j) - ea(na_+a) - eb(nb_+b);
                         double t1 = (*t2_ab_dense)(i, j, a, b);
-                        double tau = t1 + 2.0 * L2_ab_(i, j, a, b);
+                        double tau = t1 + L2_ab_(i, j, a, b);
                         diag_vv += 1.0 * (tau * t1) / D;
                     }
                 }
@@ -888,7 +900,7 @@ void OMP3::build_opdm_beta() {
                 for (int b = 0; b < vb_; ++b) {
                     double D = eb(i) + eb(j) - eb(nb_+a) - eb(nb_+b);
                     double t1 = (*t2_bb_dense)(i, j, a, b);
-                    double tau = t1 + 2.0 * L2_bb_(i, j, a, b);
+                    double tau = t1 + L2_bb_(i, j, a, b);
                     diag_oo += 0.5 * (tau * t1) / D;
                 }
             }
@@ -899,7 +911,7 @@ void OMP3::build_opdm_beta() {
                     for (int b = 0; b < vb_; ++b) {
                         double D = ea(i) + eb(j) - ea(na_+a) - eb(nb_+b);
                         double t1 = (*t2_ab_dense)(i, j, a, b);
-                        double tau = t1 + 2.0 * L2_ab_(i, j, a, b);
+                        double tau = t1 + L2_ab_(i, j, a, b);
                         diag_oo += 1.0 * (tau * t1) / D;
                     }
                 }
@@ -916,7 +928,7 @@ void OMP3::build_opdm_beta() {
                 for (int a = 0; a < vb_; ++a) {
                     double D = eb(i) + eb(j) - eb(nb_+a) - eb(nb_+b);
                     double t1 = (*t2_bb_dense)(i, j, a, b);
-                    double tau = t1 + 2.0 * L2_bb_(i, j, a, b);
+                    double tau = t1 + L2_bb_(i, j, a, b);
                     diag_vv += 0.5 * (tau * t1) / D;
                 }
             }
@@ -927,7 +939,7 @@ void OMP3::build_opdm_beta() {
                     for (int a = 0; a < va_; ++a) {
                         double D = ea(i) + eb(j) - ea(na_+a) - eb(nb_+b);
                         double t1 = (*t2_ab_dense)(i, j, a, b);
-                        double tau = t1 + 2.0 * L2_ab_(i, j, a, b);
+                        double tau = t1 + L2_ab_(i, j, a, b);
                         diag_vv += 1.0 * (tau * t1) / D;
                     }
                 }
@@ -936,7 +948,6 @@ void OMP3::build_opdm_beta() {
         G_vv_beta_(b, b) -= diag_vv;
     }
 }
-
 void OMP3::build_generalized_fock() {
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     
