@@ -931,7 +931,7 @@ void OMP3::build_generalized_fock() {
         TBLIS_VIEW_4D(t_Govov_aa, Gamma_ovov_aa, na_, va_, na_, va_);
         
         // PERBAIKAN 1: Skalar Govov Eksak (-1.0 mutlak untuk Cincin PH)
-        tblis::mult<double>(-1.0, t_T2t, "imae", t_Taa, "jmbe", 1.0, t_Govov_aa, "iajb");
+        tblis::mult<double>(1.0, t_T2t, "imae", t_Taa, "jmbe", 1.0, t_Govov_aa, "iajb");
                         
         Eigen::MatrixXd G_mat_aa(na_ * va_, na_ * va_);
         #pragma omp parallel for collapse(2) schedule(static)
