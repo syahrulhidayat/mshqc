@@ -791,60 +791,9 @@ void OMP3::build_opdm_beta() {
 void OMP3::build_generalized_fock() {
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     
-    // =========================================================
-    // 1. Perakitan 1-RDM dan Fock Dasar (TIDAK ADA PERUBAHAN)
-    // =========================================================
-    Eigen::MatrixXd G_full_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
-    G_full_a.block(0, 0, na_, na_) = G_oo_alpha_; 
-    G_full_a.block(na_, na_, va_, va_) = G_vv_alpha_;
-    Eigen::MatrixXd P_corr_a = scf_.C_alpha * G_full_a * scf_.C_alpha.transpose();
-    
-    Eigen::MatrixXd G_full_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
-    Eigen::MatrixXd P_corr_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
-    if (!is_restricted && nb_ > 0) {
-        G_full_b.block(0, 0, nb_, nb_) = G_oo_beta_;
-        G_full_b.block(nb_, nb_, vb_, vb_) = G_vv_beta_;
-        P_corr_b = scf_.C_beta * G_full_b * scf_.C_beta.transpose();
-    } else if (is_restricted) { 
-        P_corr_b = P_corr_a; 
-    }
-
-    Eigen::MatrixXd F_HF_ao_a, F_HF_ao_b;
-    build_fock_fast(scf_.P_alpha, scf_.P_beta, F_HF_ao_a, F_HF_ao_b);
-    
-    Eigen::MatrixXd F_HF_mo_a = scf_.C_alpha.transpose() * F_HF_ao_a * scf_.C_alpha;
-    Eigen::MatrixXd F_HF_mo_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
-    if (!is_restricted && nb_ > 0) F_HF_mo_b = scf_.C_beta.transpose() * F_HF_ao_b * scf_.C_beta;
-    else if (is_restricted) F_HF_mo_b = F_HF_mo_a;
-
-    Eigen::MatrixXd G_gamma_ao_a, G_gamma_ao_b;
-    build_fock_fast(P_corr_a, P_corr_b, G_gamma_ao_a, G_gamma_ao_b);
-    
-    G_gamma_ao_a -= H_core_;
-    if (!is_restricted && nb_ > 0) G_gamma_ao_b -= H_core_;
-    else if (is_restricted) G_gamma_ao_b = G_gamma_ao_a;
-    
-    Eigen::MatrixXd G_gamma_mo_a = scf_.C_alpha.transpose() * G_gamma_ao_a * scf_.C_alpha;
-    Eigen::MatrixXd G_gamma_mo_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
-    if (!is_restricted && nb_ > 0) G_gamma_mo_b = scf_.C_beta.transpose() * G_gamma_ao_b * scf_.C_beta;
-    else if (is_restricted) G_gamma_mo_b = G_gamma_mo_a;
-
-    F_gen_a_ = F_HF_mo_a + G_gamma_mo_a;
-    if (na_ > 0 && va_ > 0) {
-        Eigen::MatrixXd F_HF_vo_a = F_HF_mo_a.block(na_, 0, va_, na_);
-        Eigen::MatrixXd L_sep_a = F_HF_vo_a * G_oo_alpha_ - G_vv_alpha_ * F_HF_vo_a;
-        F_gen_a_.block(na_, 0, va_, na_) += L_sep_a;
-        F_gen_a_.block(0, na_, na_, va_) += L_sep_a.transpose();
-    }
-
-    if (!is_restricted && nb_ > 0 && vb_ > 0) {
-        F_gen_b_ = F_HF_mo_b + G_gamma_mo_b;
-        Eigen::MatrixXd F_HF_vo_b = F_HF_mo_b.block(nb_, 0, vb_, nb_);
-        Eigen::MatrixXd L_sep_b = F_HF_vo_b * G_oo_beta_ - G_vv_beta_ * F_HF_vo_b;
-        F_gen_b_.block(nb_, 0, vb_, nb_) += L_sep_b;
-        F_gen_b_.block(0, nb_, nb_, vb_) += L_sep_b.transpose();
-    } 
-
+    // =========================================================================
+    // TAHAP 1: PERSIAPAN VARIABEL DAN MATRIKS AUXILIARY (B-MATRIKS)
+    // =========================================================================
     int n_aux = scf_.L_mat.cols();
     Eigen::MatrixXd B_oo_a = Eigen::MatrixXd::Zero(na_*na_, n_aux);
     Eigen::MatrixXd B_vv_a = Eigen::MatrixXd::Zero(va_*va_, n_aux);
@@ -910,9 +859,9 @@ void OMP3::build_generalized_fock() {
     TBLIS_VIEW_2D(t_Za, Z_mat_a.data(), va_, na_);
     TBLIS_VIEW_3D(t_Bia_a, B_ia_P_alpha_.data(), va_, na_, n_aux); 
 
-    // =========================================================
-    // 2. Perakitan 2-RDM Z-Vector (EVALUASI EKSAK OMP3)
-    // =========================================================
+    // =========================================================================
+    // TAHAP 2: EVALUASI Z-VECTOR EKSAK (OMP3 Z-Vector & Amplitudo Efektif)
+    // =========================================================================
     if (is_restricted) {
         Eigen::Tensor<double, 4> T2_tilde(na_, na_, va_, va_);
         #pragma omp parallel for collapse(4) schedule(static)
@@ -929,8 +878,6 @@ void OMP3::build_generalized_fock() {
 
         Eigen::Tensor<double, 4> Gamma_ovov_aa(na_, va_, na_, va_); Gamma_ovov_aa.setZero();
         TBLIS_VIEW_4D(t_Govov_aa, Gamma_ovov_aa, na_, va_, na_, va_);
-        
-        // PERBAIKAN 1: Skalar Govov Eksak (-1.0 mutlak untuk Cincin PH)
         tblis::mult<double>(1.0, t_T2t, "imae", t_Taa, "jmbe", 1.0, t_Govov_aa, "iajb");
                         
         Eigen::MatrixXd G_mat_aa(na_ * va_, na_ * va_);
@@ -948,7 +895,6 @@ void OMP3::build_generalized_fock() {
 
         Eigen::Tensor<double, 4> Gvvvv_a(va_, va_, va_, va_); Gvvvv_a.setZero();
         TBLIS_VIEW_4D(t_Gvvvv_a, Gvvvv_a, va_, va_, va_, va_);
-        // Skalar Gvvvv Eksak (0.5 mutlak untuk Tangga Partikel)
         tblis::mult<double>(0.5, t_T2t, "ijab", t_Taa, "ijcd", 0.0, t_Gvvvv_a, "acbd");
         
         Eigen::Tensor<double, 3> Yvv_a(va_, va_, n_aux); Yvv_a.setZero();
@@ -958,7 +904,6 @@ void OMP3::build_generalized_fock() {
 
         Eigen::Tensor<double, 4> Goooo_a(na_, na_, na_, na_); Goooo_a.setZero();
         TBLIS_VIEW_4D(t_Goooo_a, Goooo_a, na_, na_, na_, na_);
-        // Skalar Goooo Eksak (0.5 mutlak untuk Tangga Lubang)
         tblis::mult<double>(0.5, t_T2t, "ijab", t_Taa, "klab", 0.0, t_Goooo_a, "ikjl");
         
         Eigen::Tensor<double, 3> Yoo_a(na_, na_, n_aux); Yoo_a.setZero();
@@ -976,7 +921,6 @@ void OMP3::build_generalized_fock() {
                         double t2_dir = L2_aa_(i, j, a, b);
                         double t1_ex = T2_aa_ijab(i, j, b, a);
                         double t2_ex = L2_aa_(i, j, b, a); 
-                        // PERBAIKAN 2: Teff Rasio Eksak 1.0 * t1 + 1.0 * t2
                         Teff_aa(i*va_+a, j*va_+b) = 1.0 * (2.0 * t1_dir - 1.0 * t1_ex) + 1.0 * (2.0 * t2_dir - 1.0 * t2_ex);
                     }
                 }
@@ -1009,11 +953,8 @@ void OMP3::build_generalized_fock() {
         TBLIS_VIEW_4D(t_Govov_bb, Gamma_ovov_bb, nb_, vb_, nb_, vb_);
         TBLIS_VIEW_4D(t_Govov_ab, Gamma_ovov_ab, na_, va_, nb_, vb_);
 
-        // --- UNRESTRICTED: Skalar Govov Eksak (SEMUANYA NEGATIF) ---
-        // --- UNRESTRICTED: Skalar Govov Eksak (SEMUANYA POSITIF) ---
         tblis::mult<double>(0.5, t_Taa, "imae", t_Taa, "jmbe", 1.0, t_Govov_aa, "iajb");
         tblis::mult<double>(0.5, t_Tbb, "imae", t_Tbb, "jmbe", 1.0, t_Govov_bb, "iajb");
-
         tblis::mult<double>(0.5, t_Tab, "miea", t_Tab, "mjeb", 1.0, t_Govov_bb, "iajb");
         tblis::mult<double>(1.0, t_Taa, "imae", t_Tab, "mjeb", 1.0, t_Govov_ab, "iajb");
         tblis::mult<double>(1.0, t_Tab, "imae", t_Tbb, "mjeb", 1.0, t_Govov_ab, "iajb");
@@ -1031,7 +972,6 @@ void OMP3::build_generalized_fock() {
         Eigen::Tensor<double, 4> Gvvvv_ab(va_, va_, vb_, vb_); Gvvvv_ab.setZero();
         TBLIS_VIEW_4D(t_Gvvvv_ab, Gvvvv_ab, va_, va_, vb_, vb_);
 
-        // --- UNRESTRICTED: Skalar Gvvvv Eksak (SEMUANYA POSITIF) ---
         tblis::mult<double>(0.5, t_Taa, "ijab", t_Taa, "ijcd", 0.0, t_Gvvvv_aa, "acbd");
         tblis::mult<double>(0.5, t_Tbb, "ijab", t_Tbb, "ijcd", 0.0, t_Gvvvv_bb, "acbd");
         tblis::mult<double>(1.0, t_Tab, "ijab", t_Tab, "ijcd", 0.0, t_Gvvvv_ab, "acbd");
@@ -1055,7 +995,6 @@ void OMP3::build_generalized_fock() {
         Eigen::Tensor<double, 4> Goooo_ab(na_, na_, nb_, nb_); Goooo_ab.setZero();
         TBLIS_VIEW_4D(t_Goooo_ab, Goooo_ab, na_, na_, nb_, nb_);
 
-        // --- UNRESTRICTED: Skalar Goooo Eksak (SEMUANYA POSITIF) ---
         tblis::mult<double>(0.5, t_Taa, "ijab", t_Taa, "klab", 0.0, t_Goooo_aa, "ikjl");
         tblis::mult<double>(0.5, t_Tbb, "ijab", t_Tbb, "klab", 0.0, t_Goooo_bb, "ikjl");
         tblis::mult<double>(1.0, t_Tab, "ijab", t_Tab, "klab", 0.0, t_Goooo_ab, "ikjl");
@@ -1113,7 +1052,6 @@ void OMP3::build_generalized_fock() {
             for (int a = 0; a < va_; ++a) {
                 for (int j = 0; j < na_; ++j) {
                     for (int b = 0; b < va_; ++b) {
-                        // PERBAIKAN 5: Rasio 1.0 * t1 + 1.0 * t2
                         Teff_aa(i*va_+a, j*va_+b) = 1.0 * T2_aa_ijab(i, j, a, b) + 1.0 * L2_aa_(i, j, a, b);
                     }
                 }
@@ -1124,7 +1062,6 @@ void OMP3::build_generalized_fock() {
             for (int a = 0; a < va_; ++a) {
                 for (int j = 0; j < nb_; ++j) {
                     for (int b = 0; b < vb_; ++b) {
-                        // PERBAIKAN 6: Rasio 1.0 * t1 + 1.0 * t2
                         Teff_ab(i*va_+a, j*vb_+b) = 1.0 * (*t2_ab_dense)(i, j, a, b) + 1.0 * L2_ab_(i, j, a, b);
                     }
                 }
@@ -1135,7 +1072,6 @@ void OMP3::build_generalized_fock() {
             for (int a = 0; a < vb_; ++a) {
                 for (int j = 0; j < nb_; ++j) {
                     for (int b = 0; b < vb_; ++b) {
-                        // PERBAIKAN 7: Rasio 1.0 * t1 + 1.0 * t2
                         Teff_bb(i*vb_+a, j*vb_+b) = 1.0 * (*t2_bb_dense)(i, j, a, b) + 1.0 * L2_bb_(i, j, a, b);
                     }
                 }
@@ -1162,15 +1098,242 @@ void OMP3::build_generalized_fock() {
             Z_mat_b.noalias() += V_b * XT_b - XT_b * O_b;
         }
     }
+
+    // =========================================================================
+    // TAHAP 3: INJEKSI DENOMINATOR RESPONSE (Fully Relaxed 1-RDM Diagonal)
+    // =========================================================================
+    const auto& ea = scf_.orbital_energies_alpha;
+    const auto& eb = scf_.orbital_energies_beta;
     
-    F_gen_a_.block(na_, 0, va_, na_) += Z_mat_a;
-    F_gen_a_.block(0, na_, na_, va_) += Z_mat_a.transpose();
+    if (is_restricted) {
+        #pragma omp parallel for schedule(static)
+        for (int i = 0; i < na_; ++i) {
+            double diag_oo = 0.0;
+            for (int j = 0; j < na_; ++j) {
+                for (int a = 0; a < va_; ++a) {
+                    for (int b = 0; b < va_; ++b) {
+                        double D = ea(i) + ea(j) - ea(na_+a) - ea(na_+b);
+                        if (std::abs(D) < 1e-12) continue;
+                        double t1_dir = T2_aa_ijab(i, j, a, b);
+                        double t2_dir = L2_aa_(i, j, a, b);
+                        double t1_ex  = T2_aa_ijab(i, j, b, a);
+                        double t2_ex  = L2_aa_(i, j, b, a);
+                        double tau_asym = (2.0 * t1_dir - t1_ex) + (2.0 * t2_dir - t2_ex);
+                        diag_oo += 0.5 * (tau_asym * t1_dir) / D;
+                    }
+                }
+            }
+            #pragma omp atomic
+            G_oo_alpha_(i, i) += diag_oo;
+        }
+        
+        #pragma omp parallel for schedule(static)
+        for (int a = 0; a < va_; ++a) {
+            double diag_vv = 0.0;
+            for (int b = 0; b < va_; ++b) {
+                for (int i = 0; i < na_; ++i) {
+                    for (int j = 0; j < na_; ++j) {
+                        double D = ea(i) + ea(j) - ea(na_+a) - ea(na_+b);
+                        if (std::abs(D) < 1e-12) continue;
+                        double t1_dir = T2_aa_ijab(i, j, a, b);
+                        double t2_dir = L2_aa_(i, j, a, b);
+                        double t1_ex  = T2_aa_ijab(i, j, b, a);
+                        double t2_ex  = L2_aa_(i, j, b, a);
+                        double tau_asym = (2.0 * t1_dir - t1_ex) + (2.0 * t2_dir - t2_ex);
+                        diag_vv -= 0.5 * (tau_asym * t1_dir) / D;
+                    }
+                }
+            }
+            #pragma omp atomic
+            G_vv_alpha_(a, a) += diag_vv;
+        }
+    } else {
+        auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
+        auto* t2_bb_dense = t2_bb_.get_block(0,0,0,0);
+        
+        // Alpha Diagonal Updates
+        #pragma omp parallel for schedule(static)
+        for (int i = 0; i < na_; ++i) {
+            double diag_oo = 0.0;
+            for (int j = 0; j < na_; ++j) {
+                for (int a = 0; a < va_; ++a) {
+                    for (int b = 0; b < va_; ++b) {
+                        double D = ea(i) + ea(j) - ea(na_+a) - ea(na_+b);
+                        if (std::abs(D) > 1e-12) {
+                            double tau = T2_aa_ijab(i,j,a,b) + L2_aa_(i,j,a,b);
+                            diag_oo += 0.5 * tau * T2_aa_ijab(i,j,a,b) / D;
+                        }
+                    }
+                }
+            }
+            if (nb_ > 0 && vb_ > 0 && t2_ab_dense) {
+                for (int j = 0; j < nb_; ++j) {
+                    for (int a = 0; a < va_; ++a) {
+                        for (int b = 0; b < vb_; ++b) {
+                            double D = ea(i) + eb(j) - ea(na_+a) - eb(nb_+b);
+                            if (std::abs(D) > 1e-12) {
+                                double tau = (*t2_ab_dense)(i,j,a,b) + L2_ab_(i,j,a,b);
+                                diag_oo += 1.0 * tau * (*t2_ab_dense)(i,j,a,b) / D;
+                            }
+                        }
+                    }
+                }
+            }
+            #pragma omp atomic
+            G_oo_alpha_(i, i) += diag_oo;
+        }
+
+        #pragma omp parallel for schedule(static)
+        for (int a = 0; a < va_; ++a) {
+            double diag_vv = 0.0;
+            for (int i = 0; i < na_; ++i) {
+                for (int j = 0; j < na_; ++j) {
+                    for (int b = 0; b < va_; ++b) {
+                        double D = ea(i) + ea(j) - ea(na_+a) - ea(na_+b);
+                        if (std::abs(D) > 1e-12) {
+                            double tau = T2_aa_ijab(i,j,a,b) + L2_aa_(i,j,a,b);
+                            diag_vv -= 0.5 * tau * T2_aa_ijab(i,j,a,b) / D;
+                        }
+                    }
+                }
+            }
+            if (nb_ > 0 && vb_ > 0 && t2_ab_dense) {
+                for (int i = 0; i < na_; ++i) {
+                    for (int j = 0; j < nb_; ++j) {
+                        for (int b = 0; b < vb_; ++b) {
+                            double D = ea(i) + eb(j) - ea(na_+a) - eb(nb_+b);
+                            if (std::abs(D) > 1e-12) {
+                                double tau = (*t2_ab_dense)(i,j,a,b) + L2_ab_(i,j,a,b);
+                                diag_vv -= 1.0 * tau * (*t2_ab_dense)(i,j,a,b) / D;
+                            }
+                        }
+                    }
+                }
+            }
+            #pragma omp atomic
+            G_vv_alpha_(a, a) += diag_vv;
+        }
+
+        // Beta Diagonal Updates
+        if (nb_ > 0 && vb_ > 0 && t2_bb_dense && t2_ab_dense) {
+            #pragma omp parallel for schedule(static)
+            for (int i = 0; i < nb_; ++i) {
+                double diag_oo = 0.0;
+                for (int j = 0; j < nb_; ++j) {
+                    for (int a = 0; a < vb_; ++a) {
+                        for (int b = 0; b < vb_; ++b) {
+                            double D = eb(i) + eb(j) - eb(nb_+a) - eb(nb_+b);
+                            if (std::abs(D) > 1e-12) {
+                                double tau = (*t2_bb_dense)(i,j,a,b) + L2_bb_(i,j,a,b);
+                                diag_oo += 0.5 * tau * (*t2_bb_dense)(i,j,a,b) / D;
+                            }
+                        }
+                    }
+                }
+                for (int j = 0; j < na_; ++j) {
+                    for (int a = 0; a < va_; ++a) {
+                        for (int b = 0; b < vb_; ++b) {
+                            double D = ea(j) + eb(i) - ea(na_+a) - eb(nb_+b);
+                            if (std::abs(D) > 1e-12) {
+                                double tau = (*t2_ab_dense)(j,i,a,b) + L2_ab_(j,i,a,b);
+                                diag_oo += 1.0 * tau * (*t2_ab_dense)(j,i,a,b) / D;
+                            }
+                        }
+                    }
+                }
+                #pragma omp atomic
+                G_oo_beta_(i, i) += diag_oo;
+            }
+
+            #pragma omp parallel for schedule(static)
+            for (int a = 0; a < vb_; ++a) {
+                double diag_vv = 0.0;
+                for (int i = 0; i < nb_; ++i) {
+                    for (int j = 0; j < nb_; ++j) {
+                        for (int b = 0; b < vb_; ++b) {
+                            double D = eb(i) + eb(j) - eb(nb_+a) - eb(nb_+b);
+                            if (std::abs(D) > 1e-12) {
+                                double tau = (*t2_bb_dense)(i,j,a,b) + L2_bb_(i,j,a,b);
+                                diag_vv -= 0.5 * tau * (*t2_bb_dense)(i,j,a,b) / D;
+                            }
+                        }
+                    }
+                }
+                for (int i = 0; i < na_; ++i) {
+                    for (int j = 0; j < nb_; ++j) {
+                        for (int b = 0; b < va_; ++b) {
+                            double D = ea(i) + eb(j) - ea(na_+b) - eb(nb_+a);
+                            if (std::abs(D) > 1e-12) {
+                                double tau = (*t2_ab_dense)(i,j,b,a) + L2_ab_(i,j,b,a);
+                                diag_vv -= 1.0 * tau * (*t2_ab_dense)(i,j,b,a) / D;
+                            }
+                        }
+                    }
+                }
+                #pragma omp atomic
+                G_vv_beta_(a, a) += diag_vv;
+            }
+        }
+    }
+
+    // =========================================================================
+    // TAHAP 4: PERAKITAN 1-RDM & MATRIKS FOCK GENERALIZED (F_gen)
+    // =========================================================================
+    Eigen::MatrixXd G_full_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
+    G_full_a.block(0, 0, na_, na_) = G_oo_alpha_; 
+    G_full_a.block(na_, na_, va_, va_) = G_vv_alpha_;
+    Eigen::MatrixXd P_corr_a = scf_.C_alpha * G_full_a * scf_.C_alpha.transpose();
     
+    Eigen::MatrixXd G_full_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
+    Eigen::MatrixXd P_corr_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
+    if (!is_restricted && nb_ > 0) {
+        G_full_b.block(0, 0, nb_, nb_) = G_oo_beta_;
+        G_full_b.block(nb_, nb_, vb_, vb_) = G_vv_beta_;
+        P_corr_b = scf_.C_beta * G_full_b * scf_.C_beta.transpose();
+    } else if (is_restricted) { 
+        P_corr_b = P_corr_a; 
+    }
+
+    Eigen::MatrixXd F_HF_ao_a, F_HF_ao_b;
+    build_fock_fast(scf_.P_alpha, scf_.P_beta, F_HF_ao_a, F_HF_ao_b);
+    
+    Eigen::MatrixXd F_HF_mo_a = scf_.C_alpha.transpose() * F_HF_ao_a * scf_.C_alpha;
+    Eigen::MatrixXd F_HF_mo_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
+    if (!is_restricted && nb_ > 0) F_HF_mo_b = scf_.C_beta.transpose() * F_HF_ao_b * scf_.C_beta;
+    else if (is_restricted) F_HF_mo_b = F_HF_mo_a;
+
+    Eigen::MatrixXd G_gamma_ao_a, G_gamma_ao_b;
+    build_fock_fast(P_corr_a, P_corr_b, G_gamma_ao_a, G_gamma_ao_b);
+    
+    G_gamma_ao_a -= H_core_;
+    if (!is_restricted && nb_ > 0) G_gamma_ao_b -= H_core_;
+    else if (is_restricted) G_gamma_ao_b = G_gamma_ao_a;
+    
+    Eigen::MatrixXd G_gamma_mo_a = scf_.C_alpha.transpose() * G_gamma_ao_a * scf_.C_alpha;
+    Eigen::MatrixXd G_gamma_mo_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
+    if (!is_restricted && nb_ > 0) G_gamma_mo_b = scf_.C_beta.transpose() * G_gamma_ao_b * scf_.C_beta;
+    else if (is_restricted) G_gamma_mo_b = G_gamma_mo_a;
+
+    F_gen_a_ = F_HF_mo_a + G_gamma_mo_a;
+    if (na_ > 0 && va_ > 0) {
+        Eigen::MatrixXd F_HF_vo_a = F_HF_mo_a.block(na_, 0, va_, na_);
+        Eigen::MatrixXd L_sep_a = F_HF_vo_a * G_oo_alpha_ - G_vv_alpha_ * F_HF_vo_a;
+        F_gen_a_.block(na_, 0, va_, na_) += L_sep_a;
+        F_gen_a_.block(0, na_, na_, va_) += L_sep_a.transpose();
+        F_gen_a_.block(na_, 0, va_, na_) += Z_mat_a;
+        F_gen_a_.block(0, na_, na_, va_) += Z_mat_a.transpose();
+    }
+
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
+        F_gen_b_ = F_HF_mo_b + G_gamma_mo_b;
+        Eigen::MatrixXd F_HF_vo_b = F_HF_mo_b.block(nb_, 0, vb_, nb_);
+        Eigen::MatrixXd L_sep_b = F_HF_vo_b * G_oo_beta_ - G_vv_beta_ * F_HF_vo_b;
+        F_gen_b_.block(nb_, 0, vb_, nb_) += L_sep_b;
+        F_gen_b_.block(0, nb_, nb_, vb_) += L_sep_b.transpose();
         F_gen_b_.block(nb_, 0, vb_, nb_) += Z_mat_b;
         F_gen_b_.block(0, nb_, nb_, vb_) += Z_mat_b.transpose();
     } else if (is_restricted) {
-        F_gen_b_ = F_gen_a_; 
+        F_gen_b_ = F_gen_a_;
     }
 }
 void OMP3::build_hessian_diagonal(Eigen::VectorXd& diag_H, double grad_norm) {
