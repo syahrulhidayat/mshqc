@@ -790,11 +790,11 @@ void OMP3::build_opdm_beta() {
 }
 void OMP3::build_generalized_fock() {
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
+    int n_aux = scf_.L_mat.cols();
     
     // =========================================================================
     // TAHAP 1: PERSIAPAN VARIABEL DAN MATRIKS AUXILIARY (B-MATRIKS)
     // =========================================================================
-    int n_aux = scf_.L_mat.cols();
     Eigen::MatrixXd B_oo_a = Eigen::MatrixXd::Zero(na_*na_, n_aux);
     Eigen::MatrixXd B_vv_a = Eigen::MatrixXd::Zero(va_*va_, n_aux);
     Eigen::MatrixXd B_oo_b, B_vv_b;
@@ -853,6 +853,15 @@ void OMP3::build_generalized_fock() {
     Eigen::MatrixXd Z_mat_a = Eigen::MatrixXd::Zero(va_, na_);
     Eigen::MatrixXd Z_mat_b;
     if (!is_restricted && nb_ > 0 && vb_ > 0) Z_mat_b = Eigen::MatrixXd::Zero(vb_, nb_);
+    
+    // VARIABEL PENAMPUNG CPHF
+    Eigen::MatrixXd Z_oo_a = Eigen::MatrixXd::Zero(na_, na_);
+    Eigen::MatrixXd Z_vv_a = Eigen::MatrixXd::Zero(va_, va_);
+    Eigen::MatrixXd Z_oo_b, Z_vv_b;
+    if (!is_restricted && nb_ > 0 && vb_ > 0) {
+        Z_oo_b = Eigen::MatrixXd::Zero(nb_, nb_);
+        Z_vv_b = Eigen::MatrixXd::Zero(vb_, vb_);
+    }
 
     TBLIS_VIEW_3D(t_Bvv_a, B_vv_a.data(), va_, va_, n_aux);
     TBLIS_VIEW_3D(t_Boo_a, B_oo_a.data(), na_, na_, n_aux);
@@ -860,7 +869,7 @@ void OMP3::build_generalized_fock() {
     TBLIS_VIEW_3D(t_Bia_a, B_ia_P_alpha_.data(), va_, na_, n_aux); 
 
     // =========================================================================
-    // TAHAP 2: EVALUASI Z-VECTOR EKSAK (OMP3 Z-Vector & Amplitudo Efektif)
+    // TAHAP 2: EVALUASI Z-VECTOR EKSAK OMP3 & EKSTRAKSI CPHF
     // =========================================================================
     if (is_restricted) {
         Eigen::Tensor<double, 4> T2_tilde(na_, na_, va_, va_);
@@ -928,11 +937,31 @@ void OMP3::build_generalized_fock() {
         }
         Eigen::MatrixXd X_a(na_*va_, n_aux);
         X_a.noalias() = Teff_aa * B_ia_P_alpha_;
-        for (int P = 0; P < n_aux; ++P) {
-            Eigen::Map<const Eigen::MatrixXd> XT_a(X_a.col(P).data(), va_, na_); 
-            Eigen::Map<const Eigen::MatrixXd> V_a(B_vv_a.col(P).data(), va_, va_);
-            Eigen::Map<const Eigen::MatrixXd> O_a(B_oo_a.col(P).data(), na_, na_);
-            Z_mat_a.noalias() += V_a * XT_a - XT_a * O_a;
+        
+        // P-Loop Restricted dengan Ekstraksi CPHF
+        #pragma omp parallel
+        {
+            Eigen::MatrixXd Z_loc_a = Eigen::MatrixXd::Zero(va_, na_);
+            Eigen::MatrixXd Z_oo_loc_a = Eigen::MatrixXd::Zero(na_, na_);
+            Eigen::MatrixXd Z_vv_loc_a = Eigen::MatrixXd::Zero(va_, va_);
+            #pragma omp for schedule(dynamic)
+            for (int P = 0; P < n_aux; ++P) {
+                Eigen::Map<const Eigen::MatrixXd> XT_a(X_a.col(P).data(), va_, na_); 
+                Eigen::Map<const Eigen::MatrixXd> V_a(B_vv_a.col(P).data(), va_, va_);
+                Eigen::Map<const Eigen::MatrixXd> O_a(B_oo_a.col(P).data(), na_, na_);
+                Z_loc_a.noalias() += V_a * XT_a - XT_a * O_a;
+
+                Eigen::Map<const Eigen::MatrixXd> X_ia(X_a.col(P).data(), na_, va_);
+                Eigen::Map<const Eigen::MatrixXd> B_ia(B_ia_P_alpha_.col(P).data(), na_, va_);
+                Z_oo_loc_a.noalias() += X_ia * B_ia.transpose();
+                Z_vv_loc_a.noalias() -= X_ia.transpose() * B_ia;
+            }
+            #pragma omp critical
+            {
+                Z_mat_a += Z_loc_a;
+                Z_oo_a += Z_oo_loc_a;
+                Z_vv_a += Z_vv_loc_a;
+            }
         }
     } 
     else {
@@ -1086,25 +1115,100 @@ void OMP3::build_generalized_fock() {
         X_b.noalias() = Teff_bb * B_ia_P_beta_;
         X_b.noalias() += Teff_ab.transpose() * B_ia_P_alpha_;
 
-        for (int P = 0; P < n_aux; ++P) {
-            Eigen::Map<const Eigen::MatrixXd> XT_a(X_a.col(P).data(), va_, na_); 
-            Eigen::Map<const Eigen::MatrixXd> V_a(B_vv_a.col(P).data(), va_, va_);
-            Eigen::Map<const Eigen::MatrixXd> O_a(B_oo_a.col(P).data(), na_, na_);
-            Z_mat_a.noalias() += V_a * XT_a - XT_a * O_a;
+        // P-Loop Unrestricted dengan Ekstraksi CPHF
+        #pragma omp parallel
+        {
+            Eigen::MatrixXd Z_loc_a = Eigen::MatrixXd::Zero(va_, na_);
+            Eigen::MatrixXd Z_oo_loc_a = Eigen::MatrixXd::Zero(na_, na_);
+            Eigen::MatrixXd Z_vv_loc_a = Eigen::MatrixXd::Zero(va_, va_);
+            
+            Eigen::MatrixXd Z_loc_b = Eigen::MatrixXd::Zero(vb_, nb_);
+            Eigen::MatrixXd Z_oo_loc_b = Eigen::MatrixXd::Zero(nb_, nb_);
+            Eigen::MatrixXd Z_vv_loc_b = Eigen::MatrixXd::Zero(vb_, vb_);
 
-            Eigen::Map<const Eigen::MatrixXd> XT_b(X_b.col(P).data(), vb_, nb_); 
-            Eigen::Map<const Eigen::MatrixXd> V_b(B_vv_b.col(P).data(), vb_, vb_);
-            Eigen::Map<const Eigen::MatrixXd> O_b(B_oo_b.col(P).data(), nb_, nb_);
-            Z_mat_b.noalias() += V_b * XT_b - XT_b * O_b;
+            #pragma omp for schedule(dynamic)
+            for (int P = 0; P < n_aux; ++P) {
+                Eigen::Map<const Eigen::MatrixXd> XT_a(X_a.col(P).data(), va_, na_); 
+                Eigen::Map<const Eigen::MatrixXd> V_a(B_vv_a.col(P).data(), va_, va_);
+                Eigen::Map<const Eigen::MatrixXd> O_a(B_oo_a.col(P).data(), na_, na_);
+                Z_loc_a.noalias() += V_a * XT_a - XT_a * O_a;
+
+                Eigen::Map<const Eigen::MatrixXd> X_ia(X_a.col(P).data(), na_, va_);
+                Eigen::Map<const Eigen::MatrixXd> B_ia(B_ia_P_alpha_.col(P).data(), na_, va_);
+                Z_oo_loc_a.noalias() += X_ia * B_ia.transpose();
+                Z_vv_loc_a.noalias() -= X_ia.transpose() * B_ia;
+
+                Eigen::Map<const Eigen::MatrixXd> XT_b(X_b.col(P).data(), vb_, nb_); 
+                Eigen::Map<const Eigen::MatrixXd> V_b(B_vv_b.col(P).data(), vb_, vb_);
+                Eigen::Map<const Eigen::MatrixXd> O_b(B_oo_b.col(P).data(), nb_, nb_);
+                Z_loc_b.noalias() += V_b * XT_b - XT_b * O_b;
+
+                Eigen::Map<const Eigen::MatrixXd> X_ib(X_b.col(P).data(), nb_, vb_);
+                Eigen::Map<const Eigen::MatrixXd> B_ib(B_ia_P_beta_.col(P).data(), nb_, vb_);
+                Z_oo_loc_b.noalias() += X_ib * B_ib.transpose();
+                Z_vv_loc_b.noalias() -= X_ib.transpose() * B_ib;
+            }
+            #pragma omp critical
+            {
+                Z_mat_a += Z_loc_a;
+                Z_oo_a += Z_oo_loc_a;
+                Z_vv_a += Z_vv_loc_a;
+                
+                Z_mat_b += Z_loc_b;
+                Z_oo_b += Z_oo_loc_b;
+                Z_vv_b += Z_vv_loc_b;
+            }
         }
     }
 
     // =========================================================================
-    // TAHAP 3: INJEKSI DENOMINATOR RESPONSE (Fully Relaxed 1-RDM Diagonal)
+    // TAHAP 3: INJEKSI DENOMINATOR RESPONSE & SEMI-CANONICAL CPHF SOLVER
     // =========================================================================
     const auto& ea = scf_.orbital_energies_alpha;
     const auto& eb = scf_.orbital_energies_beta;
+    double scale = is_restricted ? 0.25 : 0.5;
+
+    // --- SOLVER CPHF (Menangani Rotasi Occ-Occ dan Vir-Vir dari FD) ---
+    for (int i = 0; i < na_; ++i) {
+        for (int j = 0; j < na_; ++j) {
+            if (i == j) continue;
+            double diff = ea(i) - ea(j);
+            if (std::abs(diff) > 1e-10) {
+                G_oo_alpha_(i, j) += scale * (Z_oo_a(i, j) - Z_oo_a(j, i)) / diff;
+            }
+        }
+    }
+    for (int a = 0; a < va_; ++a) {
+        for (int b = 0; b < va_; ++b) {
+            if (a == b) continue;
+            double diff = ea(na_+a) - ea(na_+b);
+            if (std::abs(diff) > 1e-10) {
+                G_vv_alpha_(a, b) += scale * (Z_vv_a(a, b) - Z_vv_a(b, a)) / diff;
+            }
+        }
+    }
+    if (!is_restricted && nb_ > 0 && vb_ > 0) {
+        for (int i = 0; i < nb_; ++i) {
+            for (int j = 0; j < nb_; ++j) {
+                if (i == j) continue;
+                double diff = eb(i) - eb(j);
+                if (std::abs(diff) > 1e-10) {
+                    G_oo_beta_(i, j) += scale * (Z_oo_b(i, j) - Z_oo_b(j, i)) / diff;
+                }
+            }
+        }
+        for (int a = 0; a < vb_; ++a) {
+            for (int b = 0; b < vb_; ++b) {
+                if (a == b) continue;
+                double diff = eb(nb_+a) - eb(nb_+b);
+                if (std::abs(diff) > 1e-10) {
+                    G_vv_beta_(a, b) += scale * (Z_vv_b(a, b) - Z_vv_b(b, a)) / diff;
+                }
+            }
+        }
+    }
     
+    // --- DENOMINATOR RESPONSE (Koreksi Diagonal Tanda Terkoreksi) ---
     if (is_restricted) {
         #pragma omp parallel for schedule(static)
         for (int i = 0; i < na_; ++i) {
@@ -1112,14 +1216,13 @@ void OMP3::build_generalized_fock() {
             for (int j = 0; j < na_; ++j) {
                 for (int a = 0; a < va_; ++a) {
                     for (int b = 0; b < va_; ++b) {
-                        double D = ea(i) + ea(j) - ea(na_+a) - ea(na_+b);
-                        if (std::abs(D) < 1e-12) continue;
                         double t1_dir = T2_aa_ijab(i, j, a, b);
                         double t2_dir = L2_aa_(i, j, a, b);
                         double t1_ex  = T2_aa_ijab(i, j, b, a);
                         double t2_ex  = L2_aa_(i, j, b, a);
                         double tau_asym = (2.0 * t1_dir - t1_ex) + (2.0 * t2_dir - t2_ex);
-                        diag_oo += 0.5 * (tau_asym * t1_dir) / D;
+                        // BENAR: Hilangkan / D, Koreksi Tanda
+                        diag_oo -= 0.5 * (tau_asym * t1_dir);
                     }
                 }
             }
@@ -1133,14 +1236,12 @@ void OMP3::build_generalized_fock() {
             for (int b = 0; b < va_; ++b) {
                 for (int i = 0; i < na_; ++i) {
                     for (int j = 0; j < na_; ++j) {
-                        double D = ea(i) + ea(j) - ea(na_+a) - ea(na_+b);
-                        if (std::abs(D) < 1e-12) continue;
                         double t1_dir = T2_aa_ijab(i, j, a, b);
                         double t2_dir = L2_aa_(i, j, a, b);
                         double t1_ex  = T2_aa_ijab(i, j, b, a);
                         double t2_ex  = L2_aa_(i, j, b, a);
                         double tau_asym = (2.0 * t1_dir - t1_ex) + (2.0 * t2_dir - t2_ex);
-                        diag_vv -= 0.5 * (tau_asym * t1_dir) / D;
+                        diag_vv += 0.5 * (tau_asym * t1_dir);
                     }
                 }
             }
@@ -1151,18 +1252,14 @@ void OMP3::build_generalized_fock() {
         auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
         auto* t2_bb_dense = t2_bb_.get_block(0,0,0,0);
         
-        // Alpha Diagonal Updates
         #pragma omp parallel for schedule(static)
         for (int i = 0; i < na_; ++i) {
             double diag_oo = 0.0;
             for (int j = 0; j < na_; ++j) {
                 for (int a = 0; a < va_; ++a) {
                     for (int b = 0; b < va_; ++b) {
-                        double D = ea(i) + ea(j) - ea(na_+a) - ea(na_+b);
-                        if (std::abs(D) > 1e-12) {
-                            double tau = T2_aa_ijab(i,j,a,b) + L2_aa_(i,j,a,b);
-                            diag_oo += 0.5 * tau * T2_aa_ijab(i,j,a,b) / D;
-                        }
+                        double tau = T2_aa_ijab(i,j,a,b) + L2_aa_(i,j,a,b);
+                        diag_oo -= 0.5 * tau * T2_aa_ijab(i,j,a,b);
                     }
                 }
             }
@@ -1170,11 +1267,8 @@ void OMP3::build_generalized_fock() {
                 for (int j = 0; j < nb_; ++j) {
                     for (int a = 0; a < va_; ++a) {
                         for (int b = 0; b < vb_; ++b) {
-                            double D = ea(i) + eb(j) - ea(na_+a) - eb(nb_+b);
-                            if (std::abs(D) > 1e-12) {
-                                double tau = (*t2_ab_dense)(i,j,a,b) + L2_ab_(i,j,a,b);
-                                diag_oo += 1.0 * tau * (*t2_ab_dense)(i,j,a,b) / D;
-                            }
+                            double tau = (*t2_ab_dense)(i,j,a,b) + L2_ab_(i,j,a,b);
+                            diag_oo -= 1.0 * tau * (*t2_ab_dense)(i,j,a,b);
                         }
                     }
                 }
@@ -1189,11 +1283,8 @@ void OMP3::build_generalized_fock() {
             for (int i = 0; i < na_; ++i) {
                 for (int j = 0; j < na_; ++j) {
                     for (int b = 0; b < va_; ++b) {
-                        double D = ea(i) + ea(j) - ea(na_+a) - ea(na_+b);
-                        if (std::abs(D) > 1e-12) {
-                            double tau = T2_aa_ijab(i,j,a,b) + L2_aa_(i,j,a,b);
-                            diag_vv -= 0.5 * tau * T2_aa_ijab(i,j,a,b) / D;
-                        }
+                        double tau = T2_aa_ijab(i,j,a,b) + L2_aa_(i,j,a,b);
+                        diag_vv += 0.5 * tau * T2_aa_ijab(i,j,a,b);
                     }
                 }
             }
@@ -1201,11 +1292,8 @@ void OMP3::build_generalized_fock() {
                 for (int i = 0; i < na_; ++i) {
                     for (int j = 0; j < nb_; ++j) {
                         for (int b = 0; b < vb_; ++b) {
-                            double D = ea(i) + eb(j) - ea(na_+a) - eb(nb_+b);
-                            if (std::abs(D) > 1e-12) {
-                                double tau = (*t2_ab_dense)(i,j,a,b) + L2_ab_(i,j,a,b);
-                                diag_vv -= 1.0 * tau * (*t2_ab_dense)(i,j,a,b) / D;
-                            }
+                            double tau = (*t2_ab_dense)(i,j,a,b) + L2_ab_(i,j,a,b);
+                            diag_vv += 1.0 * tau * (*t2_ab_dense)(i,j,a,b);
                         }
                     }
                 }
@@ -1214,7 +1302,6 @@ void OMP3::build_generalized_fock() {
             G_vv_alpha_(a, a) += diag_vv;
         }
 
-        // Beta Diagonal Updates
         if (nb_ > 0 && vb_ > 0 && t2_bb_dense && t2_ab_dense) {
             #pragma omp parallel for schedule(static)
             for (int i = 0; i < nb_; ++i) {
@@ -1222,22 +1309,16 @@ void OMP3::build_generalized_fock() {
                 for (int j = 0; j < nb_; ++j) {
                     for (int a = 0; a < vb_; ++a) {
                         for (int b = 0; b < vb_; ++b) {
-                            double D = eb(i) + eb(j) - eb(nb_+a) - eb(nb_+b);
-                            if (std::abs(D) > 1e-12) {
-                                double tau = (*t2_bb_dense)(i,j,a,b) + L2_bb_(i,j,a,b);
-                                diag_oo += 0.5 * tau * (*t2_bb_dense)(i,j,a,b) / D;
-                            }
+                            double tau = (*t2_bb_dense)(i,j,a,b) + L2_bb_(i,j,a,b);
+                            diag_oo -= 0.5 * tau * (*t2_bb_dense)(i,j,a,b);
                         }
                     }
                 }
                 for (int j = 0; j < na_; ++j) {
                     for (int a = 0; a < va_; ++a) {
                         for (int b = 0; b < vb_; ++b) {
-                            double D = ea(j) + eb(i) - ea(na_+a) - eb(nb_+b);
-                            if (std::abs(D) > 1e-12) {
-                                double tau = (*t2_ab_dense)(j,i,a,b) + L2_ab_(j,i,a,b);
-                                diag_oo += 1.0 * tau * (*t2_ab_dense)(j,i,a,b) / D;
-                            }
+                            double tau = (*t2_ab_dense)(j,i,a,b) + L2_ab_(j,i,a,b);
+                            diag_oo -= 1.0 * tau * (*t2_ab_dense)(j,i,a,b);
                         }
                     }
                 }
@@ -1251,22 +1332,16 @@ void OMP3::build_generalized_fock() {
                 for (int i = 0; i < nb_; ++i) {
                     for (int j = 0; j < nb_; ++j) {
                         for (int b = 0; b < vb_; ++b) {
-                            double D = eb(i) + eb(j) - eb(nb_+a) - eb(nb_+b);
-                            if (std::abs(D) > 1e-12) {
-                                double tau = (*t2_bb_dense)(i,j,a,b) + L2_bb_(i,j,a,b);
-                                diag_vv -= 0.5 * tau * (*t2_bb_dense)(i,j,a,b) / D;
-                            }
+                            double tau = (*t2_bb_dense)(i,j,a,b) + L2_bb_(i,j,a,b);
+                            diag_vv += 0.5 * tau * (*t2_bb_dense)(i,j,a,b);
                         }
                     }
                 }
                 for (int i = 0; i < na_; ++i) {
                     for (int j = 0; j < nb_; ++j) {
                         for (int b = 0; b < va_; ++b) {
-                            double D = ea(i) + eb(j) - ea(na_+b) - eb(nb_+a);
-                            if (std::abs(D) > 1e-12) {
-                                double tau = (*t2_ab_dense)(i,j,b,a) + L2_ab_(i,j,b,a);
-                                diag_vv -= 1.0 * tau * (*t2_ab_dense)(i,j,b,a) / D;
-                            }
+                            double tau = (*t2_ab_dense)(i,j,b,a) + L2_ab_(i,j,b,a);
+                            diag_vv += 1.0 * tau * (*t2_ab_dense)(i,j,b,a);
                         }
                     }
                 }
