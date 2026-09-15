@@ -198,50 +198,143 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
         }
     } // BATAS AKHIR AREA PARALEL
 
-    // INJEKSI 4 DITEMPATKAN DI SINI (Di luar #pragma omp parallel, sebelum fungsi selesai)
-    const auto& eps_a = scf_.orbital_energies_alpha;
+    // =========================================================================
+    // TAHAP 4: MATRIX-FREE MINI-CPHF SOLVER (FULLY RELAXED INTERNAL RESPONSE)
+    // =========================================================================
+    const auto& ea = scf_.orbital_energies_alpha;
+    const auto& eb = scf_.orbital_energies_beta;
     double scale = is_restricted ? 0.25 : 0.5;
 
-    for (int i = 0; i < na_; ++i) {
-        for (int j = 0; j < na_; ++j) {
-            if (i == j) continue;
-            double diff = eps_a(i) - eps_a(j);
-            if (std::abs(diff) > 1e-10) {
-                G_oo_alpha_(i, j) += scale * (Z_oo_a(i, j) - Z_oo_a(j, i)) / diff;
-            }
-        }
+    // 1. PEMBANGUNAN MATRIKS B_FLAT (Dibutuhkan oleh PCG)
+    int n_aux = scf_.L_mat.cols();
+    Eigen::MatrixXd B_oo_flat_a = Eigen::MatrixXd::Zero(na_ * na_, n_aux);
+    Eigen::MatrixXd B_vv_flat_a = Eigen::MatrixXd::Zero(va_ * va_, n_aux);
+    Eigen::MatrixXd B_oo_flat_b, B_vv_flat_b;
+    if (has_beta) {
+        B_oo_flat_b = Eigen::MatrixXd::Zero(nb_ * nb_, n_aux);
+        B_vv_flat_b = Eigen::MatrixXd::Zero(vb_ * vb_, n_aux);
     }
     
-    for (int a = 0; a < va_; ++a) {
-        for (int b = 0; b < va_; ++b) {
-            if (a == b) continue;
-            double diff = eps_a(na_ + a) - eps_a(na_ + b);
-            if (std::abs(diff) > 1e-10) {
-                G_vv_alpha_(a, b) += scale * (Z_vv_a(a, b) - Z_vv_a(b, a)) / diff;
+    #pragma omp parallel
+    {
+        Eigen::MatrixXd priv_oo_a = Eigen::MatrixXd::Zero(na_ * na_, n_aux);
+        Eigen::MatrixXd priv_vv_a = Eigen::MatrixXd::Zero(va_ * va_, n_aux);
+        Eigen::MatrixXd priv_oo_b, priv_vv_b;
+        if (has_beta) {
+            priv_oo_b = Eigen::MatrixXd::Zero(nb_ * nb_, n_aux);
+            priv_vv_b = Eigen::MatrixXd::Zero(vb_ * vb_, n_aux);
+        }
+        
+        #pragma omp for schedule(dynamic)
+        for (int P = 0; P < n_aux; ++P) {
+            // FIX: Deklarasi Eigen::Map dengan template yang eksplisit
+            Eigen::Map<const Eigen::MatrixXd> B_AO(scf_.L_mat.col(P).data(), nbf_, nbf_);
+            Eigen::MatrixXd MO_oo_a = scf_.C_alpha.leftCols(na_).transpose() * (B_AO * scf_.C_alpha.leftCols(na_));
+            Eigen::MatrixXd MO_vv_a = scf_.C_alpha.rightCols(va_).transpose() * (B_AO * scf_.C_alpha.rightCols(va_));
+            
+            // FIX: Menggunakan Eigen::Map untuk flatten (meratakan) matriks lebih efisien dari loop manual
+            priv_oo_a.col(P) = Eigen::Map<Eigen::VectorXd>(MO_oo_a.data(), na_ * na_);
+            priv_vv_a.col(P) = Eigen::Map<Eigen::VectorXd>(MO_vv_a.data(), va_ * va_);
+
+            if (has_beta) {
+                Eigen::MatrixXd MO_oo_b = scf_.C_beta.leftCols(nb_).transpose() * (B_AO * scf_.C_beta.leftCols(nb_));
+                Eigen::MatrixXd MO_vv_b = scf_.C_beta.rightCols(vb_).transpose() * (B_AO * scf_.C_beta.rightCols(vb_));
+                priv_oo_b.col(P) = Eigen::Map<Eigen::VectorXd>(MO_oo_b.data(), nb_ * nb_);
+                priv_vv_b.col(P) = Eigen::Map<Eigen::VectorXd>(MO_vv_b.data(), vb_ * vb_);
             }
         }
-    }
+        
+        #pragma omp critical
+        {
+            B_oo_flat_a += priv_oo_a;
+            B_vv_flat_a += priv_vv_a;
+            if (has_beta) {
+                B_oo_flat_b += priv_oo_b;
+                B_vv_flat_b += priv_vv_b;
+            }
+        }
+    } // FIX: Kurung tutup ini sebelumnya terhapus, menyebabkan namespace merah
+
+    // 2. FUNGSI LAMBDA UNTUK PENYELESAIAN CPHF MINI
+    // FIX: Deklarasi lambda dikembalikan utuh agar variabel di dalamnya tidak undefined
+    auto solve_mini_cphf = [&](const Eigen::MatrixXd& Z_in, const Eigen::VectorXd& eps, const Eigen::MatrixXd& B_flat, int dim, int offset) -> Eigen::MatrixXd {
+        
+        if (dim == 0) return Eigen::MatrixXd::Zero(0, 0);
+        int dim2 = dim * dim;
+
+        // Vektorisasi dan Anti-Simetri Target (Z_ij - Z_ji)
+        Eigen::VectorXd Z_vec(dim2);
+        Eigen::VectorXd eps_diff(dim2);
+        for (int i = 0; i < dim; ++i) {
+            for (int j = 0; j < dim; ++j) {
+                Z_vec(i * dim + j) = Z_in(i, j) - Z_in(j, i);
+                eps_diff(i * dim + j) = eps(offset + i) - eps(offset + j);
+            }
+        }
+
+        // Preconditioner (Diagonal Invers dengan Ambang Degenerasi)
+        auto apply_precond = [&](const Eigen::VectorXd& v) {
+            Eigen::VectorXd res = Eigen::VectorXd::Zero(dim2);
+            for (int k = 0; k < dim2; ++k) {
+                if (std::abs(eps_diff(k)) > 1e-5) res(k) = v(k) / eps_diff(k);
+            }
+            return res;
+        };
+
+        // Hessian-Vector Product Matrix-Free
+        auto compute_Ax = [&](const Eigen::VectorXd& x) {
+            Eigen::VectorXd B_Tx = B_flat.transpose() * x;   
+            Eigen::VectorXd Coul = B_flat * B_Tx;            
+            return eps_diff.cwiseProduct(x) + Coul;          
+        };
+
+        // Algoritma PCG
+        Eigen::VectorXd x = apply_precond(Z_vec); 
+        Eigen::VectorXd r = Z_vec - compute_Ax(x);
+        Eigen::VectorXd z = apply_precond(r);
+        Eigen::VectorXd p = z;
+        double rz_old = r.dot(z);
+
+        const int MAX_ITER = 20;
+        const double TOLERANCE = 1e-8;
+
+        for (int iter = 0; iter < MAX_ITER; ++iter) {
+            if (r.norm() < TOLERANCE) break;
+            
+            Eigen::VectorXd Ap = compute_Ax(p);
+            double pAp = p.dot(Ap);
+            if (std::abs(pAp) < 1e-14) break; // Safeguard dari pembagian nol
+            
+            double alpha = rz_old / pAp;
+            
+            x += alpha * p;
+            r -= alpha * Ap;
+            
+            z = apply_precond(r);
+            double rz_new = r.dot(z);
+            
+            p = z + (rz_new / rz_old) * p;
+            rz_old = rz_new;
+        }
+
+        // Kembalikan array datar menjadi Matriks Relaksasi (x_ij)
+        // FIX: Tambahkan argumen template <Eigen::MatrixXd>
+        return Eigen::Map<Eigen::MatrixXd>(x.data(), dim, dim);
+    };
+
+    // 3. EKSEKUSI PENYELESAIAN (SOLVER) DAN INJEKSI KE 1-RDM
+    Eigen::MatrixXd dx_oo_a = solve_mini_cphf(Z_oo_a, ea, B_oo_flat_a, na_, 0);
+    Eigen::MatrixXd dx_vv_a = solve_mini_cphf(Z_vv_a, ea, B_vv_flat_a, va_, na_);
+    
+    G_oo_alpha_ += scale * dx_oo_a;
+    G_vv_alpha_ += scale * dx_vv_a;
 
     if (has_beta) {
-        const auto& eps_b = scf_.orbital_energies_beta;
-        for (int i = 0; i < nb_; ++i) {
-            for (int j = 0; j < nb_; ++j) {
-                if (i == j) continue;
-                double diff = eps_b(i) - eps_b(j);
-                if (std::abs(diff) > 1e-10) {
-                    G_oo_beta_(i, j) += scale * (Z_oo_b(i, j) - Z_oo_b(j, i)) / diff;
-                }
-            }
-        }
-        for (int a = 0; a < vb_; ++a) {
-            for (int b = 0; b < vb_; ++b) {
-                if (a == b) continue;
-                double diff = eps_b(nb_ + a) - eps_b(nb_ + b);
-                if (std::abs(diff) > 1e-10) {
-                    G_vv_beta_(a, b) += scale * (Z_vv_b(a, b) - Z_vv_b(b, a)) / diff;
-                }
-            }
-        }
+        Eigen::MatrixXd dx_oo_b = solve_mini_cphf(Z_oo_b, eb, B_oo_flat_b, nb_, 0);
+        Eigen::MatrixXd dx_vv_b = solve_mini_cphf(Z_vv_b, eb, B_vv_flat_b, vb_, nb_);
+        
+        G_oo_beta_ += scale * dx_oo_b;
+        G_vv_beta_ += scale * dx_vv_b;
     }
 }
 // 1. TAMBAHKAN FUNGSI INI UNTUK MENANGANI HESSIAN (DAPAT DI-OVERRIDE OLEH OMP3)
