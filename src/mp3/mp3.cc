@@ -886,7 +886,7 @@ void OMP3::build_generalized_fock() {
     }
 
     // =========================================================================
-    // TAHAP 2.1: Z-VECTOR 2-RDM RING TERMS
+    // TAHAP 2.1: Z-VECTOR 2-RDM RING TERMS (Mengisi Z_mat)
     // =========================================================================
     #pragma omp parallel
     {
@@ -932,7 +932,7 @@ void OMP3::build_generalized_fock() {
     }
 
     // =========================================================================
-    // TAHAP 2.2: Z-VECTOR 2-RDM LADDER TERMS (EKSAK OMP3)
+    // TAHAP 2.2: Z-VECTOR 2-RDM LADDER TERMS (Mengisi Z_mat)
     // =========================================================================
     if (is_restricted) {
         Eigen::Tensor<double, 4> Goooo_a(na_, na_, na_, na_); Goooo_a.setZero();
@@ -1049,90 +1049,8 @@ void OMP3::build_generalized_fock() {
     }
 
     // =========================================================================
-    // TAHAP 2.5: 1-RDM RESPONSE (DENOMINATOR RESPONSE) UNTUK Z-VECTOR INTERNAL
-    // Menyelaraskan error cancellation agar setara dengan kebrutalan numerik Psi4
+    // TAHAP 3: PERAKITAN MATRIKS FOCK GENERALIZED (W_eff Eksak)
     // =========================================================================
-    Eigen::VectorXd D_P = Eigen::VectorXd::Zero(n_aux);
-    for (int P = 0; P < n_aux; ++P) {
-        Eigen::Map<const Eigen::MatrixXd> B_oo_P_a(B_oo_flat_a.col(P).data(), na_, na_);
-        Eigen::Map<const Eigen::MatrixXd> B_vv_P_a(B_vv_flat_a.col(P).data(), va_, va_);
-        double tr_a = (G_oo_alpha_.cwiseProduct(B_oo_P_a)).sum() + (G_vv_alpha_.cwiseProduct(B_vv_P_a)).sum();
-        
-        if (is_restricted) {
-            D_P(P) = 2.0 * tr_a;
-        } else {
-            double tr_b = 0.0;
-            if (nb_ > 0 && vb_ > 0) {
-                Eigen::Map<const Eigen::MatrixXd> B_oo_P_b(B_oo_flat_b.col(P).data(), nb_, nb_);
-                Eigen::Map<const Eigen::MatrixXd> B_vv_P_b(B_vv_flat_b.col(P).data(), vb_, vb_);
-                tr_b = (G_oo_beta_.cwiseProduct(B_oo_P_b)).sum() + (G_vv_beta_.cwiseProduct(B_vv_P_b)).sum();
-            }
-            D_P(P) = tr_a + tr_b;
-        }
-    }
-
-    #pragma omp parallel
-    {
-        Eigen::MatrixXd Z_oo_loc_a = Eigen::MatrixXd::Zero(na_, na_);
-        Eigen::MatrixXd Z_vv_loc_a = Eigen::MatrixXd::Zero(va_, va_);
-        Eigen::MatrixXd Z_oo_loc_b, Z_vv_loc_b;
-        if (!is_restricted && nb_ > 0 && vb_ > 0) {
-            Z_oo_loc_b = Eigen::MatrixXd::Zero(nb_, nb_);
-            Z_vv_loc_b = Eigen::MatrixXd::Zero(vb_, vb_);
-        }
-
-        #pragma omp for schedule(dynamic)
-        for (int P = 0; P < n_aux; ++P) {
-            Eigen::Map<const Eigen::MatrixXd> B_oo_P_a(B_oo_flat_a.col(P).data(), na_, na_);
-            Eigen::Map<const Eigen::MatrixXd> B_vv_P_a(B_vv_flat_a.col(P).data(), va_, va_);
-            Eigen::Map<const Eigen::MatrixXd> B_ia_P_a(B_ia_P_alpha_.col(P).data(), va_, na_);
-
-            Eigen::MatrixXd Z_C_oo_a = B_oo_P_a * D_P(P);
-            Eigen::MatrixXd Z_C_vv_a = B_vv_P_a * D_P(P);
-
-            Eigen::MatrixXd Z_K_oo_a = B_oo_P_a * G_oo_alpha_ * B_oo_P_a + B_ia_P_a.transpose() * G_vv_alpha_ * B_ia_P_a;
-            Eigen::MatrixXd Z_K_vv_a = B_vv_P_a * G_vv_alpha_ * B_vv_P_a + B_ia_P_a * G_oo_alpha_ * B_ia_P_a.transpose();
-
-            if (is_restricted) {
-                Z_oo_loc_a += 4.0 * Z_C_oo_a - Z_K_oo_a - Z_K_oo_a.transpose();
-                Z_vv_loc_a += 4.0 * Z_C_vv_a - Z_K_vv_a - Z_K_vv_a.transpose();
-            } else {
-                Z_oo_loc_a += 2.0 * Z_C_oo_a - Z_K_oo_a - Z_K_oo_a.transpose();
-                Z_vv_loc_a += 2.0 * Z_C_vv_a - Z_K_vv_a - Z_K_vv_a.transpose();
-                
-                if (nb_ > 0 && vb_ > 0) {
-                    Eigen::Map<const Eigen::MatrixXd> B_oo_P_b(B_oo_flat_b.col(P).data(), nb_, nb_);
-                    Eigen::Map<const Eigen::MatrixXd> B_vv_P_b(B_vv_flat_b.col(P).data(), vb_, vb_);
-                    Eigen::Map<const Eigen::MatrixXd> B_ia_P_b(B_ia_P_beta_.col(P).data(), vb_, nb_);
-
-                    Eigen::MatrixXd Z_C_oo_b = B_oo_P_b * D_P(P);
-                    Eigen::MatrixXd Z_C_vv_b = B_vv_P_b * D_P(P);
-
-                    Eigen::MatrixXd Z_K_oo_b = B_oo_P_b * G_oo_beta_ * B_oo_P_b + B_ia_P_b.transpose() * G_vv_beta_ * B_ia_P_b;
-                    Eigen::MatrixXd Z_K_vv_b = B_vv_P_b * G_vv_beta_ * B_vv_P_b + B_ia_P_b * G_oo_beta_ * B_ia_P_b.transpose();
-
-                    Z_oo_loc_b += 2.0 * Z_C_oo_b - Z_K_oo_b - Z_K_oo_b.transpose();
-                    Z_vv_loc_b += 2.0 * Z_C_vv_b - Z_K_vv_b - Z_K_vv_b.transpose();
-                }
-            }
-        }
-        #pragma omp critical
-        {
-            Z_oo_a += Z_oo_loc_a;
-            Z_vv_a += Z_vv_loc_a;
-            if (!is_restricted && nb_ > 0 && vb_ > 0) {
-                Z_oo_b += Z_oo_loc_b;
-                Z_vv_b += Z_vv_loc_b;
-            }
-        }
-    }
-
-    // =========================================================================
-    // TAHAP 3 & 4: BOZKAYA EXACT EFFECTIVE FOCK (W_eff)
-    // Eliminasi CPHF dan Perakitan Matriks Fock Tergeneralisasi
-    // =========================================================================
-    
-    // 1. Perakitan 1-RDM Korelasi (Tanpa Relaksasi CPHF)
     Eigen::MatrixXd G_full_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
     G_full_a.block(0, 0, na_, na_) = G_oo_alpha_;
     G_full_a.block(na_, na_, va_, va_) = G_vv_alpha_;
@@ -1148,19 +1066,14 @@ void OMP3::build_generalized_fock() {
         P_corr_b = P_corr_a;
     }
 
-    // 2. Evaluasi Matriks Fock HF Dasar (F_core + J + K dari basis SCF)
     Eigen::MatrixXd F_HF_ao_a, F_HF_ao_b;
     build_fock_fast(scf_.P_alpha, scf_.P_beta, F_HF_ao_a, F_HF_ao_b);
 
     Eigen::MatrixXd F_HF_mo_a = scf_.C_alpha.transpose() * F_HF_ao_a * scf_.C_alpha;
     Eigen::MatrixXd F_HF_mo_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
-    if (!is_restricted && nb_ > 0) {
-        F_HF_mo_b = scf_.C_beta.transpose() * F_HF_ao_b * scf_.C_beta;
-    } else if (is_restricted) {
-        F_HF_mo_b = F_HF_mo_a;
-    }
+    if (!is_restricted && nb_ > 0) F_HF_mo_b = scf_.C_beta.transpose() * F_HF_ao_b * scf_.C_beta;
+    else if (is_restricted) F_HF_mo_b = F_HF_mo_a;
 
-    // 3. Kontraksi 1-RDM Korelasi dengan Integral Coulomb & Exchange (Representasi X^P)
     Eigen::MatrixXd G_gamma_ao_a, G_gamma_ao_b;
     build_fock_fast(P_corr_a, P_corr_b, G_gamma_ao_a, G_gamma_ao_b);
 
@@ -1173,28 +1086,26 @@ void OMP3::build_generalized_fock() {
     if (!is_restricted && nb_ > 0) G_gamma_mo_b = scf_.C_beta.transpose() * G_gamma_ao_b * scf_.C_beta;
     else if (is_restricted) G_gamma_mo_b = G_gamma_mo_a;
 
-    // 4. Perakitan Effective Fock (W_eff) = F_HF + G_gamma + L_sep + Z_mat
     F_gen_a_ = F_HF_mo_a + G_gamma_mo_a;
     if (na_ > 0 && va_ > 0) {
-        // Pemisahan komponen Lagrangian L_ia dari Matriks Fock
         Eigen::MatrixXd F_HF_vo_a = F_HF_mo_a.block(na_, 0, va_, na_);
+        
+        // Komponen L_sep: Bagian separable dari Generalized Fock
         Eigen::MatrixXd L_sep_a = F_HF_vo_a * G_oo_alpha_ - G_vv_alpha_ * F_HF_vo_a;
 
-        // Formulasi W_eff eksak: Penggabungan L_ia dan Z_ia secara analitik
-        Eigen::MatrixXd W_eff_vo_a = L_sep_a + Z_mat_a;
-        F_gen_a_.block(na_, 0, va_, na_) += W_eff_vo_a;
-        F_gen_a_.block(0, na_, na_, va_) += W_eff_vo_a.transpose();
+        // Injeksi Formulasi W_eff Eksak: Hanya L_sep dan Z_active yang dirakit. CPHF dieliminasi.
+        F_gen_a_.block(na_, 0, va_, na_) += L_sep_a + Z_mat_a;
+        F_gen_a_.block(0, na_, na_, va_) += (L_sep_a + Z_mat_a).transpose();
     }
 
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
         F_gen_b_ = F_HF_mo_b + G_gamma_mo_b;
-        
         Eigen::MatrixXd F_HF_vo_b = F_HF_mo_b.block(nb_, 0, vb_, nb_);
+        
         Eigen::MatrixXd L_sep_b = F_HF_vo_b * G_oo_beta_ - G_vv_beta_ * F_HF_vo_b;
 
-        Eigen::MatrixXd W_eff_vo_b = L_sep_b + Z_mat_b;
-        F_gen_b_.block(nb_, 0, vb_, nb_) += W_eff_vo_b;
-        F_gen_b_.block(0, nb_, nb_, vb_) += W_eff_vo_b.transpose();
+        F_gen_b_.block(nb_, 0, vb_, nb_) += L_sep_b + Z_mat_b;
+        F_gen_b_.block(0, nb_, nb_, vb_) += (L_sep_b + Z_mat_b).transpose();
     } else if (is_restricted) {
         F_gen_b_ = F_gen_a_;
     }
