@@ -1128,64 +1128,11 @@ void OMP3::build_generalized_fock() {
     }
 
     // =========================================================================
-    // TAHAP 3: MATRIX-FREE MINI-CPHF SOLVER
+    // TAHAP 3 & 4: BOZKAYA EXACT EFFECTIVE FOCK (W_eff)
+    // Eliminasi CPHF dan Perakitan Matriks Fock Tergeneralisasi
     // =========================================================================
-    const auto& ea = scf_.orbital_energies_alpha;
-    const auto& eb = scf_.orbital_energies_beta;
-    double scale = is_restricted ? 0.25 : 0.5;
-
-    auto solve_mini_cphf = [](const Eigen::MatrixXd& Z_in, const Eigen::VectorXd& eps,
-                              const Eigen::MatrixXd& B_flat, int dim, int offset) -> Eigen::MatrixXd {
-        if (dim == 0) return Eigen::MatrixXd::Zero(0, 0);
-        int dim2 = dim * dim;
-
-        Eigen::VectorXd Z_vec(dim2), eps_diff(dim2);
-        for (int i = 0; i < dim; ++i) {
-            for (int j = 0; j < dim; ++j) {
-                Z_vec(i * dim + j) = Z_in(i, j) - Z_in(j, i);
-                eps_diff(i * dim + j) = eps(offset + i) - eps(offset + j);
-            }
-        }
-
-        Eigen::VectorXd x = Eigen::VectorXd::Zero(dim2);
-        for (int k = 0; k < dim2; ++k) if (std::abs(eps_diff(k)) > 1e-5) x(k) = Z_vec(k) / eps_diff(k);
-        Eigen::VectorXd r = Z_vec - (eps_diff.cwiseProduct(x) + B_flat * (B_flat.transpose() * x));
-        Eigen::VectorXd z = Eigen::VectorXd::Zero(dim2);
-        for (int k = 0; k < dim2; ++k) if (std::abs(eps_diff(k)) > 1e-5) z(k) = r(k) / eps_diff(k);
-        
-        Eigen::VectorXd p = z;
-        double rz_old = r.dot(z);
-
-        for (int iter = 0; iter < 20; ++iter) {
-            if (r.norm() < 1e-8) break;
-            Eigen::VectorXd Ap = eps_diff.cwiseProduct(p) + B_flat * (B_flat.transpose() * p);
-            double pAp = p.dot(Ap);
-            if (std::abs(pAp) < 1e-14) break;
-            
-            double alpha = rz_old / pAp;
-            x += alpha * p;
-            r -= alpha * Ap;
-            
-            for (int k = 0; k < dim2; ++k) z(k) = (std::abs(eps_diff(k)) > 1e-5) ? r(k) / eps_diff(k) : 0.0;
-            double rz_new = r.dot(z);
-            p = z + (rz_new / rz_old) * p;
-            rz_old = rz_new;
-        }
-        return Eigen::Map<Eigen::MatrixXd>(x.data(), dim, dim);
-    };
-
-    Eigen::MatrixXd dx_oo_a = solve_mini_cphf(Z_oo_a, ea, B_oo_flat_a, na_, 0);
-    Eigen::MatrixXd dx_vv_a = solve_mini_cphf(Z_vv_a, ea, B_vv_flat_a, va_, na_);
-
-    Eigen::MatrixXd dx_oo_b, dx_vv_b;
-    if (!is_restricted && nb_ > 0 && vb_ > 0) {
-        dx_oo_b = solve_mini_cphf(Z_oo_b, eb, B_oo_flat_b, nb_, 0);
-        dx_vv_b = solve_mini_cphf(Z_vv_b, eb, B_vv_flat_b, vb_, nb_);
-    }
-
-    // =========================================================================
-    // TAHAP 4: PERAKITAN 1-RDM MURNI & MATRIKS FOCK GENERALIZED (F_gen)
-    // =========================================================================
+    
+    // 1. Perakitan 1-RDM Korelasi (Tanpa Relaksasi CPHF)
     Eigen::MatrixXd G_full_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
     G_full_a.block(0, 0, na_, na_) = G_oo_alpha_;
     G_full_a.block(na_, na_, va_, va_) = G_vv_alpha_;
@@ -1201,14 +1148,19 @@ void OMP3::build_generalized_fock() {
         P_corr_b = P_corr_a;
     }
 
+    // 2. Evaluasi Matriks Fock HF Dasar (F_core + J + K dari basis SCF)
     Eigen::MatrixXd F_HF_ao_a, F_HF_ao_b;
     build_fock_fast(scf_.P_alpha, scf_.P_beta, F_HF_ao_a, F_HF_ao_b);
 
     Eigen::MatrixXd F_HF_mo_a = scf_.C_alpha.transpose() * F_HF_ao_a * scf_.C_alpha;
     Eigen::MatrixXd F_HF_mo_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
-    if (!is_restricted && nb_ > 0) F_HF_mo_b = scf_.C_beta.transpose() * F_HF_ao_b * scf_.C_beta;
-    else if (is_restricted) F_HF_mo_b = F_HF_mo_a;
+    if (!is_restricted && nb_ > 0) {
+        F_HF_mo_b = scf_.C_beta.transpose() * F_HF_ao_b * scf_.C_beta;
+    } else if (is_restricted) {
+        F_HF_mo_b = F_HF_mo_a;
+    }
 
+    // 3. Kontraksi 1-RDM Korelasi dengan Integral Coulomb & Exchange (Representasi X^P)
     Eigen::MatrixXd G_gamma_ao_a, G_gamma_ao_b;
     build_fock_fast(P_corr_a, P_corr_b, G_gamma_ao_a, G_gamma_ao_b);
 
@@ -1221,36 +1173,28 @@ void OMP3::build_generalized_fock() {
     if (!is_restricted && nb_ > 0) G_gamma_mo_b = scf_.C_beta.transpose() * G_gamma_ao_b * scf_.C_beta;
     else if (is_restricted) G_gamma_mo_b = G_gamma_mo_a;
 
+    // 4. Perakitan Effective Fock (W_eff) = F_HF + G_gamma + L_sep + Z_mat
     F_gen_a_ = F_HF_mo_a + G_gamma_mo_a;
     if (na_ > 0 && va_ > 0) {
+        // Pemisahan komponen Lagrangian L_ia dari Matriks Fock
         Eigen::MatrixXd F_HF_vo_a = F_HF_mo_a.block(na_, 0, va_, na_);
         Eigen::MatrixXd L_sep_a = F_HF_vo_a * G_oo_alpha_ - G_vv_alpha_ * F_HF_vo_a;
 
-        // INJEKSI L_SEP CPHF: Menghitung respons Coulomb eksak dari CPHF x_oo dan x_vv
-        Eigen::Map<Eigen::VectorXd> vec_x_oo_a(dx_oo_a.data(), na_ * na_);
-        Eigen::Map<Eigen::VectorXd> vec_x_vv_a(dx_vv_a.data(), va_ * va_);
-        Eigen::VectorXd V_aux_a = B_oo_flat_a.transpose() * vec_x_oo_a + B_vv_flat_a.transpose() * vec_x_vv_a;
-        Eigen::VectorXd delta_g_flat_a = scale * B_ia_P_alpha_ * V_aux_a; 
-        Eigen::MatrixXd Delta_G_ia_a = Eigen::Map<Eigen::MatrixXd>(delta_g_flat_a.data(), va_, na_);
-
-        F_gen_a_.block(na_, 0, va_, na_) += L_sep_a + Z_mat_a + Delta_G_ia_a;
-        F_gen_a_.block(0, na_, na_, va_) += (L_sep_a + Z_mat_a + Delta_G_ia_a).transpose();
+        // Formulasi W_eff eksak: Penggabungan L_ia dan Z_ia secara analitik
+        Eigen::MatrixXd W_eff_vo_a = L_sep_a + Z_mat_a;
+        F_gen_a_.block(na_, 0, va_, na_) += W_eff_vo_a;
+        F_gen_a_.block(0, na_, na_, va_) += W_eff_vo_a.transpose();
     }
 
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
         F_gen_b_ = F_HF_mo_b + G_gamma_mo_b;
+        
         Eigen::MatrixXd F_HF_vo_b = F_HF_mo_b.block(nb_, 0, vb_, nb_);
         Eigen::MatrixXd L_sep_b = F_HF_vo_b * G_oo_beta_ - G_vv_beta_ * F_HF_vo_b;
 
-        // INJEKSI L_SEP BETA
-        Eigen::Map<Eigen::VectorXd> vec_x_oo_b(dx_oo_b.data(), nb_ * nb_);
-        Eigen::Map<Eigen::VectorXd> vec_x_vv_b(dx_vv_b.data(), vb_ * vb_);
-        Eigen::VectorXd V_aux_b = B_oo_flat_b.transpose() * vec_x_oo_b + B_vv_flat_b.transpose() * vec_x_vv_b;
-        Eigen::VectorXd delta_g_flat_b = scale * B_ia_P_beta_ * V_aux_b;
-        Eigen::MatrixXd Delta_G_ia_b = Eigen::Map<Eigen::MatrixXd>(delta_g_flat_b.data(), vb_, nb_);
-
-        F_gen_b_.block(nb_, 0, vb_, nb_) += L_sep_b + Z_mat_b + Delta_G_ia_b;
-        F_gen_b_.block(0, nb_, nb_, vb_) += (L_sep_b + Z_mat_b + Delta_G_ia_b).transpose();
+        Eigen::MatrixXd W_eff_vo_b = L_sep_b + Z_mat_b;
+        F_gen_b_.block(nb_, 0, vb_, nb_) += W_eff_vo_b;
+        F_gen_b_.block(0, nb_, nb_, vb_) += W_eff_vo_b.transpose();
     } else if (is_restricted) {
         F_gen_b_ = F_gen_a_;
     }
