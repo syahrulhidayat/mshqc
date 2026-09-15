@@ -1183,7 +1183,7 @@ void OMP3::build_generalized_fock() {
     }
 
     // =========================================================================
-    // TAHAP 4: PERAKITAN MATRIKS FOCK GENERALIZED (W_eff Eksak)
+    // TAHAP 3: PERAKITAN MATRIKS FOCK GENERALIZED (W_eff Eksak)
     // =========================================================================
     Eigen::MatrixXd G_full_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
     G_full_a.block(0, 0, na_, na_) = G_oo_alpha_;
@@ -1221,48 +1221,15 @@ void OMP3::build_generalized_fock() {
     else if (is_restricted) G_gamma_mo_b = G_gamma_mo_a;
 
     F_gen_a_ = F_HF_mo_a + G_gamma_mo_a;
-
-    // =========================================================================
-    // INJEKSI RELAKSASi EKSAK (HESSIAN-VECTOR PRODUCT)
-    // Menambahkan komponen Coulomb (J) dan Exchange (K) secara lengkap
-    // =========================================================================
-    double c_spin = is_restricted ? 4.0 : 2.0;
-    double c_exch = 1.0;
-
+    
     if (na_ > 0 && va_ > 0) {
         Eigen::MatrixXd F_HF_vo_a = F_HF_mo_a.block(na_, 0, va_, na_);
         Eigen::MatrixXd L_sep_a = F_HF_vo_a * G_oo_alpha_ - G_vv_alpha_ * F_HF_vo_a;
 
-        // 1. Respons Coulomb (J)
-        Eigen::Map<Eigen::VectorXd> vec_x_oo_a(dx_oo_a.data(), na_ * na_);
-        Eigen::Map<Eigen::VectorXd> vec_x_vv_a(dx_vv_a.data(), va_ * va_);
-        Eigen::VectorXd V_aux_a = B_oo_flat_a.transpose() * vec_x_oo_a + B_vv_flat_a.transpose() * vec_x_vv_a;
-        Eigen::VectorXd delta_g_coulomb_flat_a = c_spin * B_ia_P_alpha_ * V_aux_a; 
-        Eigen::MatrixXd Delta_G_ia_a = Eigen::Map<Eigen::MatrixXd>(delta_g_coulomb_flat_a.data(), va_, na_);
-
-        // Setup View TBLIS
-        TBLIS_VIEW_3D(t_Boo_a, B_oo_flat_a.data(), na_, na_, n_aux);
-        TBLIS_VIEW_3D(t_Bvv_a, B_vv_flat_a.data(), va_, va_, n_aux);
-        TBLIS_VIEW_3D(t_Bia_a, B_ia_P_alpha_.data(), va_, na_, n_aux);
-        TBLIS_VIEW_2D(t_xoo_a, dx_oo_a.data(), na_, na_);
-        TBLIS_VIEW_2D(t_xvv_a, dx_vv_a.data(), va_, va_);
-        TBLIS_VIEW_2D(t_DeltaG_a, Delta_G_ia_a.data(), va_, na_);
-
-        // 2. Respons Exchange dari Kerapatan Occupied (x_oo)
-        Eigen::Tensor<double, 3> Y_oo_a(na_, na_, n_aux); Y_oo_a.setZero();
-        TBLIS_VIEW_3D(t_Yoo_a, Y_oo_a.data(), na_, na_, n_aux);
-        tblis::mult<double>(1.0, t_Boo_a, "ijP", t_xoo_a, "jk", 0.0, t_Yoo_a, "ikP");
-        tblis::mult<double>(-c_exch, t_Yoo_a, "ikP", t_Bia_a, "akP", 1.0, t_DeltaG_a, "ai");
-
-        // 3. Respons Exchange dari Kerapatan Virtual (x_vv)
-        Eigen::Tensor<double, 3> Y_vv_a(va_, na_, n_aux); Y_vv_a.setZero();
-        TBLIS_VIEW_3D(t_Yvv_a, Y_vv_a.data(), va_, na_, n_aux);
-        tblis::mult<double>(1.0, t_Bia_a, "biP", t_xvv_a, "bc", 0.0, t_Yvv_a, "ciP");
-        tblis::mult<double>(-c_exch, t_Yvv_a, "ciP", t_Bvv_a, "acP", 1.0, t_DeltaG_a, "ai");
-
-        // Injeksi Linear ke F_gen
-        F_gen_a_.block(na_, 0, va_, na_) += L_sep_a + Z_mat_a + Delta_G_ia_a;
-        F_gen_a_.block(0, na_, na_, va_) += (L_sep_a + Z_mat_a + Delta_G_ia_a).transpose();
+        // Injeksi Formulasi W_eff Eksak MURNI
+        // CPHF dieliminasi sepenuhnya agar gradien selaras dengan ekspansi deret SOSCF
+        F_gen_a_.block(na_, 0, va_, na_) += L_sep_a + Z_mat_a;
+        F_gen_a_.block(0, na_, na_, va_) += (L_sep_a + Z_mat_a).transpose();
     }
 
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
@@ -1270,36 +1237,8 @@ void OMP3::build_generalized_fock() {
         Eigen::MatrixXd F_HF_vo_b = F_HF_mo_b.block(nb_, 0, vb_, nb_);
         Eigen::MatrixXd L_sep_b = F_HF_vo_b * G_oo_beta_ - G_vv_beta_ * F_HF_vo_b;
 
-        // 1. Respons Coulomb Beta
-        Eigen::Map<Eigen::VectorXd> vec_x_oo_b(dx_oo_b.data(), nb_ * nb_);
-        Eigen::Map<Eigen::VectorXd> vec_x_vv_b(dx_vv_b.data(), vb_ * vb_);
-        Eigen::VectorXd V_aux_b = B_oo_flat_b.transpose() * vec_x_oo_b + B_vv_flat_b.transpose() * vec_x_vv_b;
-        Eigen::VectorXd delta_g_coulomb_flat_b = c_spin * B_ia_P_beta_ * V_aux_b;
-        Eigen::MatrixXd Delta_G_ia_b = Eigen::Map<Eigen::MatrixXd>(delta_g_coulomb_flat_b.data(), vb_, nb_);
-
-        // Setup View TBLIS Beta
-        TBLIS_VIEW_3D(t_Boo_b, B_oo_flat_b.data(), nb_, nb_, n_aux);
-        TBLIS_VIEW_3D(t_Bvv_b, B_vv_flat_b.data(), vb_, vb_, n_aux);
-        TBLIS_VIEW_3D(t_Bia_b, B_ia_P_beta_.data(), vb_, nb_, n_aux);
-        TBLIS_VIEW_2D(t_xoo_b, dx_oo_b.data(), nb_, nb_);
-        TBLIS_VIEW_2D(t_xvv_b, dx_vv_b.data(), vb_, vb_);
-        TBLIS_VIEW_2D(t_DeltaG_b, Delta_G_ia_b.data(), vb_, nb_);
-
-        // 2. Respons Exchange Occupied Beta
-        Eigen::Tensor<double, 3> Y_oo_b(nb_, nb_, n_aux); Y_oo_b.setZero();
-        TBLIS_VIEW_3D(t_Yoo_b, Y_oo_b.data(), nb_, nb_, n_aux);
-        tblis::mult<double>(1.0, t_Boo_b, "ijP", t_xoo_b, "jk", 0.0, t_Yoo_b, "ikP");
-        tblis::mult<double>(-c_exch, t_Yoo_b, "ikP", t_Bia_b, "akP", 1.0, t_DeltaG_b, "ai"); 
-
-        // 3. Respons Exchange Virtual Beta
-        Eigen::Tensor<double, 3> Y_vv_b(vb_, nb_, n_aux); Y_vv_b.setZero();
-        TBLIS_VIEW_3D(t_Yvv_b, Y_vv_b.data(), vb_, nb_, n_aux);
-        tblis::mult<double>(1.0, t_Bia_b, "biP", t_xvv_b, "bc", 0.0, t_Yvv_b, "ciP");
-        tblis::mult<double>(-c_exch, t_Yvv_b, "ciP", t_Bvv_b, "acP", 1.0, t_DeltaG_b, "ai");
-
-        // Injeksi Linear ke F_gen Beta
-        F_gen_b_.block(nb_, 0, vb_, nb_) += L_sep_b + Z_mat_b + Delta_G_ia_b;
-        F_gen_b_.block(0, nb_, nb_, vb_) += (L_sep_b + Z_mat_b + Delta_G_ia_b).transpose();
+        F_gen_b_.block(nb_, 0, vb_, nb_) += L_sep_b + Z_mat_b;
+        F_gen_b_.block(0, nb_, nb_, vb_) += (L_sep_b + Z_mat_b).transpose();
     } else if (is_restricted) {
         F_gen_b_ = F_gen_a_;
     }
