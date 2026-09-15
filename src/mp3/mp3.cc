@@ -790,11 +790,11 @@ void OMP3::build_opdm_beta() {
 }
 void OMP3::build_generalized_fock() {
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
-    int n_aux = scf_.L_mat.cols();
     
     // =========================================================================
     // TAHAP 1: PERSIAPAN VARIABEL DAN MATRIKS AUXILIARY (B-MATRIKS)
     // =========================================================================
+    int n_aux = scf_.L_mat.cols();
     Eigen::MatrixXd B_oo_a = Eigen::MatrixXd::Zero(na_*na_, n_aux);
     Eigen::MatrixXd B_vv_a = Eigen::MatrixXd::Zero(va_*va_, n_aux);
     Eigen::MatrixXd B_oo_b, B_vv_b;
@@ -853,8 +853,8 @@ void OMP3::build_generalized_fock() {
     Eigen::MatrixXd Z_mat_a = Eigen::MatrixXd::Zero(va_, na_);
     Eigen::MatrixXd Z_mat_b;
     if (!is_restricted && nb_ > 0 && vb_ > 0) Z_mat_b = Eigen::MatrixXd::Zero(vb_, nb_);
-    
-    // VARIABEL PENAMPUNG CPHF
+
+    // PENAMPUNG GAYA CPHF
     Eigen::MatrixXd Z_oo_a = Eigen::MatrixXd::Zero(na_, na_);
     Eigen::MatrixXd Z_vv_a = Eigen::MatrixXd::Zero(va_, va_);
     Eigen::MatrixXd Z_oo_b, Z_vv_b;
@@ -938,7 +938,7 @@ void OMP3::build_generalized_fock() {
         Eigen::MatrixXd X_a(na_*va_, n_aux);
         X_a.noalias() = Teff_aa * B_ia_P_alpha_;
         
-        // P-Loop Restricted dengan Ekstraksi CPHF
+        // P-Loop Restricted dengan Ekstraksi CPHF Terkoreksi
         #pragma omp parallel
         {
             Eigen::MatrixXd Z_loc_a = Eigen::MatrixXd::Zero(va_, na_);
@@ -946,15 +946,15 @@ void OMP3::build_generalized_fock() {
             Eigen::MatrixXd Z_vv_loc_a = Eigen::MatrixXd::Zero(va_, va_);
             #pragma omp for schedule(dynamic)
             for (int P = 0; P < n_aux; ++P) {
-                Eigen::Map<const Eigen::MatrixXd> XT_a(X_a.col(P).data(), va_, na_); 
+                // KOREKSI DIMENSI Eigen::Map
+                Eigen::Map<const Eigen::MatrixXd> X_ai(X_a.col(P).data(), va_, na_); 
                 Eigen::Map<const Eigen::MatrixXd> V_a(B_vv_a.col(P).data(), va_, va_);
                 Eigen::Map<const Eigen::MatrixXd> O_a(B_oo_a.col(P).data(), na_, na_);
-                Z_loc_a.noalias() += V_a * XT_a - XT_a * O_a;
+                Z_loc_a.noalias() += V_a * X_ai - X_ai * O_a;
 
-                Eigen::Map<const Eigen::MatrixXd> X_ia(X_a.col(P).data(), na_, va_);
-                Eigen::Map<const Eigen::MatrixXd> B_ia(B_ia_P_alpha_.col(P).data(), na_, va_);
-                Z_oo_loc_a.noalias() += X_ia * B_ia.transpose();
-                Z_vv_loc_a.noalias() -= X_ia.transpose() * B_ia;
+                Eigen::Map<const Eigen::MatrixXd> B_ai(B_ia_P_alpha_.col(P).data(), va_, na_);
+                Z_oo_loc_a.noalias() += X_ai.transpose() * B_ai;
+                Z_vv_loc_a.noalias() -= X_ai * B_ai.transpose();
             }
             #pragma omp critical
             {
@@ -1115,7 +1115,7 @@ void OMP3::build_generalized_fock() {
         X_b.noalias() = Teff_bb * B_ia_P_beta_;
         X_b.noalias() += Teff_ab.transpose() * B_ia_P_alpha_;
 
-        // P-Loop Unrestricted dengan Ekstraksi CPHF
+        // P-Loop Unrestricted dengan Ekstraksi CPHF Terkoreksi
         #pragma omp parallel
         {
             Eigen::MatrixXd Z_loc_a = Eigen::MatrixXd::Zero(va_, na_);
@@ -1128,25 +1128,23 @@ void OMP3::build_generalized_fock() {
 
             #pragma omp for schedule(dynamic)
             for (int P = 0; P < n_aux; ++P) {
-                Eigen::Map<const Eigen::MatrixXd> XT_a(X_a.col(P).data(), va_, na_); 
+                Eigen::Map<const Eigen::MatrixXd> X_ai(X_a.col(P).data(), va_, na_); 
                 Eigen::Map<const Eigen::MatrixXd> V_a(B_vv_a.col(P).data(), va_, va_);
                 Eigen::Map<const Eigen::MatrixXd> O_a(B_oo_a.col(P).data(), na_, na_);
-                Z_loc_a.noalias() += V_a * XT_a - XT_a * O_a;
+                Z_loc_a.noalias() += V_a * X_ai - X_ai * O_a;
 
-                Eigen::Map<const Eigen::MatrixXd> X_ia(X_a.col(P).data(), na_, va_);
-                Eigen::Map<const Eigen::MatrixXd> B_ia(B_ia_P_alpha_.col(P).data(), na_, va_);
-                Z_oo_loc_a.noalias() += X_ia * B_ia.transpose();
-                Z_vv_loc_a.noalias() -= X_ia.transpose() * B_ia;
+                Eigen::Map<const Eigen::MatrixXd> B_ai(B_ia_P_alpha_.col(P).data(), va_, na_);
+                Z_oo_loc_a.noalias() += X_ai.transpose() * B_ai;
+                Z_vv_loc_a.noalias() -= X_ai * B_ai.transpose();
 
-                Eigen::Map<const Eigen::MatrixXd> XT_b(X_b.col(P).data(), vb_, nb_); 
+                Eigen::Map<const Eigen::MatrixXd> X_bi(X_b.col(P).data(), vb_, nb_); 
                 Eigen::Map<const Eigen::MatrixXd> V_b(B_vv_b.col(P).data(), vb_, vb_);
                 Eigen::Map<const Eigen::MatrixXd> O_b(B_oo_b.col(P).data(), nb_, nb_);
-                Z_loc_b.noalias() += V_b * XT_b - XT_b * O_b;
+                Z_loc_b.noalias() += V_b * X_bi - X_bi * O_b;
 
-                Eigen::Map<const Eigen::MatrixXd> X_ib(X_b.col(P).data(), nb_, vb_);
-                Eigen::Map<const Eigen::MatrixXd> B_ib(B_ia_P_beta_.col(P).data(), nb_, vb_);
-                Z_oo_loc_b.noalias() += X_ib * B_ib.transpose();
-                Z_vv_loc_b.noalias() -= X_ib.transpose() * B_ib;
+                Eigen::Map<const Eigen::MatrixXd> B_bi(B_ia_P_beta_.col(P).data(), vb_, nb_);
+                Z_oo_loc_b.noalias() += X_bi.transpose() * B_bi;
+                Z_vv_loc_b.noalias() -= X_bi * B_bi.transpose();
             }
             #pragma omp critical
             {
@@ -1168,12 +1166,12 @@ void OMP3::build_generalized_fock() {
     const auto& eb = scf_.orbital_energies_beta;
     double scale = is_restricted ? 0.25 : 0.5;
 
-    // --- SOLVER CPHF (Menangani Rotasi Occ-Occ dan Vir-Vir dari FD) ---
+    // --- SOLVER CPHF (Degeneracy Threshold = 1e-5) ---
     for (int i = 0; i < na_; ++i) {
         for (int j = 0; j < na_; ++j) {
             if (i == j) continue;
             double diff = ea(i) - ea(j);
-            if (std::abs(diff) > 1e-10) {
+            if (std::abs(diff) > 1e-5) {
                 G_oo_alpha_(i, j) += scale * (Z_oo_a(i, j) - Z_oo_a(j, i)) / diff;
             }
         }
@@ -1182,7 +1180,7 @@ void OMP3::build_generalized_fock() {
         for (int b = 0; b < va_; ++b) {
             if (a == b) continue;
             double diff = ea(na_+a) - ea(na_+b);
-            if (std::abs(diff) > 1e-10) {
+            if (std::abs(diff) > 1e-5) {
                 G_vv_alpha_(a, b) += scale * (Z_vv_a(a, b) - Z_vv_a(b, a)) / diff;
             }
         }
@@ -1192,7 +1190,7 @@ void OMP3::build_generalized_fock() {
             for (int j = 0; j < nb_; ++j) {
                 if (i == j) continue;
                 double diff = eb(i) - eb(j);
-                if (std::abs(diff) > 1e-10) {
+                if (std::abs(diff) > 1e-5) {
                     G_oo_beta_(i, j) += scale * (Z_oo_b(i, j) - Z_oo_b(j, i)) / diff;
                 }
             }
@@ -1201,14 +1199,14 @@ void OMP3::build_generalized_fock() {
             for (int b = 0; b < vb_; ++b) {
                 if (a == b) continue;
                 double diff = eb(nb_+a) - eb(nb_+b);
-                if (std::abs(diff) > 1e-10) {
+                if (std::abs(diff) > 1e-5) {
                     G_vv_beta_(a, b) += scale * (Z_vv_b(a, b) - Z_vv_b(b, a)) / diff;
                 }
             }
         }
     }
     
-    // --- DENOMINATOR RESPONSE (Koreksi Diagonal Tanda Terkoreksi) ---
+    // --- DENOMINATOR RESPONSE (Tanpa / D, Koreksi Tanda) ---
     if (is_restricted) {
         #pragma omp parallel for schedule(static)
         for (int i = 0; i < na_; ++i) {
@@ -1221,7 +1219,6 @@ void OMP3::build_generalized_fock() {
                         double t1_ex  = T2_aa_ijab(i, j, b, a);
                         double t2_ex  = L2_aa_(i, j, b, a);
                         double tau_asym = (2.0 * t1_dir - t1_ex) + (2.0 * t2_dir - t2_ex);
-                        // BENAR: Hilangkan / D, Koreksi Tanda
                         diag_oo -= 0.5 * (tau_asym * t1_dir);
                     }
                 }
