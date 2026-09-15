@@ -27,6 +27,7 @@
 #include <chrono>
 #include <omp.h>
 #include <tblis/tblis.h>
+#include <unsupported/Eigen/CXX11/Tensor>
 
 namespace mshqc {
 
@@ -178,8 +179,6 @@ MP3Result UMP3::compute() {
     varray_view<double> t_Tab({(len_type)no_a_, (len_type)no_b_, (len_type)nv_a_, (len_type)nv_b_}, 
         ptr_ab, {1, (stride_type)no_a_, (stride_type)(no_a_*no_b_), (stride_type)(no_a_*no_b_*nv_a_)});
 
-   
-
     Eigen::Tensor<double, 4> Waa(no_a_, no_a_, nv_a_, nv_a_); TBLIS_VIEW_4D(t_Waa, Waa, no_a_, no_a_, nv_a_, nv_a_);
     Eigen::Tensor<double, 4> Wbb(no_b_, no_b_, nv_b_, nv_b_); TBLIS_VIEW_4D(t_Wbb, Wbb, no_b_, no_b_, nv_b_, nv_b_);
     Eigen::Tensor<double, 4> Wab(no_a_, no_b_, nv_a_, nv_b_); TBLIS_VIEW_4D(t_Wab, Wab, no_a_, no_b_, nv_a_, nv_b_);
@@ -279,8 +278,6 @@ MP3Result UMP3::compute() {
     return res;
 }
 
-
-
 double OMP3::get_correlation_energy() const {
     return e_ss_ + e_os_ + e_mp3_tot_;
 }
@@ -292,7 +289,6 @@ double OMP3::execute_micro_iterations() {
     
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1); 
     
-  
     L2_aa_ = t2_3rd_aa_;
 
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
@@ -338,13 +334,13 @@ void OMP3::compute_mp3_correction() {
 
     int n_aux = scf_.L_mat.cols();
     Eigen::Map<const Eigen::MatrixXd> L_flat(scf_.L_mat.data(), nbf_, nbf_ * n_aux);
-   
+    
     auto build_B_mat = [&](const Eigen::MatrixXd& C_left, const Eigen::MatrixXd& C_right, int dim_L, int dim_R) {
         Eigen::MatrixXd B_mat = Eigen::MatrixXd::Zero(dim_L * dim_R, n_aux);
         Eigen::MatrixXd X_temp = C_left.transpose() * L_flat;
         #pragma omp parallel for schedule(static)
         for (int P = 0; P < n_aux; ++P) {
-            Eigen::Map<Eigen::MatrixXd> X_P(X_temp.data() + P * dim_L * nbf_, dim_L, nbf_);
+            Eigen::Map<const Eigen::MatrixXd> X_P(X_temp.data() + P * dim_L * nbf_, dim_L, nbf_);
             Eigen::MatrixXd B_MO = X_P * C_right; 
             for (int i = 0; i < dim_L; ++i) {
                 for (int j = 0; j < dim_R; ++j) {
@@ -373,7 +369,7 @@ void OMP3::compute_mp3_correction() {
     Eigen::MatrixXd B_ij_a = build_B_mat(Cao, Cao, na_, na_);
     Eigen::MatrixXd B_ab_a = build_B_mat(Cav, Cav, va_, va_);
 
-   
+    
     if (is_restricted) {
         t2_3rd_aa_ = Eigen::Tensor<double, 4>(na_, na_, va_, va_);
         Eigen::Tensor<double, 4> W(na_, na_, va_, va_); W.setZero();
@@ -381,7 +377,7 @@ void OMP3::compute_mp3_correction() {
         TBLIS_VIEW_4D(t_T, T2_aa_ijab, na_, na_, va_, va_);
         TBLIS_VIEW_4D(t_W, W, na_, na_, va_, va_);
       
-       
+        
         Eigen::Tensor<double, 4> V_oooo = map_4d(B_ij_a * B_ij_a.transpose(), na_, na_, na_, na_);
         Eigen::Tensor<double, 4> V_ovov = map_4d(B_ia_P_alpha_ * B_ia_P_alpha_.transpose(), na_, va_, na_, va_);
         Eigen::Tensor<double, 4> V_oovv = map_4d(B_ij_a * B_ab_a.transpose(), na_, na_, va_, va_);
@@ -400,7 +396,7 @@ void OMP3::compute_mp3_correction() {
         tblis::mult<double>(-1.0, t_Voovv, "ikbc", t_T, "kjac", 1.0, t_W, "ijab");
         tblis::mult<double>(-1.0, t_T, "ikcb", t_Voovv, "jkac", 1.0, t_W, "ijab"); 
 
-       
+        
         Eigen::Tensor<double, 4> X_temp(na_, na_, va_, va_);
         TBLIS_VIEW_4D(t_Xtemp, X_temp, na_, na_, va_, va_);
         for (int P = 0; P < n_aux; ++P) {
@@ -427,7 +423,7 @@ void OMP3::compute_mp3_correction() {
         return; 
     }
 
-   
+    
     t2_3rd_aa_ = Eigen::Tensor<double, 4>(na_, na_, va_, va_); t2_3rd_aa_.setZero();
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
         t2_3rd_bb_ = Eigen::Tensor<double, 4>(nb_, nb_, vb_, vb_); t2_3rd_bb_.setZero();
@@ -453,7 +449,7 @@ void OMP3::compute_mp3_correction() {
     }
 
 
-   
+    
     {
         if (Waa_ladder_.size() == 0) Waa_ladder_.resize(na_, na_, va_, va_);
         if (Waa_ring_.size() == 0) Waa_ring_.resize(na_, na_, va_, va_);
@@ -531,11 +527,11 @@ void OMP3::compute_mp3_correction() {
         TBLIS_VIEW_4D(t_T3bb, L2_bb_, nb_, nb_, vb_, vb_);
         TBLIS_VIEW_4D(t_T3ab, L2_ab_, na_, nb_, va_, vb_);
 
-       
+        
         {
             Eigen::Tensor<double, 4> Wbb_ladder(nb_, nb_, vb_, vb_); Wbb_ladder.setZero();
             Eigen::Tensor<double, 4> Wbb_ring(nb_, nb_, vb_, vb_); Wbb_ring.setZero();
-           
+            
             TBLIS_VIEW_4D(t_Wbb_ladder, Wbb_ladder, nb_, nb_, vb_, vb_);
             TBLIS_VIEW_4D(t_Wbb_ring, Wbb_ring, nb_, nb_, vb_, vb_);
 
@@ -583,7 +579,7 @@ void OMP3::compute_mp3_correction() {
             }
         }
 
-       
+        
         {
             Eigen::Tensor<double, 4> Wab_ladder(na_, nb_, va_, vb_); Wab_ladder.setZero();
             Eigen::Tensor<double, 4> Wab_ring(na_, nb_, va_, vb_); Wab_ring.setZero();
@@ -785,6 +781,7 @@ void OMP3::build_opdm_beta() {
     tblis::mult<double>(0.5, t_T2ab, "ijca", t_T3ab, "ijcb", 1.0, t_Gvv_b, "ab");   
     tblis::mult<double>(0.5, t_T3ab, "ijca", t_T2ab, "ijcb", 1.0, t_Gvv_b, "ab");
 }
+
 void OMP3::build_generalized_fock() {
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
 
@@ -1139,20 +1136,15 @@ void OMP3::build_generalized_fock() {
                 Z_vv_loc_b.noalias() -= X_bi * B_bi.transpose();
             }
             #pragma omp critical
-            {
-                Z_mat_a += Z_loc_a;
-                Z_oo_a += Z_oo_loc_a;
-                Z_vv_a += Z_vv_loc_a;
-
-                Z_mat_b += Z_loc_b;
-                Z_oo_b += Z_oo_loc_b;
-                Z_vv_b += Z_vv_loc_b;
+            { 
+                Z_oo_a += Z_oo_loc_a; Z_vv_a += Z_vv_loc_a; 
+                Z_oo_b += Z_oo_loc_b; Z_vv_b += Z_vv_loc_b;
             }
         }
     }
 
     // =========================================================================
-    // TAHAP 3: MATRIX-FREE MINI-CPHF SOLVER
+    // TAHAP 3: MATRIX-FREE MINI-CPHF SOLVER (DENGAN ELEGANT FIX)
     // =========================================================================
     const auto& ea = scf_.orbital_energies_alpha;
     const auto& eb = scf_.orbital_energies_beta;
@@ -1224,30 +1216,32 @@ void OMP3::build_generalized_fock() {
     Eigen::MatrixXd dx_oo_a = solve_mini_cphf(Z_oo_a, ea, B_oo_a, na_, 0);
     Eigen::MatrixXd dx_vv_a = solve_mini_cphf(Z_vv_a, ea, B_vv_a, va_, na_);
 
-    G_oo_alpha_ += scale * dx_oo_a;
-    G_vv_alpha_ += scale * dx_vv_a;
+    // ELEGANT FIX: Tampung densitas rileks ke lokal, JANGAN mutasi `G_oo_alpha_`
+    Eigen::MatrixXd G_oo_rel_a = G_oo_alpha_ + scale * dx_oo_a;
+    Eigen::MatrixXd G_vv_rel_a = G_vv_alpha_ + scale * dx_vv_a;
 
+    Eigen::MatrixXd G_oo_rel_b, G_vv_rel_b;
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
         Eigen::MatrixXd dx_oo_b = solve_mini_cphf(Z_oo_b, eb, B_oo_b, nb_, 0);
         Eigen::MatrixXd dx_vv_b = solve_mini_cphf(Z_vv_b, eb, B_vv_b, vb_, nb_);
 
-        G_oo_beta_ += scale * dx_oo_b;
-        G_vv_beta_ += scale * dx_vv_b;
+        G_oo_rel_b = G_oo_beta_ + scale * dx_oo_b;
+        G_vv_rel_b = G_vv_beta_ + scale * dx_vv_b;
     }
 
     // =========================================================================
     // TAHAP 4: PERAKITAN 1-RDM & MATRIKS FOCK GENERALIZED (F_gen)
     // =========================================================================
     Eigen::MatrixXd G_full_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
-    G_full_a.block(0, 0, na_, na_) = G_oo_alpha_;
-    G_full_a.block(na_, na_, va_, va_) = G_vv_alpha_;
+    G_full_a.block(0, 0, na_, na_) = G_oo_rel_a; // Pakai densitas lokal rileks
+    G_full_a.block(na_, na_, va_, va_) = G_vv_rel_a;
     Eigen::MatrixXd P_corr_a = scf_.C_alpha * G_full_a * scf_.C_alpha.transpose();
 
     Eigen::MatrixXd G_full_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
     Eigen::MatrixXd P_corr_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
     if (!is_restricted && nb_ > 0) {
-        G_full_b.block(0, 0, nb_, nb_) = G_oo_beta_;
-        G_full_b.block(nb_, nb_, vb_, vb_) = G_vv_beta_;
+        G_full_b.block(0, 0, nb_, nb_) = G_oo_rel_b;
+        G_full_b.block(nb_, nb_, vb_, vb_) = G_vv_rel_b;
         P_corr_b = scf_.C_beta * G_full_b * scf_.C_beta.transpose();
     } else if (is_restricted) {
         P_corr_b = P_corr_a;
@@ -1276,17 +1270,17 @@ void OMP3::build_generalized_fock() {
     F_gen_a_ = F_HF_mo_a + G_gamma_mo_a;
     if (na_ > 0 && va_ > 0) {
         Eigen::MatrixXd F_HF_vo_a = F_HF_mo_a.block(na_, 0, va_, na_);
-        Eigen::MatrixXd L_sep_a = F_HF_vo_a * G_oo_alpha_ - G_vv_alpha_ * F_HF_vo_a;
+        Eigen::MatrixXd L_sep_a = F_HF_vo_a * G_oo_rel_a - G_vv_rel_a * F_HF_vo_a;
         F_gen_a_.block(na_, 0, va_, na_) += L_sep_a;
         F_gen_a_.block(0, na_, na_, va_) += L_sep_a.transpose();
-        F_gen_a_.block(na_, 0, va_, na_) += Z_mat_a;
+        F_gen_a_.block(na_, 0, va_, na_) += Z_mat_a; // Z-Vector aman!
         F_gen_a_.block(0, na_, na_, va_) += Z_mat_a.transpose();
     }
 
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
         F_gen_b_ = F_HF_mo_b + G_gamma_mo_b;
         Eigen::MatrixXd F_HF_vo_b = F_HF_mo_b.block(nb_, 0, vb_, nb_);
-        Eigen::MatrixXd L_sep_b = F_HF_vo_b * G_oo_beta_ - G_vv_beta_ * F_HF_vo_b;
+        Eigen::MatrixXd L_sep_b = F_HF_vo_b * G_oo_rel_b - G_vv_rel_b * F_HF_vo_b;
         F_gen_b_.block(nb_, 0, vb_, nb_) += L_sep_b;
         F_gen_b_.block(0, nb_, nb_, vb_) += L_sep_b.transpose();
         F_gen_b_.block(nb_, 0, vb_, nb_) += Z_mat_b;
@@ -1295,6 +1289,7 @@ void OMP3::build_generalized_fock() {
         F_gen_b_ = F_gen_a_;
     }
 }
+
 void OMP3::build_hessian_diagonal(Eigen::VectorXd& diag_H, double grad_norm) {
     OMP2::build_hessian_diagonal(diag_H, grad_norm);
     int idx = 0;
@@ -1344,10 +1339,10 @@ void OMP3::debug_gradient_fd(int i_target, int a_target) {
     else if (is_restricted) G_oo_beta_ = G_oo_alpha_;
     build_generalized_fock();
 
-    // Otomatis cari target gradien terbesar (Sama seperti kode Anda yang aman)
+    // Otomatis cari target gradien terbesar
     double max_grad = -1.0;
-    for(int i=0; i<na_; ++i) {
-        for(int a=0; a<va_; ++a) {
+    for(int i = 0; i < na_; ++i) {
+        for(int a = 0; a < va_; ++a) {
             double val = std::abs(F_gen_a_(na_ + a, i));
             if (val > max_grad) {
                 max_grad = val;
@@ -1372,7 +1367,7 @@ void OMP3::debug_gradient_fd(int i_target, int a_target) {
     Eigen::MatrixXd P_a_orig = scf_.P_alpha;
     Eigen::MatrixXd P_b_orig = scf_.P_beta;
     
-    // 2. Lambda Fungsi FD (Persis seperti kode Anda, tapi memecah output energinya)
+    // 2. Lambda Fungsi FD
     auto calc_energy_components = [&](double t, double& e_hf, double& e_mp2, double& e_mp3) {
         Eigen::MatrixXd U = Eigen::MatrixXd::Identity(nbf_, nbf_);
         U(i_target, na_ + a_target) = t;
@@ -1439,6 +1434,7 @@ void OMP3::debug_gradient_fd(int i_target, int a_target) {
     std::cout << "Selisih TOTAL        : " << std::abs(g_num_tot - grad_ana_tot) << "\n";
     std::cout << "-------------------------------------------------------------------\n";
 }
+
 MP3Result OMP3::compute_omp3() {
     if(omp_get_thread_num() == 0) {
         std::cout << "\n========================================================\n";
@@ -1465,4 +1461,4 @@ MP3Result OMP3::compute_omp3() {
     return res3;
 }
 
-}
+} // namespace mshqc
