@@ -940,13 +940,9 @@ void OMP3::build_generalized_fock() {
         TBLIS_VIEW_4D(t_Goooo_a, Goooo_a, na_, na_, na_, na_);
         TBLIS_VIEW_4D(t_Gvvvv_a, Gvvvv_a, va_, va_, va_, va_);
         TBLIS_VIEW_4D(t_Taa, T2_aa_ijab, na_, na_, va_, va_);
-        TBLIS_VIEW_4D(t_L2aa, L2_aa_, na_, na_, va_, va_);
 
-        tblis::mult<double>(1.0, t_Taa, "ijab", t_L2aa, "klab", 0.0, t_Goooo_a, "ikjl");
-        tblis::mult<double>(1.0, t_L2aa, "ijab", t_Taa, "klab", 1.0, t_Goooo_a, "ikjl");
-
-        tblis::mult<double>(1.0, t_Taa, "ijab", t_L2aa, "ijcd", 0.0, t_Gvvvv_a, "acbd");
-        tblis::mult<double>(1.0, t_L2aa, "ijab", t_Taa, "ijcd", 1.0, t_Gvvvv_a, "acbd");
+        tblis::mult<double>(1.0, t_Taa, "ijab", t_Taa, "klab", 0.0, t_Goooo_a, "ikjl");
+        tblis::mult<double>(1.0, t_Taa, "ijab", t_Taa, "ijcd", 0.0, t_Gvvvv_a, "acbd");
 
         Eigen::Tensor<double, 3> Yoo_a(na_, na_, n_aux); Yoo_a.setZero();
         Eigen::Tensor<double, 3> Yvv_a(va_, va_, n_aux); Yvv_a.setZero();
@@ -975,33 +971,27 @@ void OMP3::build_generalized_fock() {
         TBLIS_VIEW_4D(t_Goooo_aa, Goooo_aa, na_, na_, na_, na_);
         TBLIS_VIEW_4D(t_Gvvvv_aa, Gvvvv_aa, va_, va_, va_, va_);
         TBLIS_VIEW_4D(t_Taa, T2_aa_ijab, na_, na_, va_, va_);
-        TBLIS_VIEW_4D(t_L2aa, L2_aa_, na_, na_, va_, va_);
-        tblis::mult<double>(1.0, t_Taa, "ijab", t_L2aa, "klab", 0.0, t_Goooo_aa, "ikjl");
-        tblis::mult<double>(1.0, t_L2aa, "ijab", t_Taa, "klab", 1.0, t_Goooo_aa, "ikjl");
-        tblis::mult<double>(1.0, t_Taa, "ijab", t_L2aa, "ijcd", 0.0, t_Gvvvv_aa, "acbd");
-        tblis::mult<double>(1.0, t_L2aa, "ijab", t_Taa, "ijcd", 1.0, t_Gvvvv_aa, "acbd");
+        
+        tblis::mult<double>(1.0, t_Taa, "ijab", t_Taa, "klab", 0.0, t_Goooo_aa, "ikjl");
+        tblis::mult<double>(1.0, t_Taa, "ijab", t_Taa, "ijcd", 0.0, t_Gvvvv_aa, "acbd");
 
         Eigen::Tensor<double, 4> Goooo_bb(nb_, nb_, nb_, nb_); Goooo_bb.setZero();
         Eigen::Tensor<double, 4> Gvvvv_bb(vb_, vb_, vb_, vb_); Gvvvv_bb.setZero();
         TBLIS_VIEW_4D(t_Goooo_bb, Goooo_bb, nb_, nb_, nb_, nb_);
         TBLIS_VIEW_4D(t_Gvvvv_bb, Gvvvv_bb, vb_, vb_, vb_, vb_);
         TBLIS_VIEW_4D(t_Tbb, (*t2_bb_dense), nb_, nb_, vb_, vb_);
-        TBLIS_VIEW_4D(t_L2bb, L2_bb_, nb_, nb_, vb_, vb_);
-        tblis::mult<double>(1.0, t_Tbb, "ijab", t_L2bb, "klab", 0.0, t_Goooo_bb, "ikjl");
-        tblis::mult<double>(1.0, t_L2bb, "ijab", t_Tbb, "klab", 1.0, t_Goooo_bb, "ikjl");
-        tblis::mult<double>(1.0, t_Tbb, "ijab", t_L2bb, "ijcd", 0.0, t_Gvvvv_bb, "acbd");
-        tblis::mult<double>(1.0, t_L2bb, "ijab", t_Tbb, "ijcd", 1.0, t_Gvvvv_bb, "acbd");
+        
+        tblis::mult<double>(1.0, t_Tbb, "ijab", t_Tbb, "klab", 0.0, t_Goooo_bb, "ikjl");
+        tblis::mult<double>(1.0, t_Tbb, "ijab", t_Tbb, "ijcd", 0.0, t_Gvvvv_bb, "acbd");
 
         Eigen::Tensor<double, 4> Goooo_ab(na_, nb_, na_, nb_); Goooo_ab.setZero();
         Eigen::Tensor<double, 4> Gvvvv_ab(va_, vb_, va_, vb_); Gvvvv_ab.setZero();
         TBLIS_VIEW_4D(t_Goooo_ab, Goooo_ab, na_, nb_, na_, nb_);
         TBLIS_VIEW_4D(t_Gvvvv_ab, Gvvvv_ab, va_, vb_, va_, vb_);
         TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
-        TBLIS_VIEW_4D(t_L2ab, L2_ab_, na_, nb_, va_, vb_);
-        tblis::mult<double>(1.0, t_Tab, "ijab", t_L2ab, "klab", 0.0, t_Goooo_ab, "ijkl");
-        tblis::mult<double>(1.0, t_L2ab, "ijab", t_Tab, "klab", 1.0, t_Goooo_ab, "ijkl");
-        tblis::mult<double>(1.0, t_Tab, "ijab", t_L2ab, "ijcd", 0.0, t_Gvvvv_ab, "abcd");
-        tblis::mult<double>(1.0, t_L2ab, "ijab", t_Tab, "ijcd", 1.0, t_Gvvvv_ab, "abcd");
+        
+        tblis::mult<double>(1.0, t_Tab, "ijab", t_Tab, "klab", 0.0, t_Goooo_ab, "ijkl");
+        tblis::mult<double>(1.0, t_Tab, "ijab", t_Tab, "ijcd", 0.0, t_Gvvvv_ab, "abcd");
 
         Eigen::Tensor<double, 3> Yoo_a(na_, na_, n_aux); Yoo_a.setZero();
         Eigen::Tensor<double, 3> Yvv_a(va_, va_, n_aux); Yvv_a.setZero();
@@ -1127,62 +1117,6 @@ void OMP3::build_generalized_fock() {
     }
 
     // =========================================================================
-    // TAHAP 3: MATRIX-FREE MINI-CPHF SOLVER
-    // =========================================================================
-    const auto& ea = scf_.orbital_energies_alpha;
-    const auto& eb = scf_.orbital_energies_beta;
-    double scale = is_restricted ? 0.25 : 0.5;
-
-    auto solve_mini_cphf = [](const Eigen::MatrixXd& Z_in, const Eigen::VectorXd& eps,
-                              const Eigen::MatrixXd& B_flat, int dim, int offset) -> Eigen::MatrixXd {
-        if (dim == 0) return Eigen::MatrixXd::Zero(0, 0);
-        int dim2 = dim * dim;
-
-        Eigen::VectorXd Z_vec(dim2), eps_diff(dim2);
-        for (int i = 0; i < dim; ++i) {
-            for (int j = 0; j < dim; ++j) {
-                Z_vec(i * dim + j) = Z_in(i, j) - Z_in(j, i);
-                eps_diff(i * dim + j) = eps(offset + i) - eps(offset + j);
-            }
-        }
-
-        Eigen::VectorXd x = Eigen::VectorXd::Zero(dim2);
-        for (int k = 0; k < dim2; ++k) if (std::abs(eps_diff(k)) > 1e-5) x(k) = Z_vec(k) / eps_diff(k);
-        Eigen::VectorXd r = Z_vec - (eps_diff.cwiseProduct(x) + B_flat * (B_flat.transpose() * x));
-        Eigen::VectorXd z = Eigen::VectorXd::Zero(dim2);
-        for (int k = 0; k < dim2; ++k) if (std::abs(eps_diff(k)) > 1e-5) z(k) = r(k) / eps_diff(k);
-        
-        Eigen::VectorXd p = z;
-        double rz_old = r.dot(z);
-
-        for (int iter = 0; iter < 20; ++iter) {
-            if (r.norm() < 1e-8) break;
-            Eigen::VectorXd Ap = eps_diff.cwiseProduct(p) + B_flat * (B_flat.transpose() * p);
-            double pAp = p.dot(Ap);
-            if (std::abs(pAp) < 1e-14) break;
-            
-            double alpha = rz_old / pAp;
-            x += alpha * p;
-            r -= alpha * Ap;
-            
-            for (int k = 0; k < dim2; ++k) z(k) = (std::abs(eps_diff(k)) > 1e-5) ? r(k) / eps_diff(k) : 0.0;
-            double rz_new = r.dot(z);
-            p = z + (rz_new / rz_old) * p;
-            rz_old = rz_new;
-        }
-        return Eigen::Map<Eigen::MatrixXd>(x.data(), dim, dim);
-    };
-
-    Eigen::MatrixXd dx_oo_a = solve_mini_cphf(Z_oo_a, ea, B_oo_flat_a, na_, 0);
-    Eigen::MatrixXd dx_vv_a = solve_mini_cphf(Z_vv_a, ea, B_vv_flat_a, va_, na_);
-
-    Eigen::MatrixXd dx_oo_b, dx_vv_b;
-    if (!is_restricted && nb_ > 0 && vb_ > 0) {
-        dx_oo_b = solve_mini_cphf(Z_oo_b, eb, B_oo_flat_b, nb_, 0);
-        dx_vv_b = solve_mini_cphf(Z_vv_b, eb, B_vv_flat_b, vb_, nb_);
-    }
-
-    // =========================================================================
     // TAHAP 3: PERAKITAN MATRIKS FOCK GENERALIZED (W_eff Eksak)
     // =========================================================================
     Eigen::MatrixXd G_full_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
@@ -1226,8 +1160,6 @@ void OMP3::build_generalized_fock() {
         Eigen::MatrixXd F_HF_vo_a = F_HF_mo_a.block(na_, 0, va_, na_);
         Eigen::MatrixXd L_sep_a = F_HF_vo_a * G_oo_alpha_ - G_vv_alpha_ * F_HF_vo_a;
 
-        // Injeksi Formulasi W_eff Eksak MURNI
-        // CPHF dieliminasi sepenuhnya agar gradien selaras dengan ekspansi deret SOSCF
         F_gen_a_.block(na_, 0, va_, na_) += L_sep_a + Z_mat_a;
         F_gen_a_.block(0, na_, na_, va_) += (L_sep_a + Z_mat_a).transpose();
     }
