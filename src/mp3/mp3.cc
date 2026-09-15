@@ -289,11 +289,11 @@ double OMP3::execute_micro_iterations() {
     
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1); 
     
-    L2_aa_ = t2_3rd_aa_;
+    L2_aa_ = t2_3rd_aa_ * 2.0;
 
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
-        L2_bb_ = t2_3rd_bb_;
-        L2_ab_ = t2_3rd_ab_;
+        L2_bb_ = t2_3rd_bb_ * 2.0;
+        L2_ab_ = t2_3rd_ab_ * 2.0;
     }
     
     build_opdm_alpha();
