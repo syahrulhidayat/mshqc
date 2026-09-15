@@ -822,6 +822,7 @@ void OMP3::build_generalized_fock() {
     }
 
     auto* t_aa_dense = t2_aa_.get_block(0,0,0,0);
+    Eigen::Tensor<double, 4> T2_aa_ijab(na_, na_, va_, va_);
     Eigen::MatrixXd Teff_aa = Eigen::MatrixXd::Zero(na_ * va_, na_ * va_);
     Eigen::MatrixXd Teff_ab = Eigen::MatrixXd::Zero(na_ * va_, nb_ * vb_);
     Eigen::MatrixXd Teff_bb = Eigen::MatrixXd::Zero(nb_ * vb_, nb_ * vb_);
@@ -832,7 +833,9 @@ void OMP3::build_generalized_fock() {
             for (int a = 0; a < va_; ++a) {
                 for (int j = 0; j < na_; ++j) {
                     for (int b = 0; b < va_; ++b) {
-                        Teff_aa(i * va_ + a, j * va_ + b) = (*t_aa_dense)(i, a, j, b) + L2_aa_(i, j, a, b);
+                        double t1 = (*t_aa_dense)(i, a, j, b);
+                        T2_aa_ijab(i, j, a, b) = t1;
+                        Teff_aa(i * va_ + a, j * va_ + b) = t1 + L2_aa_(i, j, a, b);
                     }
                 }
             }
@@ -882,6 +885,7 @@ void OMP3::build_generalized_fock() {
         Z_vv_b = Eigen::MatrixXd::Zero(vb_, vb_);
     }
 
+    // 1. Z-VECTOR RING TERMS
     #pragma omp parallel
     {
         Eigen::MatrixXd Z_loc_a = Eigen::MatrixXd::Zero(va_, na_);
@@ -898,12 +902,10 @@ void OMP3::build_generalized_fock() {
         for (int P = 0; P < n_aux; ++P) {
             Eigen::Map<const Eigen::MatrixXd> X_ai(X_a.col(P).data(), va_, na_);
             Eigen::Map<const Eigen::MatrixXd> B_ai(B_ia_P_alpha_.col(P).data(), va_, na_);
-            
-            // Reconstruct B_oo and B_vv on the fly for Z_mat (active Z-vector)
             Eigen::Map<const Eigen::MatrixXd> V_a(B_vv_flat_a.col(P).data(), va_, va_);
             Eigen::Map<const Eigen::MatrixXd> O_a(B_oo_flat_a.col(P).data(), na_, na_);
+            
             Z_loc_a.noalias() += V_a * X_ai - X_ai * O_a;
-
             Z_oo_loc_a.noalias() += X_ai.transpose() * B_ai;
             Z_vv_loc_a.noalias() -= X_ai * B_ai.transpose();
 
@@ -927,8 +929,125 @@ void OMP3::build_generalized_fock() {
         }
     }
 
+    // 2. Z-VECTOR LADDER TERMS (EKSAK OMP3)
+    if (is_restricted) {
+        Eigen::Tensor<double, 4> Goooo_a(na_, na_, na_, na_); Goooo_a.setZero();
+        Eigen::Tensor<double, 4> Gvvvv_a(va_, va_, va_, va_); Gvvvv_a.setZero();
+        TBLIS_VIEW_4D(t_Goooo_a, Goooo_a, na_, na_, na_, na_);
+        TBLIS_VIEW_4D(t_Gvvvv_a, Gvvvv_a, va_, va_, va_, va_);
+        TBLIS_VIEW_4D(t_Taa, T2_aa_ijab, na_, na_, va_, va_);
+        TBLIS_VIEW_4D(t_L2aa, L2_aa_, na_, na_, va_, va_);
+
+        tblis::mult<double>(1.0, t_Taa, "ijab", t_L2aa, "klab", 0.0, t_Goooo_a, "ikjl");
+        tblis::mult<double>(1.0, t_L2aa, "ijab", t_Taa, "klab", 1.0, t_Goooo_a, "ikjl");
+
+        tblis::mult<double>(1.0, t_Taa, "ijab", t_L2aa, "ijcd", 0.0, t_Gvvvv_a, "acbd");
+        tblis::mult<double>(1.0, t_L2aa, "ijab", t_Taa, "ijcd", 1.0, t_Gvvvv_a, "acbd");
+
+        Eigen::Tensor<double, 3> Yoo_a(na_, na_, n_aux); Yoo_a.setZero();
+        Eigen::Tensor<double, 3> Yvv_a(va_, va_, n_aux); Yvv_a.setZero();
+        TBLIS_VIEW_3D(t_Yoo_a, Yoo_a.data(), na_, na_, n_aux);
+        TBLIS_VIEW_3D(t_Yvv_a, Yvv_a.data(), va_, va_, n_aux);
+        TBLIS_VIEW_3D(t_Boo_a, B_oo_flat_a.data(), na_, na_, n_aux);
+        TBLIS_VIEW_3D(t_Bvv_a, B_vv_flat_a.data(), va_, va_, n_aux);
+
+        tblis::mult<double>(1.0, t_Goooo_a, "ikjl", t_Boo_a, "jlP", 0.0, t_Yoo_a, "ikP");
+        tblis::mult<double>(1.0, t_Gvvvv_a, "acbd", t_Bvv_a, "bdP", 0.0, t_Yvv_a, "acP");
+
+        TBLIS_VIEW_2D(t_Zoo_a, Z_oo_a.data(), na_, na_);
+        TBLIS_VIEW_2D(t_Zvv_a, Z_vv_a.data(), va_, va_);
+        TBLIS_VIEW_3D(t_Bia_a, B_ia_P_alpha_.data(), va_, na_, n_aux);
+        TBLIS_VIEW_2D(t_Za, Z_mat_a.data(), va_, na_);
+
+        // Mengalikan Y_oo dengan B_oo (bukan B_ia) untuk mendapatkan target Z_oo internal
+        tblis::mult<double>(1.0, t_Yoo_a, "ikP", t_Boo_a, "jkP", 1.0, t_Zoo_a, "ij");
+        tblis::mult<double>(-1.0, t_Yvv_a, "acP", t_Bvv_a, "bcP", 1.0, t_Zvv_a, "ab");
+
+        // Mengalikan Y_oo dan Y_vv dengan B_ia untuk mendapatkan tambahan Active Z_ia
+        tblis::mult<double>(-1.0, t_Yoo_a, "ikP", t_Bia_a, "akP", 1.0, t_Za, "ai");
+        tblis::mult<double>(1.0, t_Yvv_a, "acP", t_Bia_a, "ciP", 1.0, t_Za, "ai");
+    } else {
+        // Unrestricted Ladder Terms
+        Eigen::Tensor<double, 4> Goooo_aa(na_, na_, na_, na_); Goooo_aa.setZero();
+        Eigen::Tensor<double, 4> Gvvvv_aa(va_, va_, va_, va_); Gvvvv_aa.setZero();
+        TBLIS_VIEW_4D(t_Goooo_aa, Goooo_aa, na_, na_, na_, na_);
+        TBLIS_VIEW_4D(t_Gvvvv_aa, Gvvvv_aa, va_, va_, va_, va_);
+        TBLIS_VIEW_4D(t_Taa, T2_aa_ijab, na_, na_, va_, va_);
+        TBLIS_VIEW_4D(t_L2aa, L2_aa_, na_, na_, va_, va_);
+        tblis::mult<double>(1.0, t_Taa, "ijab", t_L2aa, "klab", 0.0, t_Goooo_aa, "ikjl");
+        tblis::mult<double>(1.0, t_L2aa, "ijab", t_Taa, "klab", 1.0, t_Goooo_aa, "ikjl");
+        tblis::mult<double>(1.0, t_Taa, "ijab", t_L2aa, "ijcd", 0.0, t_Gvvvv_aa, "acbd");
+        tblis::mult<double>(1.0, t_L2aa, "ijab", t_Taa, "ijcd", 1.0, t_Gvvvv_aa, "acbd");
+
+        Eigen::Tensor<double, 4> Goooo_bb(nb_, nb_, nb_, nb_); Goooo_bb.setZero();
+        Eigen::Tensor<double, 4> Gvvvv_bb(vb_, vb_, vb_, vb_); Gvvvv_bb.setZero();
+        TBLIS_VIEW_4D(t_Goooo_bb, Goooo_bb, nb_, nb_, nb_, nb_);
+        TBLIS_VIEW_4D(t_Gvvvv_bb, Gvvvv_bb, vb_, vb_, vb_, vb_);
+        TBLIS_VIEW_4D(t_Tbb, (*t2_bb_dense), nb_, nb_, vb_, vb_);
+        TBLIS_VIEW_4D(t_L2bb, L2_bb_, nb_, nb_, vb_, vb_);
+        tblis::mult<double>(1.0, t_Tbb, "ijab", t_L2bb, "klab", 0.0, t_Goooo_bb, "ikjl");
+        tblis::mult<double>(1.0, t_L2bb, "ijab", t_Tbb, "klab", 1.0, t_Goooo_bb, "ikjl");
+        tblis::mult<double>(1.0, t_Tbb, "ijab", t_L2bb, "ijcd", 0.0, t_Gvvvv_bb, "acbd");
+        tblis::mult<double>(1.0, t_L2bb, "ijab", t_Tbb, "ijcd", 1.0, t_Gvvvv_bb, "acbd");
+
+        Eigen::Tensor<double, 4> Goooo_ab(na_, nb_, na_, nb_); Goooo_ab.setZero();
+        Eigen::Tensor<double, 4> Gvvvv_ab(va_, vb_, va_, vb_); Gvvvv_ab.setZero();
+        TBLIS_VIEW_4D(t_Goooo_ab, Goooo_ab, na_, nb_, na_, nb_);
+        TBLIS_VIEW_4D(t_Gvvvv_ab, Gvvvv_ab, va_, vb_, va_, vb_);
+        TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
+        TBLIS_VIEW_4D(t_L2ab, L2_ab_, na_, nb_, va_, vb_);
+        tblis::mult<double>(1.0, t_Tab, "ijab", t_L2ab, "klab", 0.0, t_Goooo_ab, "ijkl");
+        tblis::mult<double>(1.0, t_L2ab, "ijab", t_Tab, "klab", 1.0, t_Goooo_ab, "ijkl");
+        tblis::mult<double>(1.0, t_Tab, "ijab", t_L2ab, "ijcd", 0.0, t_Gvvvv_ab, "abcd");
+        tblis::mult<double>(1.0, t_L2ab, "ijab", t_Tab, "ijcd", 1.0, t_Gvvvv_ab, "abcd");
+
+        Eigen::Tensor<double, 3> Yoo_a(na_, na_, n_aux); Yoo_a.setZero();
+        Eigen::Tensor<double, 3> Yvv_a(va_, va_, n_aux); Yvv_a.setZero();
+        Eigen::Tensor<double, 3> Yoo_b(nb_, nb_, n_aux); Yoo_b.setZero();
+        Eigen::Tensor<double, 3> Yvv_b(vb_, vb_, n_aux); Yvv_b.setZero();
+        TBLIS_VIEW_3D(t_Yoo_a, Yoo_a.data(), na_, na_, n_aux);
+        TBLIS_VIEW_3D(t_Yvv_a, Yvv_a.data(), va_, va_, n_aux);
+        TBLIS_VIEW_3D(t_Yoo_b, Yoo_b.data(), nb_, nb_, n_aux);
+        TBLIS_VIEW_3D(t_Yvv_b, Yvv_b.data(), vb_, vb_, n_aux);
+
+        TBLIS_VIEW_3D(t_Boo_a, B_oo_flat_a.data(), na_, na_, n_aux);
+        TBLIS_VIEW_3D(t_Bvv_a, B_vv_flat_a.data(), va_, va_, n_aux);
+        TBLIS_VIEW_3D(t_Boo_b, B_oo_flat_b.data(), nb_, nb_, n_aux);
+        TBLIS_VIEW_3D(t_Bvv_b, B_vv_flat_b.data(), vb_, vb_, n_aux);
+
+        tblis::mult<double>(1.0, t_Goooo_aa, "ikjl", t_Boo_a, "jlP", 0.0, t_Yoo_a, "ikP");
+        tblis::mult<double>(1.0, t_Goooo_ab, "ijkl", t_Boo_b, "jlP", 1.0, t_Yoo_a, "ikP");
+        tblis::mult<double>(1.0, t_Gvvvv_aa, "acbd", t_Bvv_a, "bdP", 0.0, t_Yvv_a, "acP");
+        tblis::mult<double>(1.0, t_Gvvvv_ab, "abcd", t_Bvv_b, "bdP", 1.0, t_Yvv_a, "acP");
+
+        tblis::mult<double>(1.0, t_Goooo_bb, "ikjl", t_Boo_b, "jlP", 0.0, t_Yoo_b, "ikP");
+        tblis::mult<double>(1.0, t_Goooo_ab, "ijkl", t_Boo_a, "ikP", 1.0, t_Yoo_b, "jlP");
+        tblis::mult<double>(1.0, t_Gvvvv_bb, "acbd", t_Bvv_b, "bdP", 0.0, t_Yvv_b, "acP");
+        tblis::mult<double>(1.0, t_Gvvvv_ab, "abcd", t_Bvv_a, "acP", 1.0, t_Yvv_b, "bdP");
+
+        TBLIS_VIEW_2D(t_Zoo_a, Z_oo_a.data(), na_, na_);
+        TBLIS_VIEW_2D(t_Zvv_a, Z_vv_a.data(), va_, va_);
+        tblis::mult<double>(1.0, t_Yoo_a, "ikP", t_Boo_a, "jkP", 1.0, t_Zoo_a, "ij");
+        tblis::mult<double>(-1.0, t_Yvv_a, "acP", t_Bvv_a, "bcP", 1.0, t_Zvv_a, "ab");
+
+        TBLIS_VIEW_2D(t_Zoo_b, Z_oo_b.data(), nb_, nb_);
+        TBLIS_VIEW_2D(t_Zvv_b, Z_vv_b.data(), vb_, vb_);
+        tblis::mult<double>(1.0, t_Yoo_b, "jlP", t_Boo_b, "klP", 1.0, t_Zoo_b, "jk");
+        tblis::mult<double>(-1.0, t_Yvv_b, "bdP", t_Bvv_b, "cdP", 1.0, t_Zvv_b, "bc");
+
+        TBLIS_VIEW_3D(t_Bia_a, B_ia_P_alpha_.data(), va_, na_, n_aux);
+        TBLIS_VIEW_2D(t_Za, Z_mat_a.data(), va_, na_);
+        tblis::mult<double>(-1.0, t_Yoo_a, "ikP", t_Bia_a, "akP", 1.0, t_Za, "ai");
+        tblis::mult<double>(1.0, t_Yvv_a, "acP", t_Bia_a, "ciP", 1.0, t_Za, "ai");
+
+        TBLIS_VIEW_3D(t_Bia_b, B_ia_P_beta_.data(), vb_, nb_, n_aux);
+        TBLIS_VIEW_2D(t_Zb, Z_mat_b.data(), vb_, nb_);
+        tblis::mult<double>(-1.0, t_Yoo_b, "jlP", t_Bia_b, "blP", 1.0, t_Zb, "bj");
+        tblis::mult<double>(1.0, t_Yvv_b, "bdP", t_Bia_b, "djP", 1.0, t_Zb, "bj");
+    }
+
     // =========================================================================
-    // TAHAP 2: MATRIX-FREE MINI-CPHF SOLVER (DENGAN ELEGANT BACKDOOR FIX)
+    // TAHAP 3: MATRIX-FREE MINI-CPHF SOLVER
     // =========================================================================
     const auto& ea = scf_.orbital_energies_alpha;
     const auto& eb = scf_.orbital_energies_beta;
@@ -984,8 +1103,7 @@ void OMP3::build_generalized_fock() {
     }
 
     // =========================================================================
-    // TAHAP 3: PERAKITAN 1-RDM MURNI & MATRIKS FOCK GENERALIZED (F_gen)
-    // 1-RDM G_oo dan G_vv SAMA SEKALI TIDAK TERSENTUH x_oo ATAU x_vv!
+    // TAHAP 4: PERAKITAN 1-RDM MURNI & MATRIKS FOCK GENERALIZED (F_gen)
     // =========================================================================
     Eigen::MatrixXd G_full_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
     G_full_a.block(0, 0, na_, na_) = G_oo_alpha_;
@@ -1027,14 +1145,13 @@ void OMP3::build_generalized_fock() {
         Eigen::MatrixXd F_HF_vo_a = F_HF_mo_a.block(na_, 0, va_, na_);
         Eigen::MatrixXd L_sep_a = F_HF_vo_a * G_oo_alpha_ - G_vv_alpha_ * F_HF_vo_a;
 
-        // INJEKSI L_SEP "PINTU BELAKANG": Menghitung gaya Coulomb dari CPHF x_oo dan x_vv
+        // INJEKSI L_SEP CPHF: Menghitung respons Coulomb eksak dari CPHF x_oo dan x_vv
         Eigen::Map<Eigen::VectorXd> vec_x_oo_a(dx_oo_a.data(), na_ * na_);
         Eigen::Map<Eigen::VectorXd> vec_x_vv_a(dx_vv_a.data(), va_ * va_);
         Eigen::VectorXd V_aux_a = B_oo_flat_a.transpose() * vec_x_oo_a + B_vv_flat_a.transpose() * vec_x_vv_a;
-        Eigen::VectorXd delta_g_flat_a = scale * B_ia_P_alpha_ * V_aux_a; // Kontraksi dengan B_ia
+        Eigen::VectorXd delta_g_flat_a = scale * B_ia_P_alpha_ * V_aux_a; 
         Eigen::MatrixXd Delta_G_ia_a = Eigen::Map<Eigen::MatrixXd>(delta_g_flat_a.data(), va_, na_);
 
-        // F_gen dirakit dari Lagrangian murni + Z-Vector + Gaya Relaksasi
         F_gen_a_.block(na_, 0, va_, na_) += L_sep_a + Z_mat_a + Delta_G_ia_a;
         F_gen_a_.block(0, na_, na_, va_) += (L_sep_a + Z_mat_a + Delta_G_ia_a).transpose();
     }
