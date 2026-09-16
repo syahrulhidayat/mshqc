@@ -939,10 +939,19 @@ void OMP3::build_generalized_fock() {
         Eigen::Tensor<double, 4> Gvvvv_a(va_, va_, va_, va_); Gvvvv_a.setZero();
         TBLIS_VIEW_4D(t_Goooo_a, Goooo_a, na_, na_, na_, na_);
         TBLIS_VIEW_4D(t_Gvvvv_a, Gvvvv_a, va_, va_, va_, va_);
+        
         TBLIS_VIEW_4D(t_Taa, T2_aa_ijab, na_, na_, va_, va_);
+        TBLIS_VIEW_4D(t_Laa, L2_aa_, na_, na_, va_, va_);
 
+        // G_oooo
         tblis::mult<double>(1.0, t_Taa, "ijab", t_Taa, "klab", 0.0, t_Goooo_a, "ikjl");
+        tblis::mult<double>(0.5, t_Taa, "ijab", t_Laa, "klab", 1.0, t_Goooo_a, "ikjl");
+        tblis::mult<double>(0.5, t_Laa, "ijab", t_Taa, "klab", 1.0, t_Goooo_a, "ikjl");
+
+        // G_vvvv
         tblis::mult<double>(1.0, t_Taa, "ijab", t_Taa, "ijcd", 0.0, t_Gvvvv_a, "acbd");
+        tblis::mult<double>(0.5, t_Taa, "ijab", t_Laa, "ijcd", 1.0, t_Gvvvv_a, "acbd");
+        tblis::mult<double>(0.5, t_Laa, "ijab", t_Taa, "ijcd", 1.0, t_Gvvvv_a, "acbd");
 
         Eigen::Tensor<double, 3> Yoo_a(na_, na_, n_aux); Yoo_a.setZero();
         Eigen::Tensor<double, 3> Yvv_a(va_, va_, n_aux); Yvv_a.setZero();
@@ -970,28 +979,49 @@ void OMP3::build_generalized_fock() {
         Eigen::Tensor<double, 4> Gvvvv_aa(va_, va_, va_, va_); Gvvvv_aa.setZero();
         TBLIS_VIEW_4D(t_Goooo_aa, Goooo_aa, na_, na_, na_, na_);
         TBLIS_VIEW_4D(t_Gvvvv_aa, Gvvvv_aa, va_, va_, va_, va_);
+        
         TBLIS_VIEW_4D(t_Taa, T2_aa_ijab, na_, na_, va_, va_);
+        TBLIS_VIEW_4D(t_Laa, L2_aa_, na_, na_, va_, va_);
         
         tblis::mult<double>(1.0, t_Taa, "ijab", t_Taa, "klab", 0.0, t_Goooo_aa, "ikjl");
+        tblis::mult<double>(0.5, t_Taa, "ijab", t_Laa, "klab", 1.0, t_Goooo_aa, "ikjl");
+        tblis::mult<double>(0.5, t_Laa, "ijab", t_Taa, "klab", 1.0, t_Goooo_aa, "ikjl");
+
         tblis::mult<double>(1.0, t_Taa, "ijab", t_Taa, "ijcd", 0.0, t_Gvvvv_aa, "acbd");
+        tblis::mult<double>(0.5, t_Taa, "ijab", t_Laa, "ijcd", 1.0, t_Gvvvv_aa, "acbd");
+        tblis::mult<double>(0.5, t_Laa, "ijab", t_Taa, "ijcd", 1.0, t_Gvvvv_aa, "acbd");
 
         Eigen::Tensor<double, 4> Goooo_bb(nb_, nb_, nb_, nb_); Goooo_bb.setZero();
         Eigen::Tensor<double, 4> Gvvvv_bb(vb_, vb_, vb_, vb_); Gvvvv_bb.setZero();
         TBLIS_VIEW_4D(t_Goooo_bb, Goooo_bb, nb_, nb_, nb_, nb_);
         TBLIS_VIEW_4D(t_Gvvvv_bb, Gvvvv_bb, vb_, vb_, vb_, vb_);
+        
         TBLIS_VIEW_4D(t_Tbb, (*t2_bb_dense), nb_, nb_, vb_, vb_);
+        TBLIS_VIEW_4D(t_Lbb, L2_bb_, nb_, nb_, vb_, vb_);
         
         tblis::mult<double>(1.0, t_Tbb, "ijab", t_Tbb, "klab", 0.0, t_Goooo_bb, "ikjl");
+        tblis::mult<double>(0.5, t_Tbb, "ijab", t_Lbb, "klab", 1.0, t_Goooo_bb, "ikjl");
+        tblis::mult<double>(0.5, t_Lbb, "ijab", t_Tbb, "klab", 1.0, t_Goooo_bb, "ikjl");
+
         tblis::mult<double>(1.0, t_Tbb, "ijab", t_Tbb, "ijcd", 0.0, t_Gvvvv_bb, "acbd");
+        tblis::mult<double>(0.5, t_Tbb, "ijab", t_Lbb, "ijcd", 1.0, t_Gvvvv_bb, "acbd");
+        tblis::mult<double>(0.5, t_Lbb, "ijab", t_Tbb, "ijcd", 1.0, t_Gvvvv_bb, "acbd");
 
         Eigen::Tensor<double, 4> Goooo_ab(na_, nb_, na_, nb_); Goooo_ab.setZero();
         Eigen::Tensor<double, 4> Gvvvv_ab(va_, vb_, va_, vb_); Gvvvv_ab.setZero();
         TBLIS_VIEW_4D(t_Goooo_ab, Goooo_ab, na_, nb_, na_, nb_);
         TBLIS_VIEW_4D(t_Gvvvv_ab, Gvvvv_ab, va_, vb_, va_, vb_);
+        
         TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
+        TBLIS_VIEW_4D(t_Lab, L2_ab_, na_, nb_, va_, vb_);
         
         tblis::mult<double>(1.0, t_Tab, "ijab", t_Tab, "klab", 0.0, t_Goooo_ab, "ijkl");
+        tblis::mult<double>(0.5, t_Tab, "ijab", t_Lab, "klab", 1.0, t_Goooo_ab, "ijkl");
+        tblis::mult<double>(0.5, t_Lab, "ijab", t_Tab, "klab", 1.0, t_Goooo_ab, "ijkl");
+
         tblis::mult<double>(1.0, t_Tab, "ijab", t_Tab, "ijcd", 0.0, t_Gvvvv_ab, "abcd");
+        tblis::mult<double>(0.5, t_Tab, "ijab", t_Lab, "ijcd", 1.0, t_Gvvvv_ab, "abcd");
+        tblis::mult<double>(0.5, t_Lab, "ijab", t_Tab, "ijcd", 1.0, t_Gvvvv_ab, "abcd");
 
         Eigen::Tensor<double, 3> Yoo_a(na_, na_, n_aux); Yoo_a.setZero();
         Eigen::Tensor<double, 3> Yvv_a(va_, va_, n_aux); Yvv_a.setZero();
