@@ -774,43 +774,38 @@ void OMP3::build_generalized_fock() {
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
 
     // =========================================================================
-    // 1. INJEKSI RESPON AMPLITUDO (T_eff = T1 + 2 * T2) UNTUK Z-VECTOR
+    // 1. INJEKSI RESPON AMPLITUDO (T_eff = T1 + T2) UNTUK Z-VECTOR
+    // Modifikasi in-place untuk menghindari Segfault akibat shallow copy
     // =========================================================================
-    BlockedTensor4D T1_aa_backup = t2_aa_;
     auto* t_aa = t2_aa_.get_block(0,0,0,0);
-    
-    // L2_aa_ adalah Eigen::Tensor, gunakan .data() langsung
     if (t_aa && L2_aa_.size() > 0) {
         #pragma omp parallel for
         for(int i = 0; i < t_aa->size(); ++i) {
-            (*t_aa).data()[i] += 2.0 * L2_aa_.data()[i]; 
+            (*t_aa).data()[i] += 1.0 * L2_aa_.data()[i]; // FAKTOR 1.0
         }
     }
 
-    BlockedTensor4D T1_bb_backup;
-    BlockedTensor4D T1_ab_backup;
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
-        T1_bb_backup = t2_bb_;
         auto* t_bb = t2_bb_.get_block(0,0,0,0);
         if (t_bb && L2_bb_.size() > 0) {
             #pragma omp parallel for
             for(int i = 0; i < t_bb->size(); ++i) {
-                (*t_bb).data()[i] += 2.0 * L2_bb_.data()[i];
+                (*t_bb).data()[i] += 1.0 * L2_bb_.data()[i];
             }
         }
 
-        T1_ab_backup = t2_ab_;
         auto* t_ab = t2_ab_.get_block(0,0,0,0);
         if (t_ab && L2_ab_.size() > 0) {
             #pragma omp parallel for
             for(int i = 0; i < t_ab->size(); ++i) {
-                (*t_ab).data()[i] += 2.0 * L2_ab_.data()[i];
+                (*t_ab).data()[i] += 1.0 * L2_ab_.data()[i];
             }
         }
     }
 
     // =========================================================================
     // 2. EKSEKUSI Z-VECTOR MENGGUNAKAN SOLVER OMP2 TERUJI
+    // Ini secara otomatis akan memecahkan persamaan CPHF yang kompleks
     // =========================================================================
     Eigen::MatrixXd Z_mat_a, Z_mat_b;
     if (config_.eri_method == "cholesky" || config_.eri_method == "df") {
@@ -821,14 +816,36 @@ void OMP3::build_generalized_fock() {
     if (is_restricted) Z_mat_b = Z_mat_a;
 
     // =========================================================================
-    // 3. RESTORASI AMPLITUDO ORDE PERTAMA & RAKIT FOCK UMUM
+    // 3. RESTORASI MATEMATIS AMPLITUDO ORDE PERTAMA (MENCEGAH DOUBLE FREE)
     // =========================================================================
-    t2_aa_ = T1_aa_backup;
-    if (!is_restricted && nb_ > 0 && vb_ > 0) {
-        t2_bb_ = T1_bb_backup;
-        t2_ab_ = T1_ab_backup;
+    if (t_aa && L2_aa_.size() > 0) {
+        #pragma omp parallel for
+        for(int i = 0; i < t_aa->size(); ++i) {
+            (*t_aa).data()[i] -= 1.0 * L2_aa_.data()[i]; // Dikembalikan ke nilai awal
+        }
     }
 
+    if (!is_restricted && nb_ > 0 && vb_ > 0) {
+        auto* t_bb = t2_bb_.get_block(0,0,0,0);
+        if (t_bb && L2_bb_.size() > 0) {
+            #pragma omp parallel for
+            for(int i = 0; i < t_bb->size(); ++i) {
+                (*t_bb).data()[i] -= 1.0 * L2_bb_.data()[i];
+            }
+        }
+
+        auto* t_ab = t2_ab_.get_block(0,0,0,0);
+        if (t_ab && L2_ab_.size() > 0) {
+            #pragma omp parallel for
+            for(int i = 0; i < t_ab->size(); ++i) {
+                (*t_ab).data()[i] -= 1.0 * L2_ab_.data()[i];
+            }
+        }
+    }
+
+    // =========================================================================
+    // 4. RAKIT FOCK UMUM
+    // =========================================================================
     Eigen::MatrixXd G_full_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
     G_full_a.block(0, 0, na_, na_) = G_oo_alpha_;
     G_full_a.block(na_, na_, va_, va_) = G_vv_alpha_;
