@@ -936,17 +936,47 @@ void OMP3::build_generalized_fock() {
     }
 
     // =========================================================================
-    // TAHAP 2.2: Z-VECTOR 2-RDM LADDER TERMS (Hanya bergantung T1 x T1)
+    // TAHAP 2.2: Z-VECTOR 2-RDM LADDER DAN RING TERMS
     // =========================================================================
     if (is_restricted) {
+
+        Eigen::Tensor<double, 4> T2_tilde_ijab(na_, na_, va_, va_);
+        #pragma omp parallel for collapse(4) schedule(static)
+        for (int i = 0; i < na_; ++i) {
+            for (int j = 0; j < na_; ++j) {
+                for (int a = 0; a < va_; ++a) {
+                    for (int b = 0; b < va_; ++b) {
+                        T2_tilde_ijab(i, j, a, b) = 2.0 * T2_aa_ijab(i, j, a, b) - T2_aa_ijab(i, j, b, a);
+                    }
+                }
+            }
+        }
+        TBLIS_VIEW_4D(t_T2t, T2_tilde_ijab, na_, na_, va_, va_);
         Eigen::Tensor<double, 4> Goooo_a(na_, na_, na_, na_); Goooo_a.setZero();
         Eigen::Tensor<double, 4> Gvvvv_a(va_, va_, va_, va_); Gvvvv_a.setZero();
         TBLIS_VIEW_4D(t_Goooo_a, Goooo_a, na_, na_, na_, na_);
         TBLIS_VIEW_4D(t_Gvvvv_a, Gvvvv_a, va_, va_, va_, va_);
         TBLIS_VIEW_4D(t_Taa, T2_aa_ijab, na_, na_, va_, va_);
 
-        tblis::mult<double>(1.0, t_Taa, "ijab", t_Taa, "klab", 0.0, t_Goooo_a, "ikjl");
-        tblis::mult<double>(1.0, t_Taa, "ijab", t_Taa, "ijcd", 0.0, t_Gvvvv_a, "acbd");
+        tblis::mult<double>(1.0, t_Taa, "ijab", t_T2t, "klab", 0.0, t_Goooo_a, "ikjl");
+        tblis::mult<double>(1.0, t_Taa, "ijab", t_T2t, "ijcd", 0.0, t_Gvvvv_a, "acbd");
+
+        // [TAMBAHAN: 2-RDM RING TERMS (Govov dan Goovv) RMP3]
+        Eigen::Tensor<double, 4> Govov_a(na_, va_, na_, va_); Govov_a.setZero();
+        Eigen::Tensor<double, 4> Goovv_a(na_, na_, va_, va_); Goovv_a.setZero();
+        TBLIS_VIEW_4D(t_Govov_a, Govov_a, na_, va_, na_, va_);
+        TBLIS_VIEW_4D(t_Goovv_a, Goovv_a, na_, na_, va_, va_);
+
+        tblis::mult<double>(2.0, t_Taa, "ijab", t_T2t, "kjcb", 0.0, t_Govov_a, "iakc");
+        tblis::mult<double>(-1.0, t_Taa, "ijab", t_T2t, "kjbc", 1.0, t_Govov_a, "iakc");
+        tblis::mult<double>(2.0, t_Taa, "ikac", t_T2t, "ijab", 1.0, t_Govov_a, "kcjb");
+        tblis::mult<double>(-1.0, t_Taa, "ikca", t_T2t, "ijab", 1.0, t_Govov_a, "kcjb");
+
+        tblis::mult<double>(-1.0, t_Taa, "kjcb", t_T2t, "ijab", 0.0, t_Goovv_a, "ikac");
+        tblis::mult<double>(-1.0, t_Taa, "ikac", t_T2t, "ijab", 1.0, t_Goovv_a, "kjcb");
+        tblis::mult<double>(-1.0, t_Taa, "kjac", t_T2t, "ijab", 1.0, t_Goovv_a, "ikbc");
+        tblis::mult<double>(-1.0, t_Taa, "ikcb", t_T2t, "ijab", 1.0, t_Goovv_a, "jkac");
+        // -----------------------------------------------------------
 
         Eigen::Tensor<double, 3> Yoo_a(na_, na_, n_aux); Yoo_a.setZero();
         Eigen::Tensor<double, 3> Yvv_a(va_, va_, n_aux); Yvv_a.setZero();
@@ -958,6 +988,12 @@ void OMP3::build_generalized_fock() {
         tblis::mult<double>(1.0, t_Goooo_a, "ikjl", t_Boo_a, "jlP", 0.0, t_Yoo_a, "ikP");
         tblis::mult<double>(1.0, t_Gvvvv_a, "acbd", t_Bvv_a, "bdP", 0.0, t_Yvv_a, "acP");
 
+        // [TAMBAHAN: Kontraksi Goovv ke Yoo dan Yvv]
+        tblis::mult<double>(1.0, t_Goovv_a, "ikac", t_Bvv_a, "acP", 1.0, t_Yoo_a, "ikP");
+        tblis::mult<double>(1.0, t_Goovv_a, "kiac", t_Bvv_a, "acP", 1.0, t_Yoo_a, "ikP");
+        tblis::mult<double>(1.0, t_Goovv_a, "ikac", t_Boo_a, "ikP", 1.0, t_Yvv_a, "acP");
+        tblis::mult<double>(1.0, t_Goovv_a, "ikca", t_Boo_a, "ikP", 1.0, t_Yvv_a, "acP");
+
         TBLIS_VIEW_2D(t_Zoo_a, Z_oo_a.data(), na_, na_);
         TBLIS_VIEW_2D(t_Zvv_a, Z_vv_a.data(), va_, va_);
         TBLIS_VIEW_3D(t_Bia_a, B_ia_P_alpha_.data(), va_, na_, n_aux);
@@ -968,6 +1004,16 @@ void OMP3::build_generalized_fock() {
 
         tblis::mult<double>(-1.0, t_Yoo_a, "ikP", t_Bia_a, "akP", 1.0, t_Za, "ai");
         tblis::mult<double>(1.0, t_Yvv_a, "acP", t_Bia_a, "ciP", 1.0, t_Za, "ai");
+
+        // [TAMBAHAN: Kontraksi Govov ke Yov lalu ke Za]
+        Eigen::Tensor<double, 3> Yov_a(na_, va_, n_aux); Yov_a.setZero();
+        TBLIS_VIEW_3D(t_Yov_a, Yov_a.data(), na_, va_, n_aux);
+        
+        tblis::mult<double>(1.0, t_Govov_a, "iakc", t_Bia_a, "ckP", 0.0, t_Yov_a, "iaP");
+        tblis::mult<double>(1.0, t_Govov_a, "kcia", t_Bia_a, "ckP", 1.0, t_Yov_a, "iaP");
+
+        tblis::mult<double>(1.0, t_Yov_a, "iaP", t_Bia_a, "aiP", 1.0, t_Za, "ai");
+
     } else {
         Eigen::Tensor<double, 4> Goooo_aa(na_, na_, na_, na_); Goooo_aa.setZero();
         Eigen::Tensor<double, 4> Gvvvv_aa(va_, va_, va_, va_); Gvvvv_aa.setZero();
@@ -975,8 +1021,9 @@ void OMP3::build_generalized_fock() {
         TBLIS_VIEW_4D(t_Gvvvv_aa, Gvvvv_aa, va_, va_, va_, va_);
         TBLIS_VIEW_4D(t_Taa, T2_aa_ijab, na_, na_, va_, va_);
         
-        tblis::mult<double>(1.0, t_Taa, "ijab", t_Taa, "klab", 0.0, t_Goooo_aa, "ikjl");
-        tblis::mult<double>(1.0, t_Taa, "ijab", t_Taa, "ijcd", 0.0, t_Gvvvv_aa, "acbd");
+        // [PERBAIKAN SKALA: 1.0 -> 0.5]
+        tblis::mult<double>(0.5, t_Taa, "ijab", t_Taa, "klab", 0.0, t_Goooo_aa, "ikjl");
+        tblis::mult<double>(0.5, t_Taa, "ijab", t_Taa, "ijcd", 0.0, t_Gvvvv_aa, "acbd");
 
         Eigen::Tensor<double, 4> Goooo_bb(nb_, nb_, nb_, nb_); Goooo_bb.setZero();
         Eigen::Tensor<double, 4> Gvvvv_bb(vb_, vb_, vb_, vb_); Gvvvv_bb.setZero();
@@ -984,8 +1031,9 @@ void OMP3::build_generalized_fock() {
         TBLIS_VIEW_4D(t_Gvvvv_bb, Gvvvv_bb, vb_, vb_, vb_, vb_);
         TBLIS_VIEW_4D(t_Tbb, (*t2_bb_dense), nb_, nb_, vb_, vb_);
         
-        tblis::mult<double>(1.0, t_Tbb, "ijab", t_Tbb, "klab", 0.0, t_Goooo_bb, "ikjl");
-        tblis::mult<double>(1.0, t_Tbb, "ijab", t_Tbb, "ijcd", 0.0, t_Gvvvv_bb, "acbd");
+        // [PERBAIKAN SKALA: 1.0 -> 0.5]
+        tblis::mult<double>(0.5, t_Tbb, "ijab", t_Tbb, "klab", 0.0, t_Goooo_bb, "ikjl");
+        tblis::mult<double>(0.5, t_Tbb, "ijab", t_Tbb, "ijcd", 0.0, t_Gvvvv_bb, "acbd");
 
         Eigen::Tensor<double, 4> Goooo_ab(na_, nb_, na_, nb_); Goooo_ab.setZero();
         Eigen::Tensor<double, 4> Gvvvv_ab(va_, vb_, va_, vb_); Gvvvv_ab.setZero();
@@ -995,6 +1043,42 @@ void OMP3::build_generalized_fock() {
         
         tblis::mult<double>(1.0, t_Tab, "ijab", t_Tab, "klab", 0.0, t_Goooo_ab, "ijkl");
         tblis::mult<double>(1.0, t_Tab, "ijab", t_Tab, "ijcd", 0.0, t_Gvvvv_ab, "abcd");
+
+        // [TAMBAHAN: 2-RDM RING TERMS (Govov dan Goovv) UMP3]
+        Eigen::Tensor<double, 4> Govov_aa(na_, va_, na_, va_); Govov_aa.setZero();
+        Eigen::Tensor<double, 4> Goovv_aa(na_, na_, va_, va_); Goovv_aa.setZero();
+        TBLIS_VIEW_4D(t_Govov_aa, Govov_aa, na_, va_, na_, va_);
+        TBLIS_VIEW_4D(t_Goovv_aa, Goovv_aa, na_, na_, va_, va_);
+
+        tblis::mult<double>(1.0, t_Taa, "kjcb", t_Taa, "ijab", 0.0, t_Govov_aa, "iakc");
+        tblis::mult<double>(-1.0, t_Taa, "kjcb", t_Taa, "ijab", 0.0, t_Goovv_aa, "ikac");
+        tblis::mult<double>(1.0, t_Tab, "kjcb", t_Tab, "ijab", 1.0, t_Govov_aa, "iakc");
+        tblis::mult<double>(-1.0, t_Tab, "kjcb", t_Tab, "ijab", 1.0, t_Goovv_aa, "ikac");
+
+        Eigen::Tensor<double, 4> Govov_bb(nb_, vb_, nb_, vb_); Govov_bb.setZero();
+        Eigen::Tensor<double, 4> Goovv_bb(nb_, nb_, vb_, vb_); Goovv_bb.setZero();
+        TBLIS_VIEW_4D(t_Govov_bb, Govov_bb, nb_, vb_, nb_, vb_);
+        TBLIS_VIEW_4D(t_Goovv_bb, Goovv_bb, nb_, nb_, vb_, vb_);
+
+        tblis::mult<double>(1.0, t_Tbb, "kjcb", t_Tbb, "ijab", 0.0, t_Govov_bb, "iakc");
+        tblis::mult<double>(-1.0, t_Tbb, "kjcb", t_Tbb, "ijab", 0.0, t_Goovv_bb, "ikac");
+        tblis::mult<double>(1.0, t_Tab, "ikac", t_Tab, "ijab", 1.0, t_Govov_bb, "kcjb");
+        tblis::mult<double>(-1.0, t_Tab, "ikac", t_Tab, "ijab", 1.0, t_Goovv_bb, "kjcb");
+
+        Eigen::Tensor<double, 4> Govov_ab(na_, va_, nb_, vb_); Govov_ab.setZero();
+        TBLIS_VIEW_4D(t_Govov_ab, Govov_ab, na_, va_, nb_, vb_);
+        tblis::mult<double>(1.0, t_Tab, "jkbc", t_Taa, "ijab", 0.0, t_Govov_ab, "iakc");
+        tblis::mult<double>(1.0, t_Tab, "kjcb", t_Tbb, "ijab", 1.0, t_Govov_ab, "kcia");
+        tblis::mult<double>(1.0, t_Taa, "ikac", t_Tab, "ijab", 1.0, t_Govov_ab, "kcjb");
+        tblis::mult<double>(1.0, t_Tbb, "kjcb", t_Tab, "ijab", 1.0, t_Govov_ab, "iakc");
+
+        Eigen::Tensor<double, 4> Goovv_ab_ex(na_, na_, vb_, vb_); Goovv_ab_ex.setZero();
+        Eigen::Tensor<double, 4> Goovv_ba_ex(nb_, nb_, va_, va_); Goovv_ba_ex.setZero();
+        TBLIS_VIEW_4D(t_Goovv_ab_ex, Goovv_ab_ex, na_, na_, vb_, vb_);
+        TBLIS_VIEW_4D(t_Goovv_ba_ex, Goovv_ba_ex, nb_, nb_, va_, va_);
+        tblis::mult<double>(-1.0, t_Tab, "kjac", t_Tab, "ijab", 0.0, t_Goovv_ab_ex, "ikbc");
+        tblis::mult<double>(-1.0, t_Tab, "ikcb", t_Tab, "ijab", 0.0, t_Goovv_ba_ex, "jkac");
+        // -----------------------------------------------------------
 
         Eigen::Tensor<double, 3> Yoo_a(na_, na_, n_aux); Yoo_a.setZero();
         Eigen::Tensor<double, 3> Yvv_a(va_, va_, n_aux); Yvv_a.setZero();
@@ -1020,6 +1104,27 @@ void OMP3::build_generalized_fock() {
         tblis::mult<double>(1.0, t_Gvvvv_bb, "acbd", t_Bvv_b, "bdP", 0.0, t_Yvv_b, "acP");
         tblis::mult<double>(1.0, t_Gvvvv_ab, "abcd", t_Bvv_a, "acP", 1.0, t_Yvv_b, "bdP");
 
+        // [TAMBAHAN: Kontraksi Goovv ke Yoo dan Yvv UMP3]
+        tblis::mult<double>(1.0, t_Goovv_aa, "ikac", t_Bvv_a, "acP", 1.0, t_Yoo_a, "ikP");
+        tblis::mult<double>(1.0, t_Goovv_aa, "kiac", t_Bvv_a, "acP", 1.0, t_Yoo_a, "ikP");
+        tblis::mult<double>(1.0, t_Goovv_aa, "ikac", t_Boo_a, "ikP", 1.0, t_Yvv_a, "acP");
+        tblis::mult<double>(1.0, t_Goovv_aa, "ikca", t_Boo_a, "ikP", 1.0, t_Yvv_a, "acP");
+
+        tblis::mult<double>(1.0, t_Goovv_bb, "ikac", t_Bvv_b, "acP", 1.0, t_Yoo_b, "ikP");
+        tblis::mult<double>(1.0, t_Goovv_bb, "kiac", t_Bvv_b, "acP", 1.0, t_Yoo_b, "ikP");
+        tblis::mult<double>(1.0, t_Goovv_bb, "ikac", t_Boo_b, "ikP", 1.0, t_Yvv_b, "acP");
+        tblis::mult<double>(1.0, t_Goovv_bb, "ikca", t_Boo_b, "ikP", 1.0, t_Yvv_b, "acP");
+
+        tblis::mult<double>(1.0, t_Goovv_ab_ex, "ikbc", t_Bvv_b, "bcP", 1.0, t_Yoo_a, "ikP");
+        tblis::mult<double>(1.0, t_Goovv_ab_ex, "kibc", t_Bvv_b, "bcP", 1.0, t_Yoo_a, "ikP");
+        tblis::mult<double>(1.0, t_Goovv_ab_ex, "ikbc", t_Boo_a, "ikP", 1.0, t_Yvv_b, "bcP");
+        tblis::mult<double>(1.0, t_Goovv_ab_ex, "ikcb", t_Boo_a, "ikP", 1.0, t_Yvv_b, "bcP");
+
+        tblis::mult<double>(1.0, t_Goovv_ba_ex, "jkac", t_Bvv_a, "acP", 1.0, t_Yoo_b, "jkP");
+        tblis::mult<double>(1.0, t_Goovv_ba_ex, "kjac", t_Bvv_a, "acP", 1.0, t_Yoo_b, "jkP");
+        tblis::mult<double>(1.0, t_Goovv_ba_ex, "jkac", t_Boo_b, "jkP", 1.0, t_Yvv_a, "acP");
+        tblis::mult<double>(1.0, t_Goovv_ba_ex, "jkca", t_Boo_b, "jkP", 1.0, t_Yvv_a, "acP");
+
         TBLIS_VIEW_2D(t_Zoo_a, Z_oo_a.data(), na_, na_);
         TBLIS_VIEW_2D(t_Zvv_a, Z_vv_a.data(), va_, va_);
         tblis::mult<double>(1.0, t_Yoo_a, "ikP", t_Boo_a, "jkP", 1.0, t_Zoo_a, "ij");
@@ -1039,6 +1144,23 @@ void OMP3::build_generalized_fock() {
         TBLIS_VIEW_2D(t_Zb, Z_mat_b.data(), vb_, nb_);
         tblis::mult<double>(-1.0, t_Yoo_b, "jlP", t_Bia_b, "blP", 1.0, t_Zb, "bj");
         tblis::mult<double>(1.0, t_Yvv_b, "bdP", t_Bia_b, "djP", 1.0, t_Zb, "bj");
+
+        // [TAMBAHAN: Kontraksi Govov ke Yov lalu ke Za dan Zb UMP3]
+        Eigen::Tensor<double, 3> Yov_a(na_, va_, n_aux); Yov_a.setZero();
+        Eigen::Tensor<double, 3> Yov_b(nb_, vb_, n_aux); Yov_b.setZero();
+        TBLIS_VIEW_3D(t_Yov_a, Yov_a.data(), na_, va_, n_aux);
+        TBLIS_VIEW_3D(t_Yov_b, Yov_b.data(), nb_, vb_, n_aux);
+
+        tblis::mult<double>(1.0, t_Govov_aa, "iakc", t_Bia_a, "ckP", 0.0, t_Yov_a, "iaP");
+        tblis::mult<double>(1.0, t_Govov_aa, "kcia", t_Bia_a, "ckP", 1.0, t_Yov_a, "iaP");
+        tblis::mult<double>(1.0, t_Govov_ab, "iakc", t_Bia_b, "ckP", 1.0, t_Yov_a, "iaP");
+
+        tblis::mult<double>(1.0, t_Govov_bb, "iakc", t_Bia_b, "ckP", 0.0, t_Yov_b, "iaP");
+        tblis::mult<double>(1.0, t_Govov_bb, "kcia", t_Bia_b, "ckP", 1.0, t_Yov_b, "iaP");
+        tblis::mult<double>(1.0, t_Govov_ab, "iakc", t_Bia_a, "aiP", 1.0, t_Yov_b, "kcP");
+
+        tblis::mult<double>(1.0, t_Yov_a, "iaP", t_Bia_a, "aiP", 1.0, t_Za, "ai");
+        tblis::mult<double>(1.0, t_Yov_b, "iaP", t_Bia_b, "aiP", 1.0, t_Zb, "ai");
     }
 
     // =========================================================================
