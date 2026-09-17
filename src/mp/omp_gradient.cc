@@ -285,7 +285,7 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
         auto compute_Ax = [&](const Eigen::VectorXd& x) {
             Eigen::VectorXd B_Tx = B_flat.transpose() * x;   
             Eigen::VectorXd Coul = B_flat * B_Tx;            
-            return eps_diff.cwiseProduct(x) + Coul;          
+            return (eps_diff.cwiseProduct(x) + Coul).eval();          
         };
 
         // Algoritma PCG

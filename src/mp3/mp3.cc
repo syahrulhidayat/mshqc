@@ -1143,7 +1143,7 @@ void OMP3::build_generalized_fock() {
         auto compute_Ax = [&](const Eigen::VectorXd& x) {
             Eigen::VectorXd B_Tx = B_flat.transpose() * x;   
             Eigen::VectorXd Coul = B_flat * B_Tx;            
-            return eps_diff.cwiseProduct(x) + Coul;          
+            return (eps_diff.cwiseProduct(x) + Coul).eval();          
         };
         Eigen::VectorXd x = apply_precond(Z_vec); 
         Eigen::VectorXd r = Z_vec - compute_Ax(x);
