@@ -835,9 +835,10 @@ void OMP3::build_generalized_fock() {
                             double t1_ex = (*t_aa_dense)(i, b, j, a);
                             double l2 = L2_aa_(i, j, a, b);
                             double l2_ex = L2_aa_(i, j, b, a);
-                            Teff_aa(i * va_ + a, j * va_ + b) = 2.0 * (t1 + 2.0 * l2) - 1.0 * (t1_ex + 2.0 * l2_ex);
+                            // KOREKSI: \Gamma = T1 + T2 (Faktor 1.0)
+                            Teff_aa(i * va_ + a, j * va_ + b) = 2.0 * (t1 + l2) - 1.0 * (t1_ex + l2_ex);
                         } else {
-                            Teff_aa(i * va_ + a, j * va_ + b) = t1 + 2.0 * L2_aa_(i, j, a, b);
+                            Teff_aa(i * va_ + a, j * va_ + b) = t1 + L2_aa_(i, j, a, b);
                         }
                     }
                 }
@@ -852,7 +853,7 @@ void OMP3::build_generalized_fock() {
             for (int a = 0; a < va_; ++a) {
                 for (int j = 0; j < nb_; ++j) {
                     for (int b = 0; b < vb_; ++b) {
-                        Teff_ab(i * va_ + a, j * vb_ + b) = (*t2_ab_dense)(i, j, a, b) + 2.0 * L2_ab_(i, j, a, b);
+                        Teff_ab(i * va_ + a, j * vb_ + b) = (*t2_ab_dense)(i, j, a, b) + L2_ab_(i, j, a, b);
                     }
                 }
             }
@@ -866,7 +867,7 @@ void OMP3::build_generalized_fock() {
             for (int a = 0; a < vb_; ++a) {
                 for (int j = 0; j < nb_; ++j) {
                     for (int b = 0; b < vb_; ++b) {
-                        Teff_bb(i * vb_ + a, j * vb_ + b) = (*t2_bb_dense)(i, j, a, b) + 2.0 * L2_bb_(i, j, a, b);
+                        Teff_bb(i * vb_ + a, j * vb_ + b) = (*t2_bb_dense)(i, j, a, b) + L2_bb_(i, j, a, b);
                     }
                 }
             }
