@@ -571,7 +571,7 @@ Eigen::Tensor<double, 4> ERITransformer::get_mo_tensor(
     
     if (!use_df) {
         if (!ints) throw std::runtime_error("Exact integrals engine missing!");
-        return transform_oovv_mixed(ints->compute_eri(), C1, C2, C3, C4, nbf, dim1, dim2, dim3, dim4);
+        return transform_custom(ints->compute_eri(), C1, C2, C3, C4, nbf, dim1, dim2, dim3, dim4);
     }
 
     
