@@ -2,10 +2,10 @@ name: Compile and Release Wheel to Public Repo
 
 on:
   push:
-    branches: [ "mshqc-1.0.3" ]
+    branches: [ "debug3" ]
   workflow_dispatch:
 
-permissions:
+permissions:build deploy
   contents: write
 
 jobs:
