@@ -824,7 +824,7 @@ void OMP3::build_generalized_fock() {
     Eigen::MatrixXd Teff_bb = Eigen::MatrixXd::Zero(nb_ * vb_, nb_ * vb_);
 
     // -------------------------------------------------------------------------
-    // TAHAP 1: TEFF MENGAKUMULASI T1 DAN T2
+    // TAHAP 1: TEFF MENGAKUMULASI T1 DAN T2 (X_a)
     // -------------------------------------------------------------------------
     if (t_aa_dense) {
         #pragma omp parallel for collapse(2) schedule(static)
@@ -838,9 +838,9 @@ void OMP3::build_generalized_fock() {
                             double t1_ex = (*t_aa_dense)(i, b, j, a);
                             double l2 = L2_aa_(i, j, a, b);
                             double l2_ex = L2_aa_(i, j, b, a);
-                            Teff_aa(i * va_ + a, j * va_ + b) = 2.0 * (t1 + l2) - 1.0 * (t1_ex + l2_ex);
+                            Teff_aa(i * va_ + a, j * va_ + b) = 2.0 * (t1 + 2.0*l2) - 1.0 * (t1_ex + 2.0*l2_ex);
                         } else {
-                            Teff_aa(i * va_ + a, j * va_ + b) = t1 + L2_aa_(i, j, a, b);
+                            Teff_aa(i * va_ + a, j * va_ + b) = t1 + 2.0 * L2_aa_(i, j, a, b);
                         }
                     }
                 }
@@ -855,7 +855,7 @@ void OMP3::build_generalized_fock() {
             for (int a = 0; a < va_; ++a) {
                 for (int j = 0; j < nb_; ++j) {
                     for (int b = 0; b < vb_; ++b) {
-                        Teff_ab(i * va_ + a, j * vb_ + b) = (*t2_ab_dense)(i, j, a, b) + L2_ab_(i, j, a, b);
+                        Teff_ab(i * va_ + a, j * vb_ + b) = (*t2_ab_dense)(i, j, a, b) + 2.0 * L2_ab_(i, j, a, b);
                     }
                 }
             }
@@ -869,7 +869,7 @@ void OMP3::build_generalized_fock() {
             for (int a = 0; a < vb_; ++a) {
                 for (int j = 0; j < nb_; ++j) {
                     for (int b = 0; b < vb_; ++b) {
-                        Teff_bb(i * vb_ + a, j * vb_ + b) = (*t2_bb_dense)(i, j, a, b) + L2_bb_(i, j, a, b);
+                        Teff_bb(i * vb_ + a, j * vb_ + b) = (*t2_bb_dense)(i, j, a, b) + 2.0 * L2_bb_(i, j, a, b);
                     }
                 }
             }
@@ -886,6 +886,9 @@ void OMP3::build_generalized_fock() {
 
     // -------------------------------------------------------------------------
     // TAHAP 2: EKSTRAKSI DENOMINATOR RESPONSE DARI T1 X T1
+    // String Dimension Rule:
+    // Alpha Occ: I,J,K,L | Beta Occ: M,N,O,P
+    // Alpha Vir: A,B,C,D | Beta Vir: E,F,G,H | Aux: Z
     // -------------------------------------------------------------------------
     Eigen::Tensor<double, 3> Yoo_a(na_, na_, n_aux); Yoo_a.setZero();
     Eigen::Tensor<double, 3> Yvv_a(va_, va_, n_aux); Yvv_a.setZero();
@@ -903,41 +906,54 @@ void OMP3::build_generalized_fock() {
     TBLIS_VIEW_3D(t_Bia_a, B_ia_P_alpha_.data(), va_, na_, n_aux);
 
     if (is_restricted) {
+        Eigen::Tensor<double, 4> T2_tilde_ijab(na_, na_, va_, va_);
+        #pragma omp parallel for collapse(4) schedule(static)
+        for (int i = 0; i < na_; ++i) {
+            for (int j = 0; j < na_; ++j) {
+                for (int a = 0; a < va_; ++a) {
+                    for (int b = 0; b < va_; ++b) {
+                        T2_tilde_ijab(i, j, a, b) = 2.0 * T2_aa_ijab(i, j, a, b) - T2_aa_ijab(i, j, b, a);
+                    }
+                }
+            }
+        }
+        TBLIS_VIEW_4D(t_U, T2_tilde_ijab, na_, na_, va_, va_);
         TBLIS_VIEW_4D(t_T, T2_aa_ijab, na_, na_, va_, va_);
 
-        Eigen::Tensor<double, 4> V_oooo_aa(na_, na_, na_, na_); V_oooo_aa.setZero();
-        Eigen::Tensor<double, 4> V_vvvv_aa(va_, va_, va_, va_); V_vvvv_aa.setZero();
-        TBLIS_VIEW_4D(t_V_oooo_aa, V_oooo_aa, na_, na_, na_, na_);
-        TBLIS_VIEW_4D(t_V_vvvv_aa, V_vvvv_aa, va_, va_, va_, va_);
+        Eigen::Tensor<double, 4> V_oooo(na_, na_, na_, na_); V_oooo.setZero();
+        Eigen::Tensor<double, 4> V_vvvv(va_, va_, va_, va_); V_vvvv.setZero();
+        TBLIS_VIEW_4D(t_V_oooo, V_oooo, na_, na_, na_, na_);
+        TBLIS_VIEW_4D(t_V_vvvv, V_vvvv, va_, va_, va_, va_);
 
-        tblis::mult<double>(1.0, t_T, "I J E F", t_T, "K L E F", 0.0, t_V_oooo_aa, "I K J L");
-        tblis::mult<double>(1.0, t_T, "M N A B", t_T, "M N C D", 0.0, t_V_vvvv_aa, "A C B D");
+        tblis::mult<double>(1.0, t_U, "I J E F", t_U, "K L E F", 0.0, t_V_oooo, "I K J L");
+        tblis::mult<double>(1.0, t_U, "M N A B", t_U, "M N C D", 0.0, t_V_vvvv, "A C B D");
 
-        Eigen::Tensor<double, 4> V_iajb_aa(na_, va_, na_, va_); V_iajb_aa.setZero();
-        TBLIS_VIEW_4D(t_V_iajb_aa, V_iajb_aa, na_, va_, na_, va_);
-        tblis::mult<double>(0.5, t_T, "I B M E", t_T, "M J E A", 0.0, t_V_iajb_aa, "I A J B");
+        Eigen::Tensor<double, 4> V_iajb(na_, va_, na_, va_); V_iajb.setZero();
+        TBLIS_VIEW_4D(t_V_iajb, V_iajb, na_, va_, na_, va_);
+        tblis::mult<double>(0.5, t_U, "I B M E", t_U, "M J E A", 0.0, t_V_iajb, "I A J B");
 
-        Eigen::Tensor<double, 4> V_iabj_aa(na_, va_, va_, na_); V_iabj_aa.setZero();
-        TBLIS_VIEW_4D(t_V_iabj_aa, V_iabj_aa, na_, va_, va_, na_);
-        tblis::mult<double>(0.5, t_T, "I B M E", t_T, "M J A E", 0.0, t_V_iabj_aa, "I A B J");
+        Eigen::Tensor<double, 4> V_iabj(na_, va_, va_, na_); V_iabj.setZero();
+        TBLIS_VIEW_4D(t_V_iabj, V_iabj, na_, va_, va_, na_);
+        tblis::mult<double>(-0.5, t_U, "I B M E", t_T, "M J A E", 0.0, t_V_iabj, "I A B J");
+        tblis::mult<double>(0.5, t_T, "I B M E", t_U, "M J A E", 1.0, t_V_iabj, "I A B J");
 
         TBLIS_VIEW_3D(t_Yoo_a, Yoo_a.data(), na_, na_, n_aux);
         TBLIS_VIEW_3D(t_Yvv_a, Yvv_a.data(), va_, va_, n_aux);
         TBLIS_VIEW_3D(t_Yia_a, Yia_a.data(), va_, na_, n_aux);
 
         // Yia Response
-        tblis::mult<double>(2.0, t_V_iajb_aa, "I E M A", t_Bia_a, "E M P", 0.0, t_Yia_a, "A I P");
-        tblis::mult<double>(-4.0, t_V_iabj_aa, "I E A M", t_Bia_a, "E M P", 1.0, t_Yia_a, "A I P");
+        tblis::mult<double>(2.0, t_V_iajb, "I E M A", t_Bia_a, "E M Z", 0.0, t_Yia_a, "A I Z");
+        tblis::mult<double>(-4.0, t_V_iabj, "I E A M", t_Bia_a, "E M Z", 1.0, t_Yia_a, "A I Z");
 
         // Yoo Response
-        tblis::mult<double>(1.0, t_V_oooo_aa, "I M J N", t_Boo_a, "M N P", 0.0, t_Yoo_a, "I J P");
-        tblis::mult<double>(2.0, t_V_iajb_aa, "I E J F", t_Bvv_a, "E F P", 1.0, t_Yoo_a, "I J P");
-        tblis::mult<double>(-1.0, t_V_iabj_aa, "I E F J", t_Bvv_a, "E F P", 1.0, t_Yoo_a, "I J P");
+        tblis::mult<double>(1.0, t_V_oooo, "I M J N", t_Boo_a, "M N Z", 0.0, t_Yoo_a, "I J Z");
+        tblis::mult<double>(2.0, t_V_iajb, "I E J F", t_Bvv_a, "E F Z", 1.0, t_Yoo_a, "I J Z");
+        tblis::mult<double>(-1.0, t_V_iabj, "I E F J", t_Bvv_a, "E F Z", 1.0, t_Yoo_a, "I J Z");
 
         // Yvv Response
-        tblis::mult<double>(1.0, t_V_vvvv_aa, "A E B F", t_Bvv_a, "E F P", 0.0, t_Yvv_a, "A B P");
-        tblis::mult<double>(2.0, t_V_iajb_aa, "M A N B", t_Boo_a, "M N P", 1.0, t_Yvv_a, "A B P");
-        tblis::mult<double>(-1.0, t_V_iabj_aa, "M A B N", t_Boo_a, "M N P", 1.0, t_Yvv_a, "A B P");
+        tblis::mult<double>(1.0, t_V_vvvv, "A E B F", t_Bvv_a, "E F Z", 0.0, t_Yvv_a, "A B Z");
+        tblis::mult<double>(2.0, t_V_iajb, "M A N B", t_Boo_a, "M N Z", 1.0, t_Yvv_a, "A B Z");
+        tblis::mult<double>(-1.0, t_V_iabj, "M A B N", t_Boo_a, "M N Z", 1.0, t_Yvv_a, "A B Z");
 
         Eigen::Map<Eigen::MatrixXd> Yia_flat(Yia_a.data(), va_ * na_, n_aux);
         X_a += Yia_flat;
@@ -951,7 +967,6 @@ void OMP3::build_generalized_fock() {
         TBLIS_VIEW_4D(t_Tbb, (*t2_bb_dense), nb_, nb_, vb_, vb_);
         TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
 
-        // Pembentukan Goooo & Gvvvv
         Eigen::Tensor<double, 4> Goooo_aa(na_, na_, na_, na_); Goooo_aa.setZero();
         Eigen::Tensor<double, 4> Gvvvv_aa(va_, va_, va_, va_); Gvvvv_aa.setZero();
         TBLIS_VIEW_4D(t_Goooo_aa, Goooo_aa, na_, na_, na_, na_);
@@ -973,7 +988,6 @@ void OMP3::build_generalized_fock() {
         tblis::mult<double>(1.0, t_Tab, "I M A E", t_Tab, "K N A E", 0.0, t_Goooo_ab, "I M K N");
         tblis::mult<double>(1.0, t_Tab, "I M A E", t_Tab, "I M C F", 0.0, t_Gvvvv_ab, "A E C F");
 
-        // Pembentukan V_iajb & V_iabj yang RIGOROUS SECARA DIMENSI
         Eigen::Tensor<double, 4> V_iajb_aa(na_, va_, na_, va_); V_iajb_aa.setZero();
         TBLIS_VIEW_4D(t_V_iajb_aa, V_iajb_aa, na_, va_, na_, va_);
         tblis::mult<double>(0.5, t_Taa, "I K B C", t_Taa, "K J C A", 0.0, t_V_iajb_aa, "I A J B");
@@ -986,7 +1000,7 @@ void OMP3::build_generalized_fock() {
         Eigen::Tensor<double, 4> V_iajb_bb(nb_, vb_, nb_, vb_); V_iajb_bb.setZero();
         TBLIS_VIEW_4D(t_V_iajb_bb, V_iajb_bb, nb_, vb_, nb_, vb_);
         tblis::mult<double>(0.5, t_Tbb, "M O F G", t_Tbb, "O N G E", 0.0, t_V_iajb_bb, "M E N F");
-        tblis::mult<double>(1.0, t_Tab, "I M E A", t_Tab, "I N F A", 1.0, t_V_iajb_bb, "M E N F");
+        tblis::mult<double>(1.0, t_Tab, "I M A F", t_Tab, "I N A E", 1.0, t_V_iajb_bb, "M E N F");
 
         Eigen::Tensor<double, 4> V_iabj_bb(nb_, vb_, vb_, nb_); V_iabj_bb.setZero();
         TBLIS_VIEW_4D(t_V_iabj_bb, V_iabj_bb, nb_, vb_, vb_, nb_);
@@ -1000,38 +1014,38 @@ void OMP3::build_generalized_fock() {
         TBLIS_VIEW_3D(t_Yia_b, Yia_b.data(), vb_, nb_, n_aux);
 
         // Yia Response
-        tblis::mult<double>(2.0, t_V_iajb_aa, "I E M A", t_Bia_a, "E M P", 0.0, t_Yia_a, "A I P");
-        tblis::mult<double>(-2.0, t_V_iabj_aa, "I E A M", t_Bia_a, "E M P", 1.0, t_Yia_a, "A I P");
+        tblis::mult<double>(2.0, t_V_iajb_aa, "I C K A", t_Bia_a, "C K Z", 0.0, t_Yia_a, "A I Z");
+        tblis::mult<double>(-2.0, t_V_iabj_aa, "I C A K", t_Bia_a, "C K Z", 1.0, t_Yia_a, "A I Z");
 
-        tblis::mult<double>(2.0, t_V_iajb_bb, "M G O E", t_Bia_b, "G O P", 0.0, t_Yia_b, "E M P");
-        tblis::mult<double>(-2.0, t_V_iabj_bb, "M G E O", t_Bia_b, "G O P", 1.0, t_Yia_b, "E M P");
+        tblis::mult<double>(2.0, t_V_iajb_bb, "M G O E", t_Bia_b, "G O Z", 0.0, t_Yia_b, "E M Z");
+        tblis::mult<double>(-2.0, t_V_iabj_bb, "M G E O", t_Bia_b, "G O Z", 1.0, t_Yia_b, "E M Z");
 
         Eigen::Map<Eigen::MatrixXd> Yia_flat_a(Yia_a.data(), va_ * na_, n_aux);
         X_a += Yia_flat_a;
         Eigen::Map<Eigen::MatrixXd> Yia_flat_b(Yia_b.data(), vb_ * nb_, n_aux);
         X_b += Yia_flat_b;
 
-        // Yoo_a & Yoo_b Response
-        tblis::mult<double>(1.0, t_Goooo_aa, "I K J L", t_Boo_a, "J L P", 0.0, t_Yoo_a, "I K P");
-        tblis::mult<double>(1.0, t_Goooo_ab, "I M K N", t_Boo_b, "M N P", 1.0, t_Yoo_a, "I K P");
-        tblis::mult<double>(2.0, t_V_iajb_aa, "I E J F", t_Bvv_a, "E F P", 1.0, t_Yoo_a, "I J P");
-        tblis::mult<double>(-1.0, t_V_iabj_aa, "I E F J", t_Bvv_a, "E F P", 1.0, t_Yoo_a, "I J P");
+        // Yoo Response
+        tblis::mult<double>(1.0, t_Goooo_aa, "I K J L", t_Boo_a, "J L Z", 0.0, t_Yoo_a, "I K Z");
+        tblis::mult<double>(1.0, t_Goooo_ab, "I M K N", t_Boo_b, "M N Z", 1.0, t_Yoo_a, "I K Z");
+        tblis::mult<double>(2.0, t_V_iajb_aa, "I E J F", t_Bvv_a, "E F Z", 1.0, t_Yoo_a, "I J Z");
+        tblis::mult<double>(-1.0, t_V_iabj_aa, "I E F J", t_Bvv_a, "E F Z", 1.0, t_Yoo_a, "I J Z");
 
-        tblis::mult<double>(1.0, t_Goooo_bb, "M O N Q", t_Boo_b, "N Q P", 0.0, t_Yoo_b, "M O P");
-        tblis::mult<double>(1.0, t_Goooo_ab, "I M K N", t_Boo_a, "I K P", 1.0, t_Yoo_b, "M N P");
-        tblis::mult<double>(2.0, t_V_iajb_bb, "M E N F", t_Bvv_b, "E F P", 1.0, t_Yoo_b, "M N P");
-        tblis::mult<double>(-1.0, t_V_iabj_bb, "M E F N", t_Bvv_b, "E F P", 1.0, t_Yoo_b, "M N P");
+        tblis::mult<double>(1.0, t_Goooo_bb, "M O N P", t_Boo_b, "N P Z", 0.0, t_Yoo_b, "M O Z");
+        tblis::mult<double>(1.0, t_Goooo_ab, "I M K N", t_Boo_a, "I K Z", 1.0, t_Yoo_b, "M N Z");
+        tblis::mult<double>(2.0, t_V_iajb_bb, "M E N F", t_Bvv_b, "E F Z", 1.0, t_Yoo_b, "M N Z");
+        tblis::mult<double>(-1.0, t_V_iabj_bb, "M E F N", t_Bvv_b, "E F Z", 1.0, t_Yoo_b, "M N Z");
 
-        // Yvv_a & Yvv_b Response
-        tblis::mult<double>(1.0, t_Gvvvv_aa, "A C B D", t_Bvv_a, "B D P", 0.0, t_Yvv_a, "A C P");
-        tblis::mult<double>(1.0, t_Gvvvv_ab, "A E C F", t_Bvv_b, "E F P", 1.0, t_Yvv_a, "A C P");
-        tblis::mult<double>(2.0, t_V_iajb_aa, "I A J B", t_Boo_a, "I J P", 1.0, t_Yvv_a, "A B P");
-        tblis::mult<double>(-1.0, t_V_iabj_aa, "I A B J", t_Boo_a, "I J P", 1.0, t_Yvv_a, "A B P");
+        // Yvv Response
+        tblis::mult<double>(1.0, t_Gvvvv_aa, "A C B D", t_Bvv_a, "B D Z", 0.0, t_Yvv_a, "A C Z");
+        tblis::mult<double>(1.0, t_Gvvvv_ab, "A E C F", t_Bvv_b, "E F Z", 1.0, t_Yvv_a, "A C Z");
+        tblis::mult<double>(2.0, t_V_iajb_aa, "I A J B", t_Boo_a, "I J Z", 1.0, t_Yvv_a, "A B Z");
+        tblis::mult<double>(-1.0, t_V_iabj_aa, "I A B J", t_Boo_a, "I J Z", 1.0, t_Yvv_a, "A B Z");
 
-        tblis::mult<double>(1.0, t_Gvvvv_bb, "E G F H", t_Bvv_b, "F H P", 0.0, t_Yvv_b, "E G P");
-        tblis::mult<double>(1.0, t_Gvvvv_ab, "A E C F", t_Bvv_a, "A C P", 1.0, t_Yvv_b, "E F P");
-        tblis::mult<double>(2.0, t_V_iajb_bb, "M E N F", t_Boo_b, "M N P", 1.0, t_Yvv_b, "E F P");
-        tblis::mult<double>(-1.0, t_V_iabj_bb, "M E F N", t_Boo_b, "M N P", 1.0, t_Yvv_b, "E F P");
+        tblis::mult<double>(1.0, t_Gvvvv_bb, "E G F H", t_Bvv_b, "F H Z", 0.0, t_Yvv_b, "E G Z");
+        tblis::mult<double>(1.0, t_Gvvvv_ab, "A E C F", t_Bvv_a, "A C Z", 1.0, t_Yvv_b, "E F Z");
+        tblis::mult<double>(2.0, t_V_iajb_bb, "M E N F", t_Boo_b, "M N Z", 1.0, t_Yvv_b, "E F Z");
+        tblis::mult<double>(-1.0, t_V_iabj_bb, "M E F N", t_Boo_b, "M N Z", 1.0, t_Yvv_b, "E F Z");
     }
 
     Eigen::MatrixXd Z_mat_a = Eigen::MatrixXd::Zero(va_, na_);
