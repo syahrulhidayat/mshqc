@@ -12,11 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-/**
- * @file src/mp3/mp3.cc
- * @brief Unified MP3 Implementation Powered by Native TBLISS
- */
-
 #include "mshqc/mp3/mp3.h"
 #include "mshqc/mp3/omp3.h"
 #include "mshqc/integrals/eri_transformer.h"
@@ -608,7 +603,7 @@ void OMP3::compute_mp3_correction() {
     }
 
     t2_3rd_aa_ = Eigen::Tensor<double, 4>(na_, na_, va_, va_); t2_3rd_aa_.setZero();
-    if (nb_ > 0 && vb_ > 0) {
+    if (!is_restricted && nb_ > 0 && vb_ > 0) {
         t2_3rd_bb_ = Eigen::Tensor<double, 4>(nb_, nb_, vb_, vb_); t2_3rd_bb_.setZero();
         t2_3rd_ab_ = Eigen::Tensor<double, 4>(na_, nb_, va_, vb_); t2_3rd_ab_.setZero();
     }
@@ -617,14 +612,14 @@ void OMP3::compute_mp3_correction() {
     TBLIS_VIEW_4D(t_Taa, T2_aa_ijab, na_, na_, va_, va_);
     auto* t2_bb_dense_ptr = t2_bb_.get_block(0,0,0,0);
     Eigen::Tensor<double, 4> dummy_bb_local;
-    if (!t2_bb_dense_ptr && nb_ > 0 && vb_ > 0) {
+    if (!t2_bb_dense_ptr && !is_restricted && nb_ > 0 && vb_ > 0) {
         dummy_bb_local = Eigen::Tensor<double, 4>(nb_, nb_, vb_, vb_);
         dummy_bb_local.setZero();
         t2_bb_dense_ptr = &dummy_bb_local;
     }
     auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
     Eigen::Tensor<double, 4> dummy_ab;
-    if (!t2_ab_dense && nb_ > 0 && vb_ > 0) {
+    if (!t2_ab_dense && !is_restricted && nb_ > 0 && vb_ > 0) {
         dummy_ab = Eigen::Tensor<double, 4>(na_, nb_, va_, vb_);
         dummy_ab.setZero();
         t2_ab_dense = &dummy_ab;
@@ -649,10 +644,10 @@ void OMP3::compute_mp3_correction() {
         tblis::mult<double>(0.5, t_Taa, "mnab", t_Voooo, "minj", 1.0, t_Waa_ladder, "ijab");
         tblis::mult<double>(-0.5, t_Taa, "mnab", t_Voooo, "mjni", 1.0, t_Waa_ladder, "ijab");
 
-        tblis::mult<double>(0.5, t_Taa, "kjcb", t_Taa, "ijab", 0.0, t_Waa_ring, "iakc");
-        tblis::mult<double>(-0.5, t_Taa, "kjcb", t_Taa, "ijab", 0.0, t_Waa_ring, "ikac");
+        tblis::mult<double>(1.0,  t_Vovov, "iakc", t_Taa, "kjcb", 1.0, t_Waa_ring, "ijab");
+        tblis::mult<double>(-1.0, t_Voovv, "ikac", t_Taa, "kjcb", 1.0, t_Waa_ring, "ijab");
 
-        if (nb_ > 0 && vb_ > 0) {
+        if (!is_restricted && nb_ > 0 && vb_ > 0) {
             Eigen::Tensor<double, 4> V_ovov_ab = map_4d(B_ia_P_alpha_ * B_ia_P_beta_.transpose(), na_, va_, nb_, vb_);
             TBLIS_VIEW_4D(t_Vovov_ab, V_ovov_ab, na_, va_, nb_, vb_);
             TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
@@ -685,7 +680,7 @@ void OMP3::compute_mp3_correction() {
         }
     }
 
-    if (nb_ > 0 && vb_ > 0) {
+    if (!is_restricted && nb_ > 0 && vb_ > 0) {
         const Eigen::MatrixXd& Cbo = scf_.C_beta.leftCols(nb_); 
         const Eigen::MatrixXd& Cbv = scf_.C_beta.rightCols(vb_);
         const auto& eb = scf_.orbital_energies_beta;
@@ -693,6 +688,14 @@ void OMP3::compute_mp3_correction() {
         Eigen::MatrixXd B_ij_b = build_B_mat(Cbo, Cbo, nb_, nb_);
         Eigen::MatrixXd B_ab_b = build_B_mat(Cbv, Cbv, vb_, vb_);
 
+        auto* t2_bb_dense_ptr = t2_bb_.get_block(0,0,0,0);
+        Eigen::Tensor<double, 4> dummy_bb_local;
+        if (!t2_bb_dense_ptr && !is_restricted && nb_ > 0 && vb_ > 0) {
+            dummy_bb_local = Eigen::Tensor<double, 4>(nb_, nb_, vb_, vb_);
+            dummy_bb_local.setZero();
+            t2_bb_dense_ptr = &dummy_bb_local;
+        }
+     
         TBLIS_VIEW_4D(t_Tbb, (*t2_bb_dense_ptr), nb_, nb_, vb_, vb_);
         TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
 
@@ -816,6 +819,7 @@ void OMP3::compute_mp3_correction() {
         e_mp3_tot_ = e3_aa + e3_bb + e3_ab;
     }
 }
+
 void OMP3::build_opdm_alpha() {
     if (L2_aa_.size() == 0) { OMP2::build_opdm_alpha(); return; }
     auto* t2_aa_dense = t2_aa_.get_block(0,0,0,0);
@@ -984,7 +988,7 @@ void OMP3::build_generalized_fock() {
 
         const auto& eri_ao = integrals_->compute_eri();
 
-        // 1. Evaluasi Z-Vector Aktif
+        // 1. Evaluasi Z-Vector Aktif Menggunakan O(N^5) Transformasi Satu Kali
         auto ovvv_a = integrals::ERITransformer::transform_custom(eri_ao, Ca_o, Ca_v, Ca_v, Ca_v, nbf_, na_, va_, va_, va_);
         auto ooov_a = integrals::ERITransformer::transform_custom(eri_ao, Ca_o, Ca_o, Ca_o, Ca_v, nbf_, na_, na_, na_, va_);
         auto oovv_a = integrals::ERITransformer::transform_custom(eri_ao, Ca_o, Ca_o, Ca_v, Ca_v, nbf_, na_, na_, va_, va_);
@@ -1042,7 +1046,7 @@ void OMP3::build_generalized_fock() {
             }
         }
 
-        // 2. Koreksi Coulomb+Exchange dari Densitas Aktif Menggunakan Fock Builder
+        // 2. Koreksi Coulomb (D_P) dari Densitas Aktif Menggunakan Fock Builder
         Eigen::MatrixXd G_full = Eigen::MatrixXd::Zero(nbf_, nbf_);
         G_full.block(0,0,na_,na_) = G_oo_alpha_;
         G_full.block(na_,na_,va_,va_) = G_vv_alpha_;
@@ -1056,42 +1060,34 @@ void OMP3::build_generalized_fock() {
         Z_oo_a += 2.0 * F_gamma_mo.block(0,0,na_,na_);
         Z_vv_a += 2.0 * F_gamma_mo.block(na_,na_,va_,va_);
 
-        // Helper: Evaluasi Matriks Coulomb+Exchange J-K di basis AO 
-        auto build_JK_AO_exact = [&](const Eigen::MatrixXd& P_x) {
-            Eigen::MatrixXd G_AO = Eigen::MatrixXd::Zero(nbf_, nbf_);
+        // Helper: Evaluasi Matriks Coulomb J di basis AO memanfaatkan sparsity J_val_ (O(N^2))
+        auto build_J_AO_exact = [&](const Eigen::MatrixXd& P_x) {
+            Eigen::MatrixXd J_AO = Eigen::MatrixXd::Zero(nbf_, nbf_);
             const double* p_dx = P_x.data();
             const double* Jv = J_val_.data(); 
             const int* Ji = J_ind_.data(); 
             const size_t* Jp = J_ptr_.data();
-            const double* Kv = K_val_.data(); 
-            const int* Ki = K_ind_.data(); 
-            const size_t* Kp = K_ptr_.data();
             
             #pragma omp parallel
             {
-                Eigen::MatrixXd G_loc = Eigen::MatrixXd::Zero(nbf_, nbf_);
+                Eigen::MatrixXd J_loc = Eigen::MatrixXd::Zero(nbf_, nbf_);
                 #pragma omp for schedule(dynamic, 32)
                 for (size_t r = 0; r < row_map_.size(); ++r) {
                     int mu = row_map_[r].first;
                     int nu = row_map_[r].second;
                     if (schwarz_(mu, nu) * P_x.cwiseAbs().maxCoeff() < 1e-9) continue;
-                    
                     double vj = 0.0;
                     for (size_t k = Jp[r]; k < Jp[r+1]; ++k) vj += Jv[k] * p_dx[Ji[k]];
-                    
-                    double vk = 0.0;
-                    for (size_t k = Kp[r]; k < Kp[r+1]; ++k) vk += Kv[k] * p_dx[Ki[k]];
-
-                    G_loc(mu, nu) += 4.0 * vj - 2.0 * vk; // 4J - K - K^T
+                    J_loc(mu, nu) += vj;
                 }
                 #pragma omp critical
-                G_AO += G_loc;
+                J_AO += J_loc;
             }
-            for (int i = 0; i < nbf_; ++i) for (int j = 0; j < i; ++j) G_AO(j, i) = G_AO(i, j);
-            return G_AO;
+            for (int i = 0; i < nbf_; ++i) for (int j = 0; j < i; ++j) J_AO(j, i) = J_AO(i, j);
+            return J_AO;
         };
 
-        // 3. Mini-CPHF Solver Menggunakan AO-Driven Coulomb+Exchange Response
+        // 3. Mini-CPHF Solver Menggunakan AO-Driven Coulomb Response
         auto solve_mini_cphf_exact = [&](const Eigen::MatrixXd& Z_in, const Eigen::VectorXd& eps, bool is_oo, int offset) -> Eigen::MatrixXd {
             int dim = is_oo ? na_ : va_;
             if (dim == 0) return Eigen::MatrixXd::Zero(0,0);
@@ -1115,8 +1111,8 @@ void OMP3::build_generalized_fock() {
             auto compute_Ax = [&](const Eigen::VectorXd& x) {
                 Eigen::Map<const Eigen::MatrixXd> x_mat(x.data(), dim, dim);
                 Eigen::MatrixXd P_x = C_basis * x_mat * C_basis.transpose();
-                Eigen::MatrixXd G_MO = C_basis.transpose() * build_JK_AO_exact(P_x) * C_basis;
-                return (eps_diff.cwiseProduct(x) + Eigen::Map<Eigen::VectorXd>(G_MO.data(), dim2)).eval();
+                Eigen::MatrixXd J_MO = C_basis.transpose() * build_J_AO_exact(P_x) * C_basis;
+                return (eps_diff.cwiseProduct(x) + Eigen::Map<Eigen::VectorXd>(J_MO.data(), dim2)).eval();
             };
 
             Eigen::VectorXd x = apply_precond(Z_vec); 
@@ -1144,11 +1140,11 @@ void OMP3::build_generalized_fock() {
         dx_oo_a = solve_mini_cphf_exact(Z_oo_a, ea, true, 0);
         dx_vv_a = solve_mini_cphf_exact(Z_vv_a, ea, false, na_);
 
-        // 4. Efek Gaya Relaksasi ke F_gen
+        // 4. Efek Gaya Relaksasi ke F_gen (Gaya Coulomb dari Densitas Terelaksasi)
         Eigen::MatrixXd P_x_tot = Ca_o * dx_oo_a * Ca_o.transpose() + Ca_v * dx_vv_a * Ca_v.transpose();
-        Eigen::MatrixXd G_AO_resp = build_JK_AO_exact(P_x_tot);
-        Delta_G_ia_a = scale * (Ca_v.transpose() * G_AO_resp * Ca_o);
-    }
+        Eigen::MatrixXd J_AO_resp = build_J_AO_exact(P_x_tot);
+        Delta_G_ia_a = scale * (Ca_v.transpose() * J_AO_resp * Ca_o);
+    } 
     // =========================================================================
     // JALUR 2: EVALUASI Z-VECTOR & CPHF DENGAN DENSITY FITTING (DF)
     // =========================================================================
