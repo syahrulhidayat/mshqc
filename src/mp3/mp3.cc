@@ -339,10 +339,10 @@ void OMP3::compute_mp3_correction() {
             TBLIS_VIEW_4D(t_T, T2_aa_ijab, na_, na_, va_, va_);
             TBLIS_VIEW_4D(t_W, W, na_, na_, va_, va_);
 
-            auto V_vvvv = ERITransformer::get_mo_tensor(false, 0, Cav, Cav, Cav, Cav, ints_);
-            auto V_oooo = ERITransformer::get_mo_tensor(false, 0, Cao, Cao, Cao, Cao, ints_);
-            auto V_ovov = ERITransformer::get_mo_tensor(false, 0, Cao, Cav, Cao, Cav, ints_);
-            auto V_oovv = ERITransformer::get_mo_tensor(false, 0, Cao, Cao, Cav, Cav, ints_);
+            auto V_vvvv = ERITransformer::get_mo_tensor(false, 0, Cav, Cav, Cav, Cav, integrals_);
+            auto V_oooo = ERITransformer::get_mo_tensor(false, 0, Cao, Cao, Cao, Cao, integrals_);
+            auto V_ovov = ERITransformer::get_mo_tensor(false, 0, Cao, Cav, Cao, Cav, integrals_);
+            auto V_oovv = ERITransformer::get_mo_tensor(false, 0, Cao, Cao, Cav, Cav, integrals_);
 
             TBLIS_VIEW_4D(t_Vvvvv, V_vvvv, va_, va_, va_, va_);
             TBLIS_VIEW_4D(t_Voooo, V_oooo, na_, na_, na_, na_);
@@ -412,10 +412,10 @@ void OMP3::compute_mp3_correction() {
             const Eigen::MatrixXd& Cbv = scf_.C_beta.rightCols(vb_);
             const auto& eb = scf_.orbital_energies_beta;
 
-            auto Vaa_vvvv = ERITransformer::get_mo_tensor(false, 0, Cav, Cav, Cav, Cav, ints_);
-            auto Vaa_oooo = ERITransformer::get_mo_tensor(false, 0, Cao, Cao, Cao, Cao, ints_);
-            auto Vaa_ovov = ERITransformer::get_mo_tensor(false, 0, Cao, Cav, Cao, Cav, ints_);
-            auto Vaa_oovv = ERITransformer::get_mo_tensor(false, 0, Cao, Cao, Cav, Cav, ints_);
+            auto Vaa_vvvv = ERITransformer::get_mo_tensor(false, 0, Cav, Cav, Cav, Cav, integrals_);
+            auto Vaa_oooo = ERITransformer::get_mo_tensor(false, 0, Cao, Cao, Cao, Cao, integrals_);
+            auto Vaa_ovov = ERITransformer::get_mo_tensor(false, 0, Cao, Cav, Cao, Cav, integrals_);
+            auto Vaa_oovv = ERITransformer::get_mo_tensor(false, 0, Cao, Cao, Cav, Cav, integrals_);
             
             TBLIS_VIEW_4D(t_Vaa_vvvv, Vaa_vvvv, va_, va_, va_, va_);
             TBLIS_VIEW_4D(t_Vaa_oooo, Vaa_oooo, na_, na_, na_, na_);
@@ -430,10 +430,10 @@ void OMP3::compute_mp3_correction() {
             tblis::mult<double>(-1.0, t_Vaa_oovv, "ikac", t_Taa, "kjcb", 1.0, t_Waa, "ijab");
 
             if (nb_ > 0 && vb_ > 0) {
-                auto Vbb_vvvv = ERITransformer::get_mo_tensor(false, 0, Cbv, Cbv, Cbv, Cbv, ints_);
-                auto Vbb_oooo = ERITransformer::get_mo_tensor(false, 0, Cbo, Cbo, Cbo, Cbo, ints_);
-                auto Vbb_ovov = ERITransformer::get_mo_tensor(false, 0, Cbo, Cbv, Cbo, Cbv, ints_);
-                auto Vbb_oovv = ERITransformer::get_mo_tensor(false, 0, Cbo, Cbo, Cbv, Cbv, ints_);
+                auto Vbb_vvvv = ERITransformer::get_mo_tensor(false, 0, Cbv, Cbv, Cbv, Cbv, integrals_);
+                auto Vbb_oooo = ERITransformer::get_mo_tensor(false, 0, Cbo, Cbo, Cbo, Cbo, integrals_);
+                auto Vbb_ovov = ERITransformer::get_mo_tensor(false, 0, Cbo, Cbv, Cbo, Cbv, integrals_);
+                auto Vbb_oovv = ERITransformer::get_mo_tensor(false, 0, Cbo, Cbo, Cbv, Cbv, integrals_);
                 
                 TBLIS_VIEW_4D(t_Vbb_vvvv, Vbb_vvvv, vb_, vb_, vb_, vb_);
                 TBLIS_VIEW_4D(t_Vbb_oooo, Vbb_oooo, nb_, nb_, nb_, nb_);
@@ -447,11 +447,11 @@ void OMP3::compute_mp3_correction() {
                 tblis::mult<double>(1.0, t_Vbb_ovov, "iakc", t_Tbb, "kjcb", 1.0, t_Wbb, "ijab");
                 tblis::mult<double>(-1.0, t_Vbb_oovv, "ikac", t_Tbb, "kjcb", 1.0, t_Wbb, "ijab");
 
-                auto Vab_vvvv = ERITransformer::get_mo_tensor(false, 0, Cav, Cav, Cbv, Cbv, ints_);
-                auto Vab_oooo = ERITransformer::get_mo_tensor(false, 0, Cao, Cao, Cbo, Cbo, ints_);
-                auto Vab_ovov = ERITransformer::get_mo_tensor(false, 0, Cao, Cav, Cbo, Cbv, ints_);
-                auto Vab_oovv_ex = ERITransformer::get_mo_tensor(false, 0, Cao, Cao, Cbv, Cbv, ints_);
-                auto Vba_oovv_ex = ERITransformer::get_mo_tensor(false, 0, Cbo, Cbo, Cav, Cav, ints_);
+                auto Vab_vvvv = ERITransformer::get_mo_tensor(false, 0, Cav, Cav, Cbv, Cbv, integrals_);
+                auto Vab_oooo = ERITransformer::get_mo_tensor(false, 0, Cao, Cao, Cbo, Cbo, integrals_);
+                auto Vab_ovov = ERITransformer::get_mo_tensor(false, 0, Cao, Cav, Cbo, Cbv, integrals_);
+                auto Vab_oovv_ex = ERITransformer::get_mo_tensor(false, 0, Cao, Cao, Cbv, Cbv, integrals_);
+                auto Vba_oovv_ex = ERITransformer::get_mo_tensor(false, 0, Cbo, Cbo, Cav, Cav, integrals_);
 
                 TBLIS_VIEW_4D(t_Vab_vvvv, Vab_vvvv, va_, va_, vb_, vb_);
                 TBLIS_VIEW_4D(t_Vab_oooo, Vab_oooo, na_, na_, nb_, nb_);
