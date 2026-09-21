@@ -918,9 +918,14 @@ void OMP3::build_generalized_fock() {
             for (int k = 0; k < dim2; ++k) if (std::abs(eps_diff(k)) > 1e-5) x(k) = Z_vec(k) / eps_diff(k);
 
             auto apply_V = [&](const Eigen::VectorXd& vec) {
-                Eigen::Map<const Eigen::MatrixXd> M(vec.data(), dim, dim);
+                // Gunakan const_cast agar .data() mengembalikan pointer non-const untuk TBLIS
+                Eigen::Map<Eigen::MatrixXd> M(const_cast<double*>(vec.data()), dim, dim);
                 Eigen::MatrixXd R = Eigen::MatrixXd::Zero(dim, dim);
-                TBLIS_VIEW_4D(t_V, V_exact, dim, dim, dim, dim);
+                
+                // Gunakan TensorMap non-const agar macro TBLIS_VIEW_4D bisa memanggil .data() tanpa error tipe
+                Eigen::TensorMap<Eigen::Tensor<double, 4>> V_map(const_cast<double*>(V_exact.data()), dim, dim, dim, dim);
+                
+                TBLIS_VIEW_4D(t_V, V_map, dim, dim, dim, dim);
                 TBLIS_VIEW_2D(t_M, M.data(), dim, dim);
                 TBLIS_VIEW_2D(t_R, R.data(), dim, dim);
                 
