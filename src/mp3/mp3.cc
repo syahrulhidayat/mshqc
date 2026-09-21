@@ -305,13 +305,8 @@ double OMP3::execute_micro_iterations() {
 
     return get_correlation_energy();
 }
-
 void OMP3::compute_mp3_correction() {
     if (na_ == 0 || va_ == 0) { e_mp3_tot_ = 0.0; return; }
-    
-    if (!config_.use_df) {
-        throw std::runtime_error("[OMP3] Exact Integrals not yet supported. Please use DF.");
-    }
 
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     const Eigen::MatrixXd& Cao = scf_.C_alpha.leftCols(na_); 
@@ -321,6 +316,7 @@ void OMP3::compute_mp3_correction() {
     auto* t2_aa_dense = t2_aa_.get_block(0,0,0,0);
     if(!t2_aa_dense) throw std::runtime_error("OMP3 missing T2 dense block.");
     Eigen::Tensor<double, 4> T2_aa_ijab(na_, na_, va_, va_);
+    
     #pragma omp parallel for collapse(4) schedule(static)
     for(int i = 0; i < na_; ++i) {
         for(int j = 0; j < na_; ++j) {
@@ -332,6 +328,69 @@ void OMP3::compute_mp3_correction() {
         }
     }
 
+    // =========================================================================
+    // IMPLEMENTASI INTEGRAL EKSAK (TANPA DENSITY FITTING)
+    // =========================================================================
+    if (!config_.use_df) {
+        if (is_restricted) {
+            t2_3rd_aa_ = Eigen::Tensor<double, 4>(na_, na_, va_, va_);
+            Eigen::Tensor<double, 4> W(na_, na_, va_, va_); W.setZero();
+            
+            TBLIS_VIEW_4D(t_T, T2_aa_ijab, na_, na_, va_, va_);
+            TBLIS_VIEW_4D(t_W, W, na_, na_, va_, va_);
+
+            // 1. Particle Ladder (vvvv)
+            {
+                auto V_vvvv = ERITransformer::get_mo_tensor(false, 0, Cav, Cav, Cav, Cav, integrals_);
+                TBLIS_VIEW_4D(t_Vvvvv, V_vvvv, va_, va_, va_, va_);
+                tblis::mult<double>(1.0, t_T, "ijef", t_Vvvvv, "eafb", 1.0, t_W, "ijab");
+            }
+            // 2. Hole Ladder (oooo)
+            {
+                auto V_oooo = ERITransformer::get_mo_tensor(false, 0, Cao, Cao, Cao, Cao, integrals_);
+                TBLIS_VIEW_4D(t_Voooo, V_oooo, na_, na_, na_, na_);
+                tblis::mult<double>(1.0, t_T, "mnab", t_Voooo, "minj", 1.0, t_W, "ijab");
+            }
+            // 3. Ring & Cross (ovov & oovv)
+            {
+                auto V_ovov = ERITransformer::get_mo_tensor(false, 0, Cao, Cav, Cao, Cav, integrals_);
+                auto V_oovv = ERITransformer::get_mo_tensor(false, 0, Cao, Cao, Cav, Cav, integrals_);
+                TBLIS_VIEW_4D(t_Vovov, V_ovov, na_, va_, na_, va_);
+                TBLIS_VIEW_4D(t_Voovv, V_oovv, na_, na_, va_, va_);
+
+                tblis::mult<double>(2.0,  t_Vovov, "iakc", t_T, "kjcb", 1.0, t_W, "ijab");
+                tblis::mult<double>(-1.0, t_Voovv, "ikac", t_T, "kjcb", 1.0, t_W, "ijab");
+                tblis::mult<double>(2.0,  t_T, "ikac", t_Vovov, "kcjb", 1.0, t_W, "ijab");
+                tblis::mult<double>(-1.0, t_T, "ikac", t_Voovv, "kjcb", 1.0, t_W, "ijab");
+                tblis::mult<double>(-1.0, t_T, "ikca", t_Vovov, "kcjb", 1.0, t_W, "ijab"); 
+                tblis::mult<double>(-1.0, t_Vovov, "iakc", t_T, "kjbc", 1.0, t_W, "ijab");
+                tblis::mult<double>(-1.0, t_Voovv, "ikbc", t_T, "kjac", 1.0, t_W, "ijab");
+                tblis::mult<double>(-1.0, t_T, "ikcb", t_Voovv, "jkac", 1.0, t_W, "ijab"); 
+            }
+
+            double e3_aa = 0.0;
+            #pragma omp parallel for collapse(4) reduction(+:e3_aa) schedule(static)
+            for (int i = 0; i < na_; ++i) {
+                for (int j = 0; j < na_; ++j) {
+                    for (int a = 0; a < va_; ++a) {
+                        for (int b = 0; b < va_; ++b) {
+                            double D = ea(i) + ea(j) - ea(na_+a) - ea(na_+b);
+                            t2_3rd_aa_(i,j,a,b) = W(i,j,a,b) / D; 
+                            e3_aa += W(i, j, a, b) * (2.0 * T2_aa_ijab(i, j, a, b) - T2_aa_ijab(i, j, b, a));
+                        }
+                    }
+                }
+            }
+            e_mp3_tot_ = e3_aa;
+            return; // Skip blok DF di bawah
+        } else {
+            throw std::runtime_error("[OMP3] Unrestricted Exact Integrals belum didukung. Silakan gunakan DF.");
+        }
+    }
+
+    // =========================================================================
+    // IMPLEMENTASI DENSITY FITTING (KODE ASLI)
+    // =========================================================================
     int n_aux = scf_.L_mat.cols();
     Eigen::Map<const Eigen::MatrixXd> L_flat(scf_.L_mat.data(), nbf_, nbf_ * n_aux);
 
