@@ -116,6 +116,7 @@ void RMP2::transform_integrals() {
 void RMP2::compute_amplitudes_and_energy() {
     const Eigen::VectorXd& eps = scf_.orbital_energies_alpha;
     t2_ = Eigen::Tensor<double, 4>(nocc_a_, nocc_a_, nvir_a_, nvir_a_);
+    t2_.setZero();
 
     double e_corr_sum = 0.0;
     bool is_exact = (config_.eri_method == "exact");
@@ -210,6 +211,7 @@ double UMP2::compute_ss_alpha() {
     }
 
     t2_aa_ = Eigen::Tensor<double, 4>(nocc_a_, nocc_a_, nvir_a_, nvir_a_);
+    t2_aa_.setZero();
     const auto& eo = scf_.orbital_energies_alpha;
     const auto& ev = scf_.orbital_energies_alpha.tail(nvir_a_);
     double e_sum = 0.0;
@@ -271,6 +273,7 @@ double UMP2::compute_ss_beta() {
     }
 
     t2_bb_ = Eigen::Tensor<double, 4>(nocc_b_, nocc_b_, nvir_b_, nvir_b_);
+    t2_bb_.setZero();
     const auto& eo = scf_.orbital_energies_beta;
     const auto& ev = scf_.orbital_energies_beta.tail(nvir_b_);
     double e_sum = 0.0;
@@ -328,6 +331,7 @@ double UMP2::compute_os() {
     }
 
     t2_ab_ = Eigen::Tensor<double, 4>(nocc_a_, nocc_b_, nvir_a_, nvir_b_);
+    t2_ab_.setZero();
     const auto& eoa = scf_.orbital_energies_alpha;
     const auto& eva = scf_.orbital_energies_alpha.tail(nvir_a_);
     const auto& eob = scf_.orbital_energies_beta;
