@@ -200,6 +200,8 @@ double UMP2::compute_ss_alpha() {
         auto eri_ao = integrals_->compute_eri();
         const Eigen::MatrixXd& Ca_occ = scf_.C_alpha.leftCols(nocc_a_);
         const Eigen::MatrixXd& Ca_vir = scf_.C_alpha.rightCols(nvir_a_);
+        
+      
         auto eri_chem = integrals::ERITransformer::transform_custom(
             eri_ao, Ca_occ, Ca_vir, Ca_occ, Ca_vir, nbf_, nocc_a_, nvir_a_, nocc_a_, nvir_a_
         );
@@ -261,8 +263,10 @@ double UMP2::compute_ss_beta() {
         auto eri_ao = integrals_->compute_eri();
         const Eigen::MatrixXd& Cb_occ = scf_.C_beta.leftCols(nocc_b_);
         const Eigen::MatrixXd& Cb_vir = scf_.C_beta.rightCols(nvir_b_);
-        auto eri_chem = integrals::ERITransformer::transform_ovov(eri_ao, Cb_occ, Cb_vir, nbf_, nocc_b_, nvir_b_);
-        Eigen::array<int, 4> shuf = {0, 2, 1, 3};
+        auto eri_chem = integrals::ERITransformer::transform_custom(
+            eri_ao, Cb_occ, Cb_vir, Cb_occ, Cb_vir, nbf_, nocc_b_, nvir_b_, nocc_b_, nvir_b_
+        );
+        Eigen::array< int, 4 > shuf = {0, 2, 1, 3};
         eri_bbbb_ = eri_chem.shuffle(shuf);
     }
 
@@ -316,8 +320,6 @@ double UMP2::compute_os() {
         const Eigen::MatrixXd& Ca_vir = scf_.C_alpha.rightCols(nvir_a_);
         const Eigen::MatrixXd& Cb_occ = scf_.C_beta.leftCols(nocc_b_);
         const Eigen::MatrixXd& Cb_vir = scf_.C_beta.rightCols(nvir_b_);
-        
-        // Bypass transform_oovv_mixed dan paksa matriks: (Alpha_Occ Alpha_Vir | Beta_Occ Beta_Vir)
         auto eri_chem = integrals::ERITransformer::transform_custom(
             eri_ao, Ca_occ, Ca_vir, Cb_occ, Cb_vir, nbf_, nocc_a_, nvir_a_, nocc_b_, nvir_b_
         );
