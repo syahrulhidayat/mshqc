@@ -442,26 +442,29 @@ NB_MODULE(_mshqc, m) {
         .def_rw("orbital_energies_alpha", &MP2Result::orbital_energies_alpha)
         .def_rw("orbital_energies_beta", &MP2Result::orbital_energies_beta);
 
-    nb::class_<foundation::RMP2>(m, "RMP2")
-        .def(nb::init<const Molecule&, const BasisSet&, std::shared_ptr<IntegralEngine>, 
-                      const SCFResult&, const MP2Config&, std::shared_ptr<PointGroup>, std::shared_ptr<PetiteList>>(),
+    nb::class_< foundation::RMP2 >(m, "RMP2")
+        .def(nb::init< const Molecule&, const BasisSet&, std::shared_ptr< IntegralEngine >, 
+                      const SCFResult&, const MP2Config&, std::shared_ptr< PointGroup >, std::shared_ptr< PetiteList > >(),
              nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
              nb::arg("config"), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
-        .def("compute", &foundation::RMP2::compute, nb::call_guard<nb::gil_scoped_release>());
+        .def("compute", &foundation::RMP2::compute, nb::call_guard< nb::gil_scoped_release >())
+        .def("set_frozen_core", &mshqc::BaseMP2::set_frozen_core, nb::arg("n_frozen"));
 
-    nb::class_<mshqc::UMP2>(m, "UMP2")
-        .def(nb::init<const Molecule&, const BasisSet&, std::shared_ptr<IntegralEngine>, 
-                      const SCFResult&, const MP2Config&, std::shared_ptr<PointGroup>, std::shared_ptr<PetiteList>>(),
+    nb::class_< mshqc::UMP2 >(m, "UMP2")
+        .def(nb::init< const Molecule&, const BasisSet&, std::shared_ptr< IntegralEngine >, 
+                      const SCFResult&, const MP2Config&, std::shared_ptr< PointGroup >, std::shared_ptr< PetiteList > >(),
              nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
              nb::arg("config"), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
-        .def("compute", &mshqc::UMP2::compute, nb::call_guard<nb::gil_scoped_release>());
+        .def("compute", &mshqc::UMP2::compute, nb::call_guard< nb::gil_scoped_release >())
+        .def("set_frozen_core", &mshqc::BaseMP2::set_frozen_core, nb::arg("n_frozen"));
 
-    nb::class_<OMP2>(m, "OMP2")
-        .def(nb::init<const Molecule&, const BasisSet&, std::shared_ptr<IntegralEngine>, 
-                      const SCFResult&, const MP2Config&, std::shared_ptr<PointGroup>, std::shared_ptr<PetiteList>>(), 
+    nb::class_< OMP2 >(m, "OMP2")
+        .def(nb::init< const Molecule&, const BasisSet&, std::shared_ptr< IntegralEngine >, 
+                      const SCFResult&, const MP2Config&, std::shared_ptr< PointGroup >, std::shared_ptr< PetiteList > >(), 
              nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
              nb::arg("config"), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
-        .def("compute", &OMP2::compute, nb::call_guard<nb::gil_scoped_release>(), "Run OMP2 optimization");
+        .def("compute", &OMP2::compute, nb::call_guard< nb::gil_scoped_release >(), "Run OMP2 optimization")
+        .def("set_frozen_core", &mshqc::BaseMP2::set_frozen_core, nb::arg("n_frozen"));
   
     nb::class_<MP3Result>(m, "MP3Result")
         .def(nb::init<>())
