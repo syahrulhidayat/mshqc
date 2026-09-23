@@ -135,8 +135,8 @@ jobs:
         body: "Automated build of MSHQC natively compiled without MLIR/JIT dependency."
         files: release/*.whl
         prerelease: true
+        generate_release_notes: false
       env:
-        # Token tidak perlu disuntikkan secara eksplisit, GITHUB_TOKEN ephemeral akan otomatis digunakan.
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
     # =========================================================================
