@@ -137,7 +137,7 @@ jobs:
         fail_on_unmatched_files: true
         prerelease: true
       env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        GITHUB_TOKEN: ${{ secrets.MY_GITHUB_TOKEN }}
 
     # =========================================================================
     # 7. EXPOSE ARTIFACT DIRECTORY KE GITHUB ACTIONS UI
