@@ -47,7 +47,11 @@ BaseMP2::BaseMP2(const Molecule& mol, const BasisSet& basis,
     nvir_a_ = nbf_ - nocc_a_;
     nvir_b_ = nbf_ - nocc_b_;
 
-    if (config_.eri_method == "df") config_.use_df = true;
+    if (config_.eri_method == "df") {
+        config_.use_df = true;
+    } else if (!config_.use_df && config_.eri_method != "cholesky") {
+        config_.eri_method = "exact"; 
+    }
 }
 BaseMP2::~BaseMP2() = default;
 
