@@ -134,8 +134,8 @@ jobs:
         name: "MSHQC 1.0.3 (AOT Build)"
         body: "Automated build of MSHQC natively compiled without MLIR/JIT dependency."
         files: release/*.whl
+        fail_on_unmatched_files: true
         prerelease: true
-        generate_release_notes: false
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
