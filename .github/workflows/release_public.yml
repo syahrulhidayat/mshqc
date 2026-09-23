@@ -133,12 +133,11 @@ jobs:
         tag_name: "v1.0.3-nightly"
         name: "MSHQC 1.0.3 (AOT Build)"
         body: "Automated build of MSHQC natively compiled without MLIR/JIT dependency."
-        files: release/*.whl
+        files: "release/*.whl"
         fail_on_unmatched_files: true
         prerelease: true
       env:
         GITHUB_TOKEN: ${{ secrets.MY_GITHUB_TOKEN }}
-
     # =========================================================================
     # 7. EXPOSE ARTIFACT DIRECTORY KE GITHUB ACTIONS UI
     # =========================================================================
