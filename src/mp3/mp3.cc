@@ -961,6 +961,21 @@ void OMP3::build_generalized_fock() {
         tblis::mult< double >(1.0, t_T1, "klab", t_Vooov, "klie", 0.0, t_Y, "ieab"); // klie menggantikan V_oovo_ex
         tblis::mult< double >(-2.0, t_Y, "keab", t_T1, "ikeb", 1.0, t_Zmat, "ai");
         tblis::mult< double >(1.0, t_Y, "keab", t_T1, "kieb", 1.0, t_Zmat, "ai");
+
+        // =========================================================================
+        // [PERBAIKAN 2]: Injeksi Suku Cincin (TPDM OVOV -> Gamma_meif)
+        // Menyelesaikan sisa selisih gradien 1.93e-4 dari turunan integral 
+        // =========================================================================
+        Eigen::Tensor< double, 4 > Gamma_meif(na_, va_, na_, va_);
+        TBLIS_VIEW_4D(t_Gamma, Gamma_meif, na_, va_, na_, va_);
+        Gamma_meif.setZero();
+        
+        // Gamma_meif = \sum_{n,c} T1_{mn}^{ec} (2 T1_{in}^{fc} - T1_{in}^{cf})
+        tblis::mult< double >(2.0, t_T1, "mnec", t_T1, "infc", 0.0, t_Gamma, "meif");
+        tblis::mult< double >(-1.0, t_T1, "mnec", t_T1, "incf", 1.0, t_Gamma, "meif");
+
+        // Kontraksi matriks densitas 2-partikel (Gamma) dengan integral OVOV (V_meaf)
+        tblis::mult< double >(-2.0, t_Gamma, "meif", t_Vovov, "meaf", 1.0, t_Zmat, "ai");
         // =========================================================================
         // =========================================================================
 
