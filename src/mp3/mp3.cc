@@ -368,12 +368,16 @@ void OMP3::compute_mp3_correction() {
                 eri_ao_cached_ = integrals_->compute_eri();
             }
 
-            auto V_vvvv = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cav, Cav, Cav, Cav, nbf_, va_, va_, va_, va_);
-            TBLIS_VIEW_4D(t_Vvvvv, V_vvvv, va_, va_, va_, va_);
+            // [OPTIMASI EKSAK 1]: Gunakan Waa_ladder_ yang menganggur sebagai cache V_vvvv
+            if (Waa_ladder_.size() != va_ * va_ * va_ * va_) Waa_ladder_.resize(va_, va_, va_, va_);
+            Waa_ladder_ = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cav, Cav, Cav, Cav, nbf_, va_, va_, va_, va_);
+            TBLIS_VIEW_4D(t_Vvvvv, Waa_ladder_, va_, va_, va_, va_);
             tblis::mult< double >(1.0, t_T, "ijef", t_Vvvvv, "eafb", 1.0, t_W, "ijab");
             
-            auto V_oooo = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cao, Cao, Cao, Cao, nbf_, na_, na_, na_, na_);
-            TBLIS_VIEW_4D(t_Voooo, V_oooo, na_, na_, na_, na_);
+            // [OPTIMASI EKSAK 2]: Gunakan Waa_ring_ yang menganggur sebagai cache V_oooo
+            if (Waa_ring_.size() != na_ * na_ * na_ * na_) Waa_ring_.resize(na_, na_, na_, na_);
+            Waa_ring_ = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cao, Cao, Cao, Cao, nbf_, na_, na_, na_, na_);
+            TBLIS_VIEW_4D(t_Voooo, Waa_ring_, na_, na_, na_, na_);
             tblis::mult< double >(1.0, t_T, "mnab", t_Voooo, "minj", 1.0, t_W, "ijab");
 
             auto* g_blk_mp3 = g_aa_.get_block(0,0,0,0);
@@ -994,11 +998,9 @@ void OMP3::build_generalized_fock() {
             return Eigen::Map< Eigen::MatrixXd >(x.data(), dim, dim);
         };
 
-        auto V_oooo = ERITransformer::transform_custom(eri_ao_cached_, Cao, Cao, Cao, Cao, nbf_, na_, na_, na_, na_);
-        auto V_vvvv = ERITransformer::transform_custom(eri_ao_cached_, Cav, Cav, Cav, Cav, nbf_, va_, va_, va_, va_);
-        
-        dx_oo_a = solve_mini_cphf_exact(Z_oo_mat, ea, V_oooo, na_, 0);
-        dx_vv_a = solve_mini_cphf_exact(Z_vv_mat, ea, V_vvvv, va_, na_);
+        // [OPTIMASI EKSAK 3]: Cegah perhitungan O(N^5) ulang, langsung gunakan cache!
+        dx_oo_a = solve_mini_cphf_exact(Z_oo_mat, ea, Waa_ring_, na_, 0);
+        dx_vv_a = solve_mini_cphf_exact(Z_vv_mat, ea, Waa_ladder_, va_, na_);
 
         TBLIS_VIEW_2D(t_dG, Delta_G_ia_a.data(), va_, na_);
         TBLIS_VIEW_2D(t_xoo, dx_oo_a.data(), na_, na_);
@@ -1201,16 +1203,7 @@ void OMP3::build_generalized_fock() {
         }
     }
 
-    // =========================================================================
-    // TAHAP 3: PERAKITAN 1-RDM MURNI & MATRIKS FOCK GENERALIZED (F_gen)
-    // =========================================================================
-    // [PERBAIKAN KEMATIAN GRADIENT]: Suntikkan respons CPHF ke dalam Matriks Densitas
-    G_oo_alpha_ += scale * dx_oo_a;
-    G_vv_alpha_ += scale * dx_vv_a;
-    if (!is_restricted && nb_ > 0 && vb_ > 0) {
-        G_oo_beta_ += scale * dx_oo_b;
-        G_vv_beta_ += scale * dx_vv_b;
-    }
+
 
     Eigen::MatrixXd G_full_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
     G_full_a.block(0, 0, na_, na_) = G_oo_alpha_;
