@@ -353,7 +353,7 @@ void OMP3::compute_mp3_correction() {
     }
 
     // =========================================================================
-    // IMPLEMENTASI INTEGRAL EKSAK (TANPA DENSITY FITTING)
+    // IMPLEMENTASI INTEGRAL EKSAK (CACHE AO INTEGRAL)
     // =========================================================================
     if (!config_.use_df) {
         if (is_restricted) {
@@ -363,37 +363,32 @@ void OMP3::compute_mp3_correction() {
             TBLIS_VIEW_4D(t_T, T2_aa_ijab, na_, na_, va_, va_);
             TBLIS_VIEW_4D(t_W, W, na_, na_, va_, va_);
 
-            // Hitung AO ERI satu kali untuk seluruh transformasi eksak
-            auto eri_ao = integrals_->compute_eri();
+            // CACHE: Evaluasi AO ERI satu kali saja sepanjang siklus OMP3
+            if (eri_ao_cached_.size() == 0) {
+                eri_ao_cached_ = integrals_->compute_eri();
+            }
 
-            // 1. Particle Ladder (vvvv)
-            {
-                auto V_vvvv = ERITransformer::transform_custom(eri_ao, Cav, Cav, Cav, Cav, nbf_, va_, va_, va_, va_);
-                TBLIS_VIEW_4D(t_Vvvvv, V_vvvv, va_, va_, va_, va_);
-                tblis::mult< double >(1.0, t_T, "ijef", t_Vvvvv, "eafb", 1.0, t_W, "ijab");
-            }
-            // 2. Hole Ladder (oooo)
-            {
-                auto V_oooo = ERITransformer::transform_custom(eri_ao, Cao, Cao, Cao, Cao, nbf_, na_, na_, na_, na_);
-                TBLIS_VIEW_4D(t_Voooo, V_oooo, na_, na_, na_, na_);
-                tblis::mult< double >(1.0, t_T, "mnab", t_Voooo, "minj", 1.0, t_W, "ijab");
-            }
-            // 3. Ring & Cross (ovov & oovv)
-            {
-                auto V_ovov = ERITransformer::transform_custom(eri_ao, Cao, Cav, Cao, Cav, nbf_, na_, va_, na_, va_);
-                auto V_oovv = ERITransformer::transform_custom(eri_ao, Cao, Cao, Cav, Cav, nbf_, na_, na_, va_, va_);
-                TBLIS_VIEW_4D(t_Vovov, V_ovov, na_, va_, na_, va_);
-                TBLIS_VIEW_4D(t_Voovv, V_oovv, na_, na_, va_, va_);
+            auto V_vvvv = ERITransformer::transform_custom(eri_ao_cached_, Cav, Cav, Cav, Cav, nbf_, va_, va_, va_, va_);
+            TBLIS_VIEW_4D(t_Vvvvv, V_vvvv, va_, va_, va_, va_);
+            tblis::mult< double >(1.0, t_T, "ijef", t_Vvvvv, "eafb", 1.0, t_W, "ijab");
+            
+            auto V_oooo = ERITransformer::transform_custom(eri_ao_cached_, Cao, Cao, Cao, Cao, nbf_, na_, na_, na_, na_);
+            TBLIS_VIEW_4D(t_Voooo, V_oooo, na_, na_, na_, na_);
+            tblis::mult< double >(1.0, t_T, "mnab", t_Voooo, "minj", 1.0, t_W, "ijab");
+            
+            auto V_ovov = ERITransformer::transform_custom(eri_ao_cached_, Cao, Cav, Cao, Cav, nbf_, na_, va_, na_, va_);
+            auto V_oovv = ERITransformer::transform_custom(eri_ao_cached_, Cao, Cao, Cav, Cav, nbf_, na_, na_, va_, va_);
+            TBLIS_VIEW_4D(t_Vovov, V_ovov, na_, va_, na_, va_);
+            TBLIS_VIEW_4D(t_Voovv, V_oovv, na_, na_, va_, va_);
 
-                tblis::mult< double >(2.0,  t_Vovov, "iakc", t_T, "kjcb", 1.0, t_W, "ijab");
-                tblis::mult< double >(-1.0, t_Voovv, "ikac", t_T, "kjcb", 1.0, t_W, "ijab");
-                tblis::mult< double >(2.0,  t_T, "ikac", t_Vovov, "kcjb", 1.0, t_W, "ijab");
-                tblis::mult< double >(-1.0, t_T, "ikac", t_Voovv, "kjcb", 1.0, t_W, "ijab");
-                tblis::mult< double >(-1.0, t_T, "ikca", t_Vovov, "kcjb", 1.0, t_W, "ijab"); 
-                tblis::mult< double >(-1.0, t_Vovov, "iakc", t_T, "kjbc", 1.0, t_W, "ijab");
-                tblis::mult< double >(-1.0, t_Voovv, "ikbc", t_T, "kjac", 1.0, t_W, "ijab");
-                tblis::mult< double >(-1.0, t_T, "ikcb", t_Voovv, "jkac", 1.0, t_W, "ijab"); 
-            }
+            tblis::mult< double >(2.0,  t_Vovov, "iakc", t_T, "kjcb", 1.0, t_W, "ijab");
+            tblis::mult< double >(-1.0, t_Voovv, "ikac", t_T, "kjcb", 1.0, t_W, "ijab");
+            tblis::mult< double >(2.0,  t_T, "ikac", t_Vovov, "kcjb", 1.0, t_W, "ijab");
+            tblis::mult< double >(-1.0, t_T, "ikac", t_Voovv, "kjcb", 1.0, t_W, "ijab");
+            tblis::mult< double >(-1.0, t_T, "ikca", t_Vovov, "kcjb", 1.0, t_W, "ijab"); 
+            tblis::mult< double >(-1.0, t_Vovov, "iakc", t_T, "kjbc", 1.0, t_W, "ijab");
+            tblis::mult< double >(-1.0, t_Voovv, "ikbc", t_T, "kjac", 1.0, t_W, "ijab");
+            tblis::mult< double >(-1.0, t_T, "ikcb", t_Voovv, "jkac", 1.0, t_W, "ijab"); 
 
             double e3_aa = 0.0;
             #pragma omp parallel for collapse(4) reduction(+:e3_aa) schedule(static)
@@ -416,7 +411,7 @@ void OMP3::compute_mp3_correction() {
     }
 
     // =========================================================================
-    // IMPLEMENTASI DENSITY FITTING
+    // IMPLEMENTASI DENSITY FITTING (MEMORI OPTIMAL - INPLACE ALLOCATION)
     // =========================================================================
     int n_aux = scf_.L_mat.cols();
     Eigen::Map< const Eigen::MatrixXd > L_flat(scf_.L_mat.data(), nbf_, nbf_ * n_aux);
@@ -437,8 +432,8 @@ void OMP3::compute_mp3_correction() {
         return B_mat;
     };
 
-    auto map_4d = [](const Eigen::MatrixXd& M, int d1, int d2, int d3, int d4) {
-        Eigen::Tensor< double, 4 > T(d1, d2, d3, d4);
+    auto map_4d_inplace = [](const Eigen::MatrixXd& M, Eigen::Tensor<double, 4>& T, int d1, int d2, int d3, int d4) {
+        if (T.size() != d1*d2*d3*d4) T.resize(d1, d2, d3, d4);
         #pragma omp parallel for collapse(4) schedule(static)
         for(int i = 0; i < d1; ++i) {
             for(int j = 0; j < d2; ++j) {
@@ -449,7 +444,6 @@ void OMP3::compute_mp3_correction() {
                 }
             }
         }
-        return T;
     };
 
     Eigen::MatrixXd B_ij_a = build_B_mat(Cao, Cao, na_, na_);
@@ -462,9 +456,10 @@ void OMP3::compute_mp3_correction() {
         TBLIS_VIEW_4D(t_T, T2_aa_ijab, na_, na_, va_, va_);
         TBLIS_VIEW_4D(t_W, W, na_, na_, va_, va_);
       
-        Eigen::Tensor< double, 4 > V_oooo = map_4d(B_ij_a * B_ij_a.transpose(), na_, na_, na_, na_);
-        Eigen::Tensor< double, 4 > V_ovov = map_4d(B_ia_P_alpha_ * B_ia_P_alpha_.transpose(), na_, va_, na_, va_);
-        Eigen::Tensor< double, 4 > V_oovv = map_4d(B_ij_a * B_ab_a.transpose(), na_, na_, va_, va_);
+        Eigen::Tensor< double, 4 > V_oooo, V_ovov, V_oovv;
+        map_4d_inplace(B_ij_a * B_ij_a.transpose(), V_oooo, na_, na_, na_, na_);
+        map_4d_inplace(B_ia_P_alpha_ * B_ia_P_alpha_.transpose(), V_ovov, na_, va_, na_, va_);
+        map_4d_inplace((B_ij_a * B_ab_a.transpose()).eval(), V_oovv, na_, na_, va_, va_);
         
         TBLIS_VIEW_4D(t_Voooo, V_oooo, na_, na_, na_, na_);
         TBLIS_VIEW_4D(t_Vovov, V_ovov, na_, va_, na_, va_);
@@ -537,9 +532,10 @@ void OMP3::compute_mp3_correction() {
         TBLIS_VIEW_4D(t_Waa_ladder, Waa_ladder_, na_, na_, va_, va_);
         TBLIS_VIEW_4D(t_Waa_ring, Waa_ring_, na_, na_, va_, va_);
 
-        Eigen::Tensor< double, 4 > V_oooo_aa = map_4d(B_ij_a * B_ij_a.transpose(), na_, na_, na_, na_);
-        Eigen::Tensor< double, 4 > V_ovov_aa = map_4d(B_ia_P_alpha_ * B_ia_P_alpha_.transpose(), na_, va_, na_, va_);
-        Eigen::Tensor< double, 4 > V_oovv_aa = map_4d(B_ij_a * B_ab_a.transpose(), na_, na_, va_, va_);
+        Eigen::Tensor< double, 4 > V_oooo_aa, V_ovov_aa, V_oovv_aa;
+        map_4d_inplace(B_ij_a * B_ij_a.transpose(), V_oooo_aa, na_, na_, na_, na_);
+        map_4d_inplace(B_ia_P_alpha_ * B_ia_P_alpha_.transpose(), V_ovov_aa, na_, va_, na_, va_);
+        map_4d_inplace(B_ij_a * B_ab_a.transpose(), V_oovv_aa, na_, na_, va_, va_);
         
         TBLIS_VIEW_4D(t_Voooo, V_oooo_aa, na_, na_, na_, na_);
         TBLIS_VIEW_4D(t_Vovov, V_ovov_aa, na_, va_, na_, va_);
@@ -552,7 +548,8 @@ void OMP3::compute_mp3_correction() {
         tblis::mult< double >(-1.0, t_Voovv, "ikac", t_Taa, "kjcb", 1.0, t_Waa_ring, "ijab");
 
         if (!is_restricted && nb_ > 0 && vb_ > 0) {
-            Eigen::Tensor< double, 4 > V_ovov_ab = map_4d(B_ia_P_alpha_ * B_ia_P_beta_.transpose(), na_, va_, nb_, vb_);
+            Eigen::Tensor< double, 4 > V_ovov_ab;
+            map_4d_inplace(B_ia_P_alpha_ * B_ia_P_beta_.transpose(), V_ovov_ab, na_, va_, nb_, vb_);
             TBLIS_VIEW_4D(t_Vovov_ab, V_ovov_ab, na_, va_, nb_, vb_);
             TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
             tblis::mult< double >(1.0, t_Vovov_ab, "iakc", t_Tab, "jkbc", 1.0, t_Waa_ring, "ijab");
@@ -610,9 +607,10 @@ void OMP3::compute_mp3_correction() {
             TBLIS_VIEW_4D(t_Wbb_ladder, Wbb_ladder, nb_, nb_, vb_, vb_);
             TBLIS_VIEW_4D(t_Wbb_ring, Wbb_ring, nb_, nb_, vb_, vb_);
 
-            Eigen::Tensor< double, 4 > V_oooo_bb = map_4d(B_ij_b * B_ij_b.transpose(), nb_, nb_, nb_, nb_);
-            Eigen::Tensor< double, 4 > V_ovov_bb = map_4d(B_ia_P_beta_ * B_ia_P_beta_.transpose(), nb_, vb_, nb_, vb_);
-            Eigen::Tensor< double, 4 > V_oovv_bb = map_4d(B_ij_b * B_ab_b.transpose(), nb_, nb_, vb_, vb_);
+            Eigen::Tensor< double, 4 > V_oooo_bb, V_ovov_bb, V_oovv_bb;
+            map_4d_inplace(B_ij_b * B_ij_b.transpose(), V_oooo_bb, nb_, nb_, nb_, nb_);
+            map_4d_inplace(B_ia_P_beta_ * B_ia_P_beta_.transpose(), V_ovov_bb, nb_, vb_, nb_, vb_);
+            map_4d_inplace(B_ij_b * B_ab_b.transpose(), V_oovv_bb, nb_, nb_, vb_, vb_);
             
             TBLIS_VIEW_4D(t_Voooo_bb, V_oooo_bb, nb_, nb_, nb_, nb_);
             TBLIS_VIEW_4D(t_Vovov_bb, V_ovov_bb, nb_, vb_, nb_, vb_);
@@ -624,7 +622,8 @@ void OMP3::compute_mp3_correction() {
             tblis::mult< double >(1.0,  t_Vovov_bb, "iakc", t_Tbb, "kjcb", 1.0, t_Wbb_ring, "ijab");
             tblis::mult< double >(-1.0, t_Voovv_bb, "ikac", t_Tbb, "kjcb", 1.0, t_Wbb_ring, "ijab");
 
-            Eigen::Tensor< double, 4 > V_ovov_ab = map_4d(B_ia_P_alpha_ * B_ia_P_beta_.transpose(), na_, va_, nb_, vb_);
+            Eigen::Tensor< double, 4 > V_ovov_ab;
+            map_4d_inplace(B_ia_P_alpha_ * B_ia_P_beta_.transpose(), V_ovov_ab, na_, va_, nb_, vb_);
             TBLIS_VIEW_4D(t_Vovov_ab, V_ovov_ab, na_, va_, nb_, vb_);
             tblis::mult< double >(1.0, t_Vovov_ab, "kcia", t_Tab, "kjcb", 1.0, t_Wbb_ring, "ijab"); 
 
@@ -661,34 +660,39 @@ void OMP3::compute_mp3_correction() {
             TBLIS_VIEW_4D(t_Wab_ladder, Wab_ladder, na_, nb_, va_, vb_);
             TBLIS_VIEW_4D(t_Wab_ring, Wab_ring, na_, nb_, va_, vb_);
 
-            Eigen::Tensor< double, 4 > V_oooo_ab = map_4d(B_ij_a * B_ij_b.transpose(), na_, na_, nb_, nb_);
+            Eigen::Tensor< double, 4 > V_oooo_ab;
+            map_4d_inplace(B_ij_a * B_ij_b.transpose(), V_oooo_ab, na_, na_, nb_, nb_);
             TBLIS_VIEW_4D(t_Voooo_ab, V_oooo_ab, na_, na_, nb_, nb_);
             tblis::mult< double >(1.0, t_Tab, "mnab", t_Voooo_ab, "minj", 1.0, t_Wab_ladder, "ijab");
 
-            Eigen::Tensor< double, 4 > V_ovov_aa = map_4d(B_ia_P_alpha_ * B_ia_P_alpha_.transpose(), na_, va_, na_, va_);
-            Eigen::Tensor< double, 4 > V_oovv_aa = map_4d(B_ij_a * B_ab_a.transpose(), na_, na_, va_, va_);
+            Eigen::Tensor< double, 4 > V_ovov_aa, V_oovv_aa;
+            map_4d_inplace(B_ia_P_alpha_ * B_ia_P_alpha_.transpose(), V_ovov_aa, na_, va_, na_, va_);
+            map_4d_inplace(B_ij_a * B_ab_a.transpose(), V_oovv_aa, na_, na_, va_, va_);
             TBLIS_VIEW_4D(t_Vovov_aa, V_ovov_aa, na_, va_, na_, va_);
             TBLIS_VIEW_4D(t_Voovv_aa, V_oovv_aa, na_, na_, va_, va_);
 
             tblis::mult< double >(1.0,  t_Vovov_aa, "iakc", t_Tab, "kjcb", 1.0, t_Wab_ring, "ijab");
             tblis::mult< double >(-1.0, t_Voovv_aa, "ikac", t_Tab, "kjcb", 1.0, t_Wab_ring, "ijab");
 
-            Eigen::Tensor< double, 4 > V_ovov_bb = map_4d(B_ia_P_beta_ * B_ia_P_beta_.transpose(), nb_, vb_, nb_, vb_);
-            Eigen::Tensor< double, 4 > V_oovv_bb = map_4d(B_ij_b * B_ab_b.transpose(), nb_, nb_, vb_, vb_);
+            Eigen::Tensor< double, 4 > V_ovov_bb, V_oovv_bb;
+            map_4d_inplace(B_ia_P_beta_ * B_ia_P_beta_.transpose(), V_ovov_bb, nb_, vb_, nb_, vb_);
+            map_4d_inplace(B_ij_b * B_ab_b.transpose(), V_oovv_bb, nb_, nb_, vb_, vb_);
             TBLIS_VIEW_4D(t_Vovov_bb, V_ovov_bb, nb_, vb_, nb_, vb_);
             TBLIS_VIEW_4D(t_Voovv_bb, V_oovv_bb, nb_, nb_, vb_, vb_);
 
             tblis::mult< double >(1.0,  t_Tab, "ikac", t_Vovov_bb, "kcjb", 1.0, t_Wab_ring, "ijab"); 
             tblis::mult< double >(-1.0, t_Tab, "ikac", t_Voovv_bb, "kjcb", 1.0, t_Wab_ring, "ijab");
 
-            Eigen::Tensor< double, 4 > V_ovov_ab = map_4d(B_ia_P_alpha_ * B_ia_P_beta_.transpose(), na_, va_, nb_, vb_);
+            Eigen::Tensor< double, 4 > V_ovov_ab;
+            map_4d_inplace(B_ia_P_alpha_ * B_ia_P_beta_.transpose(), V_ovov_ab, na_, va_, nb_, vb_);
             TBLIS_VIEW_4D(t_Vovov_ab, V_ovov_ab, na_, va_, nb_, vb_);
 
             tblis::mult< double >(1.0,  t_Taa, "ikac", t_Vovov_ab, "kcjb", 1.0, t_Wab_ring, "ijab");
             tblis::mult< double >(1.0,  t_Vovov_ab, "iakc", t_Tbb, "kjcb", 1.0, t_Wab_ring, "ijab");
 
-            Eigen::Tensor< double, 4 > V_oovv_ab_ex = map_4d(B_ij_a * B_ab_b.transpose(), na_, na_, vb_, vb_);
-            Eigen::Tensor< double, 4 > V_oovv_ba_ex = map_4d(B_ij_b * B_ab_a.transpose(), nb_, nb_, va_, va_);
+            Eigen::Tensor< double, 4 > V_oovv_ab_ex, V_oovv_ba_ex;
+            map_4d_inplace(B_ij_a * B_ab_b.transpose(), V_oovv_ab_ex, na_, na_, vb_, vb_);
+            map_4d_inplace(B_ij_b * B_ab_a.transpose(), V_oovv_ba_ex, nb_, nb_, va_, va_);
             TBLIS_VIEW_4D(t_Voovv_ab_ex, V_oovv_ab_ex, na_, na_, vb_, vb_);
             TBLIS_VIEW_4D(t_Voovv_ba_ex, V_oovv_ba_ex, nb_, nb_, va_, va_);
 
@@ -867,7 +871,6 @@ void OMP3::build_generalized_fock() {
     const Eigen::MatrixXd& Cbo = scf_.C_beta.leftCols(nb_);
     const Eigen::MatrixXd& Cbv = scf_.C_beta.rightCols(vb_);
 
-    // Variabel global untuk matriks Z, CPHF, dan Delta G
     Eigen::MatrixXd Z_mat_a = Eigen::MatrixXd::Zero(va_, na_);
     Eigen::MatrixXd dx_oo_a = Eigen::MatrixXd::Zero(na_, na_);
     Eigen::MatrixXd dx_vv_a = Eigen::MatrixXd::Zero(va_, va_);
@@ -886,14 +889,13 @@ void OMP3::build_generalized_fock() {
     auto* t2_bb_dense = t2_bb_.get_block(0,0,0,0);
 
     // =========================================================================
-    // TAHAP 1 & 2: Z-VECTOR & CPHF SOLVER (EXACT vs DF ROUTING)
+    // TAHAP 1 & 2: Z-VECTOR & CPHF SOLVER (EXACT CACHE vs DF ROUTING)
     // =========================================================================
     if (!config_.use_df) {
         if (!is_restricted) {
             throw std::runtime_error("[OMP3] Unrestricted Exact Z-vector belum didukung. Silakan gunakan DF.");
         }
 
-        // 1. Ekstraksi Teff = T2 + L2 (Bentuk Tensor 4D)
         Eigen::Tensor< double, 4 > Teff(na_, na_, va_, va_);
         #pragma omp parallel for collapse(4) schedule(static)
         for(int i = 0; i < na_; ++i) {
@@ -907,30 +909,30 @@ void OMP3::build_generalized_fock() {
         }
         TBLIS_VIEW_4D(t_Teff, Teff, na_, na_, va_, va_);
 
-        // Hitung AO ERI sekali untuk seluruh transformasi eksak ke depan
-        auto eri_ao = integrals_->compute_eri();
+        // CACHE: Gunakan ERI yang sudah dihitung pada tahap compute_mp3_correction
+        if (eri_ao_cached_.size() == 0) {
+            eri_ao_cached_ = integrals_->compute_eri();
+        }
 
-        // 2. Perakitan Exact Z_oo, Z_vv, Z_mat dengan TBLIS
         Eigen::MatrixXd Z_oo_mat = Eigen::MatrixXd::Zero(na_, na_);
         Eigen::MatrixXd Z_vv_mat = Eigen::MatrixXd::Zero(va_, va_);
         TBLIS_VIEW_2D(t_Zoo, Z_oo_mat.data(), na_, na_);
         TBLIS_VIEW_2D(t_Zvv, Z_vv_mat.data(), va_, va_);
         TBLIS_VIEW_2D(t_Zmat, Z_mat_a.data(), va_, na_);
 
-        auto V_ovov = ERITransformer::transform_custom(eri_ao, Cao, Cav, Cao, Cav, nbf_, na_, va_, na_, va_);
+        auto V_ovov = ERITransformer::transform_custom(eri_ao_cached_, Cao, Cav, Cao, Cav, nbf_, na_, va_, na_, va_);
         TBLIS_VIEW_4D(t_Vovov, V_ovov, na_, va_, na_, va_);
         tblis::mult< double >(1.0, t_Teff, "ikab", t_Vovov, "kbja", 0.0, t_Zoo, "ij");
         tblis::mult< double >(-1.0, t_Teff, "ikac", t_Vovov, "kcib", 0.0, t_Zvv, "ab");
 
-        auto V_vvov = ERITransformer::transform_custom(eri_ao, Cav, Cav, Cao, Cav, nbf_, va_, va_, na_, va_);
+        auto V_vvov = ERITransformer::transform_custom(eri_ao_cached_, Cav, Cav, Cao, Cav, nbf_, va_, va_, na_, va_);
         TBLIS_VIEW_4D(t_Vvvov, V_vvov, va_, va_, na_, va_);
         tblis::mult< double >(1.0, t_Vvvov, "abkc", t_Teff, "ikbc", 0.0, t_Zmat, "ai");
 
-        auto V_ooov = ERITransformer::transform_custom(eri_ao, Cao, Cao, Cao, Cav, nbf_, na_, na_, na_, va_);
+        auto V_ooov = ERITransformer::transform_custom(eri_ao_cached_, Cao, Cao, Cao, Cav, nbf_, na_, na_, na_, va_);
         TBLIS_VIEW_4D(t_Vooov, V_ooov, na_, na_, na_, va_);
         tblis::mult< double >(-1.0, t_Vooov, "jikc", t_Teff, "jkac", 1.0, t_Zmat, "ai");
 
-        // 3. Mini CPHF Solver Eksak (Kontraksi Tensor Murni)
         auto solve_mini_cphf_exact = [](const Eigen::MatrixXd& Z_in, const Eigen::VectorXd& eps,
                                         const Eigen::Tensor< double, 4 >& V_exact, int dim, int offset) -> Eigen::MatrixXd {
             if (dim == 0) return Eigen::MatrixXd::Zero(0, 0);
@@ -947,19 +949,19 @@ void OMP3::build_generalized_fock() {
             Eigen::VectorXd x = Eigen::VectorXd::Zero(dim2);
             for (int k = 0; k < dim2; ++k) if (std::abs(eps_diff(k)) > 1e-5) x(k) = Z_vec(k) / eps_diff(k);
 
-            // [PERBAIKAN] Explicitly return Eigen::VectorXd to prevent dangling Map reference
             auto apply_V = [&](const Eigen::VectorXd& vec) -> Eigen::VectorXd {
-                Eigen::Map< Eigen::MatrixXd > M(const_cast< double* >(vec.data()), dim, dim);
-                Eigen::MatrixXd R = Eigen::MatrixXd::Zero(dim, dim);
-                
-                Eigen::TensorMap< Eigen::Tensor< double, 4 > > V_map(const_cast< double* >(V_exact.data()), dim, dim, dim, dim);
-                
+            
+                Eigen::Map<Eigen::MatrixXd> M(const_cast<double*>(vec.data()), dim, dim);
+                Eigen::VectorXd res(dim2);
+                Eigen::Map<Eigen::MatrixXd> R(res.data(), dim, dim);
+                R.setZero();
+                Eigen::TensorMap<Eigen::Tensor<double, 4>> V_map(const_cast<double*>(V_exact.data()), dim, dim, dim, dim);
                 TBLIS_VIEW_4D(t_V, V_map, dim, dim, dim, dim);
                 TBLIS_VIEW_2D(t_M, M.data(), dim, dim);
                 TBLIS_VIEW_2D(t_R, R.data(), dim, dim);
                 
                 tblis::mult< double >(1.0, t_V, "ijkl", t_M, "kl", 0.0, t_R, "ij");
-                return Eigen::Map< Eigen::VectorXd >(R.data(), dim2);
+                return res;
             };
 
             Eigen::VectorXd Ap_0 = eps_diff.cwiseProduct(x) + apply_V(x);
@@ -988,16 +990,15 @@ void OMP3::build_generalized_fock() {
             return Eigen::Map< Eigen::MatrixXd >(x.data(), dim, dim);
         };
 
-        auto V_oooo = ERITransformer::transform_custom(eri_ao, Cao, Cao, Cao, Cao, nbf_, na_, na_, na_, na_);
-        auto V_vvvv = ERITransformer::transform_custom(eri_ao, Cav, Cav, Cav, Cav, nbf_, va_, va_, va_, va_);
+        auto V_oooo = ERITransformer::transform_custom(eri_ao_cached_, Cao, Cao, Cao, Cao, nbf_, na_, na_, na_, na_);
+        auto V_vvvv = ERITransformer::transform_custom(eri_ao_cached_, Cav, Cav, Cav, Cav, nbf_, va_, va_, va_, va_);
         
         dx_oo_a = solve_mini_cphf_exact(Z_oo_mat, ea, V_oooo, na_, 0);
         dx_vv_a = solve_mini_cphf_exact(Z_vv_mat, ea, V_vvvv, va_, na_);
 
-        // 4. Exact Relaxed Gradient (Delta_G_ia_a)
         TBLIS_VIEW_2D(t_dG, Delta_G_ia_a.data(), va_, na_);
-        auto V_ovoo = ERITransformer::transform_custom(eri_ao, Cao, Cav, Cao, Cao, nbf_, na_, va_, na_, na_);
-        auto V_ovvv = ERITransformer::transform_custom(eri_ao, Cao, Cav, Cav, Cav, nbf_, na_, va_, va_, va_);
+        auto V_ovoo = ERITransformer::transform_custom(eri_ao_cached_, Cao, Cav, Cao, Cao, nbf_, na_, va_, na_, na_);
+        auto V_ovvv = ERITransformer::transform_custom(eri_ao_cached_, Cao, Cav, Cav, Cav, nbf_, na_, va_, va_, va_);
         
         TBLIS_VIEW_4D(t_Vovoo, V_ovoo, na_, va_, na_, na_);
         TBLIS_VIEW_4D(t_Vovvv, V_ovvv, na_, va_, va_, va_);
@@ -1008,9 +1009,6 @@ void OMP3::build_generalized_fock() {
         tblis::mult< double >(scale, t_Vovvv, "iabc", t_xvv, "bc", 1.0, t_dG, "ai");
 
     } else {
-        // =====================================================================
-        // KODE ASLI DENSITY FITTING
-        // =====================================================================
         int n_aux = scf_.L_mat.cols();
         Eigen::MatrixXd B_oo_flat_a = Eigen::MatrixXd::Zero(na_ * na_, n_aux);
         Eigen::MatrixXd B_vv_flat_a = Eigen::MatrixXd::Zero(va_ * va_, n_aux);
@@ -1215,7 +1213,6 @@ void OMP3::build_generalized_fock() {
     Eigen::MatrixXd P_corr_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
     if (!is_restricted && nb_ > 0) {
         G_full_b.block(0, 0, nb_, nb_) = G_oo_beta_;
-        // [PERBAIKAN] Gunakan nb_ sebagai offset matriks virtual beta
         G_full_b.block(nb_, nb_, vb_, vb_) = G_vv_beta_;
         P_corr_b = scf_.C_beta * G_full_b * scf_.C_beta.transpose();
     } else if (is_restricted) {
@@ -1247,7 +1244,6 @@ void OMP3::build_generalized_fock() {
         Eigen::MatrixXd F_HF_vo_a = F_HF_mo_a.block(na_, 0, va_, na_);
         Eigen::MatrixXd L_sep_a = F_HF_vo_a * G_oo_alpha_ - G_vv_alpha_ * F_HF_vo_a;
         
-        // F_gen dirakit dari Lagrangian murni + Z-Vector + Gaya Relaksasi CPHF
         F_gen_a_.block(na_, 0, va_, na_) += L_sep_a + Z_mat_a + Delta_G_ia_a;
         F_gen_a_.block(0, na_, na_, va_) += (L_sep_a + Z_mat_a + Delta_G_ia_a).transpose();
     }
