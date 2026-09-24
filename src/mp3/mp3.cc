@@ -934,50 +934,7 @@ void OMP3::build_generalized_fock() {
         TBLIS_VIEW_4D(t_Vooov, V_ooov, na_, na_, na_, va_);
         tblis::mult< double >(-1.0, t_Vooov, "jikc", t_Teff, "jkac", 1.0, t_Zmat, "ai");
 
-        // =========================================================================
-        // [PERBAIKAN 1]: INJEKSI SUKU TPDM VVVV DAN OOOO (Eksak Analitik)
-        // =========================================================================
-        Eigen::Tensor< double, 4 > T1_aa(na_, na_, va_, va_);
-        #pragma omp parallel for collapse(4) schedule(static)
-        for(int i = 0; i < na_; ++i) {
-            for(int j = 0; j < na_; ++j) {
-                for(int a = 0; a < va_; ++a) {
-                    for(int b = 0; b < va_; ++b) {
-                        T1_aa(i,j,a,b) = (*t_aa_dense)(i,a,j,b);
-                    }
-                }
-            }
-        }
-        TBLIS_VIEW_4D(t_T1, T1_aa, na_, na_, va_, va_);
-
-        Eigen::Tensor< double, 4 > X_mnic(na_, na_, na_, va_);
-        TBLIS_VIEW_4D(t_X, X_mnic, na_, na_, na_, va_);
-        tblis::mult< double >(1.0, t_T1, "mnef", t_Vovvv_ex, "icef", 0.0, t_X, "mnic");
-        tblis::mult< double >(2.0, t_X, "mnic", t_T1, "mnac", 1.0, t_Zmat, "ai");
-        tblis::mult< double >(-1.0, t_X, "mnic", t_T1, "mnca", 1.0, t_Zmat, "ai");
-
-        Eigen::Tensor< double, 4 > Y_ieab(na_, va_, va_, va_);
-        TBLIS_VIEW_4D(t_Y, Y_ieab, na_, va_, va_, va_);
-        tblis::mult< double >(1.0, t_T1, "klab", t_Vooov, "klie", 0.0, t_Y, "ieab"); // klie menggantikan V_oovo_ex
-        tblis::mult< double >(-2.0, t_Y, "keab", t_T1, "ikeb", 1.0, t_Zmat, "ai");
-        tblis::mult< double >(1.0, t_Y, "keab", t_T1, "kieb", 1.0, t_Zmat, "ai");
-
-        // =========================================================================
-        // [PERBAIKAN 2]: Injeksi Suku Cincin (TPDM OVOV -> Gamma_meif)
-        // Menyelesaikan sisa selisih gradien 1.93e-4 dari turunan integral 
-        // =========================================================================
-        Eigen::Tensor< double, 4 > Gamma_meif(na_, va_, na_, va_);
-        TBLIS_VIEW_4D(t_Gamma, Gamma_meif, na_, va_, na_, va_);
-        Gamma_meif.setZero();
-        
-        // Gamma_meif = \sum_{n,c} T1_{mn}^{ec} (2 T1_{in}^{fc} - T1_{in}^{cf})
-        tblis::mult< double >(2.0, t_T1, "mnec", t_T1, "infc", 0.0, t_Gamma, "meif");
-        tblis::mult< double >(-1.0, t_T1, "mnec", t_T1, "incf", 1.0, t_Gamma, "meif");
-
-        // Kontraksi matriks densitas 2-partikel (Gamma) dengan integral OVOV (V_meaf)
-        tblis::mult< double >(-2.0, t_Gamma, "meif", t_Vovov, "meaf", 1.0, t_Zmat, "ai");
-        // =========================================================================
-        // =========================================================================
+       
 
         auto solve_mini_cphf_exact = [](const Eigen::MatrixXd& Z_in, const Eigen::VectorXd& eps,
                                         const Eigen::Tensor< double, 4 >& V_exact, int dim, int offset) -> Eigen::MatrixXd {
