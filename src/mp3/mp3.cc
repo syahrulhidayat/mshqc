@@ -933,6 +933,45 @@ void OMP3::build_generalized_fock() {
         TBLIS_VIEW_4D(t_Vooov, V_ooov, na_, na_, na_, va_);
         tblis::mult< double >(-1.0, t_Vooov, "jikc", t_Teff, "jkac", 1.0, t_Zmat, "ai");
 
+        // =========================================================================
+        // [PERBAIKAN 1]: INJEKSI SUKU TPDM VVVV DAN OOOO (Eksak Analitik)
+        // =========================================================================
+        Eigen::Tensor< double, 4 > T1_aa(na_, na_, va_, va_);
+        #pragma omp parallel for collapse(4) schedule(static)
+        for(int i = 0; i < na_; ++i) {
+            for(int j = 0; j < na_; ++j) {
+                for(int a = 0; a < va_; ++a) {
+                    for(int b = 0; b < va_; ++b) {
+                        T1_aa(i,j,a,b) = (*t_aa_dense)(i,a,j,b); // Murni Amplitudo T1
+                    }
+                }
+            }
+        }
+        TBLIS_VIEW_4D(t_T1, T1_aa, na_, na_, va_, va_);
+
+        // 1. Suku Kontraksi VVVV (Intermediate X_mnic)
+        auto V_ovvv_ex = ERITransformer::transform_custom(eri_ao_cached_, Cao, Cav, Cav, Cav, nbf_, na_, va_, va_, va_);
+        TBLIS_VIEW_4D(t_Vovvv_ex, V_ovvv_ex, na_, va_, va_, va_);
+        
+        Eigen::Tensor< double, 4 > X_mnic(na_, na_, na_, va_);
+        TBLIS_VIEW_4D(t_X, X_mnic, na_, na_, na_, va_);
+        tblis::mult< double >(1.0, t_T1, "mnef", t_Vovvv_ex, "icef", 0.0, t_X, "mnic");
+        
+        tblis::mult< double >(2.0, t_X, "mnic", t_T1, "mnac", 1.0, t_Zmat, "ai");
+        tblis::mult< double >(-1.0, t_X, "mnic", t_T1, "mnca", 1.0, t_Zmat, "ai");
+
+        // 2. Suku Kontraksi OOOO (Intermediate Y_ieab)
+        auto V_oovo_ex = ERITransformer::transform_custom(eri_ao_cached_, Cao, Cao, Cav, Cao, nbf_, na_, na_, va_, na_);
+        TBLIS_VIEW_4D(t_Voovo_ex, V_oovo_ex, na_, na_, va_, na_);
+        
+        Eigen::Tensor< double, 4 > Y_ieab(na_, va_, va_, va_);
+        TBLIS_VIEW_4D(t_Y, Y_ieab, na_, va_, va_, va_);
+        tblis::mult< double >(1.0, t_T1, "klab", t_Voovo_ex, "klie", 0.0, t_Y, "ieab");
+        
+        tblis::mult< double >(-2.0, t_Y, "keab", t_T1, "ikeb", 1.0, t_Zmat, "ai");
+        tblis::mult< double >(1.0, t_Y, "keab", t_T1, "kieb", 1.0, t_Zmat, "ai");
+        // =========================================================================
+
         auto solve_mini_cphf_exact = [](const Eigen::MatrixXd& Z_in, const Eigen::VectorXd& eps,
                                         const Eigen::Tensor< double, 4 >& V_exact, int dim, int offset) -> Eigen::MatrixXd {
             if (dim == 0) return Eigen::MatrixXd::Zero(0, 0);
@@ -999,15 +1038,14 @@ void OMP3::build_generalized_fock() {
 
         TBLIS_VIEW_2D(t_dG, Delta_G_ia_a.data(), va_, na_);
         auto V_ovoo = ERITransformer::transform_custom(eri_ao_cached_, Cao, Cav, Cao, Cao, nbf_, na_, va_, na_, na_);
-        auto V_ovvv = ERITransformer::transform_custom(eri_ao_cached_, Cao, Cav, Cav, Cav, nbf_, na_, va_, va_, va_);
         
+     
         TBLIS_VIEW_4D(t_Vovoo, V_ovoo, na_, va_, na_, na_);
-        TBLIS_VIEW_4D(t_Vovvv, V_ovvv, na_, va_, va_, va_);
         TBLIS_VIEW_2D(t_xoo, dx_oo_a.data(), na_, na_);
         TBLIS_VIEW_2D(t_xvv, dx_vv_a.data(), va_, va_);
 
         tblis::mult< double >(scale, t_Vovoo, "iajk", t_xoo, "jk", 0.0, t_dG, "ai");
-        tblis::mult< double >(scale, t_Vovvv, "iabc", t_xvv, "bc", 1.0, t_dG, "ai");
+        tblis::mult< double >(scale, t_Vovvv_ex, "iabc", t_xvv, "bc", 1.0, t_dG, "ai");
 
     } else {
         int n_aux = scf_.L_mat.cols();
