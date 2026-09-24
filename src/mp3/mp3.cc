@@ -375,10 +375,11 @@ void OMP3::compute_mp3_correction() {
             auto V_oooo = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cao, Cao, Cao, Cao, nbf_, na_, na_, na_, na_);
             TBLIS_VIEW_4D(t_Voooo, V_oooo, na_, na_, na_, na_);
             tblis::mult< double >(1.0, t_T, "mnab", t_Voooo, "minj", 1.0, t_W, "ijab");
+
+            auto* g_blk_mp3 = g_aa_.get_block(0,0,0,0);
+            TBLIS_VIEW_4D(t_Vovov, (*g_blk_mp3), na_, va_, na_, va_);
             
-            auto V_ovov = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cao, Cav, Cao, Cav, nbf_, na_, va_, na_, va_);
             auto V_oovv = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cao, Cao, Cav, Cav, nbf_, na_, na_, va_, va_);
-            TBLIS_VIEW_4D(t_Vovov, V_ovov, na_, va_, na_, va_);
             TBLIS_VIEW_4D(t_Voovv, V_oovv, na_, na_, va_, va_);
 
             tblis::mult< double >(2.0,  t_Vovov, "iakc", t_T, "kjcb", 1.0, t_W, "ijab");
@@ -920,14 +921,14 @@ void OMP3::build_generalized_fock() {
         TBLIS_VIEW_2D(t_Zvv, Z_vv_mat.data(), va_, va_);
         TBLIS_VIEW_2D(t_Zmat, Z_mat_a.data(), va_, na_);
 
-        auto V_ovov = ERITransformer::transform_custom(eri_ao_cached_, Cao, Cav, Cao, Cav, nbf_, na_, va_, na_, va_);
-        TBLIS_VIEW_4D(t_Vovov, V_ovov, na_, va_, na_, va_);
+        auto* g_blk = g_aa_.get_block(0,0,0,0);
+        TBLIS_VIEW_4D(t_Vovov, (*g_blk), na_, va_, na_, va_);
         tblis::mult< double >(1.0, t_Teff, "ikab", t_Vovov, "kbja", 0.0, t_Zoo, "ij");
         tblis::mult< double >(-1.0, t_Teff, "ikac", t_Vovov, "kcib", 0.0, t_Zvv, "ab");
 
-        auto V_vvov = ERITransformer::transform_custom(eri_ao_cached_, Cav, Cav, Cao, Cav, nbf_, va_, va_, na_, va_);
-        TBLIS_VIEW_4D(t_Vvvov, V_vvov, va_, va_, na_, va_);
-        tblis::mult< double >(1.0, t_Vvvov, "abkc", t_Teff, "ikbc", 0.0, t_Zmat, "ai");
+        auto V_ovvv_ex = ERITransformer::transform_custom(eri_ao_cached_, Cao, Cav, Cav, Cav, nbf_, na_, va_, va_, va_);
+        TBLIS_VIEW_4D(t_Vovvv_ex, V_ovvv_ex, na_, va_, va_, va_);
+        tblis::mult< double >(1.0, t_Vovvv_ex, "kcab", t_Teff, "ikbc", 0.0, t_Zmat, "ai"); 
 
         auto V_ooov = ERITransformer::transform_custom(eri_ao_cached_, Cao, Cao, Cao, Cav, nbf_, na_, na_, na_, va_);
         TBLIS_VIEW_4D(t_Vooov, V_ooov, na_, na_, na_, va_);
@@ -942,34 +943,25 @@ void OMP3::build_generalized_fock() {
             for(int j = 0; j < na_; ++j) {
                 for(int a = 0; a < va_; ++a) {
                     for(int b = 0; b < va_; ++b) {
-                        T1_aa(i,j,a,b) = (*t_aa_dense)(i,a,j,b); // Murni Amplitudo T1
+                        T1_aa(i,j,a,b) = (*t_aa_dense)(i,a,j,b);
                     }
                 }
             }
         }
         TBLIS_VIEW_4D(t_T1, T1_aa, na_, na_, va_, va_);
 
-        // 1. Suku Kontraksi VVVV (Intermediate X_mnic)
-        auto V_ovvv_ex = ERITransformer::transform_custom(eri_ao_cached_, Cao, Cav, Cav, Cav, nbf_, na_, va_, va_, va_);
-        TBLIS_VIEW_4D(t_Vovvv_ex, V_ovvv_ex, na_, va_, va_, va_);
-        
         Eigen::Tensor< double, 4 > X_mnic(na_, na_, na_, va_);
         TBLIS_VIEW_4D(t_X, X_mnic, na_, na_, na_, va_);
         tblis::mult< double >(1.0, t_T1, "mnef", t_Vovvv_ex, "icef", 0.0, t_X, "mnic");
-        
         tblis::mult< double >(2.0, t_X, "mnic", t_T1, "mnac", 1.0, t_Zmat, "ai");
         tblis::mult< double >(-1.0, t_X, "mnic", t_T1, "mnca", 1.0, t_Zmat, "ai");
 
-        // 2. Suku Kontraksi OOOO (Intermediate Y_ieab)
-        auto V_oovo_ex = ERITransformer::transform_custom(eri_ao_cached_, Cao, Cao, Cav, Cao, nbf_, na_, na_, va_, na_);
-        TBLIS_VIEW_4D(t_Voovo_ex, V_oovo_ex, na_, na_, va_, na_);
-        
         Eigen::Tensor< double, 4 > Y_ieab(na_, va_, va_, va_);
         TBLIS_VIEW_4D(t_Y, Y_ieab, na_, va_, va_, va_);
-        tblis::mult< double >(1.0, t_T1, "klab", t_Voovo_ex, "klie", 0.0, t_Y, "ieab");
-        
+        tblis::mult< double >(1.0, t_T1, "klab", t_Vooov, "klie", 0.0, t_Y, "ieab"); // klie menggantikan V_oovo_ex
         tblis::mult< double >(-2.0, t_Y, "keab", t_T1, "ikeb", 1.0, t_Zmat, "ai");
         tblis::mult< double >(1.0, t_Y, "keab", t_T1, "kieb", 1.0, t_Zmat, "ai");
+        // =========================================================================
         // =========================================================================
 
         auto solve_mini_cphf_exact = [](const Eigen::MatrixXd& Z_in, const Eigen::VectorXd& eps,
@@ -1037,14 +1029,11 @@ void OMP3::build_generalized_fock() {
         dx_vv_a = solve_mini_cphf_exact(Z_vv_mat, ea, V_vvvv, va_, na_);
 
         TBLIS_VIEW_2D(t_dG, Delta_G_ia_a.data(), va_, na_);
-        auto V_ovoo = ERITransformer::transform_custom(eri_ao_cached_, Cao, Cav, Cao, Cao, nbf_, na_, va_, na_, na_);
-        
-     
-        TBLIS_VIEW_4D(t_Vovoo, V_ovoo, na_, va_, na_, na_);
         TBLIS_VIEW_2D(t_xoo, dx_oo_a.data(), na_, na_);
         TBLIS_VIEW_2D(t_xvv, dx_vv_a.data(), va_, va_);
 
-        tblis::mult< double >(scale, t_Vovoo, "iajk", t_xoo, "jk", 0.0, t_dG, "ai");
+        // [OPTIMASI PERFORMA]: Daur ulang t_Vooov dengan indeks "jkia" (pengganti V_ovoo)
+        tblis::mult< double >(scale, t_Vooov, "jkia", t_xoo, "jk", 0.0, t_dG, "ai");
         tblis::mult< double >(scale, t_Vovvv_ex, "iabc", t_xvv, "bc", 1.0, t_dG, "ai");
 
     } else {
@@ -1243,6 +1232,14 @@ void OMP3::build_generalized_fock() {
     // =========================================================================
     // TAHAP 3: PERAKITAN 1-RDM MURNI & MATRIKS FOCK GENERALIZED (F_gen)
     // =========================================================================
+    // [PERBAIKAN KEMATIAN GRADIENT]: Suntikkan respons CPHF ke dalam Matriks Densitas
+    G_oo_alpha_ += scale * dx_oo_a;
+    G_vv_alpha_ += scale * dx_vv_a;
+    if (!is_restricted && nb_ > 0 && vb_ > 0) {
+        G_oo_beta_ += scale * dx_oo_b;
+        G_vv_beta_ += scale * dx_vv_b;
+    }
+
     Eigen::MatrixXd G_full_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
     G_full_a.block(0, 0, na_, na_) = G_oo_alpha_;
     G_full_a.block(na_, na_, va_, va_) = G_vv_alpha_;
