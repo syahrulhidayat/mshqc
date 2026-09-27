@@ -930,6 +930,7 @@ void OMP3::build_generalized_fock() {
         tblis::mult< double >(1.0, t_Teff, "ikab", t_Vovov, "kbja", 0.0, t_Zoo, "ij");
         tblis::mult< double >(-1.0, t_Teff, "ikac", t_Vovov, "kcib", 0.0, t_Zvv, "ab");
 
+        // Kode eksisting Anda ...
         auto V_ovvv_ex = ERITransformer::transform_custom(eri_ao_cached_, Cao, Cav, Cav, Cav, nbf_, na_, va_, va_, va_);
         TBLIS_VIEW_4D(t_Vovvv_ex, V_ovvv_ex, na_, va_, va_, va_);
         tblis::mult< double >(1.0, t_Vovvv_ex, "kcab", t_Teff, "ikbc", 0.0, t_Zmat, "ai"); 
@@ -937,9 +938,24 @@ void OMP3::build_generalized_fock() {
         auto V_ooov = ERITransformer::transform_custom(eri_ao_cached_, Cao, Cao, Cao, Cav, nbf_, na_, na_, na_, va_);
         TBLIS_VIEW_4D(t_Vooov, V_ooov, na_, na_, na_, va_);
         tblis::mult< double >(-1.0, t_Vooov, "jikc", t_Teff, "jkac", 1.0, t_Zmat, "ai");
+        Eigen::Tensor<double, 4> Gamma_vvvv(va_, va_, va_, va_); Gamma_vvvv.setZero();
+        Eigen::Tensor<double, 4> Gamma_oooo(na_, na_, na_, na_); Gamma_oooo.setZero();
+        
+        TBLIS_VIEW_4D(t_Gvvvv, Gamma_vvvv, va_, va_, va_, va_);
+        TBLIS_VIEW_4D(t_Goooo, Gamma_oooo, na_, na_, na_, na_);
+        TBLIS_VIEW_4D(t_T1, (*t_aa_dense), na_, na_, va_, va_);
+        
+    
+        tblis::mult<double>(0.5, t_T1, "ijab", t_T1, "ijcd", 0.0, t_Gvvvv, "abcd");
+        tblis::mult<double>(0.5, t_T1, "ijab", t_T1, "klab", 0.0, t_Goooo, "ijkl");
+        
+        tblis::mult<double>(1.0, t_Vovvv_ex, "ibcd", t_Gvvvv, "abcd", 1.0, t_Zmat, "ai");
+        
+        tblis::mult<double>(1.0, t_Vooov, "klja", t_Goooo, "ijkl", 1.0, t_Zmat, "ai");
+        // =========================================================================
 
-       
         auto solve_mini_cphf_exact = [](const Eigen::MatrixXd& Z_in, const Eigen::VectorXd& eps,
+        // Lanjutan fungsi eksisting Anda ...
                                         const Eigen::Tensor<double, 4>& V_exact, int dim, int offset) -> Eigen::MatrixXd {
             if (dim == 0) return Eigen::MatrixXd::Zero(0, 0);
             int dim2 = dim * dim;
