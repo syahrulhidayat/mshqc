@@ -911,7 +911,8 @@ void OMP3::build_generalized_fock() {
             for(int j = 0; j < na_; ++j) {
                 for(int a = 0; a < va_; ++a) {
                     for(int b = 0; b < va_; ++b) {
-                        Teff(i,j,a,b) = (*t_aa_dense)(i,a,j,b) + L2_aa_(i,j,a,b);
+                        // KOREKSI: Tau = t1 + 0.5 * t2
+                        Teff(i,j,a,b) = (*t_aa_dense)(i,a,j,b) + 0.5 * L2_aa_(i,j,a,b);
                     }
                 }
             }
@@ -1059,13 +1060,14 @@ void OMP3::build_generalized_fock() {
         Eigen::MatrixXd Teff_ab = Eigen::MatrixXd::Zero(na_ * va_, nb_ * vb_);
         Eigen::MatrixXd Teff_bb = Eigen::MatrixXd::Zero(nb_ * vb_, nb_ * vb_);
 
+        // ... (Cari blok pengisian Teff_aa, Teff_ab, Teff_bb) ...
         if (t_aa_dense) {
             #pragma omp parallel for collapse(2) schedule(static)
             for (int i = 0; i < na_; ++i) {
                 for (int a = 0; a < va_; ++a) {
                     for (int j = 0; j < na_; ++j) {
                         for (int b = 0; b < va_; ++b) {
-                            Teff_aa(i * va_ + a, j * va_ + b) = (*t_aa_dense)(i, a, j, b) + L2_aa_(i, j, a, b);
+                            Teff_aa(i * va_ + a, j * va_ + b) = (*t_aa_dense)(i, a, j, b) + 0.5 * L2_aa_(i, j, a, b);
                         }
                     }
                 }
@@ -1078,7 +1080,7 @@ void OMP3::build_generalized_fock() {
                 for (int a = 0; a < va_; ++a) {
                     for (int j = 0; j < nb_; ++j) {
                         for (int b = 0; b < vb_; ++b) {
-                            Teff_ab(i * va_ + a, j * vb_ + b) = (*t2_ab_dense)(i, j, a, b) + L2_ab_(i, j, a, b);
+                            Teff_ab(i * va_ + a, j * vb_ + b) = (*t2_ab_dense)(i, j, a, b) + 0.5 * L2_ab_(i, j, a, b);
                         }
                     }
                 }
@@ -1091,7 +1093,8 @@ void OMP3::build_generalized_fock() {
                 for (int a = 0; a < vb_; ++a) {
                     for (int j = 0; j < nb_; ++j) {
                         for (int b = 0; b < vb_; ++b) {
-                            Teff_bb(i * vb_ + a, j * vb_ + b) = (*t2_bb_dense)(i, j, a, b) + L2_bb_(i, j, a, b);
+                            
+                            Teff_bb(i * vb_ + a, j * vb_ + b) = (*t2_bb_dense)(i, j, a, b) + 0.5 * L2_bb_(i, j, a, b);
                         }
                     }
                 }
