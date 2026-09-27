@@ -78,7 +78,6 @@ MP3Result RMP3::compute() {
     Eigen::Tensor< double, 4 > W(no_a_, no_a_, nv_a_, nv_a_); W.setZero();
     TBLIS_VIEW_4D(t_W, W, no_a_, no_a_, nv_a_, nv_a_);
 
-    // [PERBAIKAN] Bypass get_mo_tensor untuk mode eksak
     Eigen::Tensor< double, 4 > eri_ao;
     if (!config_.use_df) eri_ao = ints_->compute_eri();
 
@@ -195,7 +194,6 @@ MP3Result UMP3::compute() {
     Eigen::Tensor< double, 4 > Wbb(no_b_, no_b_, nv_b_, nv_b_); TBLIS_VIEW_4D(t_Wbb, Wbb, no_b_, no_b_, nv_b_, nv_b_);
     Eigen::Tensor< double, 4 > Wab(no_a_, no_b_, nv_a_, nv_b_); TBLIS_VIEW_4D(t_Wab, Wab, no_a_, no_b_, nv_a_, nv_b_);
 
-    // [PERBAIKAN] Bypass get_mo_tensor untuk mode eksak
     Eigen::Tensor< double, 4 > eri_ao;
     if (!config_.use_df) eri_ao = ints_->compute_eri();
 
@@ -306,6 +304,9 @@ double OMP3::get_correlation_energy() const {
     return e_ss_ + e_os_ + e_mp3_tot_;
 }
 
+// -----------------------------------------------------------------------------
+// OVERRIDE SIKLUS MIKRO OMP3: MENGHILANGKAN KETERGANTUNGAN KE OMP2 
+// -----------------------------------------------------------------------------
 double OMP3::execute_micro_iterations() {
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1); 
     double old_energy = e_ss_ + e_os_ + e_mp3_tot_;
@@ -349,6 +350,7 @@ double OMP3::execute_micro_iterations() {
 
     return get_correlation_energy() - old_energy;
 }
+
 void OMP3::compute_mp3_correction() {
     if (na_ == 0 || va_ == 0) { e_mp3_tot_ = 0.0; return; }
 
@@ -372,9 +374,6 @@ void OMP3::compute_mp3_correction() {
         }
     }
 
-    // =========================================================================
-    // IMPLEMENTASI INTEGRAL EKSAK (CACHE AO INTEGRAL)
-    // =========================================================================
     if (!config_.use_df) {
         if (is_restricted) {
             t2_3rd_aa_ = Eigen::Tensor< double, 4 >(na_, na_, va_, va_);
@@ -383,18 +382,15 @@ void OMP3::compute_mp3_correction() {
             TBLIS_VIEW_4D(t_T, T2_aa_ijab, na_, na_, va_, va_);
             TBLIS_VIEW_4D(t_W, W, na_, na_, va_, va_);
 
-            // CACHE: Evaluasi AO ERI satu kali saja sepanjang siklus OMP3
             if (eri_ao_cached_.size() == 0) {
                 eri_ao_cached_ = integrals_->compute_eri();
             }
 
-            // [OPTIMASI EKSAK 1]: Gunakan Waa_ladder_ yang menganggur sebagai cache V_vvvv
             if (Waa_ladder_.size() != va_ * va_ * va_ * va_) Waa_ladder_.resize(va_, va_, va_, va_);
             Waa_ladder_ = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cav, Cav, Cav, Cav, nbf_, va_, va_, va_, va_);
             TBLIS_VIEW_4D(t_Vvvvv, Waa_ladder_, va_, va_, va_, va_);
             tblis::mult< double >(1.0, t_T, "ijef", t_Vvvvv, "eafb", 1.0, t_W, "ijab");
             
-            // [OPTIMASI EKSAK 2]: Gunakan Waa_ring_ yang menganggur sebagai cache V_oooo
             if (Waa_ring_.size() != na_ * na_ * na_ * na_) Waa_ring_.resize(na_, na_, na_, na_);
             Waa_ring_ = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cao, Cao, Cao, Cao, nbf_, na_, na_, na_, na_);
             TBLIS_VIEW_4D(t_Voooo, Waa_ring_, na_, na_, na_, na_);
@@ -435,9 +431,6 @@ void OMP3::compute_mp3_correction() {
         }
     }
 
-    // =========================================================================
-    // IMPLEMENTASI DENSITY FITTING (MEMORI OPTIMAL - INPLACE ALLOCATION)
-    // =========================================================================
     int n_aux = scf_.L_mat.cols();
     Eigen::Map< const Eigen::MatrixXd > L_flat(scf_.L_mat.data(), nbf_, nbf_ * n_aux);
 
@@ -753,92 +746,8 @@ void OMP3::compute_mp3_correction() {
     
     e_mp3_tot_ = e3_aa + e3_bb + e3_ab;
 }
-void OMP3::build_tpdm_fock(Eigen::MatrixXd& F_tpdm_a, Eigen::MatrixXd& F_tpdm_b) {
-    bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
-    
-    if (config_.use_df) {
-        // [TODO] Modul TPDM DF O(N^4) menyusul setelah TPDM Eksak sempurna.
-    } else {
-        if (is_restricted && eri_ao_cached_.size() > 0) {
-            const Eigen::MatrixXd& Cao = scf_.C_alpha.leftCols(na_); 
-            const Eigen::MatrixXd& Cav = scf_.C_alpha.rightCols(va_);
-            
-            auto* t2_aa_dense = t2_aa_.get_block(0,0,0,0);
-            if (!t2_aa_dense) return;
-
-            // Restrukturisasi Format Memori Amplitudo untuk TBLIS (i,j,a,b)
-            Eigen::Tensor<double, 4> T2(na_, na_, va_, va_);
-            Eigen::Tensor<double, 4> T2_tilde(na_, na_, va_, va_);
-            #pragma omp parallel for collapse(4)
-            for(int i = 0; i < na_; ++i) {
-                for(int j = 0; j < na_; ++j) {
-                    for(int a = 0; a < va_; ++a) {
-                        for(int b = 0; b < va_; ++b) {
-                            T2(i,j,a,b) = (*t2_aa_dense)(i,a,j,b);
-                            T2_tilde(i,j,a,b) = 2.0 * T2(i,j,a,b) - T2(i,j,b,a);
-                        }
-                    }
-                }
-            }
-
-            TBLIS_VIEW_4D(t_T2, T2, na_, na_, va_, va_);
-            TBLIS_VIEW_4D(t_T2t, T2_tilde, na_, na_, va_, va_);
-            TBLIS_VIEW_2D(t_F_tpdm_a, F_tpdm_a.data(), va_, na_);
-            
-            // --- 1. Kontraksi Vvvvv (Kerapatan Partikel-Partikel) ---
-            Eigen::Tensor<double, 4> G_vvvv(va_, va_, va_, va_);
-            G_vvvv.setZero();
-            TBLIS_VIEW_4D(t_Gvvvv, G_vvvv, va_, va_, va_, va_);
-            
-            // Gamma_{abcd} = \sum_{ij} T_{ijab} * T_tilde_{ijcd}
-            tblis::mult<double>(1.0, t_T2, "ijab", t_T2t, "ijcd", 0.0, t_Gvvvv, "abcd");
-            
-            auto V_ovvv = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cao, Cav, Cav, Cav, nbf_, na_, va_, va_, va_);
-            TBLIS_VIEW_4D(t_Vovvv, V_ovvv, na_, va_, va_, va_);
-            
-            // F_{ai} += \sum_{bcd} Gamma_{abcd} * V_{icbd}
-            tblis::mult<double>(1.0, t_Gvvvv, "abcd", t_Vovvv, "icbd", 1.0, t_F_tpdm_a, "ai");
-
-            // --- 2. Kontraksi Voooo (Kerapatan Lubang-Lubang) ---
-            Eigen::Tensor<double, 4> G_oooo(na_, na_, na_, na_);
-            G_oooo.setZero();
-            TBLIS_VIEW_4D(t_Goooo, G_oooo, na_, na_, na_, na_);
-            
-            // Gamma_{ijkl} = \sum_{ab} T_{ijab} * T_tilde_{klab}
-            tblis::mult<double>(1.0, t_T2, "ijab", t_T2t, "klab", 0.0, t_Goooo, "ijkl");
-            
-            auto V_ooov = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cao, Cao, Cao, Cav, nbf_, na_, na_, na_, va_);
-            TBLIS_VIEW_4D(t_Vooov, V_ooov, na_, na_, na_, va_);
-            
-            // F_{ai} -= \sum_{jkl} Gamma_{ijkl} * V_{jkla}
-            tblis::mult<double>(-1.0, t_Goooo, "ijkl", t_Vooov, "jkla", 1.0, t_F_tpdm_a, "ai");
-
-            // --- 3. Kontraksi Vovov (Kerapatan Partikel-Lubang) ---
-            Eigen::Tensor<double, 4> G_ovov(na_, va_, na_, va_);
-            G_ovov.setZero();
-            TBLIS_VIEW_4D(t_Govov, G_ovov, na_, va_, na_, va_);
-            
-            // Gamma_{iajb} = \sum_{kc} [2 * T_{ikac} * T_tilde_{jkbc} - T_{ikac} * T_{jkbc}]
-            tblis::mult<double>(2.0, t_T2, "ikac", t_T2t, "jkbc", 0.0, t_Govov, "iajb");
-            tblis::mult<double>(-1.0, t_T2, "ikac", t_T2, "jkbc", 1.0, t_Govov, "iajb");
-
-            auto V_ovov = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cao, Cav, Cao, Cav, nbf_, na_, va_, na_, va_);
-            TBLIS_VIEW_4D(t_Vovov, V_ovov, na_, va_, na_, va_);
-            
-            // F_{ai} += \sum_{jbc} [2 * Gamma_{iajb} * V_{kbjc} - Gamma_{iajb} * V_{kbcj}]
-            tblis::mult<double>(2.0, t_Govov, "iajb", t_Vovov, "kbjc", 1.0, t_F_tpdm_a, "ai");
-            tblis::mult<double>(-1.0, t_Govov, "iajb", t_Vovov, "kbcj", 1.0, t_F_tpdm_a, "ai");
-        }
-    }
-    
-    if (is_restricted) {
-        F_tpdm_b = F_tpdm_a;
-    }
-}
-
 
 void OMP3::build_opdm_alpha() {
-    if (L2_aa_.size() == 0) { OMP2::build_opdm_alpha(); return; }
     auto* t2_aa_dense = t2_aa_.get_block(0,0,0,0);
     if(!t2_aa_dense) return;
 
@@ -921,10 +830,6 @@ void OMP3::build_opdm_alpha() {
 }
 
 void OMP3::build_opdm_beta() {
-    if (L2_bb_.size() == 0 && L2_ab_.size() == 0) { 
-        OMP2::build_opdm_beta(); 
-        return; 
-    }
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     G_oo_beta_ = Eigen::MatrixXd::Zero(nb_, nb_);
     G_vv_beta_ = Eigen::MatrixXd::Zero(vb_, vb_);
@@ -960,7 +865,6 @@ void OMP3::build_opdm_beta() {
 
     tblis::mult<double>(0.5,  t_T2bb, "ijac", t_T2bb, "ijbc", 1.0, t_Gvv_b, "ab"); 
     tblis::mult<double>(0.25, t_T2bb, "ijac", t_T3bb, "ijbc", 1.0, t_Gvv_b, "ab");  
-    // Perbaikan variabel salah ketik t_T2aa menjadi t_T2bb
     tblis::mult<double>(0.25, t_T3bb, "ijac", t_T2bb, "ijbc", 1.0, t_Gvv_b, "ab"); 
     
     tblis::mult<double>(-1.0, t_T2ab, "kiab", t_T2ab, "kjab", 1.0, t_Goo_b, "ij"); 
@@ -971,6 +875,7 @@ void OMP3::build_opdm_beta() {
     tblis::mult<double>(0.5, t_T2ab, "ijca", t_T3ab, "ijcb", 1.0, t_Gvv_b, "ab");   
     tblis::mult<double>(0.5, t_T3ab, "ijca", t_T2ab, "ijcb", 1.0, t_Gvv_b, "ab");
 }
+
 void OMP3::build_generalized_fock() {
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     const auto& ea = scf_.orbital_energies_alpha;
@@ -1093,7 +998,6 @@ void OMP3::build_generalized_fock() {
             return Eigen::Map<Eigen::MatrixXd>(x.data(), dim, dim);
         };
 
-        // PERBAIKAN: Suntikkan CPHF langsung ke OPDM, HAPUS perhitungan Delta_G_ia
         dx_oo_a = solve_mini_cphf_exact(Z_oo_mat, ea, Waa_ring_, na_, 0);
         dx_vv_a = solve_mini_cphf_exact(Z_vv_mat, ea, Waa_ladder_, va_, na_);
         
@@ -1272,7 +1176,6 @@ void OMP3::build_generalized_fock() {
             return Eigen::Map< Eigen::MatrixXd >(x.data(), dim, dim);
         };
 
-        // PERBAIKAN: Suntikkan CPHF langsung ke OPDM DF
         dx_oo_a = solve_mini_cphf(Z_oo_a, ea, B_oo_flat_a, na_, 0);
         dx_vv_a = solve_mini_cphf(Z_vv_a, ea, B_vv_flat_a, va_, na_);
         
@@ -1338,7 +1241,6 @@ void OMP3::build_generalized_fock() {
         Eigen::MatrixXd F_HF_vo_a = F_HF_mo_a.block(na_, 0, va_, na_);
         Eigen::MatrixXd L_sep_a = F_HF_vo_a * G_oo_alpha_ - G_vv_alpha_ * F_HF_vo_a;
         
-        // PERBAIKAN: Masukkan F_tpdm_a ke dalam Generalized Fock
         F_gen_a_.block(na_, 0, va_, na_) += L_sep_a + Z_mat_a + F_tpdm_a;
         F_gen_a_.block(0, na_, na_, va_) += (L_sep_a + Z_mat_a + F_tpdm_a).transpose();
     }
@@ -1348,11 +1250,86 @@ void OMP3::build_generalized_fock() {
         Eigen::MatrixXd F_HF_vo_b = F_HF_mo_b.block(nb_, 0, vb_, nb_);
         Eigen::MatrixXd L_sep_b = F_HF_vo_b * G_oo_beta_ - G_vv_beta_ * F_HF_vo_b;
 
-        // PERBAIKAN: Masukkan F_tpdm_b ke dalam Generalized Fock
         F_gen_b_.block(nb_, 0, vb_, nb_) += L_sep_b + Z_mat_b + F_tpdm_b;
         F_gen_b_.block(0, nb_, nb_, vb_) += (L_sep_b + Z_mat_b + F_tpdm_b).transpose();
     } else if (is_restricted) {
         F_gen_b_ = F_gen_a_;
+    }
+}
+
+void OMP3::build_tpdm_fock(Eigen::MatrixXd& F_tpdm_a, Eigen::MatrixXd& F_tpdm_b) {
+    bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
+    
+    if (config_.use_df) {
+        // [TODO] Modul TPDM DF O(N^4) menyusul setelah TPDM Eksak sempurna.
+    } else {
+        if (eri_ao_cached_.size() > 0) {
+            const Eigen::MatrixXd& Cao = scf_.C_alpha.leftCols(na_); 
+            const Eigen::MatrixXd& Cav = scf_.C_alpha.rightCols(va_);
+            
+            auto* t2_aa_dense = t2_aa_.get_block(0,0,0,0);
+            if (!t2_aa_dense) return;
+
+            Eigen::Tensor<double, 4> T2(na_, na_, va_, va_);
+            Eigen::Tensor<double, 4> T2_tilde(na_, na_, va_, va_);
+            #pragma omp parallel for collapse(4)
+            for(int i = 0; i < na_; ++i) {
+                for(int j = 0; j < na_; ++j) {
+                    for(int a = 0; a < va_; ++a) {
+                        for(int b = 0; b < va_; ++b) {
+                            T2(i,j,a,b) = (*t2_aa_dense)(i,a,j,b);
+                            T2_tilde(i,j,a,b) = 2.0 * T2(i,j,a,b) - T2(i,j,b,a);
+                        }
+                    }
+                }
+            }
+
+            TBLIS_VIEW_4D(t_T2, T2, na_, na_, va_, va_);
+            TBLIS_VIEW_4D(t_T2t, T2_tilde, na_, na_, va_, va_);
+            TBLIS_VIEW_2D(t_F_tpdm_a, F_tpdm_a.data(), va_, na_);
+            
+            // 1. Kontraksi Vvvvv
+            Eigen::Tensor<double, 4> G_vvvv(va_, va_, va_, va_);
+            G_vvvv.setZero();
+            TBLIS_VIEW_4D(t_Gvvvv, G_vvvv, va_, va_, va_, va_);
+            
+            tblis::mult<double>(1.0, t_T2, "ijab", t_T2t, "ijcd", 0.0, t_Gvvvv, "abcd");
+            
+            auto V_ovvv = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cao, Cav, Cav, Cav, nbf_, na_, va_, va_, va_);
+            TBLIS_VIEW_4D(t_Vovvv, V_ovvv, na_, va_, va_, va_);
+            
+            tblis::mult<double>(1.0, t_Gvvvv, "abcd", t_Vovvv, "ibcd", 1.0, t_F_tpdm_a, "ai");
+
+            // 2. Kontraksi Voooo
+            Eigen::Tensor<double, 4> G_oooo(na_, na_, na_, na_);
+            G_oooo.setZero();
+            TBLIS_VIEW_4D(t_Goooo, G_oooo, na_, na_, na_, na_);
+            
+            tblis::mult<double>(1.0, t_T2, "ijab", t_T2t, "klab", 0.0, t_Goooo, "ijkl");
+            
+            auto V_ooov = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cao, Cao, Cao, Cav, nbf_, na_, na_, na_, va_);
+            TBLIS_VIEW_4D(t_Vooov, V_ooov, na_, na_, na_, va_);
+            
+            tblis::mult<double>(-1.0, t_Goooo, "ijkl", t_Vooov, "jkla", 1.0, t_F_tpdm_a, "ai");
+
+            // 3. Kontraksi Vovov
+            Eigen::Tensor<double, 4> G_ovov(na_, va_, na_, va_);
+            G_ovov.setZero();
+            TBLIS_VIEW_4D(t_Govov, G_ovov, na_, va_, na_, va_);
+            
+            tblis::mult<double>(2.0, t_T2, "ikac", t_T2t, "jkbc", 0.0, t_Govov, "iajb");
+            tblis::mult<double>(-1.0, t_T2, "ikac", t_T2, "jkbc", 1.0, t_Govov, "iajb");
+
+            auto V_vvov = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cav, Cav, Cao, Cav, nbf_, va_, va_, na_, va_);
+            TBLIS_VIEW_4D(t_Vvvov, V_vvov, va_, va_, na_, va_);
+            
+            tblis::mult<double>(2.0, t_Govov, "majb", t_Vooov, "imjb", 1.0, t_F_tpdm_a, "ai");
+            tblis::mult<double>(2.0, t_Govov, "iejb", t_Vvvov, "eajb", 1.0, t_F_tpdm_a, "ai");
+        }
+    }
+    
+    if (is_restricted) {
+        F_tpdm_b = F_tpdm_a;
     }
 }
 
@@ -1385,7 +1362,6 @@ void OMP3::debug_gradient_fd(int i_target, int a_target) {
     std::cout << "\n--- [DEBUG] Membedah Komponen Gradien OMP3 ---\n";
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     
-    // 1. Eksekusi state awal (tanpa rotasi)
     pseudocanonicalize(); 
     C_a_current_ = scf_.C_alpha;
     C_b_current_ = scf_.C_beta;
@@ -1405,7 +1381,6 @@ void OMP3::debug_gradient_fd(int i_target, int a_target) {
     else if (is_restricted) G_oo_beta_ = G_oo_alpha_;
     build_generalized_fock();
 
-    // Otomatis cari target gradien terbesar
     double max_grad = -1.0;
     for(int i = 0; i < na_; ++i) {
         for(int a = 0; a < va_; ++a) {
@@ -1418,7 +1393,6 @@ void OMP3::debug_gradient_fd(int i_target, int a_target) {
         }
     }
     
-    // Gradien Analitik
     double grad_ana_tot = is_restricted ? -4.0 * F_gen_a_(na_ + a_target, i_target) : -2.0 * F_gen_a_(na_ + a_target, i_target);
     
     Eigen::MatrixXd F_ao_a, F_ao_b;
@@ -1433,7 +1407,6 @@ void OMP3::debug_gradient_fd(int i_target, int a_target) {
     Eigen::MatrixXd P_a_orig = scf_.P_alpha;
     Eigen::MatrixXd P_b_orig = scf_.P_beta;
     
-    // 2. Lambda Fungsi FD
     auto calc_energy_components = [&](double t, double& e_hf, double& e_mp2, double& e_mp3) {
         Eigen::MatrixXd U = Eigen::MatrixXd::Identity(nbf_, nbf_);
         U(i_target, na_ + a_target) = t;
@@ -1468,7 +1441,6 @@ void OMP3::debug_gradient_fd(int i_target, int a_target) {
         e_mp3 = e_mp3_tot_;
     };
 
-    // 3. Kalkulasi Numerik (+ dan -)
     double hf_plus, mp2_plus, mp3_plus;
     calc_energy_components(theta, hf_plus, mp2_plus, mp3_plus);
     
@@ -1481,7 +1453,6 @@ void OMP3::debug_gradient_fd(int i_target, int a_target) {
     double g_num_corr = g_num_mp2 + g_num_mp3;
     double g_num_tot = g_num_hf + g_num_corr;
 
-    // 4. Cetak Hasil Dekomposisi
     std::cout << std::fixed << std::setprecision(10);
     std::cout << "Target Rotasi        : (i=" << i_target << " [Occ], a=" << a_target << " [Vir])\n";
     std::cout << "--- Finite Difference (NUMERIK) ---\n";
@@ -1514,15 +1485,6 @@ MP3Result OMP3::compute_omp3() {
         std::cout << "========================================================\n";
     }
     
-    // Menonaktifkan evaluasi finite difference pada run produksi untuk 
-    // menghindari kalkulasi ulang O(N^5) yang redundan.
-    /*
-    if(omp_get_thread_num() == 0) {
-        if (na_ > 0 && va_ > 0) {
-            debug_gradient_fd(na_ - 1, 0); 
-        }
-    }
-    */
     MP2Result res2 = OMP2::compute();
 
     MP3Result res3;
