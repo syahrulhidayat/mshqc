@@ -779,102 +779,44 @@ void OMP3::build_opdm_alpha() {
         TBLIS_VIEW_2D(t_Goo, G_oo_alpha_.data(), na_, na_);
         TBLIS_VIEW_2D(t_Gvv, G_vv_alpha_.data(), va_, va_);
 
+        // [KOREKSI EKSAK]: Faktor t1*t2 diturunkan menjadi 0.25 (karena tau = t1 + 0.5*t2)
         tblis::mult<double>(-1.0, t_T2, "ikab", t_T2t, "jkab", 0.0, t_Goo, "ij"); 
-        tblis::mult<double>(-0.5, t_T2, "ikab", t_L2t, "jkab", 1.0, t_Goo, "ij"); 
-        tblis::mult<double>(-0.5, t_L2, "ikab", t_T2t, "jkab", 1.0, t_Goo, "ij");  
+        tblis::mult<double>(-0.25, t_T2, "ikab", t_L2t, "jkab", 1.0, t_Goo, "ij"); 
+        tblis::mult<double>(-0.25, t_L2, "ikab", t_T2t, "jkab", 1.0, t_Goo, "ij");  
 
         tblis::mult<double>(1.0, t_T2, "ijac", t_T2t, "ijbc", 0.0, t_Gvv, "ab"); 
-        tblis::mult<double>(0.5, t_T2, "ijac", t_L2t, "ijbc", 1.0, t_Gvv, "ab"); 
-        tblis::mult<double>(0.5, t_L2, "ijac", t_T2t, "ijbc", 1.0, t_Gvv, "ab"); 
-        
-    } else {
-        TBLIS_VIEW_4D(t_T2aa, T2_aa_ijab, na_, na_, va_, va_);
-        TBLIS_VIEW_4D(t_T3aa, L2_aa_, na_, na_, va_, va_);
-        TBLIS_VIEW_2D(t_Goo_a, G_oo_alpha_.data(), na_, na_);
-        TBLIS_VIEW_2D(t_Gvv_a, G_vv_alpha_.data(), va_, va_);
-        
-        tblis::mult<double>(-0.5,  t_T2aa, "ikab", t_T2aa, "jkab", 1.0, t_Goo_a, "ij"); 
-        tblis::mult<double>(-0.25, t_T2aa, "ikab", t_T3aa, "jkab", 1.0, t_Goo_a, "ij"); 
-        tblis::mult<double>(-0.25, t_T3aa, "ikab", t_T2aa, "jkab", 1.0, t_Goo_a, "ij"); 
-
-        tblis::mult<double>(0.5,  t_T2aa, "ijac", t_T2aa, "ijbc", 1.0, t_Gvv_a, "ab"); 
-        tblis::mult<double>(0.25, t_T2aa, "ijac", t_T3aa, "ijbc", 1.0, t_Gvv_a, "ab");  
-        tblis::mult<double>(0.25, t_T3aa, "ijac", t_T2aa, "ijbc", 1.0, t_Gvv_a, "ab");
-
-        auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
-        if (nb_ > 0 && vb_ > 0 && t2_ab_dense) {
-            TBLIS_VIEW_4D(t_T2ab, (*t2_ab_dense), na_, nb_, va_, vb_);
-            TBLIS_VIEW_4D(t_T3ab, L2_ab_, na_, nb_, va_, vb_);
-            
-            tblis::mult<double>(-1.0, t_T2ab, "ikab", t_T2ab, "jkab", 1.0, t_Goo_a, "ij"); 
-            tblis::mult<double>(-0.5, t_T2ab, "ikab", t_T3ab, "jkab", 1.0, t_Goo_a, "ij"); 
-            tblis::mult<double>(-0.5, t_T3ab, "ikab", t_T2ab, "jkab", 1.0, t_Goo_a, "ij"); 
-            
-            tblis::mult<double>(1.0, t_T2ab, "ijac", t_T2ab, "ijbc", 1.0, t_Gvv_a, "ab"); 
-            tblis::mult<double>(0.5, t_T2ab, "ijac", t_T3ab, "ijbc", 1.0, t_Gvv_a, "ab");  
-            tblis::mult<double>(0.5, t_T3ab, "ijac", t_T2ab, "ijbc", 1.0, t_Gvv_a, "ab"); 
-        }
+        tblis::mult<double>(0.25, t_T2, "ijac", t_L2t, "ijbc", 1.0, t_Gvv, "ab"); 
+        tblis::mult<double>(0.25, t_L2, "ijac", t_T2t, "ijbc", 1.0, t_Gvv, "ab"); 
+        return;
     }
 
-    // =====================================================================
-    // [KOREKSI RELAXED 1-RDM]: Respons Penyebut Alpha
-    // Menambahkan turunan energi orbital secara langsung ke elemen diagonal.
-    // =====================================================================
-    const auto& ea = scf_.orbital_energies_alpha;
+    TBLIS_VIEW_4D(t_T2aa, T2_aa_ijab, na_, na_, va_, va_);
+    TBLIS_VIEW_4D(t_T3aa, L2_aa_, na_, na_, va_, va_);
+    TBLIS_VIEW_2D(t_Goo_a, G_oo_alpha_.data(), na_, na_);
+    TBLIS_VIEW_2D(t_Gvv_a, G_vv_alpha_.data(), va_, va_);
     
-    // 1. Koreksi untuk Kerapatan Lubang (Occupied)
-    #pragma omp parallel for schedule(static)
-    for (int i = 0; i < na_; ++i) {
-        double diag_koreksi_oo = 0.0;
-        for (int j = 0; j < na_; ++j) {
-            for (int a = 0; a < va_; ++a) {
-                for (int b = 0; b < va_; ++b) {
-                    double D = ea(i) + ea(j) - ea(na_+a) - ea(na_+b);
-                    if (std::abs(D) > 1e-12) {
-                        double t1_dir = T2_aa_ijab(i, j, a, b);
-                        double t2_dir = L2_aa_(i, j, a, b);
-                        double t1_ex  = T2_aa_ijab(i, j, b, a);
-                        double t2_ex  = L2_aa_(i, j, b, a);
-                        
-                        // Menangani faktor spin
-                        double t1_antisym = is_restricted ? (2.0 * t1_dir - t1_ex) : (t1_dir - t1_ex);
-                        double t2_antisym = is_restricted ? (2.0 * t2_dir - t2_ex) : (t2_dir - t2_ex);
-                        double tau = t1_antisym + t2_antisym; 
-                        
-                        double skalar = is_restricted ? 0.5 : 0.25;
-                        diag_koreksi_oo += skalar * (tau * t1_dir) / D;
-                    }
-                }
-            }
-        }
-        G_oo_alpha_(i, i) += diag_koreksi_oo;
-    }
+    // [KOREKSI EKSAK]: Faktor t1*t2 untuk AA diturunkan menjadi 0.125
+    tblis::mult<double>(-0.5,  t_T2aa, "ikab", t_T2aa, "jkab", 1.0, t_Goo_a, "ij"); 
+    tblis::mult<double>(-0.125, t_T2aa, "ikab", t_T3aa, "jkab", 1.0, t_Goo_a, "ij"); 
+    tblis::mult<double>(-0.125, t_T3aa, "ikab", t_T2aa, "jkab", 1.0, t_Goo_a, "ij"); 
 
-    // 2. Koreksi untuk Kerapatan Partikel (Virtual)
-    #pragma omp parallel for schedule(static)
-    for (int a = 0; a < va_; ++a) {
-        double diag_koreksi_vv = 0.0;
-        for (int i = 0; i < na_; ++i) {
-            for (int j = 0; j < na_; ++j) {
-                for (int b = 0; b < va_; ++b) {
-                    double D = ea(i) + ea(j) - ea(na_+a) - ea(na_+b);
-                    if (std::abs(D) > 1e-12) {
-                        double t1_dir = T2_aa_ijab(i, j, a, b);
-                        double t2_dir = L2_aa_(i, j, a, b);
-                        double t1_ex  = T2_aa_ijab(i, j, b, a);
-                        double t2_ex  = L2_aa_(i, j, b, a);
-                        
-                        double t1_antisym = is_restricted ? (2.0 * t1_dir - t1_ex) : (t1_dir - t1_ex);
-                        double t2_antisym = is_restricted ? (2.0 * t2_dir - t2_ex) : (t2_dir - t2_ex);
-                        double tau = t1_antisym + t2_antisym;
-                        
-                        double skalar = is_restricted ? 0.5 : 0.25;
-                        diag_koreksi_vv -= skalar * (tau * t1_dir) / D;
-                    }
-                }
-            }
-        }
-        G_vv_alpha_(a, a) += diag_koreksi_vv;
+    tblis::mult<double>(0.5,  t_T2aa, "ijac", t_T2aa, "ijbc", 1.0, t_Gvv_a, "ab"); 
+    tblis::mult<double>(0.125, t_T2aa, "ijac", t_T3aa, "ijbc", 1.0, t_Gvv_a, "ab");  
+    tblis::mult<double>(0.125, t_T3aa, "ijac", t_T2aa, "ijbc", 1.0, t_Gvv_a, "ab");
+
+    auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
+    if (nb_ > 0 && vb_ > 0 && t2_ab_dense) {
+        TBLIS_VIEW_4D(t_T2ab, (*t2_ab_dense), na_, nb_, va_, vb_);
+        TBLIS_VIEW_4D(t_T3ab, L2_ab_, na_, nb_, va_, vb_);
+        
+        // [KOREKSI EKSAK]: Faktor t1*t2 untuk AB diturunkan menjadi 0.25
+        tblis::mult<double>(-1.0, t_T2ab, "ikab", t_T2ab, "jkab", 1.0, t_Goo_a, "ij"); 
+        tblis::mult<double>(-0.25, t_T2ab, "ikab", t_T3ab, "jkab", 1.0, t_Goo_a, "ij"); 
+        tblis::mult<double>(-0.25, t_T3ab, "ikab", t_T2ab, "jkab", 1.0, t_Goo_a, "ij"); 
+        
+        tblis::mult<double>(1.0, t_T2ab, "ijac", t_T2ab, "ijbc", 1.0, t_Gvv_a, "ab"); 
+        tblis::mult<double>(0.25, t_T2ab, "ijac", t_T3ab, "ijbc", 1.0, t_Gvv_a, "ab");  
+        tblis::mult<double>(0.25, t_T3ab, "ijac", t_T2ab, "ijbc", 1.0, t_Gvv_a, "ab"); 
     }
 }
 
@@ -909,118 +851,22 @@ void OMP3::build_opdm_beta() {
     TBLIS_VIEW_2D(t_Goo_b, G_oo_beta_.data(), nb_, nb_);
     TBLIS_VIEW_2D(t_Gvv_b, G_vv_beta_.data(), vb_, vb_);
 
+ 
     tblis::mult<double>(-0.5,  t_T2bb, "ikab", t_T2bb, "jkab", 1.0, t_Goo_b, "ij"); 
-    tblis::mult<double>(-0.25, t_T2bb, "ikab", t_T3bb, "jkab", 1.0, t_Goo_b, "ij"); 
-    tblis::mult<double>(-0.25, t_T3bb, "ikab", t_T2bb, "jkab", 1.0, t_Goo_b, "ij"); 
+    tblis::mult<double>(-0.125, t_T2bb, "ikab", t_T3bb, "jkab", 1.0, t_Goo_b, "ij"); 
+    tblis::mult<double>(-0.125, t_T3bb, "ikab", t_T2bb, "jkab", 1.0, t_Goo_b, "ij"); 
 
     tblis::mult<double>(0.5,  t_T2bb, "ijac", t_T2bb, "ijbc", 1.0, t_Gvv_b, "ab"); 
-    tblis::mult<double>(0.25, t_T2bb, "ijac", t_T3bb, "ijbc", 1.0, t_Gvv_b, "ab");  
-    tblis::mult<double>(0.25, t_T3bb, "ijac", t_T2bb, "ijbc", 1.0, t_Gvv_b, "ab"); 
+    tblis::mult<double>(0.125, t_T2bb, "ijac", t_T3bb, "ijbc", 1.0, t_Gvv_b, "ab");  
+    tblis::mult<double>(0.125, t_T3bb, "ijac", t_T2bb, "ijbc", 1.0, t_Gvv_b, "ab"); 
     
     tblis::mult<double>(-1.0, t_T2ab, "kiab", t_T2ab, "kjab", 1.0, t_Goo_b, "ij"); 
-    tblis::mult<double>(-0.5, t_T2ab, "kiab", t_T3ab, "kjab", 1.0, t_Goo_b, "ij");  
-    tblis::mult<double>(-0.5, t_T3ab, "kiab", t_T2ab, "kjab", 1.0, t_Goo_b, "ij");  
+    tblis::mult<double>(-0.25, t_T2ab, "kiab", t_T3ab, "kjab", 1.0, t_Goo_b, "ij");  
+    tblis::mult<double>(-0.25, t_T3ab, "kiab", t_T2ab, "kjab", 1.0, t_Goo_b, "ij");  
         
     tblis::mult<double>(1.0, t_T2ab, "ijca", t_T2ab, "ijcb", 1.0, t_Gvv_b, "ab"); 
-    tblis::mult<double>(0.5, t_T2ab, "ijca", t_T3ab, "ijcb", 1.0, t_Gvv_b, "ab");   
-    tblis::mult<double>(0.5, t_T3ab, "ijca", t_T2ab, "ijcb", 1.0, t_Gvv_b, "ab");
-
-    // =====================================================================
-    // [KOREKSI RELAXED 1-RDM]: Respons Penyebut Beta (Unrestricted)
-    // Menambahkan turunan energi orbital ke elemen diagonal Matriks Beta.
-    // =====================================================================
-    const auto& ea = scf_.orbital_energies_alpha;
-    const auto& eb = scf_.orbital_energies_beta;
-
-    // --- A. Komponen Spin Beta-Beta (BB) ---
-    if (nb_ > 0 && vb_ > 0) {
-        #pragma omp parallel for schedule(static)
-        for (int i = 0; i < nb_; ++i) {
-            double diag_koreksi_oo_bb = 0.0;
-            for (int j = 0; j < nb_; ++j) {
-                for (int a = 0; a < vb_; ++a) {
-                    for (int b = 0; b < vb_; ++b) {
-                        double D = eb(i) + eb(j) - eb(nb_+a) - eb(nb_+b);
-                        if (std::abs(D) > 1e-12) {
-                            double t1_dir = (*t2_bb_dense)(i, a, j, b);
-                            double t2_dir = L2_bb_(i, j, a, b);
-                            double t1_ex  = (*t2_bb_dense)(i, b, j, a);
-                            double t2_ex  = L2_bb_(i, j, b, a);
-
-                            double tau = (t1_dir - t1_ex) + (t2_dir - t2_ex);
-                            diag_koreksi_oo_bb += 0.25 * (tau * t1_dir) / D;
-                        }
-                    }
-                }
-            }
-            G_oo_beta_(i, i) += diag_koreksi_oo_bb;
-        }
-
-        #pragma omp parallel for schedule(static)
-        for (int a = 0; a < vb_; ++a) {
-            double diag_koreksi_vv_bb = 0.0;
-            for (int i = 0; i < nb_; ++i) {
-                for (int j = 0; j < nb_; ++j) {
-                    for (int b = 0; b < vb_; ++b) {
-                        double D = eb(i) + eb(j) - eb(nb_+a) - eb(nb_+b);
-                        if (std::abs(D) > 1e-12) {
-                            double t1_dir = (*t2_bb_dense)(i, a, j, b);
-                            double t2_dir = L2_bb_(i, j, a, b);
-                            double t1_ex  = (*t2_bb_dense)(i, b, j, a);
-                            double t2_ex  = L2_bb_(i, j, b, a);
-
-                            double tau = (t1_dir - t1_ex) + (t2_dir - t2_ex);
-                            diag_koreksi_vv_bb -= 0.25 * (tau * t1_dir) / D;
-                        }
-                    }
-                }
-            }
-            G_vv_beta_(a, a) += diag_koreksi_vv_bb;
-        }
-    }
-
-    // --- B. Komponen Spin Campuran (Alpha-Beta) ---
-    if (na_ > 0 && nb_ > 0 && va_ > 0 && vb_ > 0) {
-        #pragma omp parallel for schedule(static)
-        for (int j = 0; j < nb_; ++j) {
-            double diag_koreksi_oo_ab = 0.0;
-            for (int i = 0; i < na_; ++i) {
-                for (int a = 0; a < va_; ++a) {
-                    for (int b = 0; b < vb_; ++b) {
-                        double D = ea(i) + eb(j) - ea(na_+a) - eb(nb_+b);
-                        if (std::abs(D) > 1e-12) {
-                            double t1_dir = (*t2_ab_dense)(i, j, a, b);
-                            double t2_dir = L2_ab_(i, j, a, b);
-
-                            double tau = t1_dir + t2_dir;
-                            diag_koreksi_oo_ab += 0.5 * (tau * t1_dir) / D;
-                        }
-                    }
-                }
-            }
-            G_oo_beta_(j, j) += diag_koreksi_oo_ab;
-        }
-
-        #pragma omp parallel for schedule(static)
-        for (int b = 0; b < vb_; ++b) {
-            double diag_koreksi_vv_ab = 0.0;
-            for (int i = 0; i < na_; ++i) {
-                for (int j = 0; j < nb_; ++j) {
-                    for (int a = 0; a < va_; ++a) {
-                        double D = ea(i) + eb(j) - ea(na_+a) - eb(nb_+b);
-                        if (std::abs(D) > 1e-12) {
-                            double t1_dir = (*t2_ab_dense)(i, j, a, b);
-                            double t2_dir = L2_ab_(i, j, a, b);
-
-                            double tau = t1_dir + t2_dir;
-                            diag_koreksi_vv_ab -= 0.5 * (tau * t1_dir) / D;
-                        }
-                    }
-                }
-            }
-            G_vv_beta_(b, b) += diag_koreksi_vv_ab;
-        }
-    }
+    tblis::mult<double>(0.25, t_T2ab, "ijca", t_T3ab, "ijcb", 1.0, t_Gvv_b, "ab");   
+    tblis::mult<double>(0.25, t_T3ab, "ijca", t_T2ab, "ijcb", 1.0, t_Gvv_b, "ab");
 }
 
 void OMP3::build_generalized_fock() {
