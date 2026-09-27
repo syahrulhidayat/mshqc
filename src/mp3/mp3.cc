@@ -1209,7 +1209,7 @@ void OMP3::build_generalized_fock() {
                     Z_loc_b.noalias() += V_b * X_bi - X_bi * O_b;
                     Z_oo_loc_b.noalias() += X_bi.transpose() * B_bi;
                     Z_vv_loc_b.noalias() -= X_bi * B_bi.transpose();
-                }s
+                }
             }
             #pragma omp critical
             { 
