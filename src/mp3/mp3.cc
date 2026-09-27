@@ -737,8 +737,7 @@ void OMP3::build_tpdm_fock(Eigen::MatrixXd& F_tpdm_a, Eigen::MatrixXd& F_tpdm_b)
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     
     if (config_.use_df) {
-        // Placeholder DF: Memerlukan perakitan 3-pusat yang berbeda,
-        // dibiarkan kosong agar eksekusi DF tidak mengalami segfault sementara.
+        // Mode DF (Saat ini dikembalikan nol. Pembangunan TPDM untuk DF menyusul).
     } else {
         if (eri_ao_cached_.size() > 0) {
             const Eigen::MatrixXd& Cao = scf_.C_alpha.leftCols(na_); 
@@ -747,7 +746,7 @@ void OMP3::build_tpdm_fock(Eigen::MatrixXd& F_tpdm_a, Eigen::MatrixXd& F_tpdm_b)
             auto* t2_aa_dense = t2_aa_.get_block(0,0,0,0);
             if (!t2_aa_dense) return;
 
-            // Restrukturisasi format (i,a,j,b) menjadi (i,j,a,b) untuk TBLIS
+            // Restrukturisasi format T2 MSHQC (i,a,j,b) menjadi format (i,j,a,b) untuk mempermudah TBLIS
             Eigen::Tensor<double, 4> T2_ijab(na_, na_, va_, va_);
             #pragma omp parallel for collapse(4)
             for(int i = 0; i < na_; ++i) {
@@ -764,23 +763,17 @@ void OMP3::build_tpdm_fock(Eigen::MatrixXd& F_tpdm_a, Eigen::MatrixXd& F_tpdm_b)
             TBLIS_VIEW_2D(t_F_tpdm_a, F_tpdm_a.data(), va_, na_);
             
             // 1. Kontraksi Vvvvv (Kerapatan Partikel-Partikel)
-            auto V_ovvv = integrals::ERITransformer::transform_custom(
-                eri_ao_cached_, Cao, Cav, Cav, Cav, nbf_, na_, va_, va_, va_
-            );
+            auto V_ovvv = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cao, Cav, Cav, Cav, nbf_, na_, va_, va_, va_);
             TBLIS_VIEW_4D(t_Vovvv, V_ovvv, na_, va_, va_, va_);
             tblis::mult<double>(1.0, t_Vovvv, "jcba", t_T2, "ijbc", 0.0, t_F_tpdm_a, "ai");
 
             // 2. Kontraksi Voooo (Kerapatan Lubang-Lubang)
-            auto V_ooov = integrals::ERITransformer::transform_custom(
-                eri_ao_cached_, Cao, Cao, Cao, Cav, nbf_, na_, na_, na_, va_
-            );
+            auto V_ooov = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cao, Cao, Cao, Cav, nbf_, na_, na_, na_, va_);
             TBLIS_VIEW_4D(t_Vooov, V_ooov, na_, na_, na_, va_);
             tblis::mult<double>(-1.0, t_Vooov, "kjic", t_T2, "jkac", 1.0, t_F_tpdm_a, "ai");
 
             // 3. Kontraksi Vovov (Kerapatan Partikel-Lubang)
-            auto V_ovov = integrals::ERITransformer::transform_custom(
-                eri_ao_cached_, Cao, Cav, Cao, Cav, nbf_, na_, va_, na_, va_
-            );
+            auto V_ovov = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cao, Cav, Cao, Cav, nbf_, na_, va_, na_, va_);
             TBLIS_VIEW_4D(t_Vovov, V_ovov, na_, va_, na_, va_);
             tblis::mult<double>(4.0, t_Vovov, "jcib", t_T2, "ijbc", 1.0, t_F_tpdm_a, "ai");
             tblis::mult<double>(-1.0, t_Vovov, "cjib", t_T2, "jcab", 1.0, t_F_tpdm_a, "ai");
@@ -1216,7 +1209,7 @@ void OMP3::build_generalized_fock() {
                     Z_loc_b.noalias() += V_b * X_bi - X_bi * O_b;
                     Z_oo_loc_b.noalias() += X_bi.transpose() * B_bi;
                     Z_vv_loc_b.noalias() -= X_bi * B_bi.transpose();
-                }
+                }s
             }
             #pragma omp critical
             { 
