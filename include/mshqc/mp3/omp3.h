@@ -44,6 +44,7 @@ protected:
 
     void build_hessian_diagonal(Eigen::VectorXd& diag_H, double grad_norm) override;
     void debug_gradient_fd(int i_target, int a_target);
+    void build_tpdm_fock(Eigen::MatrixXd& F_tpdm_a, Eigen::MatrixXd& F_tpdm_b);
     Eigen::Tensor<double, 4> V_vvvv_, V_oooo_, V_ovov_, V_oovv_, V_vvov_, V_ooov_;
     Eigen::Tensor<double, 4> eri_ao_cached_;
 
