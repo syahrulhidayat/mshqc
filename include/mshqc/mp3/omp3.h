@@ -36,6 +36,7 @@ public:
 
 protected:
     double execute_micro_iterations() override;
+    double execute_micro_iterations() override;
     void build_generalized_fock() override;
     double get_correlation_energy() const override;
 

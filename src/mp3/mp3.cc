@@ -307,19 +307,39 @@ double OMP3::get_correlation_energy() const {
 }
 
 double OMP3::execute_micro_iterations() {
-    OMP2::execute_micro_iterations();
-    
-    compute_mp3_correction(); 
-    
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1); 
+    double old_energy = e_ss_ + e_os_ + e_mp3_tot_;
     
-    L2_aa_ = t2_3rd_aa_;
+    scf_.C_alpha = C_a_current_;
+    scf_.C_beta  = C_b_current_;
+    scf_.P_alpha = scf_.C_alpha.leftCols(na_) * scf_.C_alpha.leftCols(na_).transpose();
+    scf_.P_beta  = scf_.C_beta.leftCols(nb_)  * scf_.C_beta.leftCols(nb_).transpose();
 
+    pseudocanonicalize();
+
+    C_a_current_ = scf_.C_alpha;
+    C_b_current_ = scf_.C_beta;
+
+    // 1. Persiapan Integral
+    if (config_.eri_method == "df" || config_.eri_method == "cholesky") {
+        transform_3center_mo();
+    }
+    transform_integrals(); 
+    
+    // 2. Evaluasi Orde-2
+    compute_t2_amplitudes();
+    compute_mp2_energy();
+    
+    // 3. Evaluasi Orde-3
+    compute_mp3_correction(); 
+
+    L2_aa_ = t2_3rd_aa_;
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
         L2_bb_ = t2_3rd_bb_;
         L2_ab_ = t2_3rd_ab_;
     }
     
+    // 4. Bangun Matriks Kerapatan (1-RDM) Relaksasi
     build_opdm_alpha();
     if (!is_restricted && nb_ > 0) {
         build_opdm_beta();
@@ -327,7 +347,7 @@ double OMP3::execute_micro_iterations() {
         G_oo_beta_ = G_oo_alpha_;
     }
 
-    return get_correlation_energy();
+    return get_correlation_energy() - old_energy;
 }
 void OMP3::compute_mp3_correction() {
     if (na_ == 0 || va_ == 0) { e_mp3_tot_ = 0.0; return; }
@@ -737,83 +757,77 @@ void OMP3::build_tpdm_fock(Eigen::MatrixXd& F_tpdm_a, Eigen::MatrixXd& F_tpdm_b)
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     
     if (config_.use_df) {
-        // Mode DF (Saat ini dikembalikan nol. Pembangunan TPDM untuk DF menyusul).
+        // [TODO] Modul TPDM DF O(N^4) menyusul setelah TPDM Eksak sempurna.
     } else {
-        if (eri_ao_cached_.size() > 0) {
+        if (is_restricted && eri_ao_cached_.size() > 0) {
             const Eigen::MatrixXd& Cao = scf_.C_alpha.leftCols(na_); 
             const Eigen::MatrixXd& Cav = scf_.C_alpha.rightCols(va_);
             
             auto* t2_aa_dense = t2_aa_.get_block(0,0,0,0);
             if (!t2_aa_dense) return;
 
-            // Restrukturisasi format T2 MSHQC (i,a,j,b) menjadi format (i,j,a,b) untuk mempermudah TBLIS
-            Eigen::Tensor<double, 4> T2_ijab(na_, na_, va_, va_);
+            // Restrukturisasi Format Memori Amplitudo untuk TBLIS (i,j,a,b)
+            Eigen::Tensor<double, 4> T2(na_, na_, va_, va_);
+            Eigen::Tensor<double, 4> T2_tilde(na_, na_, va_, va_);
             #pragma omp parallel for collapse(4)
             for(int i = 0; i < na_; ++i) {
                 for(int j = 0; j < na_; ++j) {
                     for(int a = 0; a < va_; ++a) {
                         for(int b = 0; b < va_; ++b) {
-                            T2_ijab(i,j,a,b) = (*t2_aa_dense)(i,a,j,b);
+                            T2(i,j,a,b) = (*t2_aa_dense)(i,a,j,b);
+                            T2_tilde(i,j,a,b) = 2.0 * T2(i,j,a,b) - T2(i,j,b,a);
                         }
                     }
                 }
             }
 
-            TBLIS_VIEW_4D(t_T2, T2_ijab, na_, na_, va_, va_);
+            TBLIS_VIEW_4D(t_T2, T2, na_, na_, va_, va_);
+            TBLIS_VIEW_4D(t_T2t, T2_tilde, na_, na_, va_, va_);
             TBLIS_VIEW_2D(t_F_tpdm_a, F_tpdm_a.data(), va_, na_);
             
-            // 1. Kontraksi Vvvvv (Kerapatan Partikel-Partikel)
+            // --- 1. Kontraksi Vvvvv (Kerapatan Partikel-Partikel) ---
+            Eigen::Tensor<double, 4> G_vvvv(va_, va_, va_, va_);
+            G_vvvv.setZero();
+            TBLIS_VIEW_4D(t_Gvvvv, G_vvvv, va_, va_, va_, va_);
+            
+            // Gamma_{abcd} = \sum_{ij} T_{ijab} * T_tilde_{ijcd}
+            tblis::mult<double>(1.0, t_T2, "ijab", t_T2t, "ijcd", 0.0, t_Gvvvv, "abcd");
+            
             auto V_ovvv = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cao, Cav, Cav, Cav, nbf_, na_, va_, va_, va_);
             TBLIS_VIEW_4D(t_Vovvv, V_ovvv, na_, va_, va_, va_);
-            tblis::mult<double>(1.0, t_Vovvv, "jcba", t_T2, "ijbc", 0.0, t_F_tpdm_a, "ai");
+            
+            // F_{ai} += \sum_{bcd} Gamma_{abcd} * V_{icbd}
+            tblis::mult<double>(1.0, t_Gvvvv, "abcd", t_Vovvv, "icbd", 1.0, t_F_tpdm_a, "ai");
 
-            // 2. Kontraksi Voooo (Kerapatan Lubang-Lubang)
+            // --- 2. Kontraksi Voooo (Kerapatan Lubang-Lubang) ---
+            Eigen::Tensor<double, 4> G_oooo(na_, na_, na_, na_);
+            G_oooo.setZero();
+            TBLIS_VIEW_4D(t_Goooo, G_oooo, na_, na_, na_, na_);
+            
+            // Gamma_{ijkl} = \sum_{ab} T_{ijab} * T_tilde_{klab}
+            tblis::mult<double>(1.0, t_T2, "ijab", t_T2t, "klab", 0.0, t_Goooo, "ijkl");
+            
             auto V_ooov = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cao, Cao, Cao, Cav, nbf_, na_, na_, na_, va_);
             TBLIS_VIEW_4D(t_Vooov, V_ooov, na_, na_, na_, va_);
-            tblis::mult<double>(-1.0, t_Vooov, "kjic", t_T2, "jkac", 1.0, t_F_tpdm_a, "ai");
+            
+            // F_{ai} -= \sum_{jkl} Gamma_{ijkl} * V_{jkla}
+            tblis::mult<double>(-1.0, t_Goooo, "ijkl", t_Vooov, "jkla", 1.0, t_F_tpdm_a, "ai");
 
-            // 3. Kontraksi Vovov (Kerapatan Partikel-Lubang)
+            // --- 3. Kontraksi Vovov (Kerapatan Partikel-Lubang) ---
+            Eigen::Tensor<double, 4> G_ovov(na_, va_, na_, va_);
+            G_ovov.setZero();
+            TBLIS_VIEW_4D(t_Govov, G_ovov, na_, va_, na_, va_);
+            
+            // Gamma_{iajb} = \sum_{kc} [2 * T_{ikac} * T_tilde_{jkbc} - T_{ikac} * T_{jkbc}]
+            tblis::mult<double>(2.0, t_T2, "ikac", t_T2t, "jkbc", 0.0, t_Govov, "iajb");
+            tblis::mult<double>(-1.0, t_T2, "ikac", t_T2, "jkbc", 1.0, t_Govov, "iajb");
+
             auto V_ovov = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cao, Cav, Cao, Cav, nbf_, na_, va_, na_, va_);
             TBLIS_VIEW_4D(t_Vovov, V_ovov, na_, va_, na_, va_);
-            tblis::mult<double>(4.0, t_Vovov, "jcib", t_T2, "ijbc", 1.0, t_F_tpdm_a, "ai");
-            tblis::mult<double>(-1.0, t_Vovov, "cjib", t_T2, "jcab", 1.0, t_F_tpdm_a, "ai");
-
-            // --- Unrestricted OMP3 (Basis Beta) ---
-            if (!is_restricted && nb_ > 0 && vb_ > 0) {
-                const Eigen::MatrixXd& Cbo = scf_.C_beta.leftCols(nb_); 
-                const Eigen::MatrixXd& Cbv = scf_.C_beta.rightCols(vb_);
-                auto* t2_bb_dense = t2_bb_.get_block(0,0,0,0);
-                
-                if(t2_bb_dense) {
-                    Eigen::Tensor<double, 4> T2_bb_ijab(nb_, nb_, vb_, vb_);
-                    #pragma omp parallel for collapse(4)
-                    for(int i = 0; i < nb_; ++i) {
-                        for(int j = 0; j < nb_; ++j) {
-                            for(int a = 0; a < vb_; ++a) {
-                                for(int b = 0; b < vb_; ++b) {
-                                    T2_bb_ijab(i,j,a,b) = (*t2_bb_dense)(i,a,j,b);
-                                }
-                            }
-                        }
-                    }
-
-                    TBLIS_VIEW_4D(t_T2bb, T2_bb_ijab, nb_, nb_, vb_, vb_);
-                    TBLIS_VIEW_2D(t_F_tpdm_b, F_tpdm_b.data(), vb_, nb_);
-                    
-                    auto V_ovvv_bb = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cbo, Cbv, Cbv, Cbv, nbf_, nb_, vb_, vb_, vb_);
-                    TBLIS_VIEW_4D(t_Vovvv_bb, V_ovvv_bb, nb_, vb_, vb_, vb_);
-                    tblis::mult<double>(1.0, t_Vovvv_bb, "jcba", t_T2bb, "ijbc", 0.0, t_F_tpdm_b, "ai");
-                    
-                    auto V_ooov_bb = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cbo, Cbo, Cbo, Cbv, nbf_, nb_, nb_, nb_, vb_);
-                    TBLIS_VIEW_4D(t_Vooov_bb, V_ooov_bb, nb_, nb_, nb_, vb_);
-                    tblis::mult<double>(-1.0, t_Vooov_bb, "kjic", t_T2bb, "jkac", 1.0, t_F_tpdm_b, "ai");
-
-                    auto V_ovov_bb = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cbo, Cbv, Cbo, Cbv, nbf_, nb_, vb_, nb_, vb_);
-                    TBLIS_VIEW_4D(t_Vovov_bb, V_ovov_bb, nb_, vb_, nb_, vb_);
-                    tblis::mult<double>(2.0, t_Vovov_bb, "jcib", t_T2bb, "ijbc", 1.0, t_F_tpdm_b, "ai");
-                    tblis::mult<double>(-1.0, t_Vovov_bb, "cjib", t_T2bb, "jcab", 1.0, t_F_tpdm_b, "ai");
-                }
-            }
+            
+            // F_{ai} += \sum_{jbc} [2 * Gamma_{iajb} * V_{kbjc} - Gamma_{iajb} * V_{kbcj}]
+            tblis::mult<double>(2.0, t_Govov, "iajb", t_Vovov, "kbjc", 1.0, t_F_tpdm_a, "ai");
+            tblis::mult<double>(-1.0, t_Govov, "iajb", t_Vovov, "kbcj", 1.0, t_F_tpdm_a, "ai");
         }
     }
     
