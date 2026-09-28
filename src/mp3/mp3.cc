@@ -903,7 +903,7 @@ void OMP3::build_generalized_fock() {
     auto* t2_bb_dense = t2_bb_.get_block(0,0,0,0);
 
     // =========================================================================
-    // TAHAP 1 & 2: Z-VECTOR & CPHF SOLVER (INJEKSI LANGSUNG KE 1-RDM)
+    // TAHAP 1: Z-VECTOR & FULL-CPHF SOLVER (COULOMB + EXCHANGE)
     // =========================================================================
     if (!config_.use_df) {
         if (!is_restricted) {
@@ -946,7 +946,8 @@ void OMP3::build_generalized_fock() {
         TBLIS_VIEW_4D(t_Vooov, V_ooov, na_, na_, na_, va_);
         tblis::mult< double >(-1.0, t_Vooov, "jikc", t_Teff, "jkac", 1.0, t_Zmat, "ai");
 
-        auto solve_mini_cphf_exact = [](const Eigen::MatrixXd& Z_in, const Eigen::VectorXd& eps,
+        // FUNGSI LAMBDA: FULL EXACT CPHF SOLVER (COULOMB + EXCHANGE)
+        auto solve_full_cphf_exact = [](const Eigen::MatrixXd& Z_in, const Eigen::VectorXd& eps,
                                         const Eigen::Tensor<double, 4>& V_exact, int dim, int offset) -> Eigen::MatrixXd {
             if (dim == 0) return Eigen::MatrixXd::Zero(0, 0);
             int dim2 = dim * dim;
@@ -968,12 +969,17 @@ void OMP3::build_generalized_fock() {
                 Eigen::Map<Eigen::MatrixXd> M(const_cast<double*>(vec.data()), dim, dim);
                 Eigen::VectorXd res(dim2);
                 Eigen::Map<Eigen::MatrixXd> R(res.data(), dim, dim);
-                R.setZero();
+                
                 Eigen::TensorMap<Eigen::Tensor<double, 4>> V_map(const_cast<double*>(V_exact.data()), dim, dim, dim, dim);
                 TBLIS_VIEW_4D(t_V, V_map, dim, dim, dim, dim);
                 TBLIS_VIEW_2D(t_M, M.data(), dim, dim);
                 TBLIS_VIEW_2D(t_R, R.data(), dim, dim);
-                tblis::mult<double>(1.0, t_V, "ijkl", t_M, "kl", 0.0, t_R, "ij");
+                
+                // PERBAIKAN: FULL EXACT CPHF (4 Coulomb - 1 Exchange - 1 Exchange)
+                tblis::mult<double>(4.0, t_V, "ijkl", t_M, "kl", 0.0, t_R, "ij");
+                tblis::mult<double>(-1.0, t_V, "ikjl", t_M, "kl", 1.0, t_R, "ij");
+                tblis::mult<double>(-1.0, t_V, "iljk", t_M, "kl", 1.0, t_R, "ij");
+                
                 return res;
             };
             Eigen::VectorXd Ap_0 = eps_diff.cwiseProduct(x) + apply_V(x);
@@ -998,13 +1004,14 @@ void OMP3::build_generalized_fock() {
             return Eigen::Map<Eigen::MatrixXd>(x.data(), dim, dim);
         };
 
-        dx_oo_a = solve_mini_cphf_exact(Z_oo_mat, ea, Waa_ring_, na_, 0);
-        dx_vv_a = solve_mini_cphf_exact(Z_vv_mat, ea, Waa_ladder_, va_, na_);
+        dx_oo_a = solve_full_cphf_exact(Z_oo_mat, ea, Waa_ring_, na_, 0);
+        dx_vv_a = solve_full_cphf_exact(Z_vv_mat, ea, Waa_ladder_, va_, na_);
         
         G_oo_alpha_ += scale * dx_oo_a;
         G_vv_alpha_ += scale * dx_vv_a;
 
     } else {
+        // [BLOK DENSITY FITTING TETAP SAMA]
         int n_aux = scf_.L_mat.cols();
         Eigen::MatrixXd B_oo_flat_a = Eigen::MatrixXd::Zero(na_ * na_, n_aux);
         Eigen::MatrixXd B_vv_flat_a = Eigen::MatrixXd::Zero(va_ * va_, n_aux);
@@ -1140,7 +1147,6 @@ void OMP3::build_generalized_fock() {
                                   const Eigen::MatrixXd& B_flat, int dim, int offset) -> Eigen::MatrixXd {
             if (dim == 0) return Eigen::MatrixXd::Zero(0, 0);
             int dim2 = dim * dim;
-
             Eigen::VectorXd Z_vec(dim2), eps_diff(dim2);
             for (int i = 0; i < dim; ++i) {
                 for (int j = 0; j < dim; ++j) {
@@ -1148,26 +1154,21 @@ void OMP3::build_generalized_fock() {
                     eps_diff(i * dim + j) = eps(offset + i) - eps(offset + j);
                 }
             }
-
             Eigen::VectorXd x = Eigen::VectorXd::Zero(dim2);
             for (int k = 0; k < dim2; ++k) if (std::abs(eps_diff(k)) > 1e-5) x(k) = Z_vec(k) / eps_diff(k);
             Eigen::VectorXd r = Z_vec - (eps_diff.cwiseProduct(x) + B_flat * (B_flat.transpose() * x));
             Eigen::VectorXd z = Eigen::VectorXd::Zero(dim2);
             for (int k = 0; k < dim2; ++k) if (std::abs(eps_diff(k)) > 1e-5) z(k) = r(k) / eps_diff(k);
-            
             Eigen::VectorXd p = z;
             double rz_old = r.dot(z);
-
             for (int iter = 0; iter < 20; ++iter) {
                 if (r.norm() < 1e-8) break;
                 Eigen::VectorXd Ap = eps_diff.cwiseProduct(p) + B_flat * (B_flat.transpose() * p);
                 double pAp = p.dot(Ap);
                 if (std::abs(pAp) < 1e-14) break;
-                
                 double alpha = rz_old / pAp;
                 x += alpha * p;
                 r -= alpha * Ap;
-                
                 for (int k = 0; k < dim2; ++k) z(k) = (std::abs(eps_diff(k)) > 1e-5) ? r(k) / eps_diff(k) : 0.0;
                 double rz_new = r.dot(z);
                 p = z + (rz_new / rz_old) * p;
@@ -1192,16 +1193,7 @@ void OMP3::build_generalized_fock() {
     }
 
     // =========================================================================
-    // TAHAP 3: EVALUASI KONTRAKSI TPDM (ORDE-3 LENGKAP)
-    // =========================================================================
-    Eigen::MatrixXd F_tpdm_a = Eigen::MatrixXd::Zero(va_, na_);
-    Eigen::MatrixXd F_tpdm_b = Eigen::MatrixXd::Zero(vb_, nb_);
-    
-    // AKTIFKAN TPDM KEMBALI
-    build_tpdm_fock(F_tpdm_a, F_tpdm_b);
-
-    // =========================================================================
-    // TAHAP 4: PERAKITAN GENERALIZED FOCK LENGKAP
+    // TAHAP 2: PERAKITAN GENERALIZED FOCK LENGKAP
     // =========================================================================
     Eigen::MatrixXd G_full_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
     G_full_a.block(0, 0, na_, na_) = G_oo_alpha_;
@@ -1243,9 +1235,8 @@ void OMP3::build_generalized_fock() {
         Eigen::MatrixXd F_HF_vo_a = F_HF_mo_a.block(na_, 0, va_, na_);
         Eigen::MatrixXd L_sep_a = F_HF_vo_a * G_oo_alpha_ - G_vv_alpha_ * F_HF_vo_a;
         
-        // INJEKSI TPDM EKSKUSIF KE GENERALIZED FOCK
-        F_gen_a_.block(na_, 0, va_, na_) += L_sep_a + Z_mat_a + F_tpdm_a;
-        F_gen_a_.block(0, na_, na_, va_) += (L_sep_a + Z_mat_a + F_tpdm_a).transpose();
+        F_gen_a_.block(na_, 0, va_, na_) += L_sep_a + Z_mat_a;
+        F_gen_a_.block(0, na_, na_, va_) += (L_sep_a + Z_mat_a).transpose();
     }
 
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
@@ -1253,8 +1244,8 @@ void OMP3::build_generalized_fock() {
         Eigen::MatrixXd F_HF_vo_b = F_HF_mo_b.block(nb_, 0, vb_, nb_);
         Eigen::MatrixXd L_sep_b = F_HF_vo_b * G_oo_beta_ - G_vv_beta_ * F_HF_vo_b;
 
-        F_gen_b_.block(nb_, 0, vb_, nb_) += L_sep_b + Z_mat_b + F_tpdm_b;
-        F_gen_b_.block(0, nb_, nb_, vb_) += (L_sep_b + Z_mat_b + F_tpdm_b).transpose();
+        F_gen_b_.block(nb_, 0, vb_, nb_) += L_sep_b + Z_mat_b;
+        F_gen_b_.block(0, nb_, nb_, vb_) += (L_sep_b + Z_mat_b).transpose();
     } else if (is_restricted) {
         F_gen_b_ = F_gen_a_;
     }
