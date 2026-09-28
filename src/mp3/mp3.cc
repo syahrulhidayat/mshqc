@@ -1197,8 +1197,8 @@ void OMP3::build_generalized_fock() {
     Eigen::MatrixXd F_tpdm_a = Eigen::MatrixXd::Zero(va_, na_);
     Eigen::MatrixXd F_tpdm_b = Eigen::MatrixXd::Zero(vb_, nb_);
     
-    // MATIKAN SEMENTARA FUNGSI INI UNTUK DIAGNOSIS KONVERGENSI
-    // build_tpdm_fock(F_tpdm_a, F_tpdm_b);
+    // AKTIFKAN KEMBALI TPDM DENGAN SKALA YANG SUDAH DIKOREKSI
+    build_tpdm_fock(F_tpdm_a, F_tpdm_b);
 
     // =========================================================================
     // TAHAP 4: PERAKITAN GENERALIZED FOCK LENGKAP
@@ -1243,9 +1243,9 @@ void OMP3::build_generalized_fock() {
         Eigen::MatrixXd F_HF_vo_a = F_HF_mo_a.block(na_, 0, va_, na_);
         Eigen::MatrixXd L_sep_a = F_HF_vo_a * G_oo_alpha_ - G_vv_alpha_ * F_HF_vo_a;
         
-        // HAPUS '+ F_tpdm_a' DARI PENJUMLAHAN INI
-        F_gen_a_.block(na_, 0, va_, na_) += L_sep_a + Z_mat_a;
-        F_gen_a_.block(0, na_, na_, va_) += (L_sep_a + Z_mat_a).transpose();
+        // TAMBAHKAN F_tpdm_a KEMBALI KE FOCK
+        F_gen_a_.block(na_, 0, va_, na_) += L_sep_a + Z_mat_a + F_tpdm_a;
+        F_gen_a_.block(0, na_, na_, va_) += (L_sep_a + Z_mat_a + F_tpdm_a).transpose();
     }
 
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
@@ -1253,9 +1253,9 @@ void OMP3::build_generalized_fock() {
         Eigen::MatrixXd F_HF_vo_b = F_HF_mo_b.block(nb_, 0, vb_, nb_);
         Eigen::MatrixXd L_sep_b = F_HF_vo_b * G_oo_beta_ - G_vv_beta_ * F_HF_vo_b;
 
-        // HAPUS '+ F_tpdm_b' DARI PENJUMLAHAN INI
-        F_gen_b_.block(nb_, 0, vb_, nb_) += L_sep_b + Z_mat_b;
-        F_gen_b_.block(0, nb_, nb_, vb_) += (L_sep_b + Z_mat_b).transpose();
+        // TAMBAHKAN F_tpdm_b KEMBALI KE FOCK
+        F_gen_b_.block(nb_, 0, vb_, nb_) += L_sep_b + Z_mat_b + F_tpdm_b;
+        F_gen_b_.block(0, nb_, nb_, vb_) += (L_sep_b + Z_mat_b + F_tpdm_b).transpose();
     } else if (is_restricted) {
         F_gen_b_ = F_gen_a_;
     }
@@ -1263,11 +1263,12 @@ void OMP3::build_generalized_fock() {
 
 void OMP3::build_tpdm_fock(Eigen::MatrixXd& F_tpdm_a, Eigen::MatrixXd& F_tpdm_b) {
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
+    double scale = is_restricted ? 0.25 : 0.5; // FAKTOR SKALA EKSKUSI TPDM SPASIAL
     
     if (config_.use_df) {
-        // [TODO] Modul TPDM DF O(N^4) menyusul setelah TPDM Eksak sempurna.
+        // Mode DF (Kosong, siap diisi metode O(N^4) Density Fitting nanti)
     } else {
-        if (eri_ao_cached_.size() > 0) {
+        if (is_restricted && eri_ao_cached_.size() > 0) {
             const Eigen::MatrixXd& Cao = scf_.C_alpha.leftCols(na_); 
             const Eigen::MatrixXd& Cav = scf_.C_alpha.rightCols(va_);
             
@@ -1292,7 +1293,7 @@ void OMP3::build_tpdm_fock(Eigen::MatrixXd& F_tpdm_a, Eigen::MatrixXd& F_tpdm_b)
             TBLIS_VIEW_4D(t_T2t, T2_tilde, na_, na_, va_, va_);
             TBLIS_VIEW_2D(t_F_tpdm_a, F_tpdm_a.data(), va_, na_);
             
-            // 1. Kontraksi Vvvvv
+            // 1. Kontraksi Vvvvv (Tangga Partikel-Partikel)
             Eigen::Tensor<double, 4> G_vvvv(va_, va_, va_, va_);
             G_vvvv.setZero();
             TBLIS_VIEW_4D(t_Gvvvv, G_vvvv, va_, va_, va_, va_);
@@ -1302,9 +1303,10 @@ void OMP3::build_tpdm_fock(Eigen::MatrixXd& F_tpdm_a, Eigen::MatrixXd& F_tpdm_b)
             auto V_ovvv = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cao, Cav, Cav, Cav, nbf_, na_, va_, va_, va_);
             TBLIS_VIEW_4D(t_Vovvv, V_ovvv, na_, va_, va_, va_);
             
-            tblis::mult<double>(1.0, t_Gvvvv, "abcd", t_Vovvv, "ibcd", 1.0, t_F_tpdm_a, "ai");
+            // Terapkan faktor skala 0.25 (scale) ke matriks Fock agar tidak Over-Counting
+            tblis::mult<double>(scale, t_Gvvvv, "abcd", t_Vovvv, "icbd", 1.0, t_F_tpdm_a, "ai");
 
-            // 2. Kontraksi Voooo
+            // 2. Kontraksi Voooo (Tangga Lubang-Lubang)
             Eigen::Tensor<double, 4> G_oooo(na_, na_, na_, na_);
             G_oooo.setZero();
             TBLIS_VIEW_4D(t_Goooo, G_oooo, na_, na_, na_, na_);
@@ -1314,9 +1316,10 @@ void OMP3::build_tpdm_fock(Eigen::MatrixXd& F_tpdm_a, Eigen::MatrixXd& F_tpdm_b)
             auto V_ooov = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cao, Cao, Cao, Cav, nbf_, na_, na_, na_, va_);
             TBLIS_VIEW_4D(t_Vooov, V_ooov, na_, na_, na_, va_);
             
-            tblis::mult<double>(-1.0, t_Goooo, "ijkl", t_Vooov, "jkla", 1.0, t_F_tpdm_a, "ai");
+            // Faktor negatif dan skala 0.25
+            tblis::mult<double>(-scale, t_Goooo, "ijkl", t_Vooov, "jkla", 1.0, t_F_tpdm_a, "ai");
 
-            // 3. Kontraksi Vovov
+            // 3. Kontraksi Vovov (Cincin Partikel-Lubang)
             Eigen::Tensor<double, 4> G_ovov(na_, va_, na_, va_);
             G_ovov.setZero();
             TBLIS_VIEW_4D(t_Govov, G_ovov, na_, va_, na_, va_);
@@ -1324,11 +1327,12 @@ void OMP3::build_tpdm_fock(Eigen::MatrixXd& F_tpdm_a, Eigen::MatrixXd& F_tpdm_b)
             tblis::mult<double>(2.0, t_T2, "ikac", t_T2t, "jkbc", 0.0, t_Govov, "iajb");
             tblis::mult<double>(-1.0, t_T2, "ikac", t_T2, "jkbc", 1.0, t_Govov, "iajb");
 
-            auto V_vvov = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cav, Cav, Cao, Cav, nbf_, va_, va_, na_, va_);
-            TBLIS_VIEW_4D(t_Vvvov, V_vvov, va_, va_, na_, va_);
+            auto V_ovov = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cao, Cav, Cao, Cav, nbf_, na_, va_, na_, va_);
+            TBLIS_VIEW_4D(t_Vovov, V_ovov, na_, va_, na_, va_);
             
-            tblis::mult<double>(2.0, t_Govov, "majb", t_Vooov, "imjb", 1.0, t_F_tpdm_a, "ai");
-            tblis::mult<double>(2.0, t_Govov, "iejb", t_Vvvov, "eajb", 1.0, t_F_tpdm_a, "ai");
+            // Terapkan faktor skala 0.25 (scale) untuk cincin
+            tblis::mult<double>(2.0 * scale, t_Govov, "iajb", t_Vovov, "kbjc", 1.0, t_F_tpdm_a, "ai");
+            tblis::mult<double>(-1.0 * scale, t_Govov, "iajb", t_Vovov, "kbcj", 1.0, t_F_tpdm_a, "ai");
         }
     }
     
@@ -1336,6 +1340,7 @@ void OMP3::build_tpdm_fock(Eigen::MatrixXd& F_tpdm_a, Eigen::MatrixXd& F_tpdm_b)
         F_tpdm_b = F_tpdm_a;
     }
 }
+
 
 void OMP3::build_hessian_diagonal(Eigen::VectorXd& diag_H, double grad_norm) {
     OMP2::build_hessian_diagonal(diag_H, grad_norm);
