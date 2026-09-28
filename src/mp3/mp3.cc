@@ -1197,7 +1197,7 @@ void OMP3::build_generalized_fock() {
     Eigen::MatrixXd F_tpdm_a = Eigen::MatrixXd::Zero(va_, na_);
     Eigen::MatrixXd F_tpdm_b = Eigen::MatrixXd::Zero(vb_, nb_);
     
-    // AKTIFKAN KEMBALI TPDM DENGAN SKALA YANG SUDAH DIKOREKSI
+    // AKTIFKAN TPDM KEMBALI
     build_tpdm_fock(F_tpdm_a, F_tpdm_b);
 
     // =========================================================================
@@ -1243,7 +1243,7 @@ void OMP3::build_generalized_fock() {
         Eigen::MatrixXd F_HF_vo_a = F_HF_mo_a.block(na_, 0, va_, na_);
         Eigen::MatrixXd L_sep_a = F_HF_vo_a * G_oo_alpha_ - G_vv_alpha_ * F_HF_vo_a;
         
-        // TAMBAHKAN F_tpdm_a KEMBALI KE FOCK
+        // INJEKSI TPDM EKSKUSIF KE GENERALIZED FOCK
         F_gen_a_.block(na_, 0, va_, na_) += L_sep_a + Z_mat_a + F_tpdm_a;
         F_gen_a_.block(0, na_, na_, va_) += (L_sep_a + Z_mat_a + F_tpdm_a).transpose();
     }
@@ -1253,7 +1253,6 @@ void OMP3::build_generalized_fock() {
         Eigen::MatrixXd F_HF_vo_b = F_HF_mo_b.block(nb_, 0, vb_, nb_);
         Eigen::MatrixXd L_sep_b = F_HF_vo_b * G_oo_beta_ - G_vv_beta_ * F_HF_vo_b;
 
-        // TAMBAHKAN F_tpdm_b KEMBALI KE FOCK
         F_gen_b_.block(nb_, 0, vb_, nb_) += L_sep_b + Z_mat_b + F_tpdm_b;
         F_gen_b_.block(0, nb_, nb_, vb_) += (L_sep_b + Z_mat_b + F_tpdm_b).transpose();
     } else if (is_restricted) {
@@ -1263,82 +1262,87 @@ void OMP3::build_generalized_fock() {
 
 void OMP3::build_tpdm_fock(Eigen::MatrixXd& F_tpdm_a, Eigen::MatrixXd& F_tpdm_b) {
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
-    double scale = is_restricted ? 0.25 : 0.5; // FAKTOR SKALA EKSKUSI TPDM SPASIAL
     
     if (config_.use_df) {
-        // Mode DF (Kosong, siap diisi metode O(N^4) Density Fitting nanti)
-    } else {
-        if (is_restricted && eri_ao_cached_.size() > 0) {
-            const Eigen::MatrixXd& Cao = scf_.C_alpha.leftCols(na_); 
-            const Eigen::MatrixXd& Cav = scf_.C_alpha.rightCols(va_);
-            
-            auto* t2_aa_dense = t2_aa_.get_block(0,0,0,0);
-            if (!t2_aa_dense) return;
+        return; // DF TPDM di-bypass sementara
+    } 
+    
+    if (is_restricted && eri_ao_cached_.size() > 0) {
+        const Eigen::MatrixXd& Cao = scf_.C_alpha.leftCols(na_); 
+        const Eigen::MatrixXd& Cav = scf_.C_alpha.rightCols(va_);
+        
+        auto* t2_aa_dense = t2_aa_.get_block(0,0,0,0);
+        if (!t2_aa_dense) return;
 
-            Eigen::Tensor<double, 4> T2(na_, na_, va_, va_);
-            Eigen::Tensor<double, 4> T2_tilde(na_, na_, va_, va_);
-            #pragma omp parallel for collapse(4)
-            for(int i = 0; i < na_; ++i) {
-                for(int j = 0; j < na_; ++j) {
-                    for(int a = 0; a < va_; ++a) {
-                        for(int b = 0; b < va_; ++b) {
-                            T2(i,j,a,b) = (*t2_aa_dense)(i,a,j,b);
-                            T2_tilde(i,j,a,b) = 2.0 * T2(i,j,a,b) - T2(i,j,b,a);
-                        }
+        Eigen::Tensor<double, 4> T2(na_, na_, va_, va_);
+        Eigen::Tensor<double, 4> T2t(na_, na_, va_, va_);
+        #pragma omp parallel for collapse(4)
+        for(int i = 0; i < na_; ++i) {
+            for(int j = 0; j < na_; ++j) {
+                for(int a = 0; a < va_; ++a) {
+                    for(int b = 0; b < va_; ++b) {
+                        T2(i,j,a,b) = (*t2_aa_dense)(i,a,j,b); 
+                        T2t(i,j,a,b) = 2.0 * T2(i,j,a,b) - T2(i,j,b,a);
                     }
                 }
             }
-
-            TBLIS_VIEW_4D(t_T2, T2, na_, na_, va_, va_);
-            TBLIS_VIEW_4D(t_T2t, T2_tilde, na_, na_, va_, va_);
-            TBLIS_VIEW_2D(t_F_tpdm_a, F_tpdm_a.data(), va_, na_);
-            
-            // 1. Kontraksi Vvvvv (Tangga Partikel-Partikel)
-            Eigen::Tensor<double, 4> G_vvvv(va_, va_, va_, va_);
-            G_vvvv.setZero();
-            TBLIS_VIEW_4D(t_Gvvvv, G_vvvv, va_, va_, va_, va_);
-            
-            tblis::mult<double>(1.0, t_T2, "ijab", t_T2t, "ijcd", 0.0, t_Gvvvv, "abcd");
-            
-            auto V_ovvv = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cao, Cav, Cav, Cav, nbf_, na_, va_, va_, va_);
-            TBLIS_VIEW_4D(t_Vovvv, V_ovvv, na_, va_, va_, va_);
-            
-            // Terapkan faktor skala 0.25 (scale) ke matriks Fock agar tidak Over-Counting
-            tblis::mult<double>(scale, t_Gvvvv, "abcd", t_Vovvv, "icbd", 1.0, t_F_tpdm_a, "ai");
-
-            // 2. Kontraksi Voooo (Tangga Lubang-Lubang)
-            Eigen::Tensor<double, 4> G_oooo(na_, na_, na_, na_);
-            G_oooo.setZero();
-            TBLIS_VIEW_4D(t_Goooo, G_oooo, na_, na_, na_, na_);
-            
-            tblis::mult<double>(1.0, t_T2, "ijab", t_T2t, "klab", 0.0, t_Goooo, "ijkl");
-            
-            auto V_ooov = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cao, Cao, Cao, Cav, nbf_, na_, na_, na_, va_);
-            TBLIS_VIEW_4D(t_Vooov, V_ooov, na_, na_, na_, va_);
-            
-            // Faktor negatif dan skala 0.25
-            tblis::mult<double>(-scale, t_Goooo, "ijkl", t_Vooov, "jkla", 1.0, t_F_tpdm_a, "ai");
-
-            // 3. Kontraksi Vovov (Cincin Partikel-Lubang)
-            Eigen::Tensor<double, 4> G_ovov(na_, va_, na_, va_);
-            G_ovov.setZero();
-            TBLIS_VIEW_4D(t_Govov, G_ovov, na_, va_, na_, va_);
-            
-            tblis::mult<double>(2.0, t_T2, "ikac", t_T2t, "jkbc", 0.0, t_Govov, "iajb");
-            tblis::mult<double>(-1.0, t_T2, "ikac", t_T2, "jkbc", 1.0, t_Govov, "iajb");
-
-            auto V_ovov = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cao, Cav, Cao, Cav, nbf_, na_, va_, na_, va_);
-            TBLIS_VIEW_4D(t_Vovov, V_ovov, na_, va_, na_, va_);
-            
-            // Terapkan faktor skala 0.25 (scale) untuk cincin
-            tblis::mult<double>(2.0 * scale, t_Govov, "iajb", t_Vovov, "kbjc", 1.0, t_F_tpdm_a, "ai");
-            tblis::mult<double>(-1.0 * scale, t_Govov, "iajb", t_Vovov, "kbcj", 1.0, t_F_tpdm_a, "ai");
         }
+
+        TBLIS_VIEW_4D(t_T2, T2, na_, na_, va_, va_);
+        TBLIS_VIEW_4D(t_T2t, T2t, na_, na_, va_, va_);
+        
+        Eigen::MatrixXd F_raw = Eigen::MatrixXd::Zero(va_, na_);
+        TBLIS_VIEW_2D(t_F_raw, F_raw.data(), va_, na_);
+        
+        // --- 1. TPDM Vvvvv ---
+        Eigen::Tensor<double, 4> G_vvvv(va_, va_, va_, va_); G_vvvv.setZero();
+        TBLIS_VIEW_4D(t_Gvvvv, G_vvvv, va_, va_, va_, va_);
+        tblis::mult<double>(1.0, t_T2, "ijef", t_T2t, "ijab", 0.0, t_Gvvvv, "eafb");
+        
+        auto V_ovvv = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cao, Cav, Cav, Cav, nbf_, na_, va_, va_, va_);
+        TBLIS_VIEW_4D(t_Vovvv, V_ovvv, na_, va_, va_, va_);
+        
+        tblis::mult<double>(1.0, t_Gvvvv, "ayzw", t_Vovvv, "iyzw", 1.0, t_F_raw, "ai");
+        tblis::mult<double>(1.0, t_Gvvvv, "xazw", t_Vovvv, "ixzw", 1.0, t_F_raw, "ai");
+        tblis::mult<double>(1.0, t_Gvvvv, "xyaw", t_Vovvv, "iwxy", 1.0, t_F_raw, "ai");
+        tblis::mult<double>(1.0, t_Gvvvv, "xyza", t_Vovvv, "izyx", 1.0, t_F_raw, "ai");
+
+        // --- 2. TPDM Voooo ---
+        Eigen::Tensor<double, 4> G_oooo(na_, na_, na_, na_); G_oooo.setZero();
+        TBLIS_VIEW_4D(t_Goooo, G_oooo, na_, na_, na_, na_);
+        tblis::mult<double>(1.0, t_T2, "mnab", t_T2t, "ijab", 0.0, t_Goooo, "minj");
+        
+        auto V_ooov = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cao, Cao, Cao, Cav, nbf_, na_, na_, na_, va_);
+        TBLIS_VIEW_4D(t_Vooov, V_ooov, na_, na_, na_, va_);
+        
+        tblis::mult<double>(1.0, t_Goooo, "iyzw", t_Vooov, "yzwa", 1.0, t_F_raw, "ai");
+        tblis::mult<double>(1.0, t_Goooo, "xizw", t_Vooov, "xzwa", 1.0, t_F_raw, "ai");
+        tblis::mult<double>(1.0, t_Goooo, "xyiw", t_Vooov, "xywa", 1.0, t_F_raw, "ai");
+        tblis::mult<double>(1.0, t_Goooo, "xyzi", t_Vooov, "xyza", 1.0, t_F_raw, "ai");
+
+        // --- 3. TPDM Vovov ---
+        Eigen::Tensor<double, 4> G_ovov(na_, va_, na_, va_); G_ovov.setZero();
+        TBLIS_VIEW_4D(t_Govov, G_ovov, na_, va_, na_, va_);
+        tblis::mult<double>(1.0, t_T2t, "ijab", t_T2, "kjcb", 1.0, t_Govov, "iakc");
+        tblis::mult<double>(1.0, t_T2t, "mkec", t_T2, "miea", 1.0, t_Govov, "iakc");
+        tblis::mult<double>(-1.0, t_T2t, "mkec", t_T2, "miae", 1.0, t_Govov, "iakc");
+        tblis::mult<double>(-1.0, t_T2t, "ijab", t_T2, "kjbc", 1.0, t_Govov, "iakc");
+        tblis::mult<double>(-1.0, t_T2t, "ijea", t_T2, "kjec", 1.0, t_Govov, "iakc");
+        tblis::mult<double>(-1.0, t_T2t, "miae", t_T2, "mkce", 1.0, t_Govov, "iakc");
+
+        auto V_vvov = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cav, Cav, Cao, Cav, nbf_, va_, va_, na_, va_);
+        TBLIS_VIEW_4D(t_Vvvov, V_vvov, va_, va_, na_, va_);
+        
+        tblis::mult<double>(1.0, t_Govov, "ixkc", t_Vvvov, "axkc", 1.0, t_F_raw, "ai");
+        tblis::mult<double>(1.0, t_Govov, "xikc", t_Vvvov, "acix", 1.0, t_F_raw, "ai");
+        tblis::mult<double>(-1.0, t_Govov, "yakc", t_Vooov, "iykc", 1.0, t_F_raw, "ai");
+        tblis::mult<double>(-1.0, t_Govov, "yakc", t_Vooov, "kiya", 1.0, t_F_raw, "ai");
+
+        // FAKTOR SKALA 0.25 UNTUK MENCEGAH OVER-COUNTING DI OMP2::execute_macro_iterations
+        F_tpdm_a = 0.25 * F_raw; 
     }
     
-    if (is_restricted) {
-        F_tpdm_b = F_tpdm_a;
-    }
+    if (is_restricted) F_tpdm_b = F_tpdm_a;
 }
 
 
