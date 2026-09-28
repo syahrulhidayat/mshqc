@@ -1196,7 +1196,9 @@ void OMP3::build_generalized_fock() {
     // =========================================================================
     Eigen::MatrixXd F_tpdm_a = Eigen::MatrixXd::Zero(va_, na_);
     Eigen::MatrixXd F_tpdm_b = Eigen::MatrixXd::Zero(vb_, nb_);
-    build_tpdm_fock(F_tpdm_a, F_tpdm_b);
+    
+    // MATIKAN SEMENTARA FUNGSI INI UNTUK DIAGNOSIS KONVERGENSI
+    // build_tpdm_fock(F_tpdm_a, F_tpdm_b);
 
     // =========================================================================
     // TAHAP 4: PERAKITAN GENERALIZED FOCK LENGKAP
@@ -1241,8 +1243,9 @@ void OMP3::build_generalized_fock() {
         Eigen::MatrixXd F_HF_vo_a = F_HF_mo_a.block(na_, 0, va_, na_);
         Eigen::MatrixXd L_sep_a = F_HF_vo_a * G_oo_alpha_ - G_vv_alpha_ * F_HF_vo_a;
         
-        F_gen_a_.block(na_, 0, va_, na_) += L_sep_a + Z_mat_a + F_tpdm_a;
-        F_gen_a_.block(0, na_, na_, va_) += (L_sep_a + Z_mat_a + F_tpdm_a).transpose();
+        // HAPUS '+ F_tpdm_a' DARI PENJUMLAHAN INI
+        F_gen_a_.block(na_, 0, va_, na_) += L_sep_a + Z_mat_a;
+        F_gen_a_.block(0, na_, na_, va_) += (L_sep_a + Z_mat_a).transpose();
     }
 
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
@@ -1250,8 +1253,9 @@ void OMP3::build_generalized_fock() {
         Eigen::MatrixXd F_HF_vo_b = F_HF_mo_b.block(nb_, 0, vb_, nb_);
         Eigen::MatrixXd L_sep_b = F_HF_vo_b * G_oo_beta_ - G_vv_beta_ * F_HF_vo_b;
 
-        F_gen_b_.block(nb_, 0, vb_, nb_) += L_sep_b + Z_mat_b + F_tpdm_b;
-        F_gen_b_.block(0, nb_, nb_, vb_) += (L_sep_b + Z_mat_b + F_tpdm_b).transpose();
+        // HAPUS '+ F_tpdm_b' DARI PENJUMLAHAN INI
+        F_gen_b_.block(nb_, 0, vb_, nb_) += L_sep_b + Z_mat_b;
+        F_gen_b_.block(0, nb_, nb_, vb_) += (L_sep_b + Z_mat_b).transpose();
     } else if (is_restricted) {
         F_gen_b_ = F_gen_a_;
     }
