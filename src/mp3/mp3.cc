@@ -1091,7 +1091,7 @@ void OMP3::build_generalized_fock() {
     Eigen::MatrixXd G_gamma_mo_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
     if (!is_restricted && nb_ > 0) G_gamma_mo_b = scf_.C_beta.transpose() * G_gamma_ao_b * scf_.C_beta;
     else if (is_restricted) G_gamma_mo_b = G_gamma_mo_a;
-    
+
     Z_mat_a *= 0.5;
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
         Z_mat_b *= 0.5;
@@ -1118,90 +1118,7 @@ void OMP3::build_generalized_fock() {
     }
 }
 
-void OMP3::build_tpdm_fock(Eigen::MatrixXd& F_tpdm_a, Eigen::MatrixXd& F_tpdm_b) {
-    bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
-    
-    if (config_.use_df) {
-        return; // DF TPDM di-bypass sementara
-    } 
-    
-    if (is_restricted && eri_ao_cached_.size() > 0) {
-        const Eigen::MatrixXd& Cao = scf_.C_alpha.leftCols(na_); 
-        const Eigen::MatrixXd& Cav = scf_.C_alpha.rightCols(va_);
-        
-        auto* t2_aa_dense = t2_aa_.get_block(0,0,0,0);
-        if (!t2_aa_dense) return;
 
-        Eigen::Tensor<double, 4> T2(na_, na_, va_, va_);
-        Eigen::Tensor<double, 4> T2t(na_, na_, va_, va_);
-        #pragma omp parallel for collapse(4)
-        for(int i = 0; i < na_; ++i) {
-            for(int j = 0; j < na_; ++j) {
-                for(int a = 0; a < va_; ++a) {
-                    for(int b = 0; b < va_; ++b) {
-                        T2(i,j,a,b) = (*t2_aa_dense)(i,a,j,b); 
-                        T2t(i,j,a,b) = 2.0 * T2(i,j,a,b) - T2(i,j,b,a);
-                    }
-                }
-            }
-        }
-
-        TBLIS_VIEW_4D(t_T2, T2, na_, na_, va_, va_);
-        TBLIS_VIEW_4D(t_T2t, T2t, na_, na_, va_, va_);
-        
-        Eigen::MatrixXd F_raw = Eigen::MatrixXd::Zero(va_, na_);
-        TBLIS_VIEW_2D(t_F_raw, F_raw.data(), va_, na_);
-        
-        // --- 1. TPDM Vvvvv ---
-        Eigen::Tensor<double, 4> G_vvvv(va_, va_, va_, va_); G_vvvv.setZero();
-        TBLIS_VIEW_4D(t_Gvvvv, G_vvvv, va_, va_, va_, va_);
-        tblis::mult<double>(1.0, t_T2, "ijef", t_T2t, "ijab", 0.0, t_Gvvvv, "eafb");
-        
-        auto V_ovvv = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cao, Cav, Cav, Cav, nbf_, na_, va_, va_, va_);
-        TBLIS_VIEW_4D(t_Vovvv, V_ovvv, na_, va_, va_, va_);
-        
-        tblis::mult<double>(1.0, t_Gvvvv, "ayzw", t_Vovvv, "iyzw", 1.0, t_F_raw, "ai");
-        tblis::mult<double>(1.0, t_Gvvvv, "xazw", t_Vovvv, "ixzw", 1.0, t_F_raw, "ai");
-        tblis::mult<double>(1.0, t_Gvvvv, "xyaw", t_Vovvv, "iwxy", 1.0, t_F_raw, "ai");
-        tblis::mult<double>(1.0, t_Gvvvv, "xyza", t_Vovvv, "izyx", 1.0, t_F_raw, "ai");
-
-        // --- 2. TPDM Voooo ---
-        Eigen::Tensor<double, 4> G_oooo(na_, na_, na_, na_); G_oooo.setZero();
-        TBLIS_VIEW_4D(t_Goooo, G_oooo, na_, na_, na_, na_);
-        tblis::mult<double>(1.0, t_T2, "mnab", t_T2t, "ijab", 0.0, t_Goooo, "minj");
-        
-        auto V_ooov = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cao, Cao, Cao, Cav, nbf_, na_, na_, na_, va_);
-        TBLIS_VIEW_4D(t_Vooov, V_ooov, na_, na_, na_, va_);
-        
-        tblis::mult<double>(1.0, t_Goooo, "iyzw", t_Vooov, "yzwa", 1.0, t_F_raw, "ai");
-        tblis::mult<double>(1.0, t_Goooo, "xizw", t_Vooov, "xzwa", 1.0, t_F_raw, "ai");
-        tblis::mult<double>(1.0, t_Goooo, "xyiw", t_Vooov, "xywa", 1.0, t_F_raw, "ai");
-        tblis::mult<double>(1.0, t_Goooo, "xyzi", t_Vooov, "xyza", 1.0, t_F_raw, "ai");
-
-        // --- 3. TPDM Vovov ---
-        Eigen::Tensor<double, 4> G_ovov(na_, va_, na_, va_); G_ovov.setZero();
-        TBLIS_VIEW_4D(t_Govov, G_ovov, na_, va_, na_, va_);
-        tblis::mult<double>(1.0, t_T2t, "ijab", t_T2, "kjcb", 1.0, t_Govov, "iakc");
-        tblis::mult<double>(1.0, t_T2t, "mkec", t_T2, "miea", 1.0, t_Govov, "iakc");
-        tblis::mult<double>(-1.0, t_T2t, "mkec", t_T2, "miae", 1.0, t_Govov, "iakc");
-        tblis::mult<double>(-1.0, t_T2t, "ijab", t_T2, "kjbc", 1.0, t_Govov, "iakc");
-        tblis::mult<double>(-1.0, t_T2t, "ijea", t_T2, "kjec", 1.0, t_Govov, "iakc");
-        tblis::mult<double>(-1.0, t_T2t, "miae", t_T2, "mkce", 1.0, t_Govov, "iakc");
-
-        auto V_vvov = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cav, Cav, Cao, Cav, nbf_, va_, va_, na_, va_);
-        TBLIS_VIEW_4D(t_Vvvov, V_vvov, va_, va_, na_, va_);
-        
-        tblis::mult<double>(1.0, t_Govov, "ixkc", t_Vvvov, "axkc", 1.0, t_F_raw, "ai");
-        tblis::mult<double>(1.0, t_Govov, "xikc", t_Vvvov, "acix", 1.0, t_F_raw, "ai");
-        tblis::mult<double>(-1.0, t_Govov, "yakc", t_Vooov, "iykc", 1.0, t_F_raw, "ai");
-        tblis::mult<double>(-1.0, t_Govov, "yakc", t_Vooov, "kiya", 1.0, t_F_raw, "ai");
-
-        // FAKTOR SKALA 0.25 UNTUK MENCEGAH OVER-COUNTING DI OMP2::execute_macro_iterations
-        F_tpdm_a = 0.25 * F_raw; 
-    }
-    
-    if (is_restricted) F_tpdm_b = F_tpdm_a;
-}
 
 
 void OMP3::build_hessian_diagonal(Eigen::VectorXd& diag_H, double grad_norm) {
