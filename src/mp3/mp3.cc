@@ -303,6 +303,90 @@ MP3Result UMP3::compute() {
 double OMP3::get_correlation_energy() const {
     return e_ss_ + e_os_ + e_mp3_tot_;
 }
+void OMP3::build_tpdm_fock(Eigen::MatrixXd& F_tpdm_a, Eigen::MatrixXd& F_tpdm_b) {
+    bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
+    
+    if (config_.use_df) {
+        return; // DF TPDM di-bypass sementara
+    } 
+    
+    if (is_restricted && eri_ao_cached_.size() > 0) {
+        const Eigen::MatrixXd& Cao = scf_.C_alpha.leftCols(na_); 
+        const Eigen::MatrixXd& Cav = scf_.C_alpha.rightCols(va_);
+        
+        auto* t2_aa_dense = t2_aa_.get_block(0,0,0,0);
+        if (!t2_aa_dense) return;
+
+        Eigen::Tensor<double, 4> T2(na_, na_, va_, va_);
+        Eigen::Tensor<double, 4> T2t(na_, na_, va_, va_);
+        #pragma omp parallel for collapse(4)
+        for(int i = 0; i < na_; ++i) {
+            for(int j = 0; j < na_; ++j) {
+                for(int a = 0; a < va_; ++a) {
+                    for(int b = 0; b < va_; ++b) {
+                        T2(i,j,a,b) = (*t2_aa_dense)(i,a,j,b); 
+                        T2t(i,j,a,b) = 2.0 * T2(i,j,a,b) - T2(i,j,b,a);
+                    }
+                }
+            }
+        }
+
+        TBLIS_VIEW_4D(t_T2, T2, na_, na_, va_, va_);
+        TBLIS_VIEW_4D(t_T2t, T2t, na_, na_, va_, va_);
+        
+        Eigen::MatrixXd F_raw = Eigen::MatrixXd::Zero(va_, na_);
+        TBLIS_VIEW_2D(t_F_raw, F_raw.data(), va_, na_);
+        
+        // --- 1. TPDM Vvvvv ---
+        Eigen::Tensor<double, 4> G_vvvv(va_, va_, va_, va_); G_vvvv.setZero();
+        TBLIS_VIEW_4D(t_Gvvvv, G_vvvv, va_, va_, va_, va_);
+        tblis::mult<double>(1.0, t_T2, "ijef", t_T2t, "ijab", 0.0, t_Gvvvv, "eafb");
+        
+        auto V_ovvv = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cao, Cav, Cav, Cav, nbf_, na_, va_, va_, va_);
+        TBLIS_VIEW_4D(t_Vovvv, V_ovvv, na_, va_, va_, va_);
+        
+        tblis::mult<double>(1.0, t_Gvvvv, "ayzw", t_Vovvv, "iyzw", 1.0, t_F_raw, "ai");
+        tblis::mult<double>(1.0, t_Gvvvv, "xazw", t_Vovvv, "ixzw", 1.0, t_F_raw, "ai");
+        tblis::mult<double>(1.0, t_Gvvvv, "xyaw", t_Vovvv, "iwxy", 1.0, t_F_raw, "ai");
+        tblis::mult<double>(1.0, t_Gvvvv, "xyza", t_Vovvv, "izyx", 1.0, t_F_raw, "ai");
+
+        // --- 2. TPDM Voooo ---
+        Eigen::Tensor<double, 4> G_oooo(na_, na_, na_, na_); G_oooo.setZero();
+        TBLIS_VIEW_4D(t_Goooo, G_oooo, na_, na_, na_, na_);
+        tblis::mult<double>(1.0, t_T2, "mnab", t_T2t, "ijab", 0.0, t_Goooo, "minj");
+        
+        auto V_ooov = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cao, Cao, Cao, Cav, nbf_, na_, na_, na_, va_);
+        TBLIS_VIEW_4D(t_Vooov, V_ooov, na_, na_, na_, va_);
+        
+        tblis::mult<double>(1.0, t_Goooo, "iyzw", t_Vooov, "yzwa", 1.0, t_F_raw, "ai");
+        tblis::mult<double>(1.0, t_Goooo, "xizw", t_Vooov, "xzwa", 1.0, t_F_raw, "ai");
+        tblis::mult<double>(1.0, t_Goooo, "xyiw", t_Vooov, "xywa", 1.0, t_F_raw, "ai");
+        tblis::mult<double>(1.0, t_Goooo, "xyzi", t_Vooov, "xyza", 1.0, t_F_raw, "ai");
+
+        // --- 3. TPDM Vovov ---
+        Eigen::Tensor<double, 4> G_ovov(na_, va_, na_, va_); G_ovov.setZero();
+        TBLIS_VIEW_4D(t_Govov, G_ovov, na_, va_, na_, va_);
+        tblis::mult<double>(1.0, t_T2t, "ijab", t_T2, "kjcb", 1.0, t_Govov, "iakc");
+        tblis::mult<double>(1.0, t_T2t, "mkec", t_T2, "miea", 1.0, t_Govov, "iakc");
+        tblis::mult<double>(-1.0, t_T2t, "mkec", t_T2, "miae", 1.0, t_Govov, "iakc");
+        tblis::mult<double>(-1.0, t_T2t, "ijab", t_T2, "kjbc", 1.0, t_Govov, "iakc");
+        tblis::mult<double>(-1.0, t_T2t, "ijea", t_T2, "kjec", 1.0, t_Govov, "iakc");
+        tblis::mult<double>(-1.0, t_T2t, "miae", t_T2, "mkce", 1.0, t_Govov, "iakc");
+
+        auto V_vvov = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cav, Cav, Cao, Cav, nbf_, va_, va_, na_, va_);
+        TBLIS_VIEW_4D(t_Vvvov, V_vvov, va_, va_, na_, va_);
+        
+        tblis::mult<double>(1.0, t_Govov, "ixkc", t_Vvvov, "axkc", 1.0, t_F_raw, "ai");
+        tblis::mult<double>(1.0, t_Govov, "xikc", t_Vvvov, "acix", 1.0, t_F_raw, "ai");
+        tblis::mult<double>(-1.0, t_Govov, "yakc", t_Vooov, "iykc", 1.0, t_F_raw, "ai");
+        tblis::mult<double>(-1.0, t_Govov, "yakc", t_Vooov, "kiya", 1.0, t_F_raw, "ai");
+
+        // FAKTOR SKALA 0.25 UNTUK MENCEGAH OVER-COUNTING DI OMP2::execute_macro_iterations
+        F_tpdm_a = 0.5 * F_raw; 
+    }
+    
+    if (is_restricted) F_tpdm_b = F_tpdm_a;
+}
 
 // -----------------------------------------------------------------------------
 // OVERRIDE SIKLUS MIKRO OMP3: MENGHILANGKAN KETERGANTUNGAN KE OMP2 
@@ -911,9 +995,14 @@ void OMP3::build_generalized_fock() {
             for(int j = 0; j < na_; ++j) {
                 for(int a = 0; a < va_; ++a) {
                     for(int b = 0; b < va_; ++b) {
-                        // KEMBALIKAN KE SPASIAL MURNI:
-                        // Skala SOSCF dan F_tpdm telah terkalibrasi untuk tau_dir murni.
-                        Teff(i,j,a,b) = (*t_aa_dense)(i,a,j,b) + L2_aa_(i,j,a,b);
+                        double val = (*t_aa_dense)(i,a,j,b) + L2_aa_(i,j,a,b);
+                        if (is_restricted) {
+                            double val_ex = (*t_aa_dense)(i,b,j,a) + L2_aa_(i,j,b,a);
+                            // Mengembalikan faktor spin adaptif yang sebelumnya hilang
+                            Teff(i,j,a,b) = 2.0 * val - 1.0 * val_ex;
+                        } else {
+                            Teff(i,j,a,b) = val;
+                        }
                     }
                 }
             }
@@ -981,7 +1070,13 @@ void OMP3::build_generalized_fock() {
                 for (int a = 0; a < va_; ++a) {
                     for (int j = 0; j < na_; ++j) {
                         for (int b = 0; b < va_; ++b) {
-                            Teff_aa(i * va_ + a, j * va_ + b) = (*t_aa_dense)(i, a, j, b) + L2_aa_(i, j, a, b);
+                            double val = (*t_aa_dense)(i, a, j, b) + L2_aa_(i, j, a, b);
+                            if (is_restricted) {
+                                double val_ex = (*t_aa_dense)(i, b, j, a) + L2_aa_(i, j, b, a);
+                                Teff_aa(i * va_ + a, j * va_ + b) = 2.0 * val - 1.0 * val_ex;
+                            } else {
+                                Teff_aa(i * va_ + a, j * va_ + b) = val;
+                            }
                         }
                     }
                 }
@@ -1092,18 +1187,24 @@ void OMP3::build_generalized_fock() {
     if (!is_restricted && nb_ > 0) G_gamma_mo_b = scf_.C_beta.transpose() * G_gamma_ao_b * scf_.C_beta;
     else if (is_restricted) G_gamma_mo_b = G_gamma_mo_a;
 
-    Z_mat_a *= 2.0;
+  
+
+    // Panggil fungsi TPDM yang sebelumnya yatim piatu
+    Eigen::MatrixXd F_tpdm_a = Eigen::MatrixXd::Zero(va_, na_);
+    Eigen::MatrixXd F_tpdm_b;
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
-        Z_mat_b *= 2.0;
+        F_tpdm_b = Eigen::MatrixXd::Zero(vb_, nb_);
     }
+    build_tpdm_fock(F_tpdm_a, F_tpdm_b);
 
     F_gen_a_ = F_HF_mo_a + G_gamma_mo_a;
     if (na_ > 0 && va_ > 0) {
         Eigen::MatrixXd F_HF_vo_a = F_HF_mo_a.block(na_, 0, va_, na_);
         Eigen::MatrixXd L_sep_a = F_HF_vo_a * G_oo_alpha_ - G_vv_alpha_ * F_HF_vo_a;
         
-        F_gen_a_.block(na_, 0, va_, na_) += L_sep_a + Z_mat_a;
-        F_gen_a_.block(0, na_, na_, va_) += (L_sep_a + Z_mat_a).transpose();
+        // Integrasikan Z_mat (linear) dan F_tpdm (kuadratik) ke gradien orbital
+        F_gen_a_.block(na_, 0, va_, na_) += L_sep_a + Z_mat_a + F_tpdm_a;
+        F_gen_a_.block(0, na_, na_, va_) += (L_sep_a + Z_mat_a + F_tpdm_a).transpose();
     }
 
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
@@ -1111,8 +1212,8 @@ void OMP3::build_generalized_fock() {
         Eigen::MatrixXd F_HF_vo_b = F_HF_mo_b.block(nb_, 0, vb_, nb_);
         Eigen::MatrixXd L_sep_b = F_HF_vo_b * G_oo_beta_ - G_vv_beta_ * F_HF_vo_b;
 
-        F_gen_b_.block(nb_, 0, vb_, nb_) += L_sep_b + Z_mat_b;
-        F_gen_b_.block(0, nb_, nb_, vb_) += (L_sep_b + Z_mat_b).transpose();
+        F_gen_b_.block(nb_, 0, vb_, nb_) += L_sep_b + Z_mat_b + F_tpdm_b;
+        F_gen_b_.block(0, nb_, nb_, vb_) += (L_sep_b + Z_mat_b + F_tpdm_b).transpose();
     } else if (is_restricted) {
         F_gen_b_ = F_gen_a_;
     }
