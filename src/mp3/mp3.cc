@@ -906,7 +906,7 @@ void OMP3::build_generalized_fock() {
     // TAHAP 1: Z-VECTOR & FULL-CPHF SOLVER (COULOMB + EXCHANGE)
     // =========================================================================
     if (config_.eri_method == "exact") {
-        if (is_restricted) {
+        if (!is_restricted) {
             throw std::runtime_error("[OMP3] Unrestricted Exact Z-vector belum didukung. Silakan gunakan DF.");
         }
 
@@ -916,6 +916,8 @@ void OMP3::build_generalized_fock() {
             for(int j = 0; j < na_; ++j) {
                 for(int a = 0; a < va_; ++a) {
                     for(int b = 0; b < va_; ++b) {
+                        // KEMBALIKAN KE SPASIAL MURNI:
+                        // Skala SOSCF dan F_tpdm telah terkalibrasi untuk tau_dir murni.
                         Teff(i,j,a,b) = (*t_aa_dense)(i,a,j,b) + L2_aa_(i,j,a,b);
                     }
                 }
