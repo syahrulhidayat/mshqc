@@ -876,6 +876,31 @@ void OMP3::build_opdm_beta() {
     tblis::mult<double>(0.5, t_T3ab, "ijca", t_T2ab, "ijcb", 1.0, t_Gvv_b, "ab");
 }
 
+void OMP3::build_hessian_diagonal(Eigen::VectorXd& diag_H, double grad_norm) {
+    OMP2::build_hessian_diagonal(diag_H, grad_norm);
+    int idx = 0;
+    bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
+    double spin_factor = is_restricted ? 4.0 : 2.0;
+
+    for (int i = 0; i < na_; ++i) {
+        for (int a = 0; a < va_; ++a) {
+            double delta_density = std::abs(G_vv_alpha_(a, a)) + std::abs(G_oo_alpha_(i, i));
+            diag_H(idx) += spin_factor * 1.5 * delta_density; 
+            idx++;
+        }
+    }
+
+    if (!is_restricted && nb_ > 0) {
+        for (int i = 0; i < nb_; ++i) {
+            for (int a = 0; a < vb_; ++a) {
+                double delta_density = std::abs(G_vv_beta_(a, a)) + std::abs(G_oo_beta_(i, i));
+                diag_H(idx) += 2.0 * 1.5 * delta_density;
+                idx++;
+            }
+        }
+    }
+}
+
 void OMP3::build_generalized_fock() {
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     const auto& ea = scf_.orbital_energies_alpha;
