@@ -380,7 +380,7 @@ void OMP3::build_tpdm_fock(Eigen::MatrixXd& F_tpdm_a, Eigen::MatrixXd& F_tpdm_b)
         tblis::mult<double>(1.0, t_Govov, "kckx", t_Vvvov, "acix", 1.0, t_F_raw, "ai");   
         tblis::mult<double>(-1.0, t_Govov, "yakc", t_Vooov, "iykc", 1.0, t_F_raw, "ai");
         tblis::mult<double>(-1.0, t_Govov, "yckc", t_Vooov, "kiya", 1.0, t_F_raw, "ai");
-        F_tpdm_a = 0.125 * F_raw;
+        F_tpdm_a = 0.125 * 0.5 * F_raw;
     }
     
     if (is_restricted) F_tpdm_b = F_tpdm_a;
