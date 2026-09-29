@@ -993,7 +993,6 @@ void OMP3::build_generalized_fock() {
             throw std::runtime_error("[OMP3] Unrestricted Exact Z-vector belum didukung. Silakan gunakan DF.");
         }
 
-        // Di dalam OMP3::build_generalized_fock() blok exact
         Eigen::Tensor< double, 4 > Teff(na_, na_, va_, va_);
         #pragma omp parallel for collapse(4) schedule(static)
         for(int i = 0; i < na_; ++i) {
@@ -1011,7 +1010,17 @@ void OMP3::build_generalized_fock() {
             eri_ao_cached_ = integrals_->compute_eri();
         }
 
+        // --- KEMBALIKAN BLOK Z_oo_mat DAN Z_vv_mat ---
+        Eigen::MatrixXd Z_oo_mat = Eigen::MatrixXd::Zero(na_, na_);
+        Eigen::MatrixXd Z_vv_mat = Eigen::MatrixXd::Zero(va_, va_);
+        TBLIS_VIEW_2D(t_Zoo, Z_oo_mat.data(), na_, na_);
+        TBLIS_VIEW_2D(t_Zvv, Z_vv_mat.data(), va_, va_);
         TBLIS_VIEW_2D(t_Zmat, Z_mat_a.data(), va_, na_);
+
+        auto* g_blk = g_aa_.get_block(0,0,0,0);
+        TBLIS_VIEW_4D(t_Vovov, (*g_blk), na_, va_, na_, va_);
+        tblis::mult< double >(1.0, t_Teff, "ikab", t_Vovov, "kbja", 0.0, t_Zoo, "ij");
+        tblis::mult< double >(-1.0, t_Teff, "ikac", t_Vovov, "kcib", 0.0, t_Zvv, "ab");
 
         auto V_ovvv_ex = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cao, Cav, Cav, Cav, nbf_, na_, va_, va_, va_);
         TBLIS_VIEW_4D(t_Vovvv_ex, V_ovvv_ex, na_, va_, va_, va_);
@@ -1020,6 +1029,65 @@ void OMP3::build_generalized_fock() {
         auto V_ooov = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cao, Cao, Cao, Cav, nbf_, na_, na_, na_, va_);
         TBLIS_VIEW_4D(t_Vooov, V_ooov, na_, na_, na_, va_);
         tblis::mult< double >(-1.0, t_Vooov, "jikc", t_Teff, "jkac", 1.0, t_Zmat, "ai");
+
+        // --- KEMBALIKAN FUNGSI LAMBDA CPHF SOLVER ORISINAL ---
+        auto solve_full_cphf_exact = [](const Eigen::MatrixXd& Z_in, const Eigen::VectorXd& eps,
+                                        const Eigen::Tensor<double, 4>& V_exact, int dim, int offset) -> Eigen::MatrixXd {
+            if (dim == 0) return Eigen::MatrixXd::Zero(0, 0);
+            int dim2 = dim * dim;
+            Eigen::VectorXd Z_vec(dim2), eps_diff(dim2);
+            for (int i = 0; i < dim; ++i) {
+                for (int j = 0; j < dim; ++j) {
+                    Z_vec(i * dim + j) = Z_in(i, j) - Z_in(j, i);
+                    eps_diff(i * dim + j) = eps(offset + i) - eps(offset + j);
+                }
+            }
+            Eigen::VectorXd x = Eigen::VectorXd::Zero(dim2);
+            for (int k = 0; k < dim2; ++k) {
+                if (std::abs(eps_diff(k)) > 1e-5) x(k) = Z_vec(k) / eps_diff(k);
+            }
+            if (dim > 30) return Eigen::Map<Eigen::MatrixXd>(x.data(), dim, dim);
+            auto apply_V = [&](const Eigen::VectorXd& vec) -> Eigen::VectorXd {
+                Eigen::Map<Eigen::MatrixXd> M(const_cast<double*>(vec.data()), dim, dim);
+                Eigen::VectorXd res(dim2);
+                Eigen::Map<Eigen::MatrixXd> R(res.data(), dim, dim);
+                Eigen::TensorMap<Eigen::Tensor<double, 4>> V_map(const_cast<double*>(V_exact.data()), dim, dim, dim, dim);
+                TBLIS_VIEW_4D(t_V, V_map, dim, dim, dim, dim);
+                TBLIS_VIEW_2D(t_M, M.data(), dim, dim);
+                TBLIS_VIEW_2D(t_R, R.data(), dim, dim);
+                tblis::mult<double>(4.0, t_V, "ijkl", t_M, "kl", 0.0, t_R, "ij");
+                tblis::mult<double>(-1.0, t_V, "ikjl", t_M, "kl", 1.0, t_R, "ij");
+                tblis::mult<double>(-1.0, t_V, "iljk", t_M, "kl", 1.0, t_R, "ij");
+                return res;
+            };
+            Eigen::VectorXd Ap_0 = eps_diff.cwiseProduct(x) + apply_V(x);
+            Eigen::VectorXd r = Z_vec - Ap_0;
+            Eigen::VectorXd z = Eigen::VectorXd::Zero(dim2);
+            for (int k = 0; k < dim2; ++k) if (std::abs(eps_diff(k)) > 1e-5) z(k) = r(k) / eps_diff(k);
+            Eigen::VectorXd p = z;
+            double rz_old = r.dot(z);
+            for (int iter = 0; iter < 3; ++iter) {
+                if (r.norm() < 1e-6) break;
+                Eigen::VectorXd Ap = eps_diff.cwiseProduct(p) + apply_V(p);
+                double pAp = p.dot(Ap);
+                if (std::abs(pAp) < 1e-14) break;
+                double alpha = rz_old / pAp;
+                x += alpha * p;
+                r -= alpha * Ap;
+                for (int k = 0; k < dim2; ++k) z(k) = (std::abs(eps_diff(k)) > 1e-5) ? r(k) / eps_diff(k) : 0.0;
+                double rz_new = r.dot(z);
+                p = z + (rz_new / rz_old) * p;
+                rz_old = rz_new;
+            }
+            return Eigen::Map<Eigen::MatrixXd>(x.data(), dim, dim);
+        };
+
+        // --- SUNTIKKAN KEMBALI RESPONS RELAKSASI KE OPDM ---
+        Eigen::MatrixXd dx_oo_a = solve_full_cphf_exact(Z_oo_mat, ea, Waa_ring_, na_, 0);
+        Eigen::MatrixXd dx_vv_a = solve_full_cphf_exact(Z_vv_mat, ea, Waa_ladder_, va_, na_);
+        
+        G_oo_alpha_ += scale * dx_oo_a;
+        G_vv_alpha_ += scale * dx_vv_a;
 
     } else {
         // [BLOK DENSITY FITTING TETAP SAMA]
