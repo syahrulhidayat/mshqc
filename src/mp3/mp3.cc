@@ -1091,6 +1091,11 @@ void OMP3::build_generalized_fock() {
     Eigen::MatrixXd G_gamma_mo_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
     if (!is_restricted && nb_ > 0) G_gamma_mo_b = scf_.C_beta.transpose() * G_gamma_ao_b * scf_.C_beta;
     else if (is_restricted) G_gamma_mo_b = G_gamma_mo_a;
+    
+    Z_mat_a *= 0.5;
+    if (!is_restricted && nb_ > 0 && vb_ > 0) {
+        Z_mat_b *= 0.5;
+    }
 
     F_gen_a_ = F_HF_mo_a + G_gamma_mo_a;
     if (na_ > 0 && va_ > 0) {
