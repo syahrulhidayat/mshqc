@@ -1243,28 +1243,20 @@ void OMP3::build_generalized_fock() {
     if (!is_restricted && nb_ > 0) G_gamma_ao_b -= H_core_;
     else if (is_restricted) G_gamma_ao_b = G_gamma_ao_a;
 
-    // Pada akhir fungsi OMP3::build_generalized_fock
     Eigen::MatrixXd G_gamma_mo_a = scf_.C_alpha.transpose() * G_gamma_ao_a * scf_.C_alpha;
     Eigen::MatrixXd G_gamma_mo_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
     if (!is_restricted && nb_ > 0) G_gamma_mo_b = scf_.C_beta.transpose() * G_gamma_ao_b * scf_.C_beta;
     else if (is_restricted) G_gamma_mo_b = G_gamma_mo_a;
 
-    // Evaluasi TPDM secara terisolasi (Decoupled)
-    Eigen::MatrixXd F_tpdm_a = Eigen::MatrixXd::Zero(va_, na_);
-    Eigen::MatrixXd F_tpdm_b;
-    if (!is_restricted && nb_ > 0 && vb_ > 0) {
-        F_tpdm_b = Eigen::MatrixXd::Zero(vb_, nb_);
-    }
-    build_tpdm_fock(F_tpdm_a, F_tpdm_b);
+  
 
+   
     F_gen_a_ = F_HF_mo_a + G_gamma_mo_a;
     if (na_ > 0 && va_ > 0) {
         Eigen::MatrixXd F_HF_vo_a = F_HF_mo_a.block(na_, 0, va_, na_);
         Eigen::MatrixXd L_sep_a = F_HF_vo_a * G_oo_alpha_ - G_vv_alpha_ * F_HF_vo_a;
-        
-        // Injeksi Z_mat (Respons Linear) dan F_tpdm (Respons Kuadratik) ke blok gradien
-        F_gen_a_.block(na_, 0, va_, na_) += L_sep_a + Z_mat_a + F_tpdm_a;
-        F_gen_a_.block(0, na_, na_, va_) += (L_sep_a + Z_mat_a + F_tpdm_a).transpose();
+        F_gen_a_.block(na_, 0, va_, na_) += L_sep_a + Z_mat_a;
+        F_gen_a_.block(0, na_, na_, va_) += (L_sep_a + Z_mat_a).transpose();
     }
 
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
@@ -1272,8 +1264,8 @@ void OMP3::build_generalized_fock() {
         Eigen::MatrixXd F_HF_vo_b = F_HF_mo_b.block(nb_, 0, vb_, nb_);
         Eigen::MatrixXd L_sep_b = F_HF_vo_b * G_oo_beta_ - G_vv_beta_ * F_HF_vo_b;
 
-        F_gen_b_.block(nb_, 0, vb_, nb_) += L_sep_b + Z_mat_b + F_tpdm_b;
-        F_gen_b_.block(0, nb_, nb_, vb_) += (L_sep_b + Z_mat_b + F_tpdm_b).transpose();
+        F_gen_b_.block(nb_, 0, vb_, nb_) += L_sep_b + Z_mat_b;
+        F_gen_b_.block(0, nb_, nb_, vb_) += (L_sep_b + Z_mat_b).transpose();
     } else if (is_restricted) {
         F_gen_b_ = F_gen_a_;
     }
