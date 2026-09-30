@@ -1,8 +1,8 @@
-name: Compile and Release Wheel to Public Repoo
+name: Compile and Release Wheel to Public Repo
 
 on:
   push:
-    branches: [ "debug4" ]
+    branches: [ "debug5" ]
   workflow_dispatch:
 
 permissions:
