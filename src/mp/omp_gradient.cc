@@ -97,6 +97,7 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
             }
         }
     }
+    
     const int CHUNK_SIZE = 128; 
 
     #pragma omp parallel
@@ -126,32 +127,32 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
             Eigen::Map<Eigen::MatrixXd> X_a_chunk(X_a_buf.data(), na_ * va_, P_len);
             X_a_chunk.setZero();
             
-            Eigen::Map<Eigen::MatrixXd> X_b_chunk(X_b_buf.data(), has_beta ? nb_ * vb_ : 0, P_len);
-            if (has_beta) X_b_chunk.setZero();
-
-            Eigen::MatrixXd Bia_chunk = B_ia_P_alpha_.middleCols(P_start, P_len);
+            if (has_beta) {
+                Eigen::Map<Eigen::MatrixXd> X_b_chunk(X_b_buf.data(), nb_ * vb_, P_len);
+                X_b_chunk.setZero();
+            }
             
-            // PERBAIKAN ERROR SCOPE: Deklarasi Bib_chunk ditarik ke luar blok if
-            Eigen::MatrixXd Bib_chunk; 
+            // PERBAIKAN MEMORI 1: Gunakan 'auto' untuk menghasilkan Block Expression (Tanpa Malloc)
+            auto Bia_blk = B_ia_P_alpha_.middleCols(P_start, P_len); 
             
             if (t_aa_blk) {
                 if (is_restricted) {
-                    X_a_chunk.noalias() += T2_rmp2 * Bia_chunk;
+                    X_a_chunk.noalias() += T2_rmp2 * Bia_blk;
                 } else {
-                    X_a_chunk.noalias() += 1.0 * T2_aa_mat * Bia_chunk; 
+                    X_a_chunk.noalias() += 1.0 * T2_aa_mat * Bia_blk; 
                 }
             }
 
             if (has_beta) {
-                Bib_chunk = B_ia_P_beta_.middleCols(P_start, P_len); // Matriks diisi di sini
+                auto Bib_blk = B_ia_P_beta_.middleCols(P_start, P_len); // Tanpa Malloc
+                Eigen::Map<Eigen::MatrixXd> X_b_chunk(X_b_buf.data(), nb_ * vb_, P_len);
                 
                 if (t_ab_blk) {
-                    X_a_chunk.noalias() += 1.0 * T2_ab_mat * Bib_chunk;
-                    X_b_chunk.noalias() += 1.0 * T2_ab_mat.transpose() * Bia_chunk;
+                    X_a_chunk.noalias() += 1.0 * T2_ab_mat * Bib_blk;
+                    X_b_chunk.noalias() += 1.0 * T2_ab_mat.transpose() * Bia_blk;
                 }
-
                 if (t_bb_blk) {
-                    X_b_chunk.noalias() += 1.0 * T2_bb_mat * Bib_chunk; 
+                    X_b_chunk.noalias() += 1.0 * T2_bb_mat * Bib_blk; 
                 }
             }
 
@@ -162,11 +163,16 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
                 B_oo_a.noalias() = scf_.C_alpha.leftCols(na_).transpose() * (B_AO * scf_.C_alpha.leftCols(na_));
                 B_vv_a.noalias() = scf_.C_alpha.rightCols(va_).transpose() * (B_AO * scf_.C_alpha.rightCols(va_));
 
-                Eigen::Map<Eigen::MatrixXd> XT_a(X_a_chunk.col(p).data(), va_, na_);
+                // PERBAIKAN MEMORI 2: Navigasi Pointer Mentah (0% Alokasi Dinamis)
+                double* x_a_ptr = X_a_buf.data() + p * (na_ * va_);
+                double* b_a_ptr = B_ia_P_alpha_.data() + P_global * (na_ * va_);
+
+                Eigen::Map<Eigen::MatrixXd> XT_a(x_a_ptr, va_, na_);
                 Z_loc_a.noalias() += B_vv_a * XT_a - XT_a * B_oo_a;
 
-                Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> X_ia(X_a_chunk.col(p).data(), na_, va_);
-                Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> B_ia(Bia_chunk.col(p).data(), na_, va_);
+                Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> X_ia(x_a_ptr, na_, va_);
+                Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> B_ia(b_a_ptr, na_, va_);
+                
                 Z_oo_loc_a.noalias() += X_ia * B_ia.transpose();
                 Z_vv_loc_a.noalias() -= X_ia.transpose() * B_ia;
 
@@ -174,12 +180,16 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
                     B_oo_b.noalias() = scf_.C_beta.leftCols(nb_).transpose() * (B_AO * scf_.C_beta.leftCols(nb_));
                     B_vv_b.noalias() = scf_.C_beta.rightCols(vb_).transpose() * (B_AO * scf_.C_beta.rightCols(vb_));
 
-                    Eigen::Map<Eigen::MatrixXd> XT_b(X_b_chunk.col(p).data(), vb_, nb_);
+                    // Navigasi Pointer Mentah Beta
+                    double* x_b_ptr = X_b_buf.data() + p * (nb_ * vb_);
+                    double* b_b_ptr = B_ia_P_beta_.data() + P_global * (nb_ * vb_);
+
+                    Eigen::Map<Eigen::MatrixXd> XT_b(x_b_ptr, vb_, nb_);
                     Z_loc_b.noalias() += B_vv_b * XT_b - XT_b * B_oo_b;
 
+                    Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> X_ib(x_b_ptr, nb_, vb_);
+                    Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> B_ib(b_b_ptr, nb_, vb_);
                     
-                    Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> X_ib(X_b_chunk.col(p).data(), nb_, vb_);
-                    Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> B_ib(Bib_chunk.col(p).data(), nb_, vb_);
                     Z_oo_loc_b.noalias() += X_ib * B_ib.transpose();
                     Z_vv_loc_b.noalias() -= X_ib.transpose() * B_ib;
                 }
@@ -205,7 +215,6 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
     const auto& eb = scf_.orbital_energies_beta;
     double scale = is_restricted ? 0.25 : 0.5;
 
-    // 1. PEMBANGUNAN MATRIKS B_FLAT (Dibutuhkan oleh PCG)
     int n_aux = scf_.L_mat.cols();
     Eigen::MatrixXd B_oo_flat_a = Eigen::MatrixXd::Zero(na_ * na_, n_aux);
     Eigen::MatrixXd B_vv_flat_a = Eigen::MatrixXd::Zero(va_ * va_, n_aux);
@@ -227,12 +236,10 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
         
         #pragma omp for schedule(dynamic)
         for (int P = 0; P < n_aux; ++P) {
-            // FIX: Deklarasi Eigen::Map dengan template yang eksplisit
             Eigen::Map<const Eigen::MatrixXd> B_AO(scf_.L_mat.col(P).data(), nbf_, nbf_);
             Eigen::MatrixXd MO_oo_a = scf_.C_alpha.leftCols(na_).transpose() * (B_AO * scf_.C_alpha.leftCols(na_));
             Eigen::MatrixXd MO_vv_a = scf_.C_alpha.rightCols(va_).transpose() * (B_AO * scf_.C_alpha.rightCols(va_));
             
-            // FIX: Menggunakan Eigen::Map untuk flatten (meratakan) matriks lebih efisien dari loop manual
             priv_oo_a.col(P) = Eigen::Map<Eigen::VectorXd>(MO_oo_a.data(), na_ * na_);
             priv_vv_a.col(P) = Eigen::Map<Eigen::VectorXd>(MO_vv_a.data(), va_ * va_);
 
@@ -253,16 +260,12 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
                 B_vv_flat_b += priv_vv_b;
             }
         }
-    } // FIX: Kurung tutup ini sebelumnya terhapus, menyebabkan namespace merah
+    }
 
-    // 2. FUNGSI LAMBDA UNTUK PENYELESAIAN CPHF MINI
-    // FIX: Deklarasi lambda dikembalikan utuh agar variabel di dalamnya tidak undefined
     auto solve_mini_cphf = [&](const Eigen::MatrixXd& Z_in, const Eigen::VectorXd& eps, const Eigen::MatrixXd& B_flat, int dim, int offset) -> Eigen::MatrixXd {
-        
         if (dim == 0) return Eigen::MatrixXd::Zero(0, 0);
         int dim2 = dim * dim;
 
-        // Vektorisasi dan Anti-Simetri Target (Z_ij - Z_ji)
         Eigen::VectorXd Z_vec(dim2);
         Eigen::VectorXd eps_diff(dim2);
         for (int i = 0; i < dim; ++i) {
@@ -272,7 +275,6 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
             }
         }
 
-        // Preconditioner (Diagonal Invers dengan Ambang Degenerasi)
         auto apply_precond = [&](const Eigen::VectorXd& v) {
             Eigen::VectorXd res = Eigen::VectorXd::Zero(dim2);
             for (int k = 0; k < dim2; ++k) {
@@ -281,14 +283,12 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
             return res;
         };
 
-        // Hessian-Vector Product Matrix-Free
         auto compute_Ax = [&](const Eigen::VectorXd& x) {
             Eigen::VectorXd B_Tx = B_flat.transpose() * x;   
             Eigen::VectorXd Coul = B_flat * B_Tx;            
             return eps_diff.cwiseProduct(x) + Coul;          
         };
 
-        // Algoritma PCG
         Eigen::VectorXd x = apply_precond(Z_vec); 
         Eigen::VectorXd r = Z_vec - compute_Ax(x);
         Eigen::VectorXd z = apply_precond(r);
@@ -303,7 +303,7 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
             
             Eigen::VectorXd Ap = compute_Ax(p);
             double pAp = p.dot(Ap);
-            if (std::abs(pAp) < 1e-14) break; // Safeguard dari pembagian nol
+            if (std::abs(pAp) < 1e-14) break; 
             
             double alpha = rz_old / pAp;
             
@@ -317,11 +317,16 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
             rz_old = rz_new;
         }
 
-        Eigen::MatrixXd res_mat = Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>>(x.data(), dim, dim);
+        // PERBAIKAN MEMORI 3: Ekstraksi Memori Eksplisit dari Map untuk memutuskan rantai lokal Eigen
+        Eigen::MatrixXd res_mat(dim, dim);
+        for(int i = 0; i < dim; ++i) {
+            for(int j = 0; j < dim; ++j) {
+                res_mat(i, j) = x(i * dim + j);
+            }
+        }
         return res_mat;
     };
 
-    // 3. EKSEKUSI PENYELESAIAN (SOLVER) DAN INJEKSI KE 1-RDM
     Eigen::MatrixXd dx_oo_a = solve_mini_cphf(Z_oo_a, ea, B_oo_flat_a, na_, 0);
     Eigen::MatrixXd dx_vv_a = solve_mini_cphf(Z_vv_a, ea, B_vv_flat_a, va_, na_);
     
