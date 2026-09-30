@@ -914,7 +914,7 @@ void OMP3::build_generalized_fock() {
             for(int j = 0; j < na_; ++j) {
                 for(int a = 0; a < va_; ++a) {
                     for(int b = 0; b < va_; ++b) {
-                        Teff(i,j,a,b) = (*t_aa_dense)(i,j,a,b) +  L2_aa_(i,a,j,b);
+                        Teff(i,j,a,b) = (*t_aa_dense)(i,j,a,b) +  L2_aa_(i,j,a,b);
                     }
                 }
             }
