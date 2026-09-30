@@ -999,13 +999,7 @@ void OMP3::build_generalized_fock() {
             for(int j = 0; j < na_; ++j) {
                 for(int a = 0; a < va_; ++a) {
                     for(int b = 0; b < va_; ++b) {
-                        double val = (*t_aa_dense)(i,a,j,b) + L2_aa_(i,j,a,b);
-                        if (is_restricted) {
-                            double val_ex = (*t_aa_dense)(i,b,j,a) + L2_aa_(i,j,b,a);
-                            Teff(i,j,a,b) = 2.0 * val - 1.0 * val_ex;
-                        } else {
-                            Teff(i,j,a,b) = val;
-                        }
+                        Teff(i,j,a,b) = (*t_aa_dense)(i,a,j,b) + L2_aa_(i,j,a,b);
                     }
                 }
             }
@@ -1143,13 +1137,8 @@ void OMP3::build_generalized_fock() {
                 for (int a = 0; a < va_; ++a) {
                     for (int j = 0; j < na_; ++j) {
                         for (int b = 0; b < va_; ++b) {
-                            double val = (*t_aa_dense)(i, a, j, b) + L2_aa_(i, j, a, b);
-                            if (is_restricted) {
-                                double val_ex = (*t_aa_dense)(i, b, j, a) + L2_aa_(i, j, b, a);
-                                Teff_aa(i * va_ + a, j * va_ + b) = 2.0 * val - 1.0 * val_ex;
-                            } else {
-                                Teff_aa(i * va_ + a, j * va_ + b) = val;
-                            }
+                            // KOREKSI FINAL: Spasial Murni
+                            Teff_aa(i * va_ + a, j * va_ + b) = (*t_aa_dense)(i, a, j, b) + L2_aa_(i, j, a, b);
                         }
                     }
                 }
