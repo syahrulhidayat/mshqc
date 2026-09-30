@@ -101,7 +101,7 @@ jobs:
           make -j$(nproc) && make install
 
       # =========================================================================
-      # 5. BUILD MSHQC WHEEL (PEP 517 / No-Isolation)
+      # 5. BUILD MSHQC WHEEL (DEBUG MODE)
       # =========================================================================
       - name: Build Python Wheel (.whl)
         run: |
@@ -110,7 +110,12 @@ jobs:
           
           export CC="ccache gcc"
           export CXX="ccache g++"
-          export CXXFLAGS="-std=c++20 -fopenmp -O3 -mavx2 -mfma -mno-avx512f -mtune=generic -DEIGEN_USE_MKL_ALL -DNDEBUG -I$HOME/tblis_install/include -I$HOME/libcint_install/include -I$CONDA_PREFIX/include"
+          
+          # Hapus -O3 dan -DNDEBUG. Ganti dengan -g -O0 untuk mempertahankan simbol debug
+          export CXXFLAGS="-std=c++20 -fopenmp -g -O0 -mavx2 -mfma -mno-avx512f -mtune=generic -DEIGEN_USE_MKL_ALL -I$HOME/tblis_install/include -I$HOME/libcint_install/include -I$CONDA_PREFIX/include"
+          export CFLAGS="-g -O0"
+          export CMAKE_BUILD_TYPE=Debug
+          export DEBUG=1
           
           LIBCINT_LIB=$( [ -d "$HOME/libcint_install/lib64" ] && echo "$HOME/libcint_install/lib64" || echo "$HOME/libcint_install/lib" )
           TBLIS_LIB=$( [ -d "$HOME/tblis_install/lib64" ] && echo "$HOME/tblis_install/lib64" || echo "$HOME/tblis_install/lib" )
