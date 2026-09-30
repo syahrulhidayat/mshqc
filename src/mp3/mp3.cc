@@ -999,7 +999,13 @@ void OMP3::build_generalized_fock() {
             for(int j = 0; j < na_; ++j) {
                 for(int a = 0; a < va_; ++a) {
                     for(int b = 0; b < va_; ++b) {
-                        Teff(i,j,a,b) = (*t_aa_dense)(i,a,j,b) + L2_aa_(i,j,a,b);
+                        double val = (*t_aa_dense)(i,a,j,b) + L2_aa_(i,j,a,b);
+                        if (is_restricted) {
+                            double val_ex = (*t_aa_dense)(i,b,j,a) + L2_aa_(i,j,b,a);
+                            Teff(i,j,a,b) = 2.0 * val - 1.0 * val_ex;
+                        } else {
+                            Teff(i,j,a,b) = val;
+                        }
                     }
                 }
             }
@@ -1130,14 +1136,20 @@ void OMP3::build_generalized_fock() {
         Eigen::MatrixXd Teff_ab = Eigen::MatrixXd::Zero(na_ * va_, nb_ * vb_);
         Eigen::MatrixXd Teff_bb = Eigen::MatrixXd::Zero(nb_ * vb_, nb_ * vb_);
 
-        // Di dalam OMP3::build_generalized_fock() blok DF
+        // Di dalam blok DF
         if (t_aa_dense) {
             #pragma omp parallel for collapse(2) schedule(static)
             for (int i = 0; i < na_; ++i) {
                 for (int a = 0; a < va_; ++a) {
                     for (int j = 0; j < na_; ++j) {
                         for (int b = 0; b < va_; ++b) {
-                            Teff_aa(i * va_ + a, j * va_ + b) = (*t_aa_dense)(i, a, j, b) + L2_aa_(i, j, a, b);
+                            double val = (*t_aa_dense)(i, a, j, b) + L2_aa_(i, j, a, b);
+                            if (is_restricted) {
+                                double val_ex = (*t_aa_dense)(i, b, j, a) + L2_aa_(i, j, b, a);
+                                Teff_aa(i * va_ + a, j * va_ + b) = 2.0 * val - 1.0 * val_ex;
+                            } else {
+                                Teff_aa(i * va_ + a, j * va_ + b) = val;
+                            }
                         }
                     }
                 }
@@ -1248,12 +1260,14 @@ void OMP3::build_generalized_fock() {
     if (!is_restricted && nb_ > 0) G_gamma_mo_b = scf_.C_beta.transpose() * G_gamma_ao_b * scf_.C_beta;
     else if (is_restricted) G_gamma_mo_b = G_gamma_mo_a;
 
-  
+    Z_mat_a *= 0.5;
+    if (!is_restricted && nb_ > 0 && vb_ > 0) {
+        Z_mat_b *= 0.5;
+    }
 
-   
     F_gen_a_ = F_HF_mo_a + G_gamma_mo_a;
     if (na_ > 0 && va_ > 0) {
-        Eigen::MatrixXd F_HF_vo_a = F_HF_mo_a.block(na_, 0, va_, na_);
+        Eigen::MatrixXd F_HF_vo_a = F_HF_mo_a.block(na_, 0, va_, na_); 
         Eigen::MatrixXd L_sep_a = F_HF_vo_a * G_oo_alpha_ - G_vv_alpha_ * F_HF_vo_a;
         F_gen_a_.block(na_, 0, va_, na_) += L_sep_a + Z_mat_a;
         F_gen_a_.block(0, na_, na_, va_) += (L_sep_a + Z_mat_a).transpose();
