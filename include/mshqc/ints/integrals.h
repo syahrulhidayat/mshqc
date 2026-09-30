@@ -63,7 +63,7 @@ public:
     
 
     const double* compute_shell_block_ptr(int sh_a, int sh_b, int sh_c, int sh_d, size_t& size_out);
-    const std::vector<double>& compute_shell_block(int sh_a, int sh_b, int sh_c, int sh_d);
+    std::vector<double> compute_shell_block(int sh_a, int sh_b, int sh_c, int sh_d);
     const std::vector<int>& get_bas() const { return bas_; }
     const std::vector<int>& get_atm() const { return atm_; }
     const std::vector<double>& get_env() const { return env_; }

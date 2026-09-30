@@ -308,8 +308,10 @@ const Eigen::Tensor<double, 4>& IntegralEngine::compute_eri() {
 // ============================================================================
 // SINGLE SHELL BLOCK COMPUTE (THREAD-SAFE)
 // ============================================================================
-const std::vector<double>& IntegralEngine::compute_shell_block(int sh_a, int sh_b, int sh_c, int sh_d) {
-    thread_local std::vector<double> t_buffer;
+std::vector<double> IntegralEngine::compute_shell_block(int sh_a, int sh_b, int sh_c, int sh_d) {
+    // Alokasi memori lokal per pemanggilan fungsi, mengeliminasi thread_local
+    // untuk mencegah race condition pada akses OpenMP konkuren.
+    std::vector<double> t_buffer;
     
     int dim1 = CINTcgto_spheric(sh_a, bas_.data());
     int dim2 = CINTcgto_spheric(sh_b, bas_.data());
@@ -321,7 +323,6 @@ const std::vector<double>& IntegralEngine::compute_shell_block(int sh_a, int sh_
     
     int shls[4] = {sh_a, sh_b, sh_c, sh_d};
     
-    // CAST opt_ SEBELUM DIGUNAKAN
     CINTOpt* tmp_opt = static_cast<CINTOpt*>(opt_);
     int has_val = cint2e_sph(t_buffer.data(), shls, atm_.data(), mol_.n_atoms(), bas_.data(), basis_.n_shells(), env_.data(), tmp_opt);
     
