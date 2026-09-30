@@ -1,4 +1,4 @@
-name: Compile and Release Wheel to Public Repo
+name: Compile and Release Wheel to Public Repoo
 
 on:
   push:
