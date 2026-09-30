@@ -165,8 +165,8 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
                 Eigen::Map<Eigen::MatrixXd> XT_a(X_a_chunk.col(p).data(), va_, na_);
                 Z_loc_a.noalias() += B_vv_a * XT_a - XT_a * B_oo_a;
 
-                Eigen::Map<Eigen::MatrixXd> X_ia(X_a_chunk.col(p).data(), na_, va_);
-                Eigen::Map<Eigen::MatrixXd> B_ia(Bia_chunk.col(p).data(), na_, va_);
+                Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> X_ia(X_a_chunk.col(p).data(), na_, va_);
+                Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> B_ia(Bia_chunk.col(p).data(), na_, va_);
                 Z_oo_loc_a.noalias() += X_ia * B_ia.transpose();
                 Z_vv_loc_a.noalias() -= X_ia.transpose() * B_ia;
 
@@ -177,9 +177,9 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
                     Eigen::Map<Eigen::MatrixXd> XT_b(X_b_chunk.col(p).data(), vb_, nb_);
                     Z_loc_b.noalias() += B_vv_b * XT_b - XT_b * B_oo_b;
 
-                    // Bib_chunk sekarang dikenali di dalam loop ini
-                    Eigen::Map<Eigen::MatrixXd> X_ib(X_b_chunk.col(p).data(), nb_, vb_);
-                    Eigen::Map<Eigen::MatrixXd> B_ib(Bib_chunk.col(p).data(), nb_, vb_);
+                    
+                    Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> X_ib(X_b_chunk.col(p).data(), nb_, vb_);
+                    Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> B_ib(Bib_chunk.col(p).data(), nb_, vb_);
                     Z_oo_loc_b.noalias() += X_ib * B_ib.transpose();
                     Z_vv_loc_b.noalias() -= X_ib.transpose() * B_ib;
                 }
@@ -317,9 +317,8 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
             rz_old = rz_new;
         }
 
-        // Kembalikan array datar menjadi Matriks Relaksasi (x_ij)
-        // FIX: Tambahkan argumen template <Eigen::MatrixXd>
-        return Eigen::Map<Eigen::MatrixXd>(x.data(), dim, dim);
+        Eigen::MatrixXd res_mat = Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>>(x.data(), dim, dim);
+        return res_mat;
     };
 
     // 3. EKSEKUSI PENYELESAIAN (SOLVER) DAN INJEKSI KE 1-RDM
