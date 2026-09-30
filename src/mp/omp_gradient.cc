@@ -97,7 +97,7 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
             }
         }
     }
-    
+
     const int CHUNK_SIZE = 128; 
 
     #pragma omp parallel
@@ -107,10 +107,15 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
         if (has_beta) X_b_buf.resize(nb_ * vb_, CHUNK_SIZE);
 
         Eigen::MatrixXd Z_loc_a = Eigen::MatrixXd::Zero(va_, na_);
-        Eigen::MatrixXd Z_loc_b = Eigen::MatrixXd::Zero(vb_, nb_);
+        Eigen::MatrixXd Z_loc_b;
+        if (has_beta) Z_loc_b = Eigen::MatrixXd::Zero(vb_, nb_);
 
         Eigen::MatrixXd B_oo_a(na_, na_), B_vv_a(va_, va_);
-        Eigen::MatrixXd B_oo_b(nb_, nb_), B_vv_b(vb_, vb_);
+        Eigen::MatrixXd B_oo_b, B_vv_b;
+        if (has_beta) {
+            B_oo_b.resize(nb_, nb_);
+            B_vv_b.resize(vb_, vb_);
+        }
 
         Eigen::MatrixXd Z_oo_loc_a = Eigen::MatrixXd::Zero(na_, na_);
         Eigen::MatrixXd Z_vv_loc_a = Eigen::MatrixXd::Zero(va_, va_);
@@ -127,32 +132,24 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
             Eigen::Map<Eigen::MatrixXd> X_a_chunk(X_a_buf.data(), na_ * va_, P_len);
             X_a_chunk.setZero();
             
-            if (has_beta) {
-                Eigen::Map<Eigen::MatrixXd> X_b_chunk(X_b_buf.data(), nb_ * vb_, P_len);
-                X_b_chunk.setZero();
-            }
-            
-            // PERBAIKAN MEMORI 1: Gunakan 'auto' untuk menghasilkan Block Expression (Tanpa Malloc)
-            auto Bia_blk = B_ia_P_alpha_.middleCols(P_start, P_len); 
-            
             if (t_aa_blk) {
                 if (is_restricted) {
-                    X_a_chunk.noalias() += T2_rmp2 * Bia_blk;
+                    X_a_chunk.noalias() += T2_rmp2 * B_ia_P_alpha_.middleCols(P_start, P_len);
                 } else {
-                    X_a_chunk.noalias() += 1.0 * T2_aa_mat * Bia_blk; 
+                    X_a_chunk.noalias() += T2_aa_mat * B_ia_P_alpha_.middleCols(P_start, P_len); 
                 }
             }
 
             if (has_beta) {
-                auto Bib_blk = B_ia_P_beta_.middleCols(P_start, P_len); // Tanpa Malloc
                 Eigen::Map<Eigen::MatrixXd> X_b_chunk(X_b_buf.data(), nb_ * vb_, P_len);
+                X_b_chunk.setZero();
                 
                 if (t_ab_blk) {
-                    X_a_chunk.noalias() += 1.0 * T2_ab_mat * Bib_blk;
-                    X_b_chunk.noalias() += 1.0 * T2_ab_mat.transpose() * Bia_blk;
+                    X_a_chunk.noalias() += T2_ab_mat * B_ia_P_beta_.middleCols(P_start, P_len);
+                    X_b_chunk.noalias() += T2_ab_mat.transpose() * B_ia_P_alpha_.middleCols(P_start, P_len);
                 }
                 if (t_bb_blk) {
-                    X_b_chunk.noalias() += 1.0 * T2_bb_mat * Bib_blk; 
+                    X_b_chunk.noalias() += T2_bb_mat * B_ia_P_beta_.middleCols(P_start, P_len); 
                 }
             }
 
@@ -163,35 +160,27 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
                 B_oo_a.noalias() = scf_.C_alpha.leftCols(na_).transpose() * (B_AO * scf_.C_alpha.leftCols(na_));
                 B_vv_a.noalias() = scf_.C_alpha.rightCols(va_).transpose() * (B_AO * scf_.C_alpha.rightCols(va_));
 
-                // PERBAIKAN MEMORI 2: Navigasi Pointer Mentah (0% Alokasi Dinamis)
-                double* x_a_ptr = X_a_buf.data() + p * (na_ * va_);
-                double* b_a_ptr = B_ia_P_alpha_.data() + P_global * (na_ * va_);
+                // ---------------------------------------------------------
+                // PENGAMANAN MEMORI: Tiru persis gaya pemetaan memori murni 
+                // Col-Major dari mode Density Fitting (Zero-Allocation).
+                // ---------------------------------------------------------
+                Eigen::Map<const Eigen::MatrixXd> X_ai(X_a_chunk.col(p).data(), va_, na_);
+                Eigen::Map<const Eigen::MatrixXd> B_ai(B_ia_P_alpha_.col(P_global).data(), va_, na_);
 
-                Eigen::Map<Eigen::MatrixXd> XT_a(x_a_ptr, va_, na_);
-                Z_loc_a.noalias() += B_vv_a * XT_a - XT_a * B_oo_a;
-
-                Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> X_ia(x_a_ptr, na_, va_);
-                Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> B_ia(b_a_ptr, na_, va_);
-                
-                Z_oo_loc_a.noalias() += X_ia * B_ia.transpose();
-                Z_vv_loc_a.noalias() -= X_ia.transpose() * B_ia;
+                Z_loc_a.noalias() += B_vv_a * X_ai - X_ai * B_oo_a;
+                Z_oo_loc_a.noalias() += X_ai.transpose() * B_ai;
+                Z_vv_loc_a.noalias() -= X_ai * B_ai.transpose();
 
                 if (has_beta) {
                     B_oo_b.noalias() = scf_.C_beta.leftCols(nb_).transpose() * (B_AO * scf_.C_beta.leftCols(nb_));
                     B_vv_b.noalias() = scf_.C_beta.rightCols(vb_).transpose() * (B_AO * scf_.C_beta.rightCols(vb_));
 
-                    // Navigasi Pointer Mentah Beta
-                    double* x_b_ptr = X_b_buf.data() + p * (nb_ * vb_);
-                    double* b_b_ptr = B_ia_P_beta_.data() + P_global * (nb_ * vb_);
+                    Eigen::Map<const Eigen::MatrixXd> X_bi(X_b_buf.col(p).data(), vb_, nb_);
+                    Eigen::Map<const Eigen::MatrixXd> B_bi(B_ia_P_beta_.col(P_global).data(), vb_, nb_);
 
-                    Eigen::Map<Eigen::MatrixXd> XT_b(x_b_ptr, vb_, nb_);
-                    Z_loc_b.noalias() += B_vv_b * XT_b - XT_b * B_oo_b;
-
-                    Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> X_ib(x_b_ptr, nb_, vb_);
-                    Eigen::Map<Eigen::Matrix<double, Eigen::Dynamic, Eigen::Dynamic, Eigen::RowMajor>> B_ib(b_b_ptr, nb_, vb_);
-                    
-                    Z_oo_loc_b.noalias() += X_ib * B_ib.transpose();
-                    Z_vv_loc_b.noalias() -= X_ib.transpose() * B_ib;
+                    Z_loc_b.noalias() += B_vv_b * X_bi - X_bi * B_oo_b;
+                    Z_oo_loc_b.noalias() += X_bi.transpose() * B_bi;
+                    Z_vv_loc_b.noalias() -= X_bi * B_bi.transpose();
                 }
             }
         }
@@ -240,14 +229,14 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
             Eigen::MatrixXd MO_oo_a = scf_.C_alpha.leftCols(na_).transpose() * (B_AO * scf_.C_alpha.leftCols(na_));
             Eigen::MatrixXd MO_vv_a = scf_.C_alpha.rightCols(va_).transpose() * (B_AO * scf_.C_alpha.rightCols(va_));
             
-            priv_oo_a.col(P) = Eigen::Map<Eigen::VectorXd>(MO_oo_a.data(), na_ * na_);
-            priv_vv_a.col(P) = Eigen::Map<Eigen::VectorXd>(MO_vv_a.data(), va_ * va_);
+            priv_oo_a.col(P) = Eigen::Map<const Eigen::VectorXd>(MO_oo_a.data(), na_ * na_);
+            priv_vv_a.col(P) = Eigen::Map<const Eigen::VectorXd>(MO_vv_a.data(), va_ * va_);
 
             if (has_beta) {
                 Eigen::MatrixXd MO_oo_b = scf_.C_beta.leftCols(nb_).transpose() * (B_AO * scf_.C_beta.leftCols(nb_));
                 Eigen::MatrixXd MO_vv_b = scf_.C_beta.rightCols(vb_).transpose() * (B_AO * scf_.C_beta.rightCols(vb_));
-                priv_oo_b.col(P) = Eigen::Map<Eigen::VectorXd>(MO_oo_b.data(), nb_ * nb_);
-                priv_vv_b.col(P) = Eigen::Map<Eigen::VectorXd>(MO_vv_b.data(), vb_ * vb_);
+                priv_oo_b.col(P) = Eigen::Map<const Eigen::VectorXd>(MO_oo_b.data(), nb_ * nb_);
+                priv_vv_b.col(P) = Eigen::Map<const Eigen::VectorXd>(MO_vv_b.data(), vb_ * vb_);
             }
         }
         
@@ -317,7 +306,7 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
             rz_old = rz_new;
         }
 
-        // PERBAIKAN MEMORI 3: Ekstraksi Memori Eksplisit dari Map untuk memutuskan rantai lokal Eigen
+        // PENGAMANAN MEMORI: Salinan keras dari array internal CPHF ke Matriks
         Eigen::MatrixXd res_mat(dim, dim);
         for(int i = 0; i < dim; ++i) {
             for(int j = 0; j < dim; ++j) {
@@ -341,7 +330,7 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
         G_vv_beta_ += scale * dx_vv_b;
     }
 }
-// 1. TAMBAHKAN FUNGSI INI UNTUK MENANGANI HESSIAN (DAPAT DI-OVERRIDE OLEH OMP3)
+
 void OMP2::build_hessian_diagonal(Eigen::VectorXd& diag_H, double grad_norm) {
     int n_params = orbital_gradient_.size();
     if (diag_H.size() != n_params) diag_H.resize(n_params);
@@ -384,17 +373,14 @@ void OMP2::build_hessian_diagonal(Eigen::VectorXd& diag_H, double grad_norm) {
     }
 }
 
-// 2. VERSI REFAKTORISASI DARI compute_soscf_step
 Eigen::VectorXd OMP2::compute_soscf_step(double trust_radius, double& expected_change) {
     int n_params = orbital_gradient_.size();
     if (n_params == 0) return Eigen::VectorXd::Zero(0);
 
     double grad_norm = orbital_gradient_.norm(); 
 
-    // 1. Bangun diagonal Hessian (ini akan otomatis memanggil versi OMP3 jika di-override)
     build_hessian_diagonal(hessian_diag_, grad_norm);
 
-    // Mencegah singularitas saat dibagi
     for(int i = 0; i < hessian_diag_.size(); ++i) {
         if(std::abs(hessian_diag_(i)) < 1e-12) hessian_diag_(i) = 1e-12; 
     }
@@ -402,18 +388,15 @@ Eigen::VectorXd OMP2::compute_soscf_step(double trust_radius, double& expected_c
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     double spin_factor = is_restricted ? 4.0 : 2.0;
 
-    // 2. Inisialisasi Engine Trust-Region SOSCF
     mshqc::gradient::TrustRegionConfig tr_conf;
     tr_conf.micro_thresh = std::min(1e-4, grad_norm * 0.1); 
     mshqc::gradient::TrustRegionSOSCF soscf_engine(tr_conf);
 
-    // 3. Lambda untuk Evaluasi Hessian-Vector Product Eksak (2-Electron Couplings)
     auto compute_hessian_vector = [&](const Eigen::VectorXd& p_vec) -> Eigen::VectorXd {
         Eigen::VectorXd Hp = Eigen::VectorXd::Zero(n_params);
         int dim_a = va_ * na_;
         int dim_b = (is_restricted) ? 0 : (vb_ * nb_);
         
-        // --- Bagian Diagonal ---
         int temp_idx = 0;
         for (int i = 0; i < na_; ++i) {
             for (int a = 0; a < va_; ++a) {
@@ -432,7 +415,6 @@ Eigen::VectorXd OMP2::compute_soscf_step(double trust_radius, double& expected_c
             }
         }
         
-        // --- Bagian Matriks Densitas Perturbasi (Respon Eksak) ---
         Eigen::MatrixXd kappa_a = Eigen::MatrixXd::Zero(na_, va_);
         if (dim_a > 0) {
             int k_idx = 0;
@@ -492,7 +474,6 @@ Eigen::VectorXd OMP2::compute_soscf_step(double trust_radius, double& expected_c
             }
         }
 
-        // --- Masking Simetri ---
         bool use_sym = (!scf_.irreps_alpha.empty() && scf_.irreps_alpha[0] != -1);
         if (use_sym) {
             int idx_sym = 0;
@@ -527,12 +508,10 @@ Eigen::VectorXd OMP2::compute_soscf_step(double trust_radius, double& expected_c
         return Hp;
     };
 
-    // 4. Eksekusi TrustRegion SOSCF
     mshqc::gradient::TrustRegionResult step_info = soscf_engine.solve(
         orbital_gradient_, hessian_diag_, trust_radius, compute_hessian_vector
     );
     
-    // Tautkan kembali hasil prediksi untuk evaluasi trust-radius di macro-iteration
     expected_change = step_info.predicted_energy_change;
     return step_info.step;
 }
