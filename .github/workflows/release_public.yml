@@ -27,7 +27,7 @@ jobs:
     - name: Setup Miniconda
       uses: conda-incubator/setup-miniconda@v3
       with:
-        auto-update-conda: true
+        miniforge-version: latest 
         python-version: "3.14"
         activate-environment: mshqc_314
         channels: conda-forge, defaults
