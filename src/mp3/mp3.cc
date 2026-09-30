@@ -383,7 +383,7 @@ void OMP3::build_tpdm_fock(Eigen::MatrixXd& F_tpdm_a, Eigen::MatrixXd& F_tpdm_b)
         tblis::mult<double>(-1.0, t_Govov, "yckc", t_Vooov, "kiya", 1.0, t_F_raw, "ai");
 
         // Skalar analitik 0.25 dikembalikan untuk menyeimbangkan ekspansi SOSCF
-        F_tpdm_a = 0.25 * F_raw; 
+        F_tpdm_a = -0.25 * F_raw; 
     }
     
     if (is_restricted) F_tpdm_b = F_tpdm_a;
@@ -1136,7 +1136,7 @@ void OMP3::build_generalized_fock() {
                     for (int j = 0; j < na_; ++j) {
                         for (int b = 0; b < va_; ++b) {
                             // KOREKSI FINAL: Spasial Murni
-                            Teff_aa(i * va_ + a, j * va_ + b) = (*t_aa_dense)(i, a, j, b) + 0.5 * L2_aa_(i, j, a, b);
+                            Teff_aa(i * va_ + a, j * va_ + b) = (*t_aa_dense)(i, a, j, b) + L2_aa_(i, j, a, b);
                         }
                     }
                 }
@@ -1247,14 +1247,22 @@ void OMP3::build_generalized_fock() {
     if (!is_restricted && nb_ > 0) G_gamma_mo_b = scf_.C_beta.transpose() * G_gamma_ao_b * scf_.C_beta;
     else if (is_restricted) G_gamma_mo_b = G_gamma_mo_a;
 
-   
+    // Evaluasi matriks densitas 2-partikel (TPDM) secara independen sebelum merakit Fock
+    Eigen::MatrixXd F_tpdm_a = Eigen::MatrixXd::Zero(va_, na_);
+    Eigen::MatrixXd F_tpdm_b;
+    if (!is_restricted && nb_ > 0 && vb_ > 0) {
+        F_tpdm_b = Eigen::MatrixXd::Zero(vb_, nb_);
+    }
+    build_tpdm_fock(F_tpdm_a, F_tpdm_b);
 
     F_gen_a_ = F_HF_mo_a + G_gamma_mo_a;
     if (na_ > 0 && va_ > 0) {
         Eigen::MatrixXd F_HF_vo_a = F_HF_mo_a.block(na_, 0, va_, na_); 
         Eigen::MatrixXd L_sep_a = F_HF_vo_a * G_oo_alpha_ - G_vv_alpha_ * F_HF_vo_a;
-        F_gen_a_.block(na_, 0, va_, na_) += L_sep_a + Z_mat_a;
-        F_gen_a_.block(0, na_, na_, va_) += (L_sep_a + Z_mat_a).transpose();
+        
+        // Injeksi respons linear (Z_mat_a) dan respons kuadratik orde-3 (F_tpdm_a) secara bersamaan
+        F_gen_a_.block(na_, 0, va_, na_) += L_sep_a + Z_mat_a + F_tpdm_a;
+        F_gen_a_.block(0, na_, na_, va_) += (L_sep_a + Z_mat_a + F_tpdm_a).transpose();
     }
 
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
@@ -1262,8 +1270,9 @@ void OMP3::build_generalized_fock() {
         Eigen::MatrixXd F_HF_vo_b = F_HF_mo_b.block(nb_, 0, vb_, nb_);
         Eigen::MatrixXd L_sep_b = F_HF_vo_b * G_oo_beta_ - G_vv_beta_ * F_HF_vo_b;
 
-        F_gen_b_.block(nb_, 0, vb_, nb_) += L_sep_b + Z_mat_b;
-        F_gen_b_.block(0, nb_, nb_, vb_) += (L_sep_b + Z_mat_b).transpose();
+        // Injeksi Z_mat_b dan F_tpdm_b untuk blok unresctricted
+        F_gen_b_.block(nb_, 0, vb_, nb_) += L_sep_b + Z_mat_b + F_tpdm_b;
+        F_gen_b_.block(0, nb_, nb_, vb_) += (L_sep_b + Z_mat_b + F_tpdm_b).transpose();
     } else if (is_restricted) {
         F_gen_b_ = F_gen_a_;
     }
