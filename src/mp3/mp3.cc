@@ -1136,7 +1136,7 @@ void OMP3::build_generalized_fock() {
                     for (int j = 0; j < na_; ++j) {
                         for (int b = 0; b < va_; ++b) {
                             // KOREKSI FINAL: Spasial Murni
-                            Teff_aa(i * va_ + a, j * va_ + b) = (*t_aa_dense)(i, a, j, b) + 0.5 *L 2_aa_(i, j, a, b);
+                            Teff_aa(i * va_ + a, j * va_ + b) = (*t_aa_dense)(i, a, j, b) + 0.5 * L2_aa_(i, j, a, b);
                         }
                     }
                 }
