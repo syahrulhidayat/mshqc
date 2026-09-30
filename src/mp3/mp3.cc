@@ -83,7 +83,7 @@ MP3Result RMP3::compute() {
     if (!config_.use_df) eri_ao = ints_->compute_eri();
 
     auto get_V = [&](const Eigen::MatrixXd& C1, const Eigen::MatrixXd& C2, const Eigen::MatrixXd& C3, const Eigen::MatrixXd& C4) {
-        if (!config_.use_df) {
+        if (config_.eri_method == "exact") {
             return ERITransformer::transform_custom(eri_ao, C1, C2, C3, C4, nbf_, C1.cols(), C2.cols(), C3.cols(), C4.cols());
         } else {
             return ERITransformer::get_mo_tensor(true, n_aux_, C1, C2, C3, C4, ints_);
@@ -200,7 +200,7 @@ MP3Result UMP3::compute() {
     if (!config_.use_df) eri_ao = ints_->compute_eri();
 
     auto get_V = [&](const Eigen::MatrixXd& C1, const Eigen::MatrixXd& C2, const Eigen::MatrixXd& C3, const Eigen::MatrixXd& C4) {
-        if (!config_.use_df) {
+        if (config_.eri_method == "exact") {
             return ERITransformer::transform_custom(eri_ao, C1, C2, C3, C4, nbf_, C1.cols(), C2.cols(), C3.cols(), C4.cols());
         } else {
             return ERITransformer::get_mo_tensor(true, n_aux_, C1, C2, C3, C4, ints_);
@@ -355,7 +355,7 @@ void OMP3::compute_mp3_correction() {
     // =========================================================================
     // IMPLEMENTASI INTEGRAL EKSAK (CACHE AO INTEGRAL)
     // =========================================================================
-    if (!config_.use_df) {
+    if (config_.eri_method == "exact") {
         if (is_restricted) {
             t2_3rd_aa_ = Eigen::Tensor< double, 4 >(na_, na_, va_, va_);
             Eigen::Tensor< double, 4 > W(na_, na_, va_, va_); W.setZero();
@@ -903,7 +903,7 @@ void OMP3::build_generalized_fock() {
     // =========================================================================
     // TAHAP 1 & 2: Z-VECTOR & CPHF SOLVER (EXACT CACHE vs DF ROUTING)
     // =========================================================================
-    if (!config_.use_df) {
+    if (config_.eri_method == "exact") {
         if (!is_restricted) {
             throw std::runtime_error("[OMP3] Unrestricted Exact Z-vector belum didukung. Silakan gunakan DF.");
         }
