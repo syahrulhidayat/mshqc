@@ -57,3 +57,4 @@ dist/
 *.whl
 releases/
 dist/
+compile_commands.json
