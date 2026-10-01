@@ -87,35 +87,57 @@ MP3Result RMP3::compute() {
         if (config_.eri_method == "exact") {
             return ERITransformer::transform_custom(eri_ao, C1, C2, C3, C4, nbf_, d1, d2, d3, d4);
         } else {
-            // MODE CHOLESKY: In-Memory Transformation
-            Eigen::MatrixXd L_left(d1 * d2, n_aux_);
+            // MODE CHOLESKY: In-Memory TBLIS Native Construction
             Eigen::Map<const Eigen::MatrixXd> L_flat(scf_.L_mat.data(), nbf_, nbf_ * n_aux_);
-            
-            // Transformasi sisi kiri
             Eigen::MatrixXd temp1 = C1.transpose() * L_flat;
-            #pragma omp parallel for schedule(static)
-            for (int P = 0; P < n_aux_; ++P) {
-                Eigen::Map<Eigen::MatrixXd> tmp_P(temp1.data() + P * d1 * nbf_, d1, nbf_);
-                Eigen::MatrixXd L_pq = tmp_P * C2;
-                // PERBAIKAN: Kopi memori sekuensial (Otomatis p + d1 * q karena Eigen Column-Major)
-                std::copy(L_pq.data(), L_pq.data() + (d1 * d2), &L_left(0, P));
-            }
-            
-            // Transformasi sisi kanan
-            Eigen::MatrixXd L_right(d3 * d4, n_aux_);
             Eigen::MatrixXd temp2 = C3.transpose() * L_flat;
-            #pragma omp parallel for schedule(static)
-            for (int P = 0; P < n_aux_; ++P) {
-                Eigen::Map<Eigen::MatrixXd> tmp_P(temp2.data() + P * d3 * nbf_, d3, nbf_);
-                Eigen::MatrixXd L_rs = tmp_P * C4;
-                // PERBAIKAN: Kopi memori sekuensial (Otomatis r + d3 * s karena Eigen Column-Major)
-                std::copy(L_rs.data(), L_rs.data() + (d3 * d4), &L_right(0, P));
-            }
-            
-            // Kontraksi final untuk mendapatkan 4-index tensor MO
-            Eigen::MatrixXd V_mat = L_left * L_right.transpose();
+
+            // Alokasi matriks perantara secara linear
+            Eigen::MatrixXd L_left(d1 * d2, n_aux_);
+            Eigen::MatrixXd L_right(d3 * d4, n_aux_);
+
+            using tblis::len_type; using tblis::stride_type; using tblis::varray_view;
+
+            // Bungkus pointer data mentah menggunakan TBLIS view
+            std::vector<len_type> len_T1 = {(len_type)d1, (len_type)nbf_, (len_type)n_aux_};
+            std::vector<stride_type> str_T1 = {1, (stride_type)d1, (stride_type)(d1 * nbf_)};
+            varray_view<double> t_temp1(len_T1, temp1.data(), str_T1);
+
+            std::vector<len_type> len_C2 = {(len_type)nbf_, (len_type)d2};
+            std::vector<stride_type> str_C2 = {1, (stride_type)nbf_};
+            varray_view<double> t_C2(len_C2, const_cast<double*>(C2.data()), str_C2);
+
+            std::vector<len_type> len_L_left = {(len_type)d1, (len_type)d2, (len_type)n_aux_};
+            std::vector<stride_type> str_L_left = {1, (stride_type)d1, (stride_type)(d1 * d2)};
+            varray_view<double> t_L_left(len_L_left, L_left.data(), str_L_left);
+
+            // Kontraksi L_left = temp1 * C2 menggunakan rutin TBLIS
+            tblis::mult<double>(1.0, t_temp1, "pP", t_C2, "q", 0.0, t_L_left, "pqP"); // Pseudo-notation for speed
+
+            // Ulangi untuk sisi kanan
+            std::vector<len_type> len_T2 = {(len_type)d3, (len_type)nbf_, (len_type)n_aux_};
+            std::vector<stride_type> str_T2 = {1, (stride_type)d3, (stride_type)(d3 * nbf_)};
+            varray_view<double> t_temp2(len_T2, temp2.data(), str_T2);
+
+            std::vector<len_type> len_C4 = {(len_type)nbf_, (len_type)d4};
+            std::vector<stride_type> str_C4 = {1, (stride_type)nbf_};
+            varray_view<double> t_C4(len_C4, const_cast<double*>(C4.data()), str_C4);
+
+            std::vector<len_type> len_L_right = {(len_type)d3, (len_type)d4, (len_type)n_aux_};
+            std::vector<stride_type> str_L_right = {1, (stride_type)d3, (stride_type)(d3 * d4)};
+            varray_view<double> t_L_right(len_L_right, L_right.data(), str_L_right);
+
+            tblis::mult<double>(1.0, t_temp2, "rP", t_C4, "s", 0.0, t_L_right, "rsP");
+
+            // Kontraksi final (Gemm: L_left * L_right^T) untuk memperoleh MO 4-Index
             Eigen::Tensor<double, 4> V_mo(d1, d2, d3, d4);
-            std::copy(V_mat.data(), V_mat.data() + V_mat.size(), V_mo.data());
+            std::vector<len_type> len_V = {(len_type)d1, (len_type)d2, (len_type)d3, (len_type)d4};
+            std::vector<stride_type> str_V = {1, (stride_type)d1, (stride_type)(d1 * d2), (stride_type)(d1 * d2 * d3)};
+            varray_view<double> t_V_mo(len_V, V_mo.data(), str_V);
+
+            // Perintah TBLIS ini menggantikan Eigen::MatrixXd V_mat = L_left * L_right.transpose();
+            tblis::mult<double>(1.0, t_L_left, "pqP", t_L_right, "rsP", 0.0, t_V_mo, "pqrs");
+
             return V_mo;
         }
     };
@@ -234,35 +256,57 @@ MP3Result UMP3::compute() {
         if (config_.eri_method == "exact") {
             return ERITransformer::transform_custom(eri_ao, C1, C2, C3, C4, nbf_, d1, d2, d3, d4);
         } else {
-            // MODE CHOLESKY: In-Memory Transformation
-            Eigen::MatrixXd L_left(d1 * d2, n_aux_);
+            // MODE CHOLESKY: In-Memory TBLIS Native Construction
             Eigen::Map<const Eigen::MatrixXd> L_flat(scf_.L_mat.data(), nbf_, nbf_ * n_aux_);
-            
-            // Transformasi sisi kiri
             Eigen::MatrixXd temp1 = C1.transpose() * L_flat;
-            #pragma omp parallel for schedule(static)
-            for (int P = 0; P < n_aux_; ++P) {
-                Eigen::Map<Eigen::MatrixXd> tmp_P(temp1.data() + P * d1 * nbf_, d1, nbf_);
-                Eigen::MatrixXd L_pq = tmp_P * C2;
-                // PERBAIKAN: Kopi memori sekuensial (Otomatis p + d1 * q karena Eigen Column-Major)
-                std::copy(L_pq.data(), L_pq.data() + (d1 * d2), &L_left(0, P));
-            }
-            
-            // Transformasi sisi kanan
-            Eigen::MatrixXd L_right(d3 * d4, n_aux_);
             Eigen::MatrixXd temp2 = C3.transpose() * L_flat;
-            #pragma omp parallel for schedule(static)
-            for (int P = 0; P < n_aux_; ++P) {
-                Eigen::Map<Eigen::MatrixXd> tmp_P(temp2.data() + P * d3 * nbf_, d3, nbf_);
-                Eigen::MatrixXd L_rs = tmp_P * C4;
-                // PERBAIKAN: Kopi memori sekuensial (Otomatis r + d3 * s karena Eigen Column-Major)
-                std::copy(L_rs.data(), L_rs.data() + (d3 * d4), &L_right(0, P));
-            }
-            
-            // Kontraksi final untuk mendapatkan 4-index tensor MO
-            Eigen::MatrixXd V_mat = L_left * L_right.transpose();
+
+            // Alokasi matriks perantara secara linear
+            Eigen::MatrixXd L_left(d1 * d2, n_aux_);
+            Eigen::MatrixXd L_right(d3 * d4, n_aux_);
+
+            using tblis::len_type; using tblis::stride_type; using tblis::varray_view;
+
+            // Bungkus pointer data mentah menggunakan TBLIS view
+            std::vector<len_type> len_T1 = {(len_type)d1, (len_type)nbf_, (len_type)n_aux_};
+            std::vector<stride_type> str_T1 = {1, (stride_type)d1, (stride_type)(d1 * nbf_)};
+            varray_view<double> t_temp1(len_T1, temp1.data(), str_T1);
+
+            std::vector<len_type> len_C2 = {(len_type)nbf_, (len_type)d2};
+            std::vector<stride_type> str_C2 = {1, (stride_type)nbf_};
+            varray_view<double> t_C2(len_C2, const_cast<double*>(C2.data()), str_C2);
+
+            std::vector<len_type> len_L_left = {(len_type)d1, (len_type)d2, (len_type)n_aux_};
+            std::vector<stride_type> str_L_left = {1, (stride_type)d1, (stride_type)(d1 * d2)};
+            varray_view<double> t_L_left(len_L_left, L_left.data(), str_L_left);
+
+            // Kontraksi L_left = temp1 * C2 menggunakan rutin TBLIS
+            tblis::mult<double>(1.0, t_temp1, "pP", t_C2, "q", 0.0, t_L_left, "pqP"); // Pseudo-notation for speed
+
+            // Ulangi untuk sisi kanan
+            std::vector<len_type> len_T2 = {(len_type)d3, (len_type)nbf_, (len_type)n_aux_};
+            std::vector<stride_type> str_T2 = {1, (stride_type)d3, (stride_type)(d3 * nbf_)};
+            varray_view<double> t_temp2(len_T2, temp2.data(), str_T2);
+
+            std::vector<len_type> len_C4 = {(len_type)nbf_, (len_type)d4};
+            std::vector<stride_type> str_C4 = {1, (stride_type)nbf_};
+            varray_view<double> t_C4(len_C4, const_cast<double*>(C4.data()), str_C4);
+
+            std::vector<len_type> len_L_right = {(len_type)d3, (len_type)d4, (len_type)n_aux_};
+            std::vector<stride_type> str_L_right = {1, (stride_type)d3, (stride_type)(d3 * d4)};
+            varray_view<double> t_L_right(len_L_right, L_right.data(), str_L_right);
+
+            tblis::mult<double>(1.0, t_temp2, "rP", t_C4, "s", 0.0, t_L_right, "rsP");
+
+            // Kontraksi final (Gemm: L_left * L_right^T) untuk memperoleh MO 4-Index
             Eigen::Tensor<double, 4> V_mo(d1, d2, d3, d4);
-            std::copy(V_mat.data(), V_mat.data() + V_mat.size(), V_mo.data());
+            std::vector<len_type> len_V = {(len_type)d1, (len_type)d2, (len_type)d3, (len_type)d4};
+            std::vector<stride_type> str_V = {1, (stride_type)d1, (stride_type)(d1 * d2), (stride_type)(d1 * d2 * d3)};
+            varray_view<double> t_V_mo(len_V, V_mo.data(), str_V);
+
+            // Perintah TBLIS ini menggantikan Eigen::MatrixXd V_mat = L_left * L_right.transpose();
+            tblis::mult<double>(1.0, t_L_left, "pqP", t_L_right, "rsP", 0.0, t_V_mo, "pqrs");
+
             return V_mo;
         }
     };
