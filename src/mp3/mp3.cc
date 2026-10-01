@@ -78,15 +78,51 @@ MP3Result RMP3::compute() {
     Eigen::Tensor< double, 4 > W(no_a_, no_a_, nv_a_, nv_a_); W.setZero();
     TBLIS_VIEW_4D(t_W, W, no_a_, no_a_, nv_a_, nv_a_);
 
-    // [PERBAIKAN] Bypass get_mo_tensor untuk mode eksak
+    // [PERBAIKAN] Hanya hitung integral 4-indeks raksasa jika murni mode "exact"
     Eigen::Tensor< double, 4 > eri_ao;
-    if (!config_.use_df) eri_ao = ints_->compute_eri();
+    if (config_.eri_method == "exact") eri_ao = ints_->compute_eri();
 
     auto get_V = [&](const Eigen::MatrixXd& C1, const Eigen::MatrixXd& C2, const Eigen::MatrixXd& C3, const Eigen::MatrixXd& C4) {
+        int d1 = C1.cols(); int d2 = C2.cols(); int d3 = C3.cols(); int d4 = C4.cols();
         if (config_.eri_method == "exact") {
-            return ERITransformer::transform_custom(eri_ao, C1, C2, C3, C4, nbf_, C1.cols(), C2.cols(), C3.cols(), C4.cols());
+            return ERITransformer::transform_custom(eri_ao, C1, C2, C3, C4, nbf_, d1, d2, d3, d4);
         } else {
-            return ERITransformer::get_mo_tensor(true, n_aux_, C1, C2, C3, C4, ints_);
+            // MODE CHOLESKY: In-Memory Transformation murni menggunakan RAM tanpa I/O Disk
+            Eigen::MatrixXd L_left(d1 * d2, n_aux_);
+            Eigen::Map<const Eigen::MatrixXd> L_flat(scf_.L_mat.data(), nbf_, nbf_ * n_aux_);
+            
+            // Gemm masif untuk transformasi sisi kiri
+            Eigen::MatrixXd temp1 = C1.transpose() * L_flat;
+            #pragma omp parallel for schedule(static)
+            for (int P = 0; P < n_aux_; ++P) {
+                Eigen::Map<Eigen::MatrixXd> tmp_P(temp1.data() + P * d1 * nbf_, d1, nbf_);
+                Eigen::MatrixXd L_pq = tmp_P * C2;
+                for(int q = 0; q < d2; ++q) {
+                    for(int p = 0; p < d1; ++p) {
+                        L_left(p * d2 + q, P) = L_pq(p, q);
+                    }
+                }
+            }
+            
+            // Gemm masif untuk transformasi sisi kanan
+            Eigen::MatrixXd L_right(d3 * d4, n_aux_);
+            Eigen::MatrixXd temp2 = C3.transpose() * L_flat;
+            #pragma omp parallel for schedule(static)
+            for (int P = 0; P < n_aux_; ++P) {
+                Eigen::Map<Eigen::MatrixXd> tmp_P(temp2.data() + P * d3 * nbf_, d3, nbf_);
+                Eigen::MatrixXd L_rs = tmp_P * C4;
+                for(int s = 0; s < d4; ++s) {
+                    for(int r = 0; r < d3; ++r) {
+                        L_right(r * d4 + s, P) = L_rs(r, s);
+                    }
+                }
+            }
+            
+            // Kontraksi final untuk mendapatkan 4-index tensor MO
+            Eigen::MatrixXd V_mat = L_left * L_right.transpose();
+            Eigen::Tensor<double, 4> V_mo(d1, d2, d3, d4);
+            std::copy(V_mat.data(), V_mat.data() + V_mat.size(), V_mo.data());
+            return V_mo;
         }
     };
 
@@ -195,15 +231,51 @@ MP3Result UMP3::compute() {
     Eigen::Tensor< double, 4 > Wbb(no_b_, no_b_, nv_b_, nv_b_); TBLIS_VIEW_4D(t_Wbb, Wbb, no_b_, no_b_, nv_b_, nv_b_);
     Eigen::Tensor< double, 4 > Wab(no_a_, no_b_, nv_a_, nv_b_); TBLIS_VIEW_4D(t_Wab, Wab, no_a_, no_b_, nv_a_, nv_b_);
 
-    // [PERBAIKAN] Bypass get_mo_tensor untuk mode eksak
+    // [PERBAIKAN] Hanya hitung integral 4-indeks raksasa jika murni mode "exact"
     Eigen::Tensor< double, 4 > eri_ao;
-    if (!config_.use_df) eri_ao = ints_->compute_eri();
+    if (config_.eri_method == "exact") eri_ao = ints_->compute_eri();
 
     auto get_V = [&](const Eigen::MatrixXd& C1, const Eigen::MatrixXd& C2, const Eigen::MatrixXd& C3, const Eigen::MatrixXd& C4) {
+        int d1 = C1.cols(); int d2 = C2.cols(); int d3 = C3.cols(); int d4 = C4.cols();
         if (config_.eri_method == "exact") {
-            return ERITransformer::transform_custom(eri_ao, C1, C2, C3, C4, nbf_, C1.cols(), C2.cols(), C3.cols(), C4.cols());
+            return ERITransformer::transform_custom(eri_ao, C1, C2, C3, C4, nbf_, d1, d2, d3, d4);
         } else {
-            return ERITransformer::get_mo_tensor(true, n_aux_, C1, C2, C3, C4, ints_);
+            // MODE CHOLESKY: In-Memory Transformation murni menggunakan RAM tanpa I/O Disk
+            Eigen::MatrixXd L_left(d1 * d2, n_aux_);
+            Eigen::Map<const Eigen::MatrixXd> L_flat(scf_.L_mat.data(), nbf_, nbf_ * n_aux_);
+            
+            // Gemm masif untuk transformasi sisi kiri
+            Eigen::MatrixXd temp1 = C1.transpose() * L_flat;
+            #pragma omp parallel for schedule(static)
+            for (int P = 0; P < n_aux_; ++P) {
+                Eigen::Map<Eigen::MatrixXd> tmp_P(temp1.data() + P * d1 * nbf_, d1, nbf_);
+                Eigen::MatrixXd L_pq = tmp_P * C2;
+                for(int q = 0; q < d2; ++q) {
+                    for(int p = 0; p < d1; ++p) {
+                        L_left(p * d2 + q, P) = L_pq(p, q);
+                    }
+                }
+            }
+            
+            // Gemm masif untuk transformasi sisi kanan
+            Eigen::MatrixXd L_right(d3 * d4, n_aux_);
+            Eigen::MatrixXd temp2 = C3.transpose() * L_flat;
+            #pragma omp parallel for schedule(static)
+            for (int P = 0; P < n_aux_; ++P) {
+                Eigen::Map<Eigen::MatrixXd> tmp_P(temp2.data() + P * d3 * nbf_, d3, nbf_);
+                Eigen::MatrixXd L_rs = tmp_P * C4;
+                for(int s = 0; s < d4; ++s) {
+                    for(int r = 0; r < d3; ++r) {
+                        L_right(r * d4 + s, P) = L_rs(r, s);
+                    }
+                }
+            }
+            
+            // Kontraksi final untuk mendapatkan 4-index tensor MO
+            Eigen::MatrixXd V_mat = L_left * L_right.transpose();
+            Eigen::Tensor<double, 4> V_mo(d1, d2, d3, d4);
+            std::copy(V_mat.data(), V_mat.data() + V_mat.size(), V_mo.data());
+            return V_mo;
         }
     };
 
