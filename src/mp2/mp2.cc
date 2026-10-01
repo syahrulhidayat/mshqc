@@ -102,7 +102,7 @@ void BaseMP2::transform_3center_mo() {
     B_ia_P_beta_ = B_ia_P_alpha_;
     }
 }
-}
+
 
 namespace foundation {
 
