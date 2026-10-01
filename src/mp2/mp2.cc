@@ -98,6 +98,10 @@ void BaseMP2::transform_3center_mo() {
             }
         }
     }
+    else if (is_restricted && nocc_b_ > 0 && nvir_b_ > 0) {
+    B_ia_P_beta_ = B_ia_P_alpha_;
+    }
+}
 }
 
 namespace foundation {
@@ -780,6 +784,9 @@ void OMP2::transform_3center_mo_cholesky() {
                 }
             }
         }
+    }
+    if (is_restricted && nb_ > 0 && vb_ > 0) {
+        B_ia_P_beta_ = B_ia_P_alpha_;
     }
 }
 
