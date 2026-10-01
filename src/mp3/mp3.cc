@@ -372,10 +372,12 @@ MP3Result UMP3::compute() {
                 auto Vab = get_V_exact(Cav, Cav, Cbv, Cbv);
                 TBLIS_VIEW_4D(t_Vab, Vab, nv_a_, nv_a_, nv_b_, nv_b_);
                 tblis::mult< double >(1.0, t_Tab, "ijef", t_Vab, "eafb", 1.0, t_Wab, "ijab");
+            // ... (Tahap Ladder vvvv - UMP3 Wab block) ...
             } else {
                 #pragma omp parallel
                 {
-                    Eigen::Tensor<double, 4> W_priv(no_a_, no_b_, nv_a_, nv_b_); Wab.setZero();
+                    Eigen::Tensor<double, 4> W_priv(no_a_, no_b_, nv_a_, nv_b_); 
+                    W_priv.setZero(); // Diperbaiki dari Wab.setZero()
                     Eigen::Tensor<double, 4> X_priv(no_a_, no_b_, nv_a_, nv_b_);
                     TBLIS_VIEW_4D(t_W_priv, W_priv, no_a_, no_b_, nv_a_, nv_b_);
                     TBLIS_VIEW_4D(t_X_priv, X_priv, no_a_, no_b_, nv_a_, nv_b_);
