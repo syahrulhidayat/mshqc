@@ -87,35 +87,29 @@ MP3Result RMP3::compute() {
         if (config_.eri_method == "exact") {
             return ERITransformer::transform_custom(eri_ao, C1, C2, C3, C4, nbf_, d1, d2, d3, d4);
         } else {
-            // MODE CHOLESKY: In-Memory Transformation murni menggunakan RAM tanpa I/O Disk
+            // MODE CHOLESKY: In-Memory Transformation
             Eigen::MatrixXd L_left(d1 * d2, n_aux_);
             Eigen::Map<const Eigen::MatrixXd> L_flat(scf_.L_mat.data(), nbf_, nbf_ * n_aux_);
             
-            // Gemm masif untuk transformasi sisi kiri
+            // Transformasi sisi kiri
             Eigen::MatrixXd temp1 = C1.transpose() * L_flat;
             #pragma omp parallel for schedule(static)
             for (int P = 0; P < n_aux_; ++P) {
                 Eigen::Map<Eigen::MatrixXd> tmp_P(temp1.data() + P * d1 * nbf_, d1, nbf_);
                 Eigen::MatrixXd L_pq = tmp_P * C2;
-                for(int q = 0; q < d2; ++q) {
-                    for(int p = 0; p < d1; ++p) {
-                        L_left(p * d2 + q, P) = L_pq(p, q);
-                    }
-                }
+                // PERBAIKAN: Kopi memori sekuensial (Otomatis p + d1 * q karena Eigen Column-Major)
+                std::copy(L_pq.data(), L_pq.data() + (d1 * d2), &L_left(0, P));
             }
             
-            // Gemm masif untuk transformasi sisi kanan
+            // Transformasi sisi kanan
             Eigen::MatrixXd L_right(d3 * d4, n_aux_);
             Eigen::MatrixXd temp2 = C3.transpose() * L_flat;
             #pragma omp parallel for schedule(static)
             for (int P = 0; P < n_aux_; ++P) {
                 Eigen::Map<Eigen::MatrixXd> tmp_P(temp2.data() + P * d3 * nbf_, d3, nbf_);
                 Eigen::MatrixXd L_rs = tmp_P * C4;
-                for(int s = 0; s < d4; ++s) {
-                    for(int r = 0; r < d3; ++r) {
-                        L_right(r * d4 + s, P) = L_rs(r, s);
-                    }
-                }
+                // PERBAIKAN: Kopi memori sekuensial (Otomatis r + d3 * s karena Eigen Column-Major)
+                std::copy(L_rs.data(), L_rs.data() + (d3 * d4), &L_right(0, P));
             }
             
             // Kontraksi final untuk mendapatkan 4-index tensor MO
@@ -240,35 +234,29 @@ MP3Result UMP3::compute() {
         if (config_.eri_method == "exact") {
             return ERITransformer::transform_custom(eri_ao, C1, C2, C3, C4, nbf_, d1, d2, d3, d4);
         } else {
-            // MODE CHOLESKY: In-Memory Transformation murni menggunakan RAM tanpa I/O Disk
+            // MODE CHOLESKY: In-Memory Transformation
             Eigen::MatrixXd L_left(d1 * d2, n_aux_);
             Eigen::Map<const Eigen::MatrixXd> L_flat(scf_.L_mat.data(), nbf_, nbf_ * n_aux_);
             
-            // Gemm masif untuk transformasi sisi kiri
+            // Transformasi sisi kiri
             Eigen::MatrixXd temp1 = C1.transpose() * L_flat;
             #pragma omp parallel for schedule(static)
             for (int P = 0; P < n_aux_; ++P) {
                 Eigen::Map<Eigen::MatrixXd> tmp_P(temp1.data() + P * d1 * nbf_, d1, nbf_);
                 Eigen::MatrixXd L_pq = tmp_P * C2;
-                for(int q = 0; q < d2; ++q) {
-                    for(int p = 0; p < d1; ++p) {
-                        L_left(p * d2 + q, P) = L_pq(p, q);
-                    }
-                }
+                // PERBAIKAN: Kopi memori sekuensial (Otomatis p + d1 * q karena Eigen Column-Major)
+                std::copy(L_pq.data(), L_pq.data() + (d1 * d2), &L_left(0, P));
             }
             
-            // Gemm masif untuk transformasi sisi kanan
+            // Transformasi sisi kanan
             Eigen::MatrixXd L_right(d3 * d4, n_aux_);
             Eigen::MatrixXd temp2 = C3.transpose() * L_flat;
             #pragma omp parallel for schedule(static)
             for (int P = 0; P < n_aux_; ++P) {
                 Eigen::Map<Eigen::MatrixXd> tmp_P(temp2.data() + P * d3 * nbf_, d3, nbf_);
                 Eigen::MatrixXd L_rs = tmp_P * C4;
-                for(int s = 0; s < d4; ++s) {
-                    for(int r = 0; r < d3; ++r) {
-                        L_right(r * d4 + s, P) = L_rs(r, s);
-                    }
-                }
+                // PERBAIKAN: Kopi memori sekuensial (Otomatis r + d3 * s karena Eigen Column-Major)
+                std::copy(L_rs.data(), L_rs.data() + (d3 * d4), &L_right(0, P));
             }
             
             // Kontraksi final untuk mendapatkan 4-index tensor MO
