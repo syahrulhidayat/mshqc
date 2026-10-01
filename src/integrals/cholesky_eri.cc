@@ -195,10 +195,9 @@ void CholeskyERI::decompose_direct() {
 
     Eigen::VectorXd D(npair); D.setZero();
     std::vector<double> shell_max(nshells * nshells, 0.0);
+    std::vector<std::pair<int, int>> valid_pairs;
 
-    
-    
-    
+    // Tahap inisialisasi: menghitung diagonal, shell bounds, dan pasangan valid HANYA SEKALI
     #pragma omp parallel for schedule(dynamic, 1)
     for (int s1 = 0; s1 < nshells; ++s1) {
         for (int s2 = 0; s2 <= s1; ++s2) {
@@ -212,10 +211,9 @@ void CholeskyERI::decompose_direct() {
             
             for(int i=0; i<dim1; ++i) {
                 for(int j=0; j<dim2; ++j) {
-                    
                     size_t idx_buf = i + dim1 * (j + dim2 * (i + dim1 * j));
-                    
                     if (idx_buf >= buf.size()) continue;
+                    
                     double val = buf[idx_buf];
                     int p = st1 + i; int q = st2 + j;
                     
@@ -226,6 +224,12 @@ void CholeskyERI::decompose_direct() {
             }
             shell_max[s1 * nshells + s2] = std::sqrt(max_val_block);
             shell_max[s2 * nshells + s1] = std::sqrt(max_val_block);
+            
+            // Masukkan ke daftar valid pairs jika batas integrasi Schwarz lebih besar dari nol absolut
+            if (max_val_block > 1e-14) {
+                #pragma omp critical
+                valid_pairs.push_back({s1, s2});
+            }
         }
     }
 
@@ -244,29 +248,21 @@ void CholeskyERI::decompose_direct() {
         int sp = bf2shell_[p]; int sq = bf2shell_[q];
         int rel_p = p - shell_starts[sp]; int rel_q = q - shell_starts[sq];
         int pair_pq = sp * (sp + 1) / 2 + sq; double inv_sqrt = 1.0 / std::sqrt(D_max);
-
-        // OPTIMASI 1: Pre-filter pasangan shell agar CPU tidak membuang waktu untuk percabangan (if) di dalam loop paralel
-        std::vector<std::pair<int, int>> valid_pairs;
-        for (int s1 = 0; s1 < nshells; ++s1) {
-            for (int s2 = 0; s2 <= s1; ++s2) {
-                double bound = shell_max[s1 * nshells + s2] * shell_max[sp * nshells + sq];
-                if (bound >= 1e-12) {
-                    valid_pairs.push_back({s1, s2});
-                }
-            }
-        }
         
         Eigen::VectorXd col_buf = Eigen::VectorXd::Zero(npair);
+        double pivot_schwarz = shell_max[sp * nshells + sq];
         
         #pragma omp parallel
         {
             Eigen::VectorXd local_col_buf = Eigen::VectorXd::Zero(npair);
             
-            // Loop sekarang berjalan murni secara matematis menggunakan pasangan shell yang sudah disaring
             #pragma omp for schedule(dynamic, 1)
             for (size_t v = 0; v < valid_pairs.size(); ++v) {
                 int s1 = valid_pairs[v].first;
                 int s2 = valid_pairs[v].second;
+
+                // Screen di dalam thread: Tolak jika perkalian batas maksimum berada di bawah batas presisi Cholesky
+                if (shell_max[s1 * nshells + s2] * pivot_schwarz < 1e-12) continue;
 
                 int pair_s = s1 * (s1 + 1) / 2 + s2;
                 bool swap_pairs = (pair_s < pair_pq);
@@ -294,23 +290,22 @@ void CholeskyERI::decompose_direct() {
                         double val = buf[idx_buf];
 
                         int global_i = st1 + i; int global_j = st2 + j;
-                        
                         local_col_buf(global_i * n_basis_ + global_j) = val;
                         if (global_i != global_j) local_col_buf(global_j * n_basis_ + global_i) = val;
                     }
                 }
             }
             
+            // Pengurangan residual: Pindahkan ke level utas lokal untuk mereduksi beban memori (Thread-Local BLAS)
+            if (iter > 0) {
+                local_col_buf.noalias() -= L_store.leftCols(iter) * L_store.row(pivot_idx).head(iter).adjoint();
+            }
+
             #pragma omp critical
             {
                 col_buf += local_col_buf;
             }
         } 
-
-        // OPTIMASI 2: Eksekusi murni BLAS tanpa realokasi memori berulang
-        if (iter > 0) {
-            col_buf.noalias() -= L_store.leftCols(iter) * L_store.row(pivot_idx).head(iter).adjoint();
-        }
         
         L_store.col(iter) = col_buf * inv_sqrt; 
         D.array() -= L_store.col(iter).array().square();
