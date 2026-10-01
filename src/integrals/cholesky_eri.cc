@@ -245,59 +245,61 @@ void CholeskyERI::decompose_direct() {
         int rel_p = p - shell_starts[sp]; int rel_q = q - shell_starts[sq];
         int pair_pq = sp * (sp + 1) / 2 + sq; double inv_sqrt = 1.0 / std::sqrt(D_max);
 
-        
-        
-        
-        
+        // OPTIMASI 1: Pre-filter pasangan shell agar CPU tidak membuang waktu untuk percabangan (if) di dalam loop paralel
+        std::vector<std::pair<int, int>> valid_pairs;
+        for (int s1 = 0; s1 < nshells; ++s1) {
+            for (int s2 = 0; s2 <= s1; ++s2) {
+                double bound = shell_max[s1 * nshells + s2] * shell_max[sp * nshells + sq];
+                if (bound >= 1e-12) {
+                    valid_pairs.push_back({s1, s2});
+                }
+            }
+        }
         
         Eigen::VectorXd col_buf = Eigen::VectorXd::Zero(npair);
         
         #pragma omp parallel
         {
-            
             Eigen::VectorXd local_col_buf = Eigen::VectorXd::Zero(npair);
             
+            // Loop sekarang berjalan murni secara matematis menggunakan pasangan shell yang sudah disaring
             #pragma omp for schedule(dynamic, 1)
-            for (int s1 = 0; s1 < nshells; ++s1) {
-                for (int s2 = 0; s2 <= s1; ++s2) {
-                    double bound = shell_max[s1 * nshells + s2] * shell_max[sp * nshells + sq];
-                    if (bound < 1e-12) continue; 
+            for (size_t v = 0; v < valid_pairs.size(); ++v) {
+                int s1 = valid_pairs[v].first;
+                int s2 = valid_pairs[v].second;
 
-                    int pair_s = s1 * (s1 + 1) / 2 + s2;
-                    bool swap_pairs = (pair_s < pair_pq);
-                    
-                    int u1 = swap_pairs ? sp : s1; int u2 = swap_pairs ? sq : s2;
-                    int u3 = swap_pairs ? s1 : sp; int u4 = swap_pairs ? s2 : sq;
+                int pair_s = s1 * (s1 + 1) / 2 + s2;
+                bool swap_pairs = (pair_s < pair_pq);
+                
+                int u1 = swap_pairs ? sp : s1; int u2 = swap_pairs ? sq : s2;
+                int u3 = swap_pairs ? s1 : sp; int u4 = swap_pairs ? s2 : sq;
 
-                    
-                    const auto& buf = integrals_ptr_->compute_shell_block(u1, u2, u3, u4);
-                    if (buf.empty()) continue;
+                const auto& buf = integrals_ptr_->compute_shell_block(u1, u2, u3, u4);
+                if (buf.empty()) continue;
 
-                    int dim1 = basis.shell(s1).n_functions(); int dim2 = basis.shell(s2).n_functions();
-                    int dimP = basis.shell(sp).n_functions(); int dimQ = basis.shell(sq).n_functions();
-                    int st1 = shell_starts[s1]; int st2 = shell_starts[s2];
+                int dim1 = basis.shell(s1).n_functions(); int dim2 = basis.shell(s2).n_functions();
+                int dimP = basis.shell(sp).n_functions(); int dimQ = basis.shell(sq).n_functions();
+                int st1 = shell_starts[s1]; int st2 = shell_starts[s2];
 
-                    for (int i = 0; i < dim1; ++i) {
-                        for (int j = 0; j < dim2; ++j) {
-                            size_t idx_buf;
-                            if (!swap_pairs) {
-                                idx_buf = i + dim1 * (j + dim2 * (rel_p + dimP * rel_q));
-                            } else {
-                                idx_buf = rel_p + dimP * (rel_q + dimQ * (i + dim1 * j));
-                            }
-
-                            if (idx_buf >= buf.size()) continue;
-                            double val = buf[idx_buf];
-
-                            int global_i = st1 + i; int global_j = st2 + j;
-                            
-                            local_col_buf(global_i * n_basis_ + global_j) = val;
-                            if (global_i != global_j) local_col_buf(global_j * n_basis_ + global_i) = val;
+                for (int i = 0; i < dim1; ++i) {
+                    for (int j = 0; j < dim2; ++j) {
+                        size_t idx_buf;
+                        if (!swap_pairs) {
+                            idx_buf = i + dim1 * (j + dim2 * (rel_p + dimP * rel_q));
+                        } else {
+                            idx_buf = rel_p + dimP * (rel_q + dimQ * (i + dim1 * j));
                         }
+
+                        if (idx_buf >= buf.size()) continue;
+                        double val = buf[idx_buf];
+
+                        int global_i = st1 + i; int global_j = st2 + j;
+                        
+                        local_col_buf(global_i * n_basis_ + global_j) = val;
+                        if (global_i != global_j) local_col_buf(global_j * n_basis_ + global_i) = val;
                     }
                 }
             }
-            
             
             #pragma omp critical
             {
@@ -305,7 +307,11 @@ void CholeskyERI::decompose_direct() {
             }
         } 
 
-        if (iter > 0) col_buf -= L_store.leftCols(iter) * L_store.row(pivot_idx).head(iter).transpose();
+        // OPTIMASI 2: Eksekusi murni BLAS tanpa realokasi memori berulang
+        if (iter > 0) {
+            col_buf.noalias() -= L_store.leftCols(iter) * L_store.row(pivot_idx).head(iter).adjoint();
+        }
+        
         L_store.col(iter) = col_buf * inv_sqrt; 
         D.array() -= L_store.col(iter).array().square();
         for(int k=0; k<npair; ++k) if (D(k) < 0.0) D(k) = 0.0;

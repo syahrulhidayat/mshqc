@@ -595,7 +595,10 @@ Eigen::Tensor<double, 4> ERITransformer::get_mo_tensor(
         
         
         L_ao.resize(nbf * nbf, P_size);
-        io.read_slice_4d("df_tensor", {P_start, 0, 0, 0}, {P_size, (long)nbf, (long)nbf, 1}, L_ao.data());
+        #pragma omp critical(hdf5_io_lock)
+        {
+            io.read_slice_4d("df_tensor", {P_start, 0, 0, 0}, {P_size, (long)nbf, (long)nbf, 1}, L_ao.data());
+        }
         
         
         std::vector<len_type> len_L_ao = { (len_type)nbf, (len_type)nbf, (len_type)P_size };
