@@ -920,7 +920,7 @@ void OMP3::compute_mp3_correction() {
             TBLIS_VIEW_4D(t_Voovv_ba_ex, V_oovv_ba_ex, nb_, nb_, va_, va_);
 
             tblis::mult< double >(-1.0, t_Voovv_ab_ex, "ikbc", t_Tab, "kjac", 1.0, t_Wab_ring, "ijab");
-            tblis::mult< double >(-1.0, t_Tab, "ikcb", t_oovv_ba_ex, "jkac", 1.0, t_Wab_ring, "ijab");
+            tblis::mult< double >(-1.0, t_Tab, "ikcb", t_Voovv_ba_ex, "jkac", 1.0, t_Wab_ring, "ijab");
           
             Eigen::Tensor< double, 4 > X_temp_ab(na_, nb_, va_, vb_);
             TBLIS_VIEW_4D(t_Xtemp_ab, X_temp_ab, na_, nb_, va_, vb_);

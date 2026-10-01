@@ -57,10 +57,9 @@ execute_process(
     COMMAND "${Python_EXECUTABLE}" -c "import nanobind; print(nanobind.cmake_dir())"
     OUTPUT_VARIABLE nanobind_DIR
     OUTPUT_STRIP_TRAILING_WHITESPACE
-    ERROR_QUIET
 )
 
-find_package(nanobind CONFIG REQUIRED)
+find_package(nanobind CONFIG REQUIRED HINTS "\({nanobind_DIR}" "\)ENV{CONDA_PREFIX}/lib/python3.14/site-packages/nanobind/cmake")
 find_package(OpenMP REQUIRED)
 
 # ==============================================================================
