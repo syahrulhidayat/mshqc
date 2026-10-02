@@ -671,6 +671,15 @@ void OMP3::compute_mp3_correction() {
                 dummy_ab.setZero();
                 t2_ab_dense = &dummy_ab;
             }
+            
+            // FIX: Tambahkan inisialisasi t_Tbb, t_Tab, t_Wbb, t_Wab
+            double* t_Tbb_data = (nb_ > 0 && vb_ > 0) ? t2_bb_dense_ptr->data() : dummy_bb_local.data();
+            TBLIS_VIEW_4D(t_Tbb, t_Tbb_data, nb_, nb_, vb_, vb_);
+            TBLIS_VIEW_4D(t_Wbb, Wbb, nb_, nb_, vb_, vb_);
+            
+            double* t_Tab_data = (nb_ > 0 && vb_ > 0) ? t2_ab_dense->data() : dummy_ab.data();
+            TBLIS_VIEW_4D(t_Tab, t_Tab_data, na_, nb_, va_, vb_);
+            TBLIS_VIEW_4D(t_Wab, Wab, na_, nb_, va_, vb_);
 
             auto V_vvvv_aa = get_V_exact(Cav, Cav, Cav, Cav);
             TBLIS_VIEW_4D(t_Vvvvv_aa, V_vvvv_aa, va_, va_, va_, va_);
@@ -678,15 +687,11 @@ void OMP3::compute_mp3_correction() {
             tblis::mult< double >(-1.0, t_Taa, "ijef", t_Vvvvv_aa, "ebfa", 1.0, t_Waa, "ijab");
 
             if (nb_ > 0 && vb_ > 0) {
-                TBLIS_VIEW_4D(t_Tbb, (*t2_bb_dense_ptr), nb_, nb_, vb_, vb_);
-                TBLIS_VIEW_4D(t_Wbb, Wbb, nb_, nb_, vb_, vb_);
                 auto V_vvvv_bb = get_V_exact(Cbv, Cbv, Cbv, Cbv);
                 TBLIS_VIEW_4D(t_Vvvvv_bb, V_vvvv_bb, vb_, vb_, vb_, vb_);
                 tblis::mult< double >(1.0, t_Tbb, "ijef", t_Vvvvv_bb, "eafb", 1.0, t_Wbb, "ijab");
                 tblis::mult< double >(-1.0, t_Tbb, "ijef", t_Vvvvv_bb, "ebfa", 1.0, t_Wbb, "ijab");
 
-                TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
-                TBLIS_VIEW_4D(t_Wab, Wab, na_, nb_, va_, vb_);
                 auto V_vvvv_ab = get_V_exact(Cav, Cav, Cbv, Cbv);
                 TBLIS_VIEW_4D(t_Vvvvv_ab, V_vvvv_ab, va_, va_, vb_, vb_);
                 tblis::mult< double >(1.0, t_Tab, "ijef", t_Vvvvv_ab, "eafb", 1.0, t_Wab, "ijab");
