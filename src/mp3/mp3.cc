@@ -631,7 +631,163 @@ void OMP3::compute_mp3_correction() {
             e_mp3_tot_ = e3_aa;
             return;
         } else {
-            throw std::runtime_error("[OMP3] Unrestricted Exact Integrals belum didukung. Silakan gunakan DF.");
+            if (eri_ao_cached_.size() == 0) {
+                eri_ao_cached_ = integrals_->compute_eri();
+            }
+
+            const Eigen::MatrixXd& Cbo = scf_.C_beta.leftCols(nb_);
+            const Eigen::MatrixXd& Cbv = scf_.C_beta.rightCols(vb_);
+            const auto& eb = scf_.orbital_energies_beta;
+
+            auto get_V_exact = [&](const Eigen::MatrixXd& C1, const Eigen::MatrixXd& C2, const Eigen::MatrixXd& C3, const Eigen::MatrixXd& C4) {
+                int d1 = C1.cols(); int d2 = C2.cols(); int d3 = C3.cols(); int d4 = C4.cols();
+                return integrals::ERITransformer::transform_custom(eri_ao_cached_, C1, C2, C3, C4, nbf_, d1, d2, d3, d4);
+            };
+
+            t2_3rd_aa_ = Eigen::Tensor< double, 4 >(na_, na_, va_, va_); t2_3rd_aa_.setZero();
+            if (nb_ > 0 && vb_ > 0) {
+                t2_3rd_bb_ = Eigen::Tensor< double, 4 >(nb_, nb_, vb_, vb_); t2_3rd_bb_.setZero();
+                t2_3rd_ab_ = Eigen::Tensor< double, 4 >(na_, nb_, va_, vb_); t2_3rd_ab_.setZero();
+            }
+
+            Eigen::Tensor< double, 4 > Waa(na_, na_, va_, va_); Waa.setZero();
+            Eigen::Tensor< double, 4 > Wbb(nb_, nb_, vb_, vb_); if (nb_ > 0) Wbb.setZero();
+            Eigen::Tensor< double, 4 > Wab(na_, nb_, va_, vb_); if (nb_ > 0) Wab.setZero();
+
+            TBLIS_VIEW_4D(t_Taa, T2_aa_ijab, na_, na_, va_, va_);
+            TBLIS_VIEW_4D(t_Waa, Waa, na_, na_, va_, va_);
+
+            auto* t2_bb_dense_ptr = t2_bb_.get_block(0,0,0,0);
+            Eigen::Tensor< double, 4 > dummy_bb_local;
+            if (!t2_bb_dense_ptr && nb_ > 0 && vb_ > 0) {
+                dummy_bb_local = Eigen::Tensor< double, 4 >(nb_, nb_, vb_, vb_);
+                dummy_bb_local.setZero();
+                t2_bb_dense_ptr = &dummy_bb_local;
+            }
+            auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
+            Eigen::Tensor< double, 4 > dummy_ab;
+            if (!t2_ab_dense && nb_ > 0 && vb_ > 0) {
+                dummy_ab = Eigen::Tensor< double, 4 >(na_, nb_, va_, vb_);
+                dummy_ab.setZero();
+                t2_ab_dense = &dummy_ab;
+            }
+
+            auto V_vvvv_aa = get_V_exact(Cav, Cav, Cav, Cav);
+            TBLIS_VIEW_4D(t_Vvvvv_aa, V_vvvv_aa, va_, va_, va_, va_);
+            tblis::mult< double >(1.0, t_Taa, "ijef", t_Vvvvv_aa, "eafb", 1.0, t_Waa, "ijab");
+            tblis::mult< double >(-1.0, t_Taa, "ijef", t_Vvvvv_aa, "ebfa", 1.0, t_Waa, "ijab");
+
+            if (nb_ > 0 && vb_ > 0) {
+                TBLIS_VIEW_4D(t_Tbb, (*t2_bb_dense_ptr), nb_, nb_, vb_, vb_);
+                TBLIS_VIEW_4D(t_Wbb, Wbb, nb_, nb_, vb_, vb_);
+                auto V_vvvv_bb = get_V_exact(Cbv, Cbv, Cbv, Cbv);
+                TBLIS_VIEW_4D(t_Vvvvv_bb, V_vvvv_bb, vb_, vb_, vb_, vb_);
+                tblis::mult< double >(1.0, t_Tbb, "ijef", t_Vvvvv_bb, "eafb", 1.0, t_Wbb, "ijab");
+                tblis::mult< double >(-1.0, t_Tbb, "ijef", t_Vvvvv_bb, "ebfa", 1.0, t_Wbb, "ijab");
+
+                TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
+                TBLIS_VIEW_4D(t_Wab, Wab, na_, nb_, va_, vb_);
+                auto V_vvvv_ab = get_V_exact(Cav, Cav, Cbv, Cbv);
+                TBLIS_VIEW_4D(t_Vvvvv_ab, V_vvvv_ab, va_, va_, vb_, vb_);
+                tblis::mult< double >(1.0, t_Tab, "ijef", t_Vvvvv_ab, "eafb", 1.0, t_Wab, "ijab");
+            }
+
+            auto V_oooo_aa = get_V_exact(Cao, Cao, Cao, Cao);
+            TBLIS_VIEW_4D(t_Voooo_aa, V_oooo_aa, na_, na_, na_, na_);
+            tblis::mult< double >(1.0, t_Taa, "mnab", t_Voooo_aa, "minj", 1.0, t_Waa, "ijab");
+            tblis::mult< double >(-1.0, t_Taa, "mnab", t_Voooo_aa, "mjni", 1.0, t_Waa, "ijab");
+
+            if (nb_ > 0 && vb_ > 0) {
+                auto V_oooo_bb = get_V_exact(Cbo, Cbo, Cbo, Cbo);
+                TBLIS_VIEW_4D(t_Voooo_bb, V_oooo_bb, nb_, nb_, nb_, nb_);
+                tblis::mult< double >(1.0, t_Tbb, "mnab", t_Voooo_bb, "minj", 1.0, t_Wbb, "ijab");
+                tblis::mult< double >(-1.0, t_Tbb, "mnab", t_Voooo_bb, "mjni", 1.0, t_Wbb, "ijab");
+
+                auto V_oooo_ab = get_V_exact(Cao, Cao, Cbo, Cbo);
+                TBLIS_VIEW_4D(t_Voooo_ab, V_oooo_ab, na_, na_, nb_, nb_);
+                tblis::mult< double >(1.0, t_Tab, "mnab", t_Voooo_ab, "minj", 1.0, t_Wab, "ijab");
+            }
+
+            auto V_ovov_aa = get_V_exact(Cao, Cav, Cao, Cav);
+            auto V_oovv_aa = get_V_exact(Cao, Cao, Cav, Cav);
+            TBLIS_VIEW_4D(t_Vovov_aa, V_ovov_aa, na_, va_, na_, va_);
+            TBLIS_VIEW_4D(t_Voovv_aa, V_oovv_aa, na_, na_, va_, va_);
+
+            tblis::mult< double >(1.0, t_Vovov_aa, "iakc", t_Taa, "kjcb", 1.0, t_Waa, "ijab");
+            tblis::mult< double >(-1.0, t_Voovv_aa, "ikac", t_Taa, "kjcb", 1.0, t_Waa, "ijab");
+
+            if (nb_ > 0 && vb_ > 0) {
+                auto V_ovov_bb    = get_V_exact(Cbo, Cbv, Cbo, Cbv);
+                auto V_oovv_bb    = get_V_exact(Cbo, Cbo, Cbv, Cbv);
+                auto V_ovov_ab    = get_V_exact(Cao, Cav, Cbo, Cbv);
+                auto V_oovv_ab_ex = get_V_exact(Cao, Cao, Cbv, Cbv);
+                auto V_oovv_ba_ex = get_V_exact(Cbo, Cbo, Cav, Cav);
+
+                TBLIS_VIEW_4D(t_Vovov_bb_vw, V_ovov_bb, nb_, vb_, nb_, vb_);
+                TBLIS_VIEW_4D(t_Voovv_bb_vw, V_oovv_bb, nb_, nb_, vb_, vb_);
+                TBLIS_VIEW_4D(t_Vovov_ab_vw, V_ovov_ab, na_, va_, nb_, vb_);
+                TBLIS_VIEW_4D(t_Voovv_ab_ex_vw, V_oovv_ab_ex, na_, na_, vb_, vb_);
+                TBLIS_VIEW_4D(t_Voovv_ba_ex_vw, V_oovv_ba_ex, nb_, nb_, va_, va_);
+
+                tblis::mult< double >(1.0, t_Vovov_ab_vw, "iakc", t_Tab, "jkbc", 1.0, t_Waa, "ijab");
+                tblis::mult< double >(1.0, t_Vovov_bb_vw, "iakc", t_Tbb, "kjcb", 1.0, t_Wbb, "ijab");
+                tblis::mult< double >(-1.0, t_Voovv_bb_vw, "ikac", t_Tbb, "kjcb", 1.0, t_Wbb, "ijab");
+                tblis::mult< double >(1.0, t_Vovov_ab_vw, "kcia", t_Tab, "kjcb", 1.0, t_Wbb, "ijab"); 
+                tblis::mult< double >(1.0,  t_Vovov_aa, "iakc", t_Tab, "kjcb", 1.0, t_Wab, "ijab");
+                tblis::mult< double >(-1.0, t_Voovv_aa, "ikac", t_Tab, "kjcb", 1.0, t_Wab, "ijab");
+                tblis::mult< double >(1.0,  t_Tab, "ikac", t_Vovov_bb_vw, "kcjb", 1.0, t_Wab, "ijab");
+                tblis::mult< double >(-1.0, t_Tab, "ikac", t_Voovv_bb_vw, "kjcb", 1.0, t_Wab, "ijab");
+                tblis::mult< double >(1.0,  t_Taa, "ikac", t_Vovov_ab_vw, "kcjb", 1.0, t_Wab, "ijab");
+                tblis::mult< double >(1.0,  t_Vovov_ab_vw, "iakc", t_Tbb, "kjcb", 1.0, t_Wab, "ijab");
+                tblis::mult< double >(-1.0, t_Voovv_ab_ex_vw, "ikbc", t_Tab, "kjac", 1.0, t_Wab, "ijab");
+                tblis::mult< double >(-1.0, t_Tab, "ikcb", t_Voovv_ba_ex_vw, "jkac", 1.0, t_Wab, "ijab"); 
+            }
+
+            double e3_aa = 0.0, e3_bb = 0.0, e3_ab = 0.0;
+            
+            #pragma omp parallel for collapse(4) reduction(+:e3_aa) schedule(static)
+            for (int i = 0; i < na_; ++i) {
+                for (int j = 0; j < na_; ++j) {
+                    for (int a = 0; a < va_; ++a) {
+                        for (int b = 0; b < va_; ++b) {
+                            double D = ea(i) + ea(j) - ea(na_+a) - ea(na_+b);
+                            t2_3rd_aa_(i,j,a,b) = Waa(i,j,a,b) / D;
+                            e3_aa += 0.125 * T2_aa_ijab(i,j,a,b) * Waa(i,j,a,b);
+                        }
+                    }
+                }
+            }
+
+            if (nb_ > 0 && vb_ > 0) {
+                #pragma omp parallel for collapse(4) reduction(+:e3_bb) schedule(static)
+                for (int i = 0; i < nb_; ++i) {
+                    for (int j = 0; j < nb_; ++j) {
+                        for (int a = 0; a < vb_; ++a) {
+                            for (int b = 0; b < vb_; ++b) {
+                                double D = eb(i) + eb(j) - eb(nb_+a) - eb(nb_+b);
+                                t2_3rd_bb_(i,j,a,b) = Wbb(i,j,a,b) / D;
+                                e3_bb += 0.125 * (*t2_bb_dense_ptr)(i,j,a,b) * Wbb(i,j,a,b);
+                            }
+                        }
+                    }
+                }
+
+                #pragma omp parallel for collapse(4) reduction(+:e3_ab) schedule(static)
+                for (int i = 0; i < na_; ++i) {
+                    for (int j = 0; j < nb_; ++j) {
+                        for (int a = 0; a < va_; ++a) {
+                            for (int b = 0; b < vb_; ++b) {
+                                double D = ea(i) + eb(j) - ea(na_+a) - eb(nb_+b);
+                                t2_3rd_ab_(i,j,a,b) = Wab(i,j,a,b) / D;
+                                e3_ab += 1.0 * (*t2_ab_dense)(i,j,a,b) * Wab(i,j,a,b);
+                            }
+                        }
+                    }
+                }
+            }
+            
+            e_mp3_tot_ = e3_aa + e3_bb + e3_ab;
+            return;
         }
     }
 
@@ -1117,46 +1273,6 @@ void OMP3::build_generalized_fock() {
     auto* t2_bb_dense = t2_bb_.get_block(0,0,0,0);
 
     if (config_.eri_method == "exact") {
-        if (!is_restricted) {
-            throw std::runtime_error("[OMP3] Unrestricted Exact Z-vector belum didukung. Silakan gunakan DF.");
-        }
-
-        Eigen::Tensor< double, 4 > Teff(na_, na_, va_, va_);
-        #pragma omp parallel for collapse(4) schedule(static)
-        for(int i = 0; i < na_; ++i) {
-            for(int j = 0; j < na_; ++j) {
-                for(int a = 0; a < va_; ++a) {
-                    for(int b = 0; b < va_; ++b) {
-                        Teff(i,j,a,b) = (*t_aa_dense)(i,a,j,b) + L2_aa_(i,j,a,b);
-                    }
-                }
-            }
-        }
-        TBLIS_VIEW_4D(t_Teff, Teff, na_, na_, va_, va_);
-
-        if (eri_ao_cached_.size() == 0) {
-            eri_ao_cached_ = integrals_->compute_eri();
-        }
-
-        Eigen::MatrixXd Z_oo_mat = Eigen::MatrixXd::Zero(na_, na_);
-        Eigen::MatrixXd Z_vv_mat = Eigen::MatrixXd::Zero(va_, va_);
-        TBLIS_VIEW_2D(t_Zoo, Z_oo_mat.data(), na_, na_);
-        TBLIS_VIEW_2D(t_Zvv, Z_vv_mat.data(), va_, va_);
-        TBLIS_VIEW_2D(t_Zmat, Z_mat_a.data(), va_, na_);
-
-        auto* g_blk = g_aa_.get_block(0,0,0,0);
-        TBLIS_VIEW_4D(t_Vovov, (*g_blk), na_, va_, na_, va_);
-        tblis::mult< double >(1.0, t_Teff, "ikab", t_Vovov, "kbja", 0.0, t_Zoo, "ij");
-        tblis::mult< double >(-1.0, t_Teff, "ikac", t_Vovov, "kcib", 0.0, t_Zvv, "ab");
-
-        auto V_ovvv_ex = ERITransformer::transform_custom(eri_ao_cached_, Cao, Cav, Cav, Cav, nbf_, na_, va_, va_, va_);
-        TBLIS_VIEW_4D(t_Vovvv_ex, V_ovvv_ex, na_, va_, va_, va_);
-        tblis::mult< double >(1.0, t_Vovvv_ex, "kcab", t_Teff, "ikbc", 0.0, t_Zmat, "ai"); 
-
-        auto V_ooov = ERITransformer::transform_custom(eri_ao_cached_, Cao, Cao, Cao, Cav, nbf_, na_, na_, na_, va_);
-        TBLIS_VIEW_4D(t_Vooov, V_ooov, na_, na_, na_, va_);
-        tblis::mult< double >(-1.0, t_Vooov, "jikc", t_Teff, "jkac", 1.0, t_Zmat, "ai");
-
         auto solve_mini_cphf_exact = [](const Eigen::MatrixXd& Z_in, const Eigen::VectorXd& eps,
                                         const Eigen::Tensor<double, 4>& V_exact, int dim, int offset) -> Eigen::MatrixXd {
             if (dim == 0) return Eigen::MatrixXd::Zero(0, 0);
@@ -1219,15 +1335,192 @@ void OMP3::build_generalized_fock() {
             return Eigen::Map<Eigen::MatrixXd>(x.data(), dim, dim);
         };
 
-        dx_oo_a = solve_mini_cphf_exact(Z_oo_mat, ea, Waa_ring_, na_, 0);
-        dx_vv_a = solve_mini_cphf_exact(Z_vv_mat, ea, Waa_ladder_, va_, na_);
+        if (is_restricted) {
+            Eigen::Tensor< double, 4 > Teff(na_, na_, va_, va_);
+            #pragma omp parallel for collapse(4) schedule(static)
+            for(int i = 0; i < na_; ++i) {
+                for(int j = 0; j < na_; ++j) {
+                    for(int a = 0; a < va_; ++a) {
+                        for(int b = 0; b < va_; ++b) {
+                            Teff(i,j,a,b) = (*t_aa_dense)(i,a,j,b) + L2_aa_(i,j,a,b);
+                        }
+                    }
+                }
+            }
+            TBLIS_VIEW_4D(t_Teff, Teff, na_, na_, va_, va_);
 
-        TBLIS_VIEW_2D(t_dG, Delta_G_ia_a.data(), va_, na_);
-        TBLIS_VIEW_2D(t_xoo, dx_oo_a.data(), na_, na_);
-        TBLIS_VIEW_2D(t_xvv, dx_vv_a.data(), va_, va_);
+            if (eri_ao_cached_.size() == 0) {
+                eri_ao_cached_ = integrals_->compute_eri();
+            }
 
-        tblis::mult< double >(scale, t_Vooov, "jkia", t_xoo, "jk", 0.0, t_dG, "ai");
-        tblis::mult< double >(scale, t_Vovvv_ex, "iabc", t_xvv, "bc", 1.0, t_dG, "ai");
+            Eigen::MatrixXd Z_oo_mat = Eigen::MatrixXd::Zero(na_, na_);
+            Eigen::MatrixXd Z_vv_mat = Eigen::MatrixXd::Zero(va_, va_);
+            TBLIS_VIEW_2D(t_Zoo, Z_oo_mat.data(), na_, na_);
+            TBLIS_VIEW_2D(t_Zvv, Z_vv_mat.data(), va_, va_);
+            TBLIS_VIEW_2D(t_Zmat, Z_mat_a.data(), va_, na_);
+
+            auto* g_blk = g_aa_.get_block(0,0,0,0);
+            TBLIS_VIEW_4D(t_Vovov, (*g_blk), na_, va_, na_, va_);
+            tblis::mult< double >(1.0, t_Teff, "ikab", t_Vovov, "kbja", 0.0, t_Zoo, "ij");
+            tblis::mult< double >(-1.0, t_Teff, "ikac", t_Vovov, "kcib", 0.0, t_Zvv, "ab");
+
+            auto V_ovvv_ex = ERITransformer::transform_custom(eri_ao_cached_, Cao, Cav, Cav, Cav, nbf_, na_, va_, va_, va_);
+            TBLIS_VIEW_4D(t_Vovvv_ex, V_ovvv_ex, na_, va_, va_, va_);
+            tblis::mult< double >(1.0, t_Vovvv_ex, "kcab", t_Teff, "ikbc", 0.0, t_Zmat, "ai"); 
+
+            auto V_ooov = ERITransformer::transform_custom(eri_ao_cached_, Cao, Cao, Cao, Cav, nbf_, na_, na_, na_, va_);
+            TBLIS_VIEW_4D(t_Vooov, V_ooov, na_, na_, na_, va_);
+            tblis::mult< double >(-1.0, t_Vooov, "jikc", t_Teff, "jkac", 1.0, t_Zmat, "ai");
+
+            dx_oo_a = solve_mini_cphf_exact(Z_oo_mat, ea, Waa_ring_, na_, 0);
+            dx_vv_a = solve_mini_cphf_exact(Z_vv_mat, ea, Waa_ladder_, va_, na_);
+
+            TBLIS_VIEW_2D(t_dG, Delta_G_ia_a.data(), va_, na_);
+            TBLIS_VIEW_2D(t_xoo, dx_oo_a.data(), na_, na_);
+            TBLIS_VIEW_2D(t_xvv, dx_vv_a.data(), va_, va_);
+
+            tblis::mult< double >(scale, t_Vooov, "jkia", t_xoo, "jk", 0.0, t_dG, "ai");
+            tblis::mult< double >(scale, t_Vovvv_ex, "iabc", t_xvv, "bc", 1.0, t_dG, "ai");
+
+        } else {
+            if (eri_ao_cached_.size() == 0) {
+                eri_ao_cached_ = integrals_->compute_eri();
+            }
+
+            Eigen::Tensor< double, 4 > Teff_aa(na_, na_, va_, va_);
+            Eigen::Tensor< double, 4 > Teff_bb(nb_, nb_, vb_, vb_);
+            Eigen::Tensor< double, 4 > Teff_ab(na_, nb_, va_, vb_);
+
+            #pragma omp parallel for collapse(4) schedule(static)
+            for(int i = 0; i < na_; ++i) {
+                for(int j = 0; j < na_; ++j) {
+                    for(int a = 0; a < va_; ++a) {
+                        for(int b = 0; b < va_; ++b) {
+                            Teff_aa(i,j,a,b) = (*t_aa_dense)(i,a,j,b) + L2_aa_(i,j,a,b);
+                        }
+                    }
+                }
+            }
+            if (nb_ > 0 && vb_ > 0) {
+                #pragma omp parallel for collapse(4) schedule(static)
+                for(int i = 0; i < nb_; ++i) {
+                    for(int j = 0; j < nb_; ++j) {
+                        for(int a = 0; a < vb_; ++a) {
+                            for(int b = 0; b < vb_; ++b) {
+                                Teff_bb(i,j,a,b) = (*t2_bb_dense)(i,a,j,b) + L2_bb_(i,j,a,b);
+                            }
+                        }
+                    }
+                }
+                #pragma omp parallel for collapse(4) schedule(static)
+                for(int i = 0; i < na_; ++i) {
+                    for(int j = 0; j < nb_; ++j) {
+                        for(int a = 0; a < va_; ++a) {
+                            for(int b = 0; b < vb_; ++b) {
+                                Teff_ab(i,j,a,b) = (*t2_ab_dense)(i,j,a,b) + L2_ab_(i,j,a,b);
+                            }
+                        }
+                    }
+                }
+            }
+
+            TBLIS_VIEW_4D(t_Teff_aa, Teff_aa, na_, na_, va_, va_);
+            TBLIS_VIEW_4D(t_Teff_bb, Teff_bb, nb_, nb_, vb_, vb_);
+            TBLIS_VIEW_4D(t_Teff_ab, Teff_ab, na_, nb_, va_, vb_);
+
+            auto get_V = [&](const Eigen::MatrixXd& C1, const Eigen::MatrixXd& C2, const Eigen::MatrixXd& C3, const Eigen::MatrixXd& C4) {
+                return ERITransformer::transform_custom(eri_ao_cached_, C1, C2, C3, C4, nbf_, C1.cols(), C2.cols(), C3.cols(), C4.cols());
+            };
+
+            auto V_ovov_aa = get_V(Cao, Cav, Cao, Cav);
+            auto V_ovvv_aa = get_V(Cao, Cav, Cav, Cav);
+            auto V_ooov_aa = get_V(Cao, Cao, Cao, Cav);
+            
+            TBLIS_VIEW_4D(t_Vovov_aa, V_ovov_aa, na_, va_, na_, va_);
+            TBLIS_VIEW_4D(t_Vovvv_aa, V_ovvv_aa, na_, va_, va_, va_);
+            TBLIS_VIEW_4D(t_Vooov_aa, V_ooov_aa, na_, na_, na_, va_);
+            
+            Eigen::MatrixXd Z_oo_a = Eigen::MatrixXd::Zero(na_, na_);
+            Eigen::MatrixXd Z_vv_a = Eigen::MatrixXd::Zero(va_, va_);
+            TBLIS_VIEW_2D(t_Zoo_a, Z_oo_a.data(), na_, na_);
+            TBLIS_VIEW_2D(t_Zvv_a, Z_vv_a.data(), va_, va_);
+            TBLIS_VIEW_2D(t_Zmat_a, Z_mat_a.data(), va_, na_);
+
+            tblis::mult< double >(1.0, t_Teff_aa, "ikab", t_Vovov_aa, "kbja", 0.0, t_Zoo_a, "ij");
+            tblis::mult< double >(-1.0, t_Teff_aa, "ikac", t_Vovov_aa, "kcib", 0.0, t_Zvv_a, "ab");
+            tblis::mult< double >(1.0, t_Vovvv_aa, "kcab", t_Teff_aa, "ikbc", 0.0, t_Zmat_a, "ai"); 
+            tblis::mult< double >(-1.0, t_Vooov_aa, "jikc", t_Teff_aa, "jkac", 1.0, t_Zmat_a, "ai");
+
+            Eigen::Tensor<double, 4> Waa_ring_exact = get_V(Cao, Cao, Cao, Cao);
+            Eigen::Tensor<double, 4> Waa_ladder_exact = get_V(Cav, Cav, Cav, Cav);
+
+            if (nb_ > 0 && vb_ > 0) {
+                auto V_ovov_ba = get_V(Cbo, Cbv, Cao, Cav);
+                auto V_ovvv_ba = get_V(Cbo, Cbv, Cav, Cav);
+                auto V_ooov_ab_ex = get_V(Cao, Cao, Cbo, Cbv);
+
+                TBLIS_VIEW_4D(t_Vovov_ba, V_ovov_ba, nb_, vb_, na_, va_);
+                TBLIS_VIEW_4D(t_Vovvv_ba, V_ovvv_ba, nb_, vb_, va_, va_);
+                TBLIS_VIEW_4D(t_Vooov_ab_ex, V_ooov_ab_ex, na_, na_, nb_, vb_);
+
+                tblis::mult< double >(1.0, t_Teff_ab, "ikab", t_Vovov_ba, "kbja", 1.0, t_Zoo_a, "ij");
+                tblis::mult< double >(-1.0, t_Teff_ab, "ikac", t_Vovov_ba, "kcib", 1.0, t_Zvv_a, "ab");
+                tblis::mult< double >(1.0, t_Vovvv_ba, "kcab", t_Teff_ab, "ikbc", 1.0, t_Zmat_a, "ai");
+                tblis::mult< double >(-1.0, t_Vooov_ab_ex, "jikc", t_Teff_ab, "jkac", 1.0, t_Zmat_a, "ai");
+
+                auto V_ovov_bb = get_V(Cbo, Cbv, Cbo, Cbv);
+                auto V_ovvv_bb = get_V(Cbo, Cbv, Cbv, Cbv);
+                auto V_ooov_bb = get_V(Cbo, Cbo, Cbo, Cbv);
+                auto V_ovov_ab = get_V(Cao, Cav, Cbo, Cbv);
+                auto V_ovvv_ab = get_V(Cao, Cav, Cbv, Cbv);
+                auto V_ooov_ba_ex = get_V(Cbo, Cbo, Cao, Cav);
+
+                TBLIS_VIEW_4D(t_Vovov_bb, V_ovov_bb, nb_, vb_, nb_, vb_);
+                TBLIS_VIEW_4D(t_Vovvv_bb, V_ovvv_bb, nb_, vb_, vb_, vb_);
+                TBLIS_VIEW_4D(t_Vooov_bb, V_ooov_bb, nb_, nb_, nb_, vb_);
+                TBLIS_VIEW_4D(t_Vovov_ab, V_ovov_ab, na_, va_, nb_, vb_);
+                TBLIS_VIEW_4D(t_Vovvv_ab, V_ovvv_ab, na_, va_, vb_, vb_);
+                TBLIS_VIEW_4D(t_Vooov_ba_ex, V_ooov_ba_ex, nb_, nb_, na_, va_);
+
+                Eigen::MatrixXd Z_oo_b = Eigen::MatrixXd::Zero(nb_, nb_);
+                Eigen::MatrixXd Z_vv_b = Eigen::MatrixXd::Zero(vb_, vb_);
+                TBLIS_VIEW_2D(t_Zoo_b, Z_oo_b.data(), nb_, nb_);
+                TBLIS_VIEW_2D(t_Zvv_b, Z_vv_b.data(), vb_, vb_);
+                TBLIS_VIEW_2D(t_Zmat_b, Z_mat_b.data(), vb_, nb_);
+
+                tblis::mult< double >(1.0, t_Teff_bb, "ikab", t_Vovov_bb, "kbja", 0.0, t_Zoo_b, "ij");
+                tblis::mult< double >(-1.0, t_Teff_bb, "ikac", t_Vovov_bb, "kcib", 0.0, t_Zvv_b, "ab");
+                tblis::mult< double >(1.0, t_Vovvv_bb, "kcab", t_Teff_bb, "ikbc", 0.0, t_Zmat_b, "ai");
+                tblis::mult< double >(-1.0, t_Vooov_bb, "jikc", t_Teff_bb, "jkac", 1.0, t_Zmat_b, "ai");
+
+                tblis::mult< double >(1.0, t_Teff_ab, "kiba", t_Vovov_ab, "kbja", 1.0, t_Zoo_b, "ij");
+                tblis::mult< double >(-1.0, t_Teff_ab, "kica", t_Vovov_ab, "kcib", 1.0, t_Zvv_b, "ab");
+                tblis::mult< double >(1.0, t_Vovvv_ab, "kcab", t_Teff_ab, "kicb", 1.0, t_Zmat_b, "ai"); 
+                tblis::mult< double >(-1.0, t_Vooov_ba_ex, "jikc", t_Teff_ab, "kjca", 1.0, t_Zmat_b, "ai");
+
+                Eigen::Tensor<double, 4> Wbb_ring_exact = get_V(Cbo, Cbo, Cbo, Cbo);
+                Eigen::Tensor<double, 4> Wbb_ladder_exact = get_V(Cbv, Cbv, Cbv, Cbv);
+                dx_oo_b = solve_mini_cphf_exact(Z_oo_b, eb, Wbb_ring_exact, nb_, 0);
+                dx_vv_b = solve_mini_cphf_exact(Z_vv_b, eb, Wbb_ladder_exact, vb_, nb_);
+
+                TBLIS_VIEW_2D(t_dG_b, Delta_G_ia_b.data(), vb_, nb_);
+                TBLIS_VIEW_2D(t_xoo_b, dx_oo_b.data(), nb_, nb_);
+                TBLIS_VIEW_2D(t_xvv_b, dx_vv_b.data(), vb_, vb_);
+
+                tblis::mult< double >(scale, t_Vooov_bb, "jkia", t_xoo_b, "jk", 0.0, t_dG_b, "ai");
+                tblis::mult< double >(scale, t_Vovvv_bb, "iabc", t_xvv_b, "bc", 1.0, t_dG_b, "ai");
+            }
+
+            dx_oo_a = solve_mini_cphf_exact(Z_oo_a, ea, Waa_ring_exact, na_, 0);
+            dx_vv_a = solve_mini_cphf_exact(Z_vv_a, ea, Waa_ladder_exact, va_, na_);
+
+            TBLIS_VIEW_2D(t_dG_a, Delta_G_ia_a.data(), va_, na_);
+            TBLIS_VIEW_2D(t_xoo_a, dx_oo_a.data(), na_, na_);
+            TBLIS_VIEW_2D(t_xvv_a, dx_vv_a.data(), va_, va_);
+
+            tblis::mult< double >(scale, t_Vooov_aa, "jkia", t_xoo_a, "jk", 0.0, t_dG_a, "ai");
+            tblis::mult< double >(scale, t_Vovvv_aa, "iabc", t_xvv_a, "bc", 1.0, t_dG_a, "ai");
+        }
 
     } else {
         int n_aux = scf_.L_mat.cols();
