@@ -372,12 +372,11 @@ MP3Result UMP3::compute() {
                 auto Vab = get_V_exact(Cav, Cav, Cbv, Cbv);
                 TBLIS_VIEW_4D(t_Vab, Vab, nv_a_, nv_a_, nv_b_, nv_b_);
                 tblis::mult< double >(1.0, t_Tab, "ijef", t_Vab, "eafb", 1.0, t_Wab, "ijab");
-            // ... (Tahap Ladder vvvv - UMP3 Wab block) ...
             } else {
                 #pragma omp parallel
                 {
                     Eigen::Tensor<double, 4> W_priv(no_a_, no_b_, nv_a_, nv_b_); 
-                    W_priv.setZero(); // Diperbaiki dari Wab.setZero()
+                    W_priv.setZero();
                     Eigen::Tensor<double, 4> X_priv(no_a_, no_b_, nv_a_, nv_b_);
                     TBLIS_VIEW_4D(t_W_priv, W_priv, no_a_, no_b_, nv_a_, nv_b_);
                     TBLIS_VIEW_4D(t_X_priv, X_priv, no_a_, no_b_, nv_a_, nv_b_);
@@ -498,7 +497,7 @@ MP3Result UMP3::compute() {
             tblis::mult< double >(1.0,  t_Tab, "ikac", t_ovov_bb, "kcjb", 1.0, t_Wab, "ijab");
             tblis::mult< double >(-1.0, t_Tab, "ikac", t_oovv_bb, "kjcb", 1.0, t_Wab, "ijab");
             tblis::mult< double >(1.0,  t_Taa, "ikac", t_ovov_ab, "kcjb", 1.0, t_Wab, "ijab");
-            tblis::mult< double >(1.0,  t_ovov_ab, "iakc", t_Tbb, "kjcb", 1.0, t_Wab, "ijab");
+            tblis::mult< double >(1.0,  t_Vovov_ab, "iakc", t_Tbb, "kjcb", 1.0, t_Wab, "ijab");
             tblis::mult< double >(-1.0, t_oovv_ab_ex, "ikbc", t_Tab, "kjac", 1.0, t_Wab, "ijab");
             tblis::mult< double >(-1.0, t_Tab, "ikcb", t_oovv_ba_ex, "jkac", 1.0, t_Wab, "ijab"); 
             e3_ab += 1.0 * tensor_dot(t2_ab_, Wab);
@@ -650,12 +649,16 @@ void OMP3::compute_mp3_correction() {
                 t2_3rd_ab_ = Eigen::Tensor< double, 4 >(na_, nb_, va_, vb_); t2_3rd_ab_.setZero();
             }
 
-            Eigen::Tensor< double, 4 > Waa(na_, na_, va_, va_); Waa.setZero();
-            Eigen::Tensor< double, 4 > Wbb(nb_, nb_, vb_, vb_); if (nb_ > 0) Wbb.setZero();
-            Eigen::Tensor< double, 4 > Wab(na_, nb_, va_, vb_); if (nb_ > 0) Wab.setZero();
+            Eigen::Tensor< double, 4 > Waa_ladder(na_, na_, va_, va_); Waa_ladder.setZero();
+            Eigen::Tensor< double, 4 > Waa_ring(na_, na_, va_, va_); Waa_ring.setZero();
+            Eigen::Tensor< double, 4 > Wbb_ladder(nb_, nb_, vb_, vb_); if (nb_ > 0) Wbb_ladder.setZero();
+            Eigen::Tensor< double, 4 > Wbb_ring(nb_, nb_, vb_, vb_); if (nb_ > 0) Wbb_ring.setZero();
+            Eigen::Tensor< double, 4 > Wab_ladder(na_, nb_, va_, vb_); if (nb_ > 0) Wab_ladder.setZero();
+            Eigen::Tensor< double, 4 > Wab_ring(na_, nb_, va_, vb_); if (nb_ > 0) Wab_ring.setZero();
 
             TBLIS_VIEW_4D(t_Taa, T2_aa_ijab, na_, na_, va_, va_);
-            TBLIS_VIEW_4D(t_Waa, Waa, na_, na_, va_, va_);
+            TBLIS_VIEW_4D(t_Waa_ladder, Waa_ladder, na_, na_, va_, va_);
+            TBLIS_VIEW_4D(t_Waa_ring, Waa_ring, na_, na_, va_, va_);
 
             auto* t2_bb_dense_ptr = t2_bb_.get_block(0,0,0,0);
             Eigen::Tensor< double, 4 > dummy_bb_local(nb_, nb_, vb_, vb_);
@@ -672,41 +675,43 @@ void OMP3::compute_mp3_correction() {
             }
 
             TBLIS_VIEW_4D(t_Tbb, (*t2_bb_dense_ptr), nb_, nb_, vb_, vb_);
-            TBLIS_VIEW_4D(t_Wbb, Wbb, nb_, nb_, vb_, vb_);
+            TBLIS_VIEW_4D(t_Wbb_ladder, Wbb_ladder, nb_, nb_, vb_, vb_);
+            TBLIS_VIEW_4D(t_Wbb_ring, Wbb_ring, nb_, nb_, vb_, vb_);
             
             TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
-            TBLIS_VIEW_4D(t_Wab, Wab, na_, nb_, va_, vb_);
+            TBLIS_VIEW_4D(t_Wab_ladder, Wab_ladder, na_, nb_, va_, vb_);
+            TBLIS_VIEW_4D(t_Wab_ring, Wab_ring, na_, nb_, va_, vb_);
 
             auto V_vvvv_aa = get_V_exact(Cav, Cav, Cav, Cav);
             TBLIS_VIEW_4D(t_Vvvvv_aa, V_vvvv_aa, va_, va_, va_, va_);
-            tblis::mult< double >(1.0, t_Taa, "ijef", t_Vvvvv_aa, "eafb", 1.0, t_Waa, "ijab");
-            tblis::mult< double >(-1.0, t_Taa, "ijef", t_Vvvvv_aa, "ebfa", 1.0, t_Waa, "ijab");
+            tblis::mult< double >(0.5, t_Taa, "ijef", t_Vvvvv_aa, "eafb", 1.0, t_Waa_ladder, "ijab");
+            tblis::mult< double >(-0.5, t_Taa, "ijef", t_Vvvvv_aa, "ebfa", 1.0, t_Waa_ladder, "ijab");
 
             if (nb_ > 0 && vb_ > 0) {
                 auto V_vvvv_bb = get_V_exact(Cbv, Cbv, Cbv, Cbv);
                 TBLIS_VIEW_4D(t_Vvvvv_bb, V_vvvv_bb, vb_, vb_, vb_, vb_);
-                tblis::mult< double >(1.0, t_Tbb, "ijef", t_Vvvvv_bb, "eafb", 1.0, t_Wbb, "ijab");
-                tblis::mult< double >(-1.0, t_Tbb, "ijef", t_Vvvvv_bb, "ebfa", 1.0, t_Wbb, "ijab");
+                tblis::mult< double >(0.5, t_Tbb, "ijef", t_Vvvvv_bb, "eafb", 1.0, t_Wbb_ladder, "ijab");
+                tblis::mult< double >(-0.5, t_Tbb, "ijef", t_Vvvvv_bb, "ebfa", 1.0, t_Wbb_ladder, "ijab");
 
                 auto V_vvvv_ab = get_V_exact(Cav, Cav, Cbv, Cbv);
                 TBLIS_VIEW_4D(t_Vvvvv_ab, V_vvvv_ab, va_, va_, vb_, vb_);
-                tblis::mult< double >(1.0, t_Tab, "ijef", t_Vvvvv_ab, "eafb", 1.0, t_Wab, "ijab");
+                tblis::mult< double >(1.0, t_Tab, "ijef", t_Vvvvv_ab, "eafb", 1.0, t_Wab_ladder, "ijab");
             }
 
             auto V_oooo_aa = get_V_exact(Cao, Cao, Cao, Cao);
             TBLIS_VIEW_4D(t_Voooo_aa, V_oooo_aa, na_, na_, na_, na_);
-            tblis::mult< double >(1.0, t_Taa, "mnab", t_Voooo_aa, "minj", 1.0, t_Waa, "ijab");
-            tblis::mult< double >(-1.0, t_Taa, "mnab", t_Voooo_aa, "mjni", 1.0, t_Waa, "ijab");
+            tblis::mult< double >(0.5, t_Taa, "mnab", t_Voooo_aa, "minj", 1.0, t_Waa_ladder, "ijab");
+            tblis::mult< double >(-0.5, t_Taa, "mnab", t_Voooo_aa, "mjni", 1.0, t_Waa_ladder, "ijab");
 
             if (nb_ > 0 && vb_ > 0) {
                 auto V_oooo_bb = get_V_exact(Cbo, Cbo, Cbo, Cbo);
                 TBLIS_VIEW_4D(t_Voooo_bb, V_oooo_bb, nb_, nb_, nb_, nb_);
-                tblis::mult< double >(1.0, t_Tbb, "mnab", t_Voooo_bb, "minj", 1.0, t_Wbb, "ijab");
-                tblis::mult< double >(-1.0, t_Tbb, "mnab", t_Voooo_bb, "mjni", 1.0, t_Wbb, "ijab");
+                tblis::mult< double >(0.5, t_Tbb, "mnab", t_Voooo_bb, "minj", 1.0, t_Wbb_ladder, "ijab");
+                tblis::mult< double >(-0.5, t_Tbb, "mnab", t_Voooo_bb, "mjni", 1.0, t_Wbb_ladder, "ijab");
 
                 auto V_oooo_ab = get_V_exact(Cao, Cao, Cbo, Cbo);
                 TBLIS_VIEW_4D(t_Voooo_ab, V_oooo_ab, na_, na_, nb_, nb_);
-                tblis::mult< double >(1.0, t_Tab, "mnab", t_Voooo_ab, "minj", 1.0, t_Wab, "ijab");
+                tblis::mult< double >(1.0, t_Tab, "mnab", t_Voooo_ab, "minj", 1.0, t_Wab_ladder, "ijab");
             }
 
             auto V_ovov_aa = get_V_exact(Cao, Cav, Cao, Cav);
@@ -714,8 +719,8 @@ void OMP3::compute_mp3_correction() {
             TBLIS_VIEW_4D(t_Vovov_aa, V_ovov_aa, na_, va_, na_, va_);
             TBLIS_VIEW_4D(t_Voovv_aa, V_oovv_aa, na_, na_, va_, va_);
 
-            tblis::mult< double >(1.0, t_Vovov_aa, "iakc", t_Taa, "kjcb", 1.0, t_Waa, "ijab");
-            tblis::mult< double >(-1.0, t_Voovv_aa, "ikac", t_Taa, "kjcb", 1.0, t_Waa, "ijab");
+            tblis::mult< double >(1.0, t_Vovov_aa, "iakc", t_Taa, "kjcb", 1.0, t_Waa_ring, "ijab");
+            tblis::mult< double >(-1.0, t_Voovv_aa, "ikac", t_Taa, "kjcb", 1.0, t_Waa_ring, "ijab");
 
             if (nb_ > 0 && vb_ > 0) {
                 auto V_ovov_bb    = get_V_exact(Cbo, Cbv, Cbo, Cbv);
@@ -730,18 +735,18 @@ void OMP3::compute_mp3_correction() {
                 TBLIS_VIEW_4D(t_Voovv_ab_ex_vw, V_oovv_ab_ex, na_, na_, vb_, vb_);
                 TBLIS_VIEW_4D(t_Voovv_ba_ex_vw, V_oovv_ba_ex, nb_, nb_, va_, va_);
 
-                tblis::mult< double >(1.0, t_Vovov_ab_vw, "iakc", t_Tab, "jkbc", 1.0, t_Waa, "ijab");
-                tblis::mult< double >(1.0, t_Vovov_bb_vw, "iakc", t_Tbb, "kjcb", 1.0, t_Wbb, "ijab");
-                tblis::mult< double >(-1.0, t_Voovv_bb_vw, "ikac", t_Tbb, "kjcb", 1.0, t_Wbb, "ijab");
-                tblis::mult< double >(1.0, t_Vovov_ab_vw, "kcia", t_Tab, "kjcb", 1.0, t_Wbb, "ijab"); 
-                tblis::mult< double >(1.0,  t_Vovov_aa, "iakc", t_Tab, "kjcb", 1.0, t_Wab, "ijab");
-                tblis::mult< double >(-1.0, t_Voovv_aa, "ikac", t_Tab, "kjcb", 1.0, t_Wab, "ijab");
-                tblis::mult< double >(1.0,  t_Tab, "ikac", t_Vovov_bb_vw, "kcjb", 1.0, t_Wab, "ijab");
-                tblis::mult< double >(-1.0, t_Tab, "ikac", t_Voovv_bb_vw, "kjcb", 1.0, t_Wab, "ijab");
-                tblis::mult< double >(1.0,  t_Taa, "ikac", t_Vovov_ab_vw, "kcjb", 1.0, t_Wab, "ijab");
-                tblis::mult< double >(1.0,  t_Vovov_ab_vw, "iakc", t_Tbb, "kjcb", 1.0, t_Wab, "ijab");
-                tblis::mult< double >(-1.0, t_Voovv_ab_ex_vw, "ikbc", t_Tab, "kjac", 1.0, t_Wab, "ijab");
-                tblis::mult< double >(-1.0, t_Tab, "ikcb", t_Voovv_ba_ex_vw, "jkac", 1.0, t_Wab, "ijab"); 
+                tblis::mult< double >(1.0, t_Vovov_ab_vw, "iakc", t_Tab, "jkbc", 1.0, t_Waa_ring, "ijab");
+                tblis::mult< double >(1.0, t_Vovov_bb_vw, "iakc", t_Tbb, "kjcb", 1.0, t_Wbb_ring, "ijab");
+                tblis::mult< double >(-1.0, t_Voovv_bb_vw, "ikac", t_Tbb, "kjcb", 1.0, t_Wbb_ring, "ijab");
+                tblis::mult< double >(1.0, t_Vovov_ab_vw, "kcia", t_Tab, "kjcb", 1.0, t_Wbb_ring, "ijab"); 
+                tblis::mult< double >(1.0,  t_Vovov_aa, "iakc", t_Tab, "kjcb", 1.0, t_Wab_ring, "ijab");
+                tblis::mult< double >(-1.0, t_Voovv_aa, "ikac", t_Tab, "kjcb", 1.0, t_Wab_ring, "ijab");
+                tblis::mult< double >(1.0,  t_Tab, "ikac", t_Vovov_bb_vw, "kcjb", 1.0, t_Wab_ring, "ijab");
+                tblis::mult< double >(-1.0, t_Tab, "ikac", t_Voovv_bb_vw, "kjcb", 1.0, t_Wab_ring, "ijab");
+                tblis::mult< double >(1.0,  t_Taa, "ikac", t_Vovov_ab_vw, "kcjb", 1.0, t_Wab_ring, "ijab");
+                tblis::mult< double >(1.0,  t_Vovov_ab_vw, "iakc", t_Tbb, "kjcb", 1.0, t_Wab_ring, "ijab");
+                tblis::mult< double >(-1.0, t_Voovv_ab_ex_vw, "ikbc", t_Tab, "kjac", 1.0, t_Wab_ring, "ijab");
+                tblis::mult< double >(-1.0, t_Tab, "ikcb", t_Voovv_ba_ex_vw, "jkac", 1.0, t_Wab_ring, "ijab"); 
             }
 
             double e3_aa = 0.0, e3_bb = 0.0, e3_ab = 0.0;
@@ -751,9 +756,11 @@ void OMP3::compute_mp3_correction() {
                 for (int j = 0; j < na_; ++j) {
                     for (int a = 0; a < va_; ++a) {
                         for (int b = 0; b < va_; ++b) {
+                            double r_asym = Waa_ring(i,j,a,b) - Waa_ring(j,i,a,b) - Waa_ring(i,j,b,a) + Waa_ring(j,i,b,a);
+                            double w_tot = Waa_ladder(i,j,a,b) + r_asym;
                             double D = ea(i) + ea(j) - ea(na_+a) - ea(na_+b);
-                            t2_3rd_aa_(i,j,a,b) = Waa(i,j,a,b) / D;
-                            e3_aa += 0.125 * T2_aa_ijab(i,j,a,b) * Waa(i,j,a,b);
+                            t2_3rd_aa_(i,j,a,b) = w_tot / D;
+                            e3_aa += 0.25 * T2_aa_ijab(i,j,a,b) * w_tot;
                         }
                     }
                 }
@@ -765,9 +772,11 @@ void OMP3::compute_mp3_correction() {
                     for (int j = 0; j < nb_; ++j) {
                         for (int a = 0; a < vb_; ++a) {
                             for (int b = 0; b < vb_; ++b) {
+                                double r_asym = Wbb_ring(i,j,a,b) - Wbb_ring(j,i,a,b) - Wbb_ring(i,j,b,a) + Wbb_ring(j,i,b,a);
+                                double w_tot = Wbb_ladder(i,j,a,b) + r_asym;
                                 double D = eb(i) + eb(j) - eb(nb_+a) - eb(nb_+b);
-                                t2_3rd_bb_(i,j,a,b) = Wbb(i,j,a,b) / D;
-                                e3_bb += 0.125 * (*t2_bb_dense_ptr)(i,j,a,b) * Wbb(i,j,a,b);
+                                t2_3rd_bb_(i,j,a,b) = w_tot / D;
+                                e3_bb += 0.25 * (*t2_bb_dense_ptr)(i,j,a,b) * w_tot;
                             }
                         }
                     }
@@ -778,9 +787,10 @@ void OMP3::compute_mp3_correction() {
                     for (int j = 0; j < nb_; ++j) {
                         for (int a = 0; a < va_; ++a) {
                             for (int b = 0; b < vb_; ++b) {
+                                double w_tot = Wab_ladder(i,j,a,b) + Wab_ring(i,j,a,b); 
                                 double D = ea(i) + eb(j) - ea(na_+a) - eb(nb_+b);
-                                t2_3rd_ab_(i,j,a,b) = Wab(i,j,a,b) / D;
-                                e3_ab += 1.0 * (*t2_ab_dense)(i,j,a,b) * Wab(i,j,a,b);
+                                t2_3rd_ab_(i,j,a,b) = w_tot / D;
+                                e3_ab += 1.0 * (*t2_ab_dense)(i,j,a,b) * w_tot;
                             }
                         }
                     }
