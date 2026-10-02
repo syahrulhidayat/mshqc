@@ -658,27 +658,23 @@ void OMP3::compute_mp3_correction() {
             TBLIS_VIEW_4D(t_Waa, Waa, na_, na_, va_, va_);
 
             auto* t2_bb_dense_ptr = t2_bb_.get_block(0,0,0,0);
-            Eigen::Tensor< double, 4 > dummy_bb_local;
-            if (!t2_bb_dense_ptr && nb_ > 0 && vb_ > 0) {
-                dummy_bb_local = Eigen::Tensor< double, 4 >(nb_, nb_, vb_, vb_);
+            Eigen::Tensor< double, 4 > dummy_bb_local(nb_, nb_, vb_, vb_);
+            if (!t2_bb_dense_ptr) {
                 dummy_bb_local.setZero();
                 t2_bb_dense_ptr = &dummy_bb_local;
             }
+            
             auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
-            Eigen::Tensor< double, 4 > dummy_ab;
-            if (!t2_ab_dense && nb_ > 0 && vb_ > 0) {
-                dummy_ab = Eigen::Tensor< double, 4 >(na_, nb_, va_, vb_);
+            Eigen::Tensor< double, 4 > dummy_ab(na_, nb_, va_, vb_);
+            if (!t2_ab_dense) {
                 dummy_ab.setZero();
                 t2_ab_dense = &dummy_ab;
             }
-            
-            // FIX: Tambahkan inisialisasi t_Tbb, t_Tab, t_Wbb, t_Wab
-            double* t_Tbb_data = (nb_ > 0 && vb_ > 0) ? t2_bb_dense_ptr->data() : dummy_bb_local.data();
-            TBLIS_VIEW_4D(t_Tbb, t_Tbb_data, nb_, nb_, vb_, vb_);
+
+            TBLIS_VIEW_4D(t_Tbb, (*t2_bb_dense_ptr), nb_, nb_, vb_, vb_);
             TBLIS_VIEW_4D(t_Wbb, Wbb, nb_, nb_, vb_, vb_);
             
-            double* t_Tab_data = (nb_ > 0 && vb_ > 0) ? t2_ab_dense->data() : dummy_ab.data();
-            TBLIS_VIEW_4D(t_Tab, t_Tab_data, na_, nb_, va_, vb_);
+            TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
             TBLIS_VIEW_4D(t_Wab, Wab, na_, nb_, va_, vb_);
 
             auto V_vvvv_aa = get_V_exact(Cav, Cav, Cav, Cav);
