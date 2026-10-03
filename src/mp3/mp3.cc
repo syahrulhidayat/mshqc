@@ -74,6 +74,33 @@ MP3Result RMP3::compute() {
     const auto& Co = scf_.C_alpha.leftCols(no_a_);
     const auto& Cv = scf_.C_alpha.rightCols(nv_a_);
 
+    // 1. Ekstraksi Irrep SCF menjadi rentang blok spasial kontinu
+    auto build_irrep_spaces = [](const std::vector<int>& irreps, int start_idx, int count) {
+        std::vector<integrals::IrrepSpace> spaces;
+        if (count == 0 || irreps.empty()) return spaces;
+        int current_id = irreps[start_idx];
+        int current_offset = 0;
+        int current_size = 1;
+        for (int i = 1; i < count; ++i) {
+            if (irreps[start_idx + i] == current_id) {
+                current_size++;
+            } else {
+                spaces.push_back({current_id, current_offset, current_size});
+                current_id = irreps[start_idx + i];
+                current_offset += current_size;
+                current_size = 1;
+            }
+        }
+        spaces.push_back({current_id, current_offset, current_size});
+        return spaces;
+    };
+
+    std::vector<integrals::IrrepSpace> occ_spaces, virt_spaces;
+    if (!scf_.irreps_alpha.empty()) {
+        occ_spaces = build_irrep_spaces(scf_.irreps_alpha, 0, no_a_);
+        virt_spaces = build_irrep_spaces(scf_.irreps_alpha, no_a_, nv_a_);
+    }
+
     TBLIS_VIEW_4D(t_T, t2_aa_, no_a_, no_a_, nv_a_, nv_a_);
     Eigen::Tensor< double, 4 > W(no_a_, no_a_, nv_a_, nv_a_); W.setZero();
     TBLIS_VIEW_4D(t_W, W, no_a_, no_a_, nv_a_, nv_a_);
@@ -169,7 +196,7 @@ MP3Result RMP3::compute() {
         }
     }
 
-    // 3. Ring terms (ovov & oovv) dengan in-place allocation
+    // 3. Ring terms (ovov & oovv) dengan in-place allocation & blocked tensor
     {
         Eigen::Tensor<double, 4> V_ovov(no_a_, nv_a_, no_a_, nv_a_);
         Eigen::Tensor<double, 4> V_oovv(no_a_, no_a_, nv_a_, nv_a_);
@@ -179,12 +206,47 @@ MP3Result RMP3::compute() {
 
         if (config_.eri_method == "exact") {
             V_ovov = get_V_exact(Co, Cv, Co, Cv);
-            V_oovv = get_V_exact(Co, Co, Cv, Cv);
+            
+            if (!occ_spaces.empty() && !virt_spaces.empty()) {
+                auto blocked_oovv = integrals::ERITransformer::transform_oovv_blocked(
+                    eri_ao, Co, Cv, occ_spaces, virt_spaces, nbf_
+                );
+                
+                V_oovv.setZero();
+                #pragma omp parallel for schedule(dynamic)
+                for (size_t o1_idx = 0; o1_idx < occ_spaces.size(); ++o1_idx) {
+                    const auto& o1 = occ_spaces[o1_idx];
+                    for (const auto& v1 : virt_spaces) {
+                        for (const auto& o2 : occ_spaces) {
+                            for (const auto& v2 : virt_spaces) {
+                                if ((o1.id ^ v1.id ^ o2.id ^ v2.id) == 0) {
+                                    int key = (o1.id << 24) | (v1.id << 16) | (o2.id << 8) | v2.id;
+                                    auto it = blocked_oovv.blocks.find(key);
+                                    if (it != blocked_oovv.blocks.end()) {
+                                        const auto& block = it->second;
+                                        for (int i = 0; i < o1.size; ++i) {
+                                            for (int a = 0; a < v1.size; ++a) {
+                                                for (int j = 0; j < o2.size; ++j) {
+                                                    for (int b = 0; b < v2.size; ++b) {
+                                                        V_oovv(o1.offset + i, v1.offset + a, o2.offset + j, v2.offset + b) = block(i, a, j, b);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                V_oovv = get_V_exact(Co, Co, Cv, Cv);
+            }
         } else {
             calc_ovov = make_V_from_B_inplace(B_ov, B_ov, V_ovov);
             calc_oovv = make_V_from_B_inplace(B_oo, B_vv, V_oovv);
         }
-        
+
         TBLIS_VIEW_4D(t_Vovov, V_ovov, no_a_, nv_a_, no_a_, nv_a_);
         TBLIS_VIEW_4D(t_Voovv, V_oovv, no_a_, no_a_, nv_a_, nv_a_);
 

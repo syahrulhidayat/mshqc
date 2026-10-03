@@ -58,3 +58,4 @@ dist/
 releases/
 dist/
 compile_commands.json
+.clangd
