@@ -174,7 +174,6 @@ void BaseSCF::init_integrals_incore() {
     auto process_quartet = [&](int M, int N, int P, int Q, double weight) {
         if (schwarz_(M, N) * schwarz_(P, Q) < shell_cutoff) return;
         
-        // Panggilan blok on-the-fly, mengabaikan matriks ERI raksasa
         auto buf = integrals_->compute_shell_block(M, N, P, Q);
         
         int dimM = shell_sizes_[M]; int dimN = shell_sizes_[N];
@@ -192,15 +191,22 @@ void BaseSCF::init_integrals_incore() {
                         int lam = stP + p; int sig = stQ + q;
                         if (P == Q && lam < sig) continue; 
                         
-                        int mn = mu * nbasis_ + nu;
-                        int ls = lam * nbasis_ + sig;
-                        if (M == P && N == Q && mn < ls) continue; 
+                        // BITWISE PACKING (Menghapus '/' dan '%' di masa depan)
+                        int packed_mn = (mu << 16) | nu;
+                        int packed_ls = (lam << 16) | sig;
+                        if (M == P && N == Q && packed_mn < packed_ls) continue; 
                         
                         double val = buf[m + dimM * (n + dimN * (p + dimP * q))] * weight;
                         if (std::abs(val) > sparse_threshold) {
-                            J_val_[idx] = val;
-                            J_ind_[idx] = mn;
-                            K_ind_[idx] = ls;
+                            // PRE-CALCULATE SYMMETRY FACTOR
+                            double f = 1.0;
+                            if (mu == nu) f *= 0.5;
+                            if (lam == sig) f *= 0.5;
+                            if (packed_mn == packed_ls) f *= 0.5;
+                            
+                            J_val_[idx] = val * f; // Sudah terkalikan f!
+                            J_ind_[idx] = packed_mn;
+                            K_ind_[idx] = packed_ls;
                             idx++;
                         }
                     }
@@ -525,32 +531,19 @@ void RHF::build_fock_matrix() {
                 
                 #pragma omp for schedule(dynamic, 2048)
                 for (size_t k = 0; k < n_ints; ++k) {
-                    int mn = ind1[k]; int mu = mn / nbasis_; int nu = mn % nbasis_;
-                    int ls = ind2[k]; int lam = ls / nbasis_; int sig = ls % nbasis_;
-                    double v = val[k];
-
-                    double f = 1.0;
-                    if (mu == nu) f *= 0.5;
-                    if (lam == sig) f *= 0.5;
-                    if (mn == ls) f *= 0.5;
-                    v *= f;
-
-                    double p_ls = dP(lam, sig);
-                    double p_mn = dP(mu, nu);
+                    // FAST BITWISE UNPACKING (0 overhead)
+                    int p_mn = ind1[k]; int mu = (p_mn >> 16) & 0xFFFF; int nu = p_mn & 0xFFFF;
+                    int p_ls = ind2[k]; int lam = (p_ls >> 16) & 0xFFFF; int sig = p_ls & 0xFFFF;
+                    double v = val[k]; // Faktor f sudah dihitung di init!
                     
                     double vJ = 4.0 * v;
-                    G_local(mu, nu) += vJ * p_ls;
-                    if (mn != ls) G_local(lam, sig) += vJ * p_mn;
+                    G_local(mu, nu) += vJ * dP(lam, sig);
+                    if (p_mn != p_ls) G_local(lam, sig) += vJ * dP(mu, nu);
                     
-                    double p_ms = dP(mu, sig);
-                    double p_ml = dP(mu, lam);
-                    double p_ns = dP(nu, sig);
-                    double p_nl = dP(nu, lam);
-                    
-                    G_local(mu, lam) -= v * p_ns;
-                    G_local(mu, sig) -= v * p_nl;
-                    G_local(nu, lam) -= v * p_ms;
-                    G_local(nu, sig) -= v * p_ml;
+                    G_local(mu, lam) -= v * dP(nu, sig);
+                    G_local(mu, sig) -= v * dP(nu, lam);
+                    G_local(nu, lam) -= v * dP(mu, sig);
+                    G_local(nu, sig) -= v * dP(mu, lam);
                 }
                 #pragma omp critical
                 { dG += G_local; }
@@ -771,15 +764,9 @@ void UHF::build_fock_matrix() {
                 
                 #pragma omp for schedule(dynamic, 2048)
                 for (size_t k = 0; k < n_ints; ++k) {
-                    int mn = ind1[k]; int mu = mn / nbasis_; int nu = mn % nbasis_;
-                    int ls = ind2[k]; int lam = ls / nbasis_; int sig = ls % nbasis_;
+                    int p_mn = ind1[k]; int mu = (p_mn >> 16) & 0xFFFF; int nu = p_mn & 0xFFFF;
+                    int p_ls = ind2[k]; int lam = (p_ls >> 16) & 0xFFFF; int sig = p_ls & 0xFFFF;
                     double v = val[k];
-
-                    double f = 1.0;
-                    if (mu == nu) f *= 0.5;
-                    if (lam == sig) f *= 0.5;
-                    if (mn == ls) f *= 0.5;
-                    v *= f;
 
                     double pt_ls = dP_tot(lam, sig);
                     double pt_mn = dP_tot(mu, nu);
@@ -790,30 +777,20 @@ void UHF::build_fock_matrix() {
 
                     Ga_local(mu, nu) += J_mn;
                     Gb_local(mu, nu) += J_mn;
-                    if (mn != ls) {
+                    if (p_mn != p_ls) {
                         Ga_local(lam, sig) += J_ls;
                         Gb_local(lam, sig) += J_ls;
                     }
-                    
-                    double pa_ms = dPa(mu, sig);
-                    double pa_ml = dPa(mu, lam);
-                    double pa_ns = dPa(nu, sig);
-                    double pa_nl = dPa(nu, lam);
-                    
-                    Ga_local(mu, lam) -= v * pa_ns;
-                    Ga_local(mu, sig) -= v * pa_nl;
-                    Ga_local(nu, lam) -= v * pa_ms;
-                    Ga_local(nu, sig) -= v * pa_ml;
 
-                    double pb_ms = dPb(mu, sig);
-                    double pb_ml = dPb(mu, lam);
-                    double pb_ns = dPb(nu, sig);
-                    double pb_nl = dPb(nu, lam);
-                    
-                    Gb_local(mu, lam) -= v * pb_ns;
-                    Gb_local(mu, sig) -= v * pb_nl;
-                    Gb_local(nu, lam) -= v * pb_ms;
-                    Gb_local(nu, sig) -= v * pb_ml;
+                    Ga_local(mu, lam) -= v * dPa(nu, sig);
+                    Ga_local(mu, sig) -= v * dPa(nu, lam);
+                    Ga_local(nu, lam) -= v * dPa(mu, sig);
+                    Ga_local(nu, sig) -= v * dPa(mu, lam);
+
+                    Gb_local(mu, lam) -= v * dPb(nu, sig);
+                    Gb_local(mu, sig) -= v * dPb(nu, lam);
+                    Gb_local(nu, lam) -= v * dPb(mu, sig);
+                    Gb_local(nu, sig) -= v * dPb(mu, lam);
                 }
                 #pragma omp critical
                 { dGa += Ga_local; dGb += Gb_local; }
@@ -1036,15 +1013,9 @@ void ROHF::build_fock_matrix() {
                 
                 #pragma omp for schedule(dynamic, 2048)
                 for (size_t k = 0; k < n_ints; ++k) {
-                    int mn = ind1[k]; int mu = mn / nbasis_; int nu = mn % nbasis_;
-                    int ls = ind2[k]; int lam = ls / nbasis_; int sig = ls % nbasis_;
+                    int p_mn = ind1[k]; int mu = (p_mn >> 16) & 0xFFFF; int nu = p_mn & 0xFFFF;
+                    int p_ls = ind2[k]; int lam = (p_ls >> 16) & 0xFFFF; int sig = p_ls & 0xFFFF;
                     double v = val[k];
-
-                    double f = 1.0;
-                    if (mu == nu) f *= 0.5;
-                    if (lam == sig) f *= 0.5;
-                    if (mn == ls) f *= 0.5;
-                    v *= f;
 
                     double pt_ls = dP_tot(lam, sig);
                     double pt_mn = dP_tot(mu, nu);
@@ -1055,30 +1026,20 @@ void ROHF::build_fock_matrix() {
 
                     Ga_local(mu, nu) += J_mn;
                     Gb_local(mu, nu) += J_mn;
-                    if (mn != ls) {
+                    if (p_mn != p_ls) {
                         Ga_local(lam, sig) += J_ls;
                         Gb_local(lam, sig) += J_ls;
                     }
-                    
-                    double pa_ms = dPa(mu, sig);
-                    double pa_ml = dPa(mu, lam);
-                    double pa_ns = dPa(nu, sig);
-                    double pa_nl = dPa(nu, lam);
-                    
-                    Ga_local(mu, lam) -= v * pa_ns;
-                    Ga_local(mu, sig) -= v * pa_nl;
-                    Ga_local(nu, lam) -= v * pa_ms;
-                    Ga_local(nu, sig) -= v * pa_ml;
 
-                    double pb_ms = dPb(mu, sig);
-                    double pb_ml = dPb(mu, lam);
-                    double pb_ns = dPb(nu, sig);
-                    double pb_nl = dPb(nu, lam);
-                    
-                    Gb_local(mu, lam) -= v * pb_ns;
-                    Gb_local(mu, sig) -= v * pb_nl;
-                    Gb_local(nu, lam) -= v * pb_ms;
-                    Gb_local(nu, sig) -= v * pb_ml;
+                    Ga_local(mu, lam) -= v * dPa(nu, sig);
+                    Ga_local(mu, sig) -= v * dPa(nu, lam);
+                    Ga_local(nu, lam) -= v * dPa(mu, sig);
+                    Ga_local(nu, sig) -= v * dPa(mu, lam);
+
+                    Gb_local(mu, lam) -= v * dPb(nu, sig);
+                    Gb_local(mu, sig) -= v * dPb(nu, lam);
+                    Gb_local(nu, lam) -= v * dPb(mu, sig);
+                    Gb_local(nu, sig) -= v * dPb(mu, lam);
                 }
                 #pragma omp critical
                 { dGa += Ga_local; dGb += Gb_local; }
