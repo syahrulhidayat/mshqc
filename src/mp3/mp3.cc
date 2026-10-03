@@ -132,10 +132,9 @@ MP3Result RMP3::compute() {
 
     auto make_V_from_B_inplace = [](const Eigen::MatrixXd& B1, const Eigen::MatrixXd& B2, Eigen::Tensor<double, 4>& V_mo) {
         Eigen::MatrixXd V_mat = B1 * B2.transpose();
-
         if (V_mat.cwiseAbs().maxCoeff() < 1e-12) {
             V_mo.setZero();
-            return false; 
+            return false;
         }
         std::copy(V_mat.data(), V_mat.data() + V_mat.size(), V_mo.data());
         return true;
@@ -391,7 +390,7 @@ MP3Result UMP3::compute() {
         Eigen::MatrixXd V_mat = B1 * B2.transpose();
         if (V_mat.cwiseAbs().maxCoeff() < 1e-12) {
             V_mo.setZero();
-            return false; 
+            return false;
         }
         std::copy(V_mat.data(), V_mat.data() + V_mat.size(), V_mo.data());
         return true;
@@ -526,41 +525,55 @@ MP3Result UMP3::compute() {
     }
 
     // =========================================================================
-    // 2. TAHAP LADDER (oooo) - Ringan $O(n_o^4)$
+    // 2. TAHAP LADDER (oooo) - Ringan O(n_o^4)
     // =========================================================================
     {
-        Eigen::Tensor<double, 4> Vaa;
+        Eigen::Tensor<double, 4> Vaa(no_a_, no_a_, no_a_, no_a_);
         if (config_.eri_method == "exact") {
             Vaa = get_V_exact(Cao, Cao, Cao, Cao);
+            TBLIS_VIEW_4D(t_Vaa, Vaa, no_a_, no_a_, no_a_, no_a_); Waa.setZero();
+            tblis::mult< double >(1.0, t_Taa, "mnab", t_Vaa, "minj", 1.0, t_Waa, "ijab");
+            tblis::mult< double >(-1.0, t_Taa, "mnab", t_Vaa, "mjni", 1.0, t_Waa, "ijab");
+            e3_aa += 0.125 * tensor_dot(t2_aa_, Waa);
         } else {
-            Vaa = make_V_from_B(B_oo_a, B_oo_a, no_a_, no_a_, no_a_, no_a_);
+            if (make_V_from_B_inplace(B_oo_a, B_oo_a, Vaa)) {
+                TBLIS_VIEW_4D(t_Vaa, Vaa, no_a_, no_a_, no_a_, no_a_); Waa.setZero();
+                tblis::mult< double >(1.0, t_Taa, "mnab", t_Vaa, "minj", 1.0, t_Waa, "ijab");
+                tblis::mult< double >(-1.0, t_Taa, "mnab", t_Vaa, "mjni", 1.0, t_Waa, "ijab");
+                e3_aa += 0.125 * tensor_dot(t2_aa_, Waa);
+            }
         }
-        TBLIS_VIEW_4D(t_Vaa, Vaa, no_a_, no_a_, no_a_, no_a_); Waa.setZero();
-        tblis::mult< double >(1.0, t_Taa, "mnab", t_Vaa, "minj", 1.0, t_Waa, "ijab");
-        tblis::mult< double >(-1.0, t_Taa, "mnab", t_Vaa, "mjni", 1.0, t_Waa, "ijab");
-        e3_aa += 0.125 * tensor_dot(t2_aa_, Waa);
 
         if (no_b_ > 0 && nv_b_ > 0) {
-            Eigen::Tensor<double, 4> Vbb;
+            Eigen::Tensor<double, 4> Vbb(no_b_, no_b_, no_b_, no_b_);
             if (config_.eri_method == "exact") {
                 Vbb = get_V_exact(Cbo, Cbo, Cbo, Cbo);
+                TBLIS_VIEW_4D(t_Vbb, Vbb, no_b_, no_b_, no_b_, no_b_); Wbb.setZero();
+                tblis::mult< double >(1.0, t_Tbb, "mnab", t_Vbb, "minj", 1.0, t_Wbb, "ijab");
+                tblis::mult< double >(-1.0, t_Tbb, "mnab", t_Vbb, "mjni", 1.0, t_Wbb, "ijab");
+                e3_bb += 0.125 * tensor_dot(t2_bb_, Wbb);
             } else {
-                Vbb = make_V_from_B(B_oo_b, B_oo_b, no_b_, no_b_, no_b_, no_b_);
+                if (make_V_from_B_inplace(B_oo_b, B_oo_b, Vbb)) {
+                    TBLIS_VIEW_4D(t_Vbb, Vbb, no_b_, no_b_, no_b_, no_b_); Wbb.setZero();
+                    tblis::mult< double >(1.0, t_Tbb, "mnab", t_Vbb, "minj", 1.0, t_Wbb, "ijab");
+                    tblis::mult< double >(-1.0, t_Tbb, "mnab", t_Vbb, "mjni", 1.0, t_Wbb, "ijab");
+                    e3_bb += 0.125 * tensor_dot(t2_bb_, Wbb);
+                }
             }
-            TBLIS_VIEW_4D(t_Vbb, Vbb, no_b_, no_b_, no_b_, no_b_); Wbb.setZero();
-            tblis::mult< double >(1.0, t_Tbb, "mnab", t_Vbb, "minj", 1.0, t_Wbb, "ijab");
-            tblis::mult< double >(-1.0, t_Tbb, "mnab", t_Vbb, "mjni", 1.0, t_Wbb, "ijab");
-            e3_bb += 0.125 * tensor_dot(t2_bb_, Wbb);
 
-            Eigen::Tensor<double, 4> Vab;
+            Eigen::Tensor<double, 4> Vab(no_a_, no_a_, no_b_, no_b_);
             if (config_.eri_method == "exact") {
                 Vab = get_V_exact(Cao, Cao, Cbo, Cbo);
+                TBLIS_VIEW_4D(t_Vab, Vab, no_a_, no_a_, no_b_, no_b_); Wab.setZero();
+                tblis::mult< double >(1.0, t_Tab, "mnab", t_Vab, "minj", 1.0, t_Wab, "ijab");
+                e3_ab += 1.0 * tensor_dot(t2_ab_, Wab);
             } else {
-                Vab = make_V_from_B(B_oo_a, B_oo_b, no_a_, no_a_, no_b_, no_b_);
+                if (make_V_from_B_inplace(B_oo_a, B_oo_b, Vab)) {
+                    TBLIS_VIEW_4D(t_Vab, Vab, no_a_, no_a_, no_b_, no_b_); Wab.setZero();
+                    tblis::mult< double >(1.0, t_Tab, "mnab", t_Vab, "minj", 1.0, t_Wab, "ijab");
+                    e3_ab += 1.0 * tensor_dot(t2_ab_, Wab);
+                }
             }
-            TBLIS_VIEW_4D(t_Vab, Vab, no_a_, no_a_, no_b_, no_b_); Wab.setZero();
-            tblis::mult< double >(1.0, t_Tab, "mnab", t_Vab, "minj", 1.0, t_Wab, "ijab");
-            e3_ab += 1.0 * tensor_dot(t2_ab_, Wab);
         }
     }
 
