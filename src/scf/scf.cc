@@ -540,7 +540,7 @@ void RHF::build_fock_matrix() {
                     
                     double vJ = 4.0 * v;
                     G_local(mu, nu) += vJ * p_ls;
-                    G_local(lam, sig) += vJ * p_mn;
+                    if (mn != ls) G_local(lam, sig) += vJ * p_mn;
                     
                     double p_ms = dP(mu, sig);
                     double p_ml = dP(mu, lam);
@@ -789,9 +789,11 @@ void UHF::build_fock_matrix() {
                     double J_ls = vJ * pt_mn;
 
                     Ga_local(mu, nu) += J_mn;
-                    Ga_local(lam, sig) += J_ls;
                     Gb_local(mu, nu) += J_mn;
-                    Gb_local(lam, sig) += J_ls;
+                    if (mn != ls) {
+                        Ga_local(lam, sig) += J_ls;
+                        Gb_local(lam, sig) += J_ls;
+                    }
                     
                     double pa_ms = dPa(mu, sig);
                     double pa_ml = dPa(mu, lam);
@@ -1052,9 +1054,11 @@ void ROHF::build_fock_matrix() {
                     double J_ls = vJ * pt_mn;
 
                     Ga_local(mu, nu) += J_mn;
-                    Ga_local(lam, sig) += J_ls;
                     Gb_local(mu, nu) += J_mn;
-                    Gb_local(lam, sig) += J_ls;
+                    if (mn != ls) {
+                        Ga_local(lam, sig) += J_ls;
+                        Gb_local(lam, sig) += J_ls;
+                    }
                     
                     double pa_ms = dPa(mu, sig);
                     double pa_ml = dPa(mu, lam);
