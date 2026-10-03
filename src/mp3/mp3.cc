@@ -76,7 +76,7 @@ MP3Result RMP3::compute() {
 
     // 1. Ekstraksi Irrep SCF menjadi rentang blok spasial kontinu
     auto build_irrep_spaces = [](const std::vector<int>& irreps, int start_idx, int count) {
-        std::vector<integrals::IrrepSpace> spaces;
+        std::vector<IrrepSpace> spaces;
         if (count == 0 || irreps.empty()) return spaces;
         int current_id = irreps[start_idx];
         int current_offset = 0;
@@ -95,7 +95,7 @@ MP3Result RMP3::compute() {
         return spaces;
     };
 
-    std::vector<integrals::IrrepSpace> occ_spaces, virt_spaces;
+    std::vector<IrrepSpace> occ_spaces, virt_spaces;
     if (!scf_.irreps_alpha.empty()) {
         occ_spaces = build_irrep_spaces(scf_.irreps_alpha, 0, no_a_);
         virt_spaces = build_irrep_spaces(scf_.irreps_alpha, no_a_, nv_a_);
@@ -320,7 +320,7 @@ MP3Result UMP3::compute() {
         }
     }
     auto build_irrep_spaces = [](const std::vector<int>& irreps, int start_idx, int count) {
-        std::vector<integrals::IrrepSpace> spaces;
+        std::vector<IrrepSpace> spaces;
         if (count == 0 || irreps.empty()) return spaces;
         int current_id = irreps[start_idx];
         int current_offset = 0;
@@ -339,8 +339,8 @@ MP3Result UMP3::compute() {
         return spaces;
     };
 
-    std::vector<integrals::IrrepSpace> occ_a_spaces, virt_a_spaces;
-    std::vector<integrals::IrrepSpace> occ_b_spaces, virt_b_spaces;
+    std::vector<IrrepSpace> occ_a_spaces, virt_a_spaces;
+    std::vector<IrrepSpace> occ_b_spaces, virt_b_spaces;
     if (!scf_.irreps_alpha.empty()) {
         occ_a_spaces = build_irrep_spaces(scf_.irreps_alpha, 0, no_a_);
         virt_a_spaces = build_irrep_spaces(scf_.irreps_alpha, no_a_, nv_a_);
