@@ -200,19 +200,17 @@ MP3Result RMP3::compute() {
     {
         Eigen::Tensor<double, 4> V_ovov(no_a_, nv_a_, no_a_, nv_a_);
         Eigen::Tensor<double, 4> V_oovv(no_a_, no_a_, nv_a_, nv_a_);
-        
-        bool calc_ovov = true;
-        bool calc_oovv = true;
+        bool calc_ovov = true, calc_oovv = true;
 
         if (config_.eri_method == "exact") {
-            V_ovov = get_V_exact(Co, Cv, Co, Cv);
+            V_oovv = get_V_exact(Co, Co, Cv, Cv); 
             
             if (!occ_spaces.empty() && !virt_spaces.empty()) {
-                auto blocked_oovv = integrals::ERITransformer::transform_oovv_blocked(
+                auto blocked_ovov = integrals::ERITransformer::transform_oovv_blocked(
                     eri_ao, Co, Cv, occ_spaces, virt_spaces, nbf_
                 );
                 
-                V_oovv.setZero();
+                V_ovov.setZero();
                 #pragma omp parallel for schedule(dynamic)
                 for (size_t o1_idx = 0; o1_idx < occ_spaces.size(); ++o1_idx) {
                     const auto& o1 = occ_spaces[o1_idx];
@@ -221,14 +219,14 @@ MP3Result RMP3::compute() {
                             for (const auto& v2 : virt_spaces) {
                                 if ((o1.id ^ v1.id ^ o2.id ^ v2.id) == 0) {
                                     int key = (o1.id << 24) | (v1.id << 16) | (o2.id << 8) | v2.id;
-                                    auto it = blocked_oovv.blocks.find(key);
-                                    if (it != blocked_oovv.blocks.end()) {
+                                    auto it = blocked_ovov.blocks.find(key);
+                                    if (it != blocked_ovov.blocks.end()) {
                                         const auto& block = it->second;
                                         for (int i = 0; i < o1.size; ++i) {
                                             for (int a = 0; a < v1.size; ++a) {
                                                 for (int j = 0; j < o2.size; ++j) {
                                                     for (int b = 0; b < v2.size; ++b) {
-                                                        V_oovv(o1.offset + i, v1.offset + a, o2.offset + j, v2.offset + b) = block(i, a, j, b);
+                                                        V_ovov(o1.offset + i, v1.offset + a, o2.offset + j, v2.offset + b) = block(i, a, j, b);
                                                     }
                                                 }
                                             }
@@ -240,7 +238,7 @@ MP3Result RMP3::compute() {
                     }
                 }
             } else {
-                V_oovv = get_V_exact(Co, Co, Cv, Cv);
+                V_ovov = get_V_exact(Co, Cv, Co, Cv);
             }
         } else {
             calc_ovov = make_V_from_B_inplace(B_ov, B_ov, V_ovov);
@@ -320,6 +318,36 @@ MP3Result UMP3::compute() {
         } else {
             ptr_ab = t2_ab_.data();
         }
+    }
+    auto build_irrep_spaces = [](const std::vector<int>& irreps, int start_idx, int count) {
+        std::vector<integrals::IrrepSpace> spaces;
+        if (count == 0 || irreps.empty()) return spaces;
+        int current_id = irreps[start_idx];
+        int current_offset = 0;
+        int current_size = 1;
+        for (int i = 1; i < count; ++i) {
+            if (irreps[start_idx + i] == current_id) {
+                current_size++;
+            } else {
+                spaces.push_back({current_id, current_offset, current_size});
+                current_id = irreps[start_idx + i];
+                current_offset += current_size;
+                current_size = 1;
+            }
+        }
+        spaces.push_back({current_id, current_offset, current_size});
+        return spaces;
+    };
+
+    std::vector<integrals::IrrepSpace> occ_a_spaces, virt_a_spaces;
+    std::vector<integrals::IrrepSpace> occ_b_spaces, virt_b_spaces;
+    if (!scf_.irreps_alpha.empty()) {
+        occ_a_spaces = build_irrep_spaces(scf_.irreps_alpha, 0, no_a_);
+        virt_a_spaces = build_irrep_spaces(scf_.irreps_alpha, no_a_, nv_a_);
+    }
+    if (!scf_.irreps_beta.empty()) {
+        occ_b_spaces = build_irrep_spaces(scf_.irreps_beta, 0, no_b_);
+        virt_b_spaces = build_irrep_spaces(scf_.irreps_beta, no_b_, nv_b_);
     }
     TBLIS_VIEW_4D(t_Taa, t2_aa_, no_a_, no_a_, nv_a_, nv_a_);
 
@@ -537,64 +565,155 @@ MP3Result UMP3::compute() {
     }
 
     // =========================================================================
-    // 3. TAHAP RING (ovov & oovv) - Kompak $O(n_o^2 n_v^2)$
+    // 3. TAHAP RING (ovov & oovv) - Kompak O(n_o^2 n_v^2)
     // =========================================================================
     {
-        Eigen::Tensor<double, 4> ovov_aa, oovv_aa;
+        Eigen::Tensor<double, 4> ovov_aa(no_a_, nv_a_, no_a_, nv_a_);
+        Eigen::Tensor<double, 4> oovv_aa(no_a_, no_a_, nv_a_, nv_a_);
+        bool calc_aa = true;
+
         if (config_.eri_method == "exact") {
-            ovov_aa = get_V_exact(Cao, Cav, Cao, Cav);
-            oovv_aa = get_V_exact(Cao, Cao, Cav, Cav);
+            oovv_aa = get_V_exact(Cao, Cao, Cav, Cav); 
+            
+            if (!occ_a_spaces.empty() && !virt_a_spaces.empty()) {
+                auto blocked_ovov = integrals::ERITransformer::transform_oovv_blocked(
+                    eri_ao, Cao, Cav, occ_a_spaces, virt_a_spaces, nbf_
+                ); 
+                
+                ovov_aa.setZero();
+                #pragma omp parallel for schedule(dynamic)
+                for (size_t o1_idx = 0; o1_idx < occ_a_spaces.size(); ++o1_idx) {
+                    const auto& o1 = occ_a_spaces[o1_idx];
+                    for (const auto& v1 : virt_a_spaces) {
+                        for (const auto& o2 : occ_a_spaces) {
+                            for (const auto& v2 : virt_a_spaces) {
+                                if ((o1.id ^ v1.id ^ o2.id ^ v2.id) == 0) {
+                                    int key = (o1.id << 24) | (v1.id << 16) | (o2.id << 8) | v2.id;
+                                    auto it = blocked_ovov.blocks.find(key);
+                                    if (it != blocked_ovov.blocks.end()) {
+                                        const auto& block = it->second;
+                                        for (int i = 0; i < o1.size; ++i) {
+                                            for (int a = 0; a < v1.size; ++a) {
+                                                for (int j = 0; j < o2.size; ++j) {
+                                                    for (int b = 0; b < v2.size; ++b) {
+                                                        ovov_aa(o1.offset + i, v1.offset + a, o2.offset + j, v2.offset + b) = block(i, a, j, b);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                ovov_aa = get_V_exact(Cao, Cav, Cao, Cav);
+            }
         } else {
-            ovov_aa = make_V_from_B(B_ov_a, B_ov_a, no_a_, nv_a_, no_a_, nv_a_);
-            oovv_aa = make_V_from_B(B_oo_a, B_vv_a, no_a_, no_a_, nv_a_, nv_a_);
+            calc_aa = make_V_from_B_inplace(B_ov_a, B_ov_a, ovov_aa);
+            calc_aa &= make_V_from_B_inplace(B_oo_a, B_vv_a, oovv_aa);
         }
+
         TBLIS_VIEW_4D(t_ovov_aa, ovov_aa, no_a_, nv_a_, no_a_, nv_a_);
         TBLIS_VIEW_4D(t_oovv_aa, oovv_aa, no_a_, no_a_, nv_a_, nv_a_);
 
         Waa.setZero();
-        tblis::mult< double >(1.0, t_ovov_aa, "iakc", t_Taa, "kjcb", 1.0, t_Waa, "ijab");
-        tblis::mult< double >(-1.0, t_oovv_aa, "ikac", t_Taa, "kjcb", 1.0, t_Waa, "ijab");
+        if (calc_aa) {
+            tblis::mult< double >(1.0, t_ovov_aa, "iakc", t_Taa, "kjcb", 1.0, t_Waa, "ijab");
+            tblis::mult< double >(-1.0, t_oovv_aa, "ikac", t_Taa, "kjcb", 1.0, t_Waa, "ijab");
+        }
 
         if (no_b_ > 0 && nv_b_ > 0) {
-            Eigen::Tensor<double, 4> ovov_bb, oovv_bb;
-            Eigen::Tensor<double, 4> ovov_ab, oovv_ab_ex, oovv_ba_ex;
+            Eigen::Tensor<double, 4> ovov_bb(no_b_, nv_b_, no_b_, nv_b_);
+            Eigen::Tensor<double, 4> oovv_bb(no_b_, no_b_, nv_b_, nv_b_);
+            Eigen::Tensor<double, 4> ovov_ab(no_a_, nv_a_, no_b_, nv_b_);
+            Eigen::Tensor<double, 4> oovv_ab_ex(no_a_, no_a_, nv_b_, nv_b_);
+            Eigen::Tensor<double, 4> oovv_ba_ex(no_b_, no_b_, nv_a_, nv_a_);
+            
+            bool calc_bb = true, calc_ab = true;
+
             if (config_.eri_method == "exact") {
-                ovov_bb    = get_V_exact(Cbo, Cbv, Cbo, Cbv);
                 oovv_bb    = get_V_exact(Cbo, Cbo, Cbv, Cbv);
                 ovov_ab    = get_V_exact(Cao, Cav, Cbo, Cbv);
                 oovv_ab_ex = get_V_exact(Cao, Cao, Cbv, Cbv);
                 oovv_ba_ex = get_V_exact(Cbo, Cbo, Cav, Cav);
+
+                if (!occ_b_spaces.empty() && !virt_b_spaces.empty()) {
+                    auto blocked_ovov_bb = integrals::ERITransformer::transform_oovv_blocked(
+                        eri_ao, Cbo, Cbv, occ_b_spaces, virt_b_spaces, nbf_
+                    );
+                    
+                    ovov_bb.setZero();
+                    #pragma omp parallel for schedule(dynamic)
+                    for (size_t o1_idx = 0; o1_idx < occ_b_spaces.size(); ++o1_idx) {
+                        const auto& o1 = occ_b_spaces[o1_idx];
+                        for (const auto& v1 : virt_b_spaces) {
+                            for (const auto& o2 : occ_b_spaces) {
+                                for (const auto& v2 : virt_b_spaces) {
+                                    if ((o1.id ^ v1.id ^ o2.id ^ v2.id) == 0) {
+                                        int key = (o1.id << 24) | (v1.id << 16) | (o2.id << 8) | v2.id;
+                                        auto it = blocked_ovov_bb.blocks.find(key);
+                                        if (it != blocked_ovov_bb.blocks.end()) {
+                                            const auto& block = it->second;
+                                            for (int i = 0; i < o1.size; ++i) {
+                                                for (int a = 0; a < v1.size; ++a) {
+                                                    for (int j = 0; j < o2.size; ++j) {
+                                                        for (int b = 0; b < v2.size; ++b) {
+                                                            ovov_bb(o1.offset + i, v1.offset + a, o2.offset + j, v2.offset + b) = block(i, a, j, b);
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    ovov_bb = get_V_exact(Cbo, Cbv, Cbo, Cbv);
+                }
             } else {
-                ovov_bb    = make_V_from_B(B_ov_b, B_ov_b, no_b_, nv_b_, no_b_, nv_b_);
-                oovv_bb    = make_V_from_B(B_oo_b, B_vv_b, no_b_, no_b_, nv_b_, nv_b_);
-                ovov_ab    = make_V_from_B(B_ov_a, B_ov_b, no_a_, nv_a_, no_b_, nv_b_);
-                oovv_ab_ex = make_V_from_B(B_oo_a, B_vv_b, no_a_, no_a_, nv_b_, nv_b_);
-                oovv_ba_ex = make_V_from_B(B_oo_b, B_vv_a, no_b_, no_b_, nv_a_, nv_a_);
+                calc_bb = make_V_from_B_inplace(B_ov_b, B_ov_b, ovov_bb);
+                calc_bb &= make_V_from_B_inplace(B_oo_b, B_vv_b, oovv_bb);
+                calc_ab = make_V_from_B_inplace(B_ov_a, B_ov_b, ovov_ab);
+                calc_ab &= make_V_from_B_inplace(B_oo_a, B_vv_b, oovv_ab_ex);
+                calc_ab &= make_V_from_B_inplace(B_oo_b, B_vv_a, oovv_ba_ex);
             }
+            
             TBLIS_VIEW_4D(t_ovov_bb, ovov_bb, no_b_, nv_b_, no_b_, nv_b_);
             TBLIS_VIEW_4D(t_oovv_bb, oovv_bb, no_b_, no_b_, nv_b_, nv_b_);
             TBLIS_VIEW_4D(t_ovov_ab, ovov_ab, no_a_, nv_a_, no_b_, nv_b_);
             TBLIS_VIEW_4D(t_oovv_ab_ex, oovv_ab_ex, no_a_, no_a_, nv_b_, nv_b_);
             TBLIS_VIEW_4D(t_oovv_ba_ex, oovv_ba_ex, no_b_, no_b_, nv_a_, nv_a_);
 
-            tblis::mult< double >(1.0, t_ovov_ab, "iakc", t_Tab, "jkbc", 1.0, t_Waa, "ijab");
+            if (calc_ab) tblis::mult< double >(1.0, t_ovov_ab, "iakc", t_Tab, "jkbc", 1.0, t_Waa, "ijab");
             e3_aa += 1.0 * tensor_dot(t2_aa_, Waa);
 
             Wbb.setZero();
-            tblis::mult< double >(1.0, t_ovov_bb, "iakc", t_Tbb, "kjcb", 1.0, t_Wbb, "ijab");
-            tblis::mult< double >(-1.0, t_oovv_bb, "ikac", t_Tbb, "kjcb", 1.0, t_Wbb, "ijab");
-            tblis::mult< double >(1.0, t_ovov_ab, "kcia", t_Tab, "kjcb", 1.0, t_Wbb, "ijab"); 
+            if (calc_bb) {
+                tblis::mult< double >(1.0, t_ovov_bb, "iakc", t_Tbb, "kjcb", 1.0, t_Wbb, "ijab");
+                tblis::mult< double >(-1.0, t_oovv_bb, "ikac", t_Tbb, "kjcb", 1.0, t_Wbb, "ijab");
+            }
+            if (calc_ab) tblis::mult< double >(1.0, t_ovov_ab, "kcia", t_Tab, "kjcb", 1.0, t_Wbb, "ijab"); 
             e3_bb += 1.0 * tensor_dot(t2_bb_, Wbb);
 
             Wab.setZero();
-            tblis::mult< double >(1.0,  t_ovov_aa, "iakc", t_Tab, "kjcb", 1.0, t_Wab, "ijab");
-            tblis::mult< double >(-1.0, t_oovv_aa, "ikac", t_Tab, "kjcb", 1.0, t_Wab, "ijab");
-            tblis::mult< double >(1.0,  t_Tab, "ikac", t_ovov_bb, "kcjb", 1.0, t_Wab, "ijab");
-            tblis::mult< double >(-1.0, t_Tab, "ikac", t_oovv_bb, "kjcb", 1.0, t_Wab, "ijab");
-            tblis::mult< double >(1.0,  t_Taa, "ikac", t_ovov_ab, "kcjb", 1.0, t_Wab, "ijab");
-            tblis::mult< double >(1.0,  t_ovov_ab, "iakc", t_Tbb, "kjcb", 1.0, t_Wab, "ijab");
-            tblis::mult< double >(-1.0, t_oovv_ab_ex, "ikbc", t_Tab, "kjac", 1.0, t_Wab, "ijab");
-            tblis::mult< double >(-1.0, t_Tab, "ikcb", t_oovv_ba_ex, "jkac", 1.0, t_Wab, "ijab"); 
+            if (calc_aa) {
+                tblis::mult< double >(1.0,  t_ovov_aa, "iakc", t_Tab, "kjcb", 1.0, t_Wab, "ijab");
+                tblis::mult< double >(-1.0, t_oovv_aa, "ikac", t_Tab, "kjcb", 1.0, t_Wab, "ijab");
+            }
+            if (calc_bb) {
+                tblis::mult< double >(1.0,  t_Tab, "ikac", t_ovov_bb, "kcjb", 1.0, t_Wab, "ijab");
+                tblis::mult< double >(-1.0, t_Tab, "ikac", t_oovv_bb, "kjcb", 1.0, t_Wab, "ijab");
+            }
+            if (calc_ab) {
+                tblis::mult< double >(1.0,  t_Taa, "ikac", t_ovov_ab, "kcjb", 1.0, t_Wab, "ijab");
+                tblis::mult< double >(1.0,  t_ovov_ab, "iakc", t_Tbb, "kjcb", 1.0, t_Wab, "ijab");
+                tblis::mult< double >(-1.0, t_oovv_ab_ex, "ikbc", t_Tab, "kjac", 1.0, t_Wab, "ijab");
+                tblis::mult< double >(-1.0, t_Tab, "ikcb", t_oovv_ba_ex, "jkac", 1.0, t_Wab, "ijab"); 
+            }
             e3_ab += 1.0 * tensor_dot(t2_ab_, Wab);
         } else {
             e3_aa += 1.0 * tensor_dot(t2_aa_, Waa);
