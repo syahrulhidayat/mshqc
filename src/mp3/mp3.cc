@@ -78,12 +78,12 @@ MP3Result RMP3::compute() {
     Eigen::Tensor< double, 4 > W(no_a_, no_a_, nv_a_, nv_a_); W.setZero();
     TBLIS_VIEW_4D(t_W, W, no_a_, no_a_, nv_a_, nv_a_);
 
-    Eigen::Tensor< double, 4 > eri_ao;
-    if (config_.eri_method == "exact") eri_ao = ints_->compute_eri();
+    const Eigen::Tensor<double, 4>* eri_ao_ptr = nullptr;
+    if (config_.eri_method == "exact") eri_ao_ptr = &(ints_->compute_eri());
 
     auto get_V_exact = [&](const Eigen::MatrixXd& C1, const Eigen::MatrixXd& C2, const Eigen::MatrixXd& C3, const Eigen::MatrixXd& C4) {
         int d1 = C1.cols(); int d2 = C2.cols(); int d3 = C3.cols(); int d4 = C4.cols();
-        return ERITransformer::transform_custom(eri_ao, C1, C2, C3, C4, nbf_, d1, d2, d3, d4);
+        return ERITransformer::transform_custom(*eri_ao_ptr, C1, C2, C3, C4, nbf_, d1, d2, d3, d4);
     };
 
     auto build_B = [&](const Eigen::MatrixXd& C1, const Eigen::MatrixXd& C2) {
@@ -258,12 +258,12 @@ MP3Result UMP3::compute() {
     Eigen::Tensor< double, 4 > Wbb(no_b_, no_b_, nv_b_, nv_b_); TBLIS_VIEW_4D(t_Wbb, Wbb, no_b_, no_b_, nv_b_, nv_b_);
     Eigen::Tensor< double, 4 > Wab(no_a_, no_b_, nv_a_, nv_b_); TBLIS_VIEW_4D(t_Wab, Wab, no_a_, no_b_, nv_a_, nv_b_);
 
-    Eigen::Tensor< double, 4 > eri_ao;
-    if (config_.eri_method == "exact") eri_ao = ints_->compute_eri();
+    const Eigen::Tensor<double, 4>* eri_ao_ptr = nullptr;
+    if (config_.eri_method == "exact") eri_ao_ptr = &(ints_->compute_eri());
 
     auto get_V_exact = [&](const Eigen::MatrixXd& C1, const Eigen::MatrixXd& C2, const Eigen::MatrixXd& C3, const Eigen::MatrixXd& C4) {
         int d1 = C1.cols(); int d2 = C2.cols(); int d3 = C3.cols(); int d4 = C4.cols();
-        return ERITransformer::transform_custom(eri_ao, C1, C2, C3, C4, nbf_, d1, d2, d3, d4);
+        return ERITransformer::transform_custom(*eri_ao_ptr, C1, C2, C3, C4, nbf_, d1, d2, d3, d4);
     };
 
     auto build_B = [&](const Eigen::MatrixXd& C1, const Eigen::MatrixXd& C2) {
@@ -587,24 +587,23 @@ void OMP3::compute_mp3_correction() {
             TBLIS_VIEW_4D(t_T, T2_aa_ijab, na_, na_, va_, va_);
             TBLIS_VIEW_4D(t_W, W, na_, na_, va_, va_);
 
-            if (eri_ao_cached_.size() == 0) {
-                eri_ao_cached_ = integrals_->compute_eri();
-            }
+            eri_ao_cached_.resize(0, 0, 0, 0); // Hapus cache dummy yang bocor
+            const auto& eri_ao_cached_local = integrals_->compute_eri();
 
             if (Waa_ladder_.size() != va_ * va_ * va_ * va_) Waa_ladder_.resize(va_, va_, va_, va_);
-            Waa_ladder_ = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cav, Cav, Cav, Cav, nbf_, va_, va_, va_, va_);
+            Waa_ladder_ = integrals::ERITransformer::transform_custom(eri_ao_cached_local, Cav, Cav, Cav, Cav, nbf_, va_, va_, va_, va_);
             TBLIS_VIEW_4D(t_Vvvvv, Waa_ladder_, va_, va_, va_, va_);
             tblis::mult< double >(1.0, t_T, "ijef", t_Vvvvv, "eafb", 1.0, t_W, "ijab");
             
             if (Waa_ring_.size() != na_ * na_ * na_ * na_) Waa_ring_.resize(na_, na_, na_, na_);
-            Waa_ring_ = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cao, Cao, Cao, Cao, nbf_, na_, na_, na_, na_);
+            Waa_ring_ = integrals::ERITransformer::transform_custom(eri_ao_cached_local, Cao, Cao, Cao, Cao, nbf_, na_, na_, na_, na_);
             TBLIS_VIEW_4D(t_Voooo, Waa_ring_, na_, na_, na_, na_);
             tblis::mult< double >(1.0, t_T, "mnab", t_Voooo, "minj", 1.0, t_W, "ijab");
 
             auto* g_blk_mp3 = g_aa_.get_block(0,0,0,0);
             TBLIS_VIEW_4D(t_Vovov, (*g_blk_mp3), na_, va_, na_, va_);
             
-            auto V_oovv = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cao, Cao, Cav, Cav, nbf_, na_, na_, va_, va_);
+            auto V_oovv = integrals::ERITransformer::transform_custom(eri_ao_cached_local, Cao, Cao, Cav, Cav, nbf_, na_, na_, va_, va_);
             TBLIS_VIEW_4D(t_Voovv, V_oovv, na_, na_, va_, va_);
 
             tblis::mult< double >(2.0,  t_Vovov, "iakc", t_T, "kjcb", 1.0, t_W, "ijab");
@@ -632,9 +631,8 @@ void OMP3::compute_mp3_correction() {
             e_mp3_tot_ = e3_aa;
             return;
         } else {
-            if (eri_ao_cached_.size() == 0) {
-                eri_ao_cached_ = integrals_->compute_eri();
-            }
+            eri_ao_cached_.resize(0, 0, 0, 0); 
+            const auto& eri_ao_cached_local = integrals_->compute_eri();
 
             const Eigen::MatrixXd& Cbo = scf_.C_beta.leftCols(nb_);
             const Eigen::MatrixXd& Cbv = scf_.C_beta.rightCols(vb_);
@@ -642,7 +640,7 @@ void OMP3::compute_mp3_correction() {
 
             auto get_V_exact = [&](const Eigen::MatrixXd& C1, const Eigen::MatrixXd& C2, const Eigen::MatrixXd& C3, const Eigen::MatrixXd& C4) {
                 int d1 = C1.cols(); int d2 = C2.cols(); int d3 = C3.cols(); int d4 = C4.cols();
-                return integrals::ERITransformer::transform_custom(eri_ao_cached_, C1, C2, C3, C4, nbf_, d1, d2, d3, d4);
+                return integrals::ERITransformer::transform_custom(eri_ao_cached_local, C1, C2, C3, C4, nbf_, d1, d2, d3, d4);
             };
 
             t2_3rd_aa_ = Eigen::Tensor< double, 4 >(na_, na_, va_, va_); t2_3rd_aa_.setZero();

@@ -136,59 +136,101 @@ Eigen::MatrixXd BaseSCF::precompute_shell_schwarz() {
 }
 
 void BaseSCF::init_integrals_incore() {
-    if (config_.print_level > 0) std::cout << "  [SCF] Building Optimized CRS Integrals... " << std::flush;
+    if (config_.print_level > 0) std::cout << "  [SCF] Building Optimized PK-InCore Integrals (4D Symmetry)... " << std::flush;
 
-    J_val_.clear(); J_ind_.clear(); J_ptr_.clear();
-    K_val_.clear(); K_ind_.clear(); K_ptr_.clear(); row_map_.clear();
-    
-    long long est_nnz = (long long)(std::pow(nbasis_, 4) * 0.15); 
-    if (est_nnz > 0) { J_val_.reserve(est_nnz); J_ind_.reserve(est_nnz); K_val_.reserve(est_nnz); K_ind_.reserve(est_nnz); }
-    row_map_.reserve(nbasis_ * nbasis_ / 2); schwarz_basis_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-    J_ptr_.push_back(0); K_ptr_.push_back(0);
+    J_val_.clear(); J_ind_.clear(); K_ind_.clear();
+    double shell_cutoff = 1e-12;
+    const double sparse_threshold = 1e-12;
 
-    const auto& ERI = integrals_->compute_eri();
-    const double sparse_threshold = 1e-12; int nshells = basis_.n_shells(); double shell_cutoff = 1e-12;
+    if (pl_ && pl_->get_unique_quartets().empty()) pl_->build();
 
-    struct SymPair { int M; int N; double w; };
-    std::vector<SymPair> shell_pairs;
-    if (pl_ && !pl_->get_unique_pairs().empty()) {
-        for (const auto& u : pl_->get_unique_pairs()) shell_pairs.push_back({u.p, u.q, u.weight}); 
+    // Pass 1: Pre-calculate capacity to bypass push_back thrashing
+    size_t est_ints = 0;
+    if (pl_) {
+        for (const auto& [M, N, P, Q, w] : pl_->get_unique_quartets()) {
+            if (schwarz_(M, N) * schwarz_(P, Q) < shell_cutoff) continue;
+            est_ints += shell_sizes_[M] * shell_sizes_[N] * shell_sizes_[P] * shell_sizes_[Q];
+        }
     } else {
-        for(int i = 0; i < nshells; ++i) for(int j = 0; j <= i; ++j) shell_pairs.push_back({i, j, 1.0});
-    }
-
-    for (const auto& pair_mn : shell_pairs) {
-        int M = pair_mn.M; int N = pair_mn.N; double sym_weight = pair_mn.w; double Q_MN = schwarz_(M, N); 
-        if (Q_MN * schwarz_.maxCoeff() < shell_cutoff) continue;
-
-        for (int m = 0; m < shell_sizes_[M]; ++m) {
-            for (int n = 0; n < shell_sizes_[N]; ++n) {
-                int mu = shell_starts_[M] + m; int nu = shell_starts_[N] + n;
-                if (M == N && nu > mu) continue;
-                row_map_.push_back({mu, nu}); double max_val_row = 0.0;
-                
-                for (int L = 0; L < nshells; ++L) {
-                    for (int S = 0; S < nshells; ++S) {
-                        if (Q_MN * schwarz_(L, S) < shell_cutoff) continue;
-                        for (int s_idx = 0; s_idx < shell_sizes_[S]; ++s_idx) {
-                            for (int l_idx = 0; l_idx < shell_sizes_[L]; ++l_idx) {
-                                int sig = shell_starts_[S] + s_idx; int lam = shell_starts_[L] + l_idx; int density_idx = lam + sig * nbasis_;
-                                double vJ = ERI(mu, nu, lam, sig);
-                                if (std::abs(vJ) > sparse_threshold) { J_val_.push_back(vJ * sym_weight); J_ind_.push_back(density_idx); max_val_row = std::max(max_val_row, std::abs(vJ)); }
-                                double vK = ERI(mu, lam, nu, sig);
-                                if (std::abs(vK) > sparse_threshold) { K_val_.push_back(vK * sym_weight); K_ind_.push_back(density_idx); }
-                            }
-                        }
+        int nshells = basis_.n_shells();
+        for (int M = 0; M < nshells; ++M) {
+            for (int N = 0; N <= M; ++N) {
+                for (int P = 0; P <= M; ++P) {
+                    int Q_max = (M == P) ? N : P;
+                    for (int Q = 0; Q <= Q_max; ++Q) {
+                        if (schwarz_(M, N) * schwarz_(P, Q) < shell_cutoff) continue;
+                        est_ints += shell_sizes_[M] * shell_sizes_[N] * shell_sizes_[P] * shell_sizes_[Q];
                     }
                 }
-                J_ptr_.push_back(J_val_.size()); K_ptr_.push_back(K_val_.size());
-                schwarz_basis_(mu, nu) = std::sqrt(max_val_row); schwarz_basis_(nu, mu) = std::sqrt(max_val_row);
             }
         }
     }
-    if (config_.print_level > 0) std::cout << "Done. (Mapped Rows: " << row_map_.size() << ")\n";
-}
 
+    J_val_.assign(est_ints, 0.0);
+    J_ind_.assign(est_ints, 0);
+    K_ind_.assign(est_ints, 0);
+    size_t idx = 0;
+
+    auto process_quartet = [&](int M, int N, int P, int Q, double weight) {
+        if (schwarz_(M, N) * schwarz_(P, Q) < shell_cutoff) return;
+        
+        // Panggilan blok on-the-fly, mengabaikan matriks ERI raksasa
+        auto buf = integrals_->compute_shell_block(M, N, P, Q);
+        
+        int dimM = shell_sizes_[M]; int dimN = shell_sizes_[N];
+        int dimP = shell_sizes_[P]; int dimQ = shell_sizes_[Q];
+        int stM = shell_starts_[M]; int stN = shell_starts_[N];
+        int stP = shell_starts_[P]; int stQ = shell_starts_[Q];
+
+        for (int m = 0; m < dimM; ++m) {
+            for (int n = 0; n < dimN; ++n) {
+                int mu = stM + m; int nu = stN + n;
+                if (M == N && mu < nu) continue; 
+                
+                for (int p = 0; p < dimP; ++p) {
+                    for (int q = 0; q < dimQ; ++q) {
+                        int lam = stP + p; int sig = stQ + q;
+                        if (P == Q && lam < sig) continue; 
+                        
+                        int mn = mu * nbasis_ + nu;
+                        int ls = lam * nbasis_ + sig;
+                        if (M == P && N == Q && mn < ls) continue; 
+                        
+                        double val = buf[m + dimM * (n + dimN * (p + dimP * q))] * weight;
+                        if (std::abs(val) > sparse_threshold) {
+                            J_val_[idx] = val;
+                            J_ind_[idx] = mn;
+                            K_ind_[idx] = ls;
+                            idx++;
+                        }
+                    }
+                }
+            }
+        }
+    };
+
+    if (pl_) {
+        for (const auto& [M, N, P, Q, w] : pl_->get_unique_quartets()) {
+            process_quartet(M, N, P, Q, w);
+        }
+    } else {
+        int nshells = basis_.n_shells();
+        for (int M = 0; M < nshells; ++M) {
+            for (int N = 0; N <= M; ++N) {
+                for (int P = 0; P <= M; ++P) {
+                    int Q_max = (M == P) ? N : P;
+                    for (int Q = 0; Q <= Q_max; ++Q) {
+                        process_quartet(M, N, P, Q, 1.0);
+                    }
+                }
+            }
+        }
+    }
+
+    J_val_.resize(idx); J_ind_.resize(idx); K_ind_.resize(idx);
+    K_val_.clear(); J_ptr_.clear(); K_ptr_.clear(); row_map_.clear(); 
+    if (config_.print_level > 0) std::cout << "Done. (Stored PK Integrals: " << idx << ")\n";
+}
 void BaseSCF::init_integrals_cholesky() {
     if (config_.print_level > 0) std::cout << "  [SCF] Decomposing Integrals (Cholesky)... " << std::flush;
     internal_cholesky_ = std::make_unique<integrals::CholeskyERI>(basis_, integrals_);
@@ -470,39 +512,53 @@ void RHF::build_fock_matrix() {
         if (max_dP < 1e-11) {
             F_alpha_ = H_ + G_accum_;
         } else {
-            const double* __restrict__ p_d = dP.data();
-            const double* __restrict__ Jv = J_val_.data(); const int* __restrict__ Ji = J_ind_.data(); const size_t* __restrict__ Jp = J_ptr_.data();
-            const double* __restrict__ Kv = K_val_.data(); const int* __restrict__ Ki = K_ind_.data(); const size_t* __restrict__ Kp = K_ptr_.data();
+            const double* val = J_val_.data();
+            const int* ind1 = J_ind_.data();
+            const int* ind2 = K_ind_.data();
+            size_t n_ints = J_val_.size();
 
             Eigen::MatrixXd dG = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-            size_t n_rows = row_map_.size();
-            
+
             #pragma omp parallel
             {
                 Eigen::MatrixXd G_local = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-                #pragma omp for schedule(dynamic, 32)
-                for (size_t r = 0; r < n_rows; ++r) {
-                    int mu = row_map_[r].first; int nu = row_map_[r].second;
-                    if (schwarz_basis_(mu, nu) * max_dP < 1e-12) continue;
+                
+                #pragma omp for schedule(dynamic, 2048)
+                for (size_t k = 0; k < n_ints; ++k) {
+                    int mn = ind1[k]; int mu = mn / nbasis_; int nu = mn % nbasis_;
+                    int ls = ind2[k]; int lam = ls / nbasis_; int sig = ls % nbasis_;
+                    double v = val[k];
 
-                    size_t js = Jp[r]; size_t je = Jp[r+1];
-                    size_t ks = Kp[r]; size_t ke = Kp[r+1];
-                    double vj = 0.0, vk = 0.0;
+                    double f = 1.0;
+                    if (mu == nu) f *= 0.5;
+                    if (lam == sig) f *= 0.5;
+                    if (mn == ls) f *= 0.5;
+                    v *= f;
+
+                    double p_ls = dP(lam, sig);
+                    double p_mn = dP(mu, nu);
                     
-                    #pragma omp simd reduction(+:vj)
-                    for (size_t k = js; k < je; ++k) vj += Jv[k] * p_d[Ji[k]];
+                    double vJ = 4.0 * v;
+                    G_local(mu, nu) += vJ * p_ls;
+                    G_local(lam, sig) += vJ * p_mn;
                     
-                    #pragma omp simd reduction(+:vk)
-                    for (size_t k = ks; k < ke; ++k) vk += Kv[k] * p_d[Ki[k]];
+                    double p_ms = dP(mu, sig);
+                    double p_ml = dP(mu, lam);
+                    double p_ns = dP(nu, sig);
+                    double p_nl = dP(nu, lam);
                     
-                    G_local(mu, nu) += 2.0 * vj - vk;
+                    G_local(mu, lam) -= v * p_ns;
+                    G_local(mu, sig) -= v * p_nl;
+                    G_local(nu, lam) -= v * p_ms;
+                    G_local(nu, sig) -= v * p_ml;
                 }
                 #pragma omp critical
                 { dG += G_local; }
-            } 
-            for (int i = 0; i < nbasis_; ++i) {
-                for (int j = 0; j < i; ++j) dG(j, i) = dG(i, j); 
             }
+            
+            dG = dG + dG.transpose().eval();
+            for (int i = 0; i < nbasis_; ++i) dG(i, i) *= 0.5;
+            
             G_accum_ += dG;
             F_alpha_ = H_ + G_accum_;
         }
@@ -691,7 +747,6 @@ void UHF::build_fock_matrix() {
             }
         }
     } else if (config_.scf_type == "incore") {
-        
         Eigen::MatrixXd dPa = (iter_scf_ == 1) ? P_alpha_ : (P_alpha_ - P_alpha_old_);
         Eigen::MatrixXd dPb = (iter_scf_ == 1) ? P_beta_ : (P_beta_ - P_beta_old_);
         Eigen::MatrixXd dP_tot = dPa + dPb; 
@@ -701,48 +756,76 @@ void UHF::build_fock_matrix() {
             F_alpha_ = H_ + G_accum_a_;
             F_beta_  = H_ + G_accum_b_;
         } else {
-            const double* __restrict__ p_dtot = dP_tot.data();
-            const double* __restrict__ p_da   = dPa.data();
-            const double* __restrict__ p_db   = dPb.data();
-            const double* __restrict__ Jv = J_val_.data(); const int* __restrict__ Ji = J_ind_.data(); const size_t* __restrict__ Jp = J_ptr_.data();
-            const double* __restrict__ Kv = K_val_.data(); const int* __restrict__ Ki = K_ind_.data(); const size_t* __restrict__ Kp = K_ptr_.data();
+            const double* val = J_val_.data();
+            const int* ind1 = J_ind_.data();
+            const int* ind2 = K_ind_.data();
+            size_t n_ints = J_val_.size();
 
             Eigen::MatrixXd dGa = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
             Eigen::MatrixXd dGb = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-            size_t n_rows = row_map_.size();
 
             #pragma omp parallel
             {
                 Eigen::MatrixXd Ga_local = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
                 Eigen::MatrixXd Gb_local = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+                
+                #pragma omp for schedule(dynamic, 2048)
+                for (size_t k = 0; k < n_ints; ++k) {
+                    int mn = ind1[k]; int mu = mn / nbasis_; int nu = mn % nbasis_;
+                    int ls = ind2[k]; int lam = ls / nbasis_; int sig = ls % nbasis_;
+                    double v = val[k];
 
-                #pragma omp for schedule(dynamic, 32)
-                for (size_t r = 0; r < n_rows; ++r) {
-                    int mu = row_map_[r].first; int nu = row_map_[r].second;
-                    if (schwarz_basis_(mu, nu) * max_dP < 1e-12) continue;
+                    double f = 1.0;
+                    if (mu == nu) f *= 0.5;
+                    if (lam == sig) f *= 0.5;
+                    if (mn == ls) f *= 0.5;
+                    v *= f;
 
-                    size_t js = Jp[r]; size_t je = Jp[r+1];
-                    size_t ks = Kp[r]; size_t ke = Kp[r+1];
+                    double pt_ls = dP_tot(lam, sig);
+                    double pt_mn = dP_tot(mu, nu);
+                    
+                    double vJ = 4.0 * v;
+                    double J_mn = vJ * pt_ls;
+                    double J_ls = vJ * pt_mn;
 
-                    double vj = 0.0, ka = 0.0, kb = 0.0;
-                    #pragma omp simd reduction(+:vj)
-                    for (size_t k = js; k < je; ++k) vj += Jv[k] * p_dtot[Ji[k]];
+                    Ga_local(mu, nu) += J_mn;
+                    Ga_local(lam, sig) += J_ls;
+                    Gb_local(mu, nu) += J_mn;
+                    Gb_local(lam, sig) += J_ls;
+                    
+                    double pa_ms = dPa(mu, sig);
+                    double pa_ml = dPa(mu, lam);
+                    double pa_ns = dPa(nu, sig);
+                    double pa_nl = dPa(nu, lam);
+                    
+                    Ga_local(mu, lam) -= v * pa_ns;
+                    Ga_local(mu, sig) -= v * pa_nl;
+                    Ga_local(nu, lam) -= v * pa_ms;
+                    Ga_local(nu, sig) -= v * pa_ml;
 
-                    #pragma omp simd reduction(+:ka, kb)
-                    for (size_t k = ks; k < ke; ++k) {
-                        double v = Kv[k]; int idx = Ki[k];
-                        ka += v * p_da[idx]; kb += v * p_db[idx];
-                    }
-                    Ga_local(mu, nu) += vj - ka; Gb_local(mu, nu) += vj - kb;
+                    double pb_ms = dPb(mu, sig);
+                    double pb_ml = dPb(mu, lam);
+                    double pb_ns = dPb(nu, sig);
+                    double pb_nl = dPb(nu, lam);
+                    
+                    Gb_local(mu, lam) -= v * pb_ns;
+                    Gb_local(mu, sig) -= v * pb_nl;
+                    Gb_local(nu, lam) -= v * pb_ms;
+                    Gb_local(nu, sig) -= v * pb_ml;
                 }
                 #pragma omp critical
                 { dGa += Ga_local; dGb += Gb_local; }
             }
             
+            dGa = dGa + dGa.transpose().eval();
+            dGb = dGb + dGb.transpose().eval();
             for (int i = 0; i < nbasis_; ++i) {
-                for (int j = 0; j < i; ++j) { dGa(j, i) = dGa(i, j); dGb(j, i) = dGb(i, j); }
+                dGa(i, i) *= 0.5;
+                dGb(i, i) *= 0.5;
             }
-            G_accum_a_ += dGa; G_accum_b_ += dGb;
+            
+            G_accum_a_ += dGa;
+            G_accum_b_ += dGb;
             F_alpha_ = H_ + G_accum_a_; 
             F_beta_  = H_ + G_accum_b_;
         }
@@ -927,7 +1010,6 @@ void ROHF::build_fock_matrix() {
             }
         }
     } else if (config_.scf_type == "incore") {
-        
         Eigen::MatrixXd dPa = (iter_scf_ == 1) ? P_alpha_ : (P_alpha_ - P_alpha_old_);
         Eigen::MatrixXd dPb = (iter_scf_ == 1) ? P_beta_ : (P_beta_ - P_beta_old_);
         Eigen::MatrixXd dP_tot = dPa + dPb; 
@@ -937,48 +1019,76 @@ void ROHF::build_fock_matrix() {
             F_alpha_ = H_ + G_accum_a_;
             F_beta_  = H_ + G_accum_b_;
         } else {
-            const double* __restrict__ p_dtot = dP_tot.data();
-            const double* __restrict__ p_da   = dPa.data();
-            const double* __restrict__ p_db   = dPb.data();
-            const double* __restrict__ Jv = J_val_.data(); const int* __restrict__ Ji = J_ind_.data(); const size_t* __restrict__ Jp = J_ptr_.data();
-            const double* __restrict__ Kv = K_val_.data(); const int* __restrict__ Ki = K_ind_.data(); const size_t* __restrict__ Kp = K_ptr_.data();
+            const double* val = J_val_.data();
+            const int* ind1 = J_ind_.data();
+            const int* ind2 = K_ind_.data();
+            size_t n_ints = J_val_.size();
 
             Eigen::MatrixXd dGa = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
             Eigen::MatrixXd dGb = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-            size_t n_rows = row_map_.size();
 
             #pragma omp parallel
             {
                 Eigen::MatrixXd Ga_local = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
                 Eigen::MatrixXd Gb_local = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+                
+                #pragma omp for schedule(dynamic, 2048)
+                for (size_t k = 0; k < n_ints; ++k) {
+                    int mn = ind1[k]; int mu = mn / nbasis_; int nu = mn % nbasis_;
+                    int ls = ind2[k]; int lam = ls / nbasis_; int sig = ls % nbasis_;
+                    double v = val[k];
 
-                #pragma omp for schedule(dynamic, 32)
-                for (size_t r = 0; r < n_rows; ++r) {
-                    int mu = row_map_[r].first; int nu = row_map_[r].second;
-                    if (schwarz_basis_(mu, nu) * max_dP < 1e-12) continue;
+                    double f = 1.0;
+                    if (mu == nu) f *= 0.5;
+                    if (lam == sig) f *= 0.5;
+                    if (mn == ls) f *= 0.5;
+                    v *= f;
 
-                    size_t js = Jp[r]; size_t je = Jp[r+1];
-                    size_t ks = Kp[r]; size_t ke = Kp[r+1];
+                    double pt_ls = dP_tot(lam, sig);
+                    double pt_mn = dP_tot(mu, nu);
+                    
+                    double vJ = 4.0 * v;
+                    double J_mn = vJ * pt_ls;
+                    double J_ls = vJ * pt_mn;
 
-                    double vj = 0.0, ka = 0.0, kb = 0.0;
-                    #pragma omp simd reduction(+:vj)
-                    for (size_t k = js; k < je; ++k) vj += Jv[k] * p_dtot[Ji[k]];
+                    Ga_local(mu, nu) += J_mn;
+                    Ga_local(lam, sig) += J_ls;
+                    Gb_local(mu, nu) += J_mn;
+                    Gb_local(lam, sig) += J_ls;
+                    
+                    double pa_ms = dPa(mu, sig);
+                    double pa_ml = dPa(mu, lam);
+                    double pa_ns = dPa(nu, sig);
+                    double pa_nl = dPa(nu, lam);
+                    
+                    Ga_local(mu, lam) -= v * pa_ns;
+                    Ga_local(mu, sig) -= v * pa_nl;
+                    Ga_local(nu, lam) -= v * pa_ms;
+                    Ga_local(nu, sig) -= v * pa_ml;
 
-                    #pragma omp simd reduction(+:ka, kb)
-                    for (size_t k = ks; k < ke; ++k) {
-                        double v = Kv[k]; int idx = Ki[k];
-                        ka += v * p_da[idx]; kb += v * p_db[idx];
-                    }
-                    Ga_local(mu, nu) += vj - ka; Gb_local(mu, nu) += vj - kb;
+                    double pb_ms = dPb(mu, sig);
+                    double pb_ml = dPb(mu, lam);
+                    double pb_ns = dPb(nu, sig);
+                    double pb_nl = dPb(nu, lam);
+                    
+                    Gb_local(mu, lam) -= v * pb_ns;
+                    Gb_local(mu, sig) -= v * pb_nl;
+                    Gb_local(nu, lam) -= v * pb_ms;
+                    Gb_local(nu, sig) -= v * pb_ml;
                 }
                 #pragma omp critical
                 { dGa += Ga_local; dGb += Gb_local; }
             }
             
+            dGa = dGa + dGa.transpose().eval();
+            dGb = dGb + dGb.transpose().eval();
             for (int i = 0; i < nbasis_; ++i) {
-                for (int j = 0; j < i; ++j) { dGa(j, i) = dGa(i, j); dGb(j, i) = dGb(i, j); }
+                dGa(i, i) *= 0.5;
+                dGb(i, i) *= 0.5;
             }
-            G_accum_a_ += dGa; G_accum_b_ += dGb;
+            
+            G_accum_a_ += dGa;
+            G_accum_b_ += dGb;
             F_alpha_ = H_ + G_accum_a_; 
             F_beta_  = H_ + G_accum_b_;
         }
