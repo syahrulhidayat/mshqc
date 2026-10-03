@@ -103,11 +103,15 @@ MP3Result RMP3::compute() {
         return B;
     };
 
-    auto make_V_from_B = [](const Eigen::MatrixXd& B1, const Eigen::MatrixXd& B2, int d1, int d2, int d3, int d4) {
+    auto make_V_from_B_inplace = [](const Eigen::MatrixXd& B1, const Eigen::MatrixXd& B2, Eigen::Tensor<double, 4>& V_mo) {
         Eigen::MatrixXd V_mat = B1 * B2.transpose();
-        Eigen::Tensor<double, 4> V_mo(d1, d2, d3, d4);
+
+        if (V_mat.cwiseAbs().maxCoeff() < 1e-12) {
+            V_mo.setZero();
+            return false; 
+        }
         std::copy(V_mat.data(), V_mat.data() + V_mat.size(), V_mo.data());
-        return V_mo;
+        return true;
     };
 
     Eigen::MatrixXd B_oo, B_ov, B_vv;
@@ -117,7 +121,7 @@ MP3Result RMP3::compute() {
         B_vv = build_B(Cv, Cv);
     }
 
-    // 1. Ladder term (vvvv): Memory-free factorized contraction across P
+    // 1. Ladder term (vvvv): Memasukkan screening threshold
     if (config_.eri_method == "exact") {
         auto V = get_V_exact(Cv, Cv, Cv, Cv);
         TBLIS_VIEW_4D(t_V, V, nv_a_, nv_a_, nv_a_, nv_a_);
@@ -132,6 +136,9 @@ MP3Result RMP3::compute() {
 
             #pragma omp for schedule(dynamic)
             for (int P = 0; P < n_aux_; ++P) {
+                // Terapkan penapisan numerik untuk melewatkan blok P yang tidak signifikan
+                if (B_vv.col(P).cwiseAbs().maxCoeff() < 1e-12) continue;
+                
                 TBLIS_VIEW_2D(t_B_P, B_vv.col(P).data(), nv_a_, nv_a_);
                 X_priv.setZero();
                 tblis::mult< double >(1.0, t_T, "ijef", t_B_P, "fb", 0.0, t_X_priv, "ijeb");
@@ -147,39 +154,52 @@ MP3Result RMP3::compute() {
         }
     }
 
-    // 2. Ladder term (oooo)
+    // 2. Ladder term (oooo) dengan in-place allocation
     {
-        Eigen::Tensor<double, 4> V;
+        Eigen::Tensor<double, 4> V(no_a_, no_a_, no_a_, no_a_);
         if (config_.eri_method == "exact") {
             V = get_V_exact(Co, Co, Co, Co);
+            TBLIS_VIEW_4D(t_V, V, no_a_, no_a_, no_a_, no_a_);
+            tblis::mult< double >(1.0, t_T, "mnab", t_V, "minj", 1.0, t_W, "ijab");
         } else {
-            V = make_V_from_B(B_oo, B_oo, no_a_, no_a_, no_a_, no_a_);
+            if (make_V_from_B_inplace(B_oo, B_oo, V)) {
+                TBLIS_VIEW_4D(t_V, V, no_a_, no_a_, no_a_, no_a_);
+                tblis::mult< double >(1.0, t_T, "mnab", t_V, "minj", 1.0, t_W, "ijab");
+            }
         }
-        TBLIS_VIEW_4D(t_V, V, no_a_, no_a_, no_a_, no_a_);
-        tblis::mult< double >(1.0, t_T, "mnab", t_V, "minj", 1.0, t_W, "ijab");
     }
 
-    // 3. Ring terms (ovov & oovv)
+    // 3. Ring terms (ovov & oovv) dengan in-place allocation
     {
-        Eigen::Tensor<double, 4> V_ovov, V_oovv;
+        Eigen::Tensor<double, 4> V_ovov(no_a_, nv_a_, no_a_, nv_a_);
+        Eigen::Tensor<double, 4> V_oovv(no_a_, no_a_, nv_a_, nv_a_);
+        
+        bool calc_ovov = true;
+        bool calc_oovv = true;
+
         if (config_.eri_method == "exact") {
             V_ovov = get_V_exact(Co, Cv, Co, Cv);
             V_oovv = get_V_exact(Co, Co, Cv, Cv);
         } else {
-            V_ovov = make_V_from_B(B_ov, B_ov, no_a_, nv_a_, no_a_, nv_a_);
-            V_oovv = make_V_from_B(B_oo, B_vv, no_a_, no_a_, nv_a_, nv_a_);
+            calc_ovov = make_V_from_B_inplace(B_ov, B_ov, V_ovov);
+            calc_oovv = make_V_from_B_inplace(B_oo, B_vv, V_oovv);
         }
+        
         TBLIS_VIEW_4D(t_Vovov, V_ovov, no_a_, nv_a_, no_a_, nv_a_);
         TBLIS_VIEW_4D(t_Voovv, V_oovv, no_a_, no_a_, nv_a_, nv_a_);
 
-        tblis::mult< double >(2.0,  t_Vovov, "iakc", t_T, "kjcb", 1.0, t_W, "ijab");
-        tblis::mult< double >(-1.0, t_Voovv, "ikac", t_T, "kjcb", 1.0, t_W, "ijab");
-        tblis::mult< double >(2.0,  t_T, "ikac", t_Vovov, "kcjb", 1.0, t_W, "ijab");
-        tblis::mult< double >(-1.0, t_T, "ikac", t_Voovv, "kjcb", 1.0, t_W, "ijab");
-        tblis::mult< double >(-1.0, t_T, "ikca", t_Vovov, "kcjb", 1.0, t_W, "ijab"); 
-        tblis::mult< double >(-1.0, t_Vovov, "iakc", t_T, "kjbc", 1.0, t_W, "ijab");
-        tblis::mult< double >(-1.0, t_Voovv, "ikbc", t_T, "kjac", 1.0, t_W, "ijab");
-        tblis::mult< double >(-1.0, t_T, "ikcb", t_Voovv, "jkac", 1.0, t_W, "ijab"); 
+        if (calc_ovov) {
+            tblis::mult< double >(2.0,  t_Vovov, "iakc", t_T, "kjcb", 1.0, t_W, "ijab");
+            tblis::mult< double >(2.0,  t_T, "ikac", t_Vovov, "kcjb", 1.0, t_W, "ijab");
+            tblis::mult< double >(-1.0, t_T, "ikca", t_Vovov, "kcjb", 1.0, t_W, "ijab"); 
+            tblis::mult< double >(-1.0, t_Vovov, "iakc", t_T, "kjbc", 1.0, t_W, "ijab");
+        }
+        if (calc_oovv) {
+            tblis::mult< double >(-1.0, t_Voovv, "ikac", t_T, "kjcb", 1.0, t_W, "ijab");
+            tblis::mult< double >(-1.0, t_T, "ikac", t_Voovv, "kjcb", 1.0, t_W, "ijab");
+            tblis::mult< double >(-1.0, t_Voovv, "ikbc", t_T, "kjac", 1.0, t_W, "ijab");
+            tblis::mult< double >(-1.0, t_T, "ikcb", t_Voovv, "jkac", 1.0, t_W, "ijab"); 
+        }
     }
 
     double e_mp3 = 0.0;
@@ -276,11 +296,15 @@ MP3Result UMP3::compute() {
         return B;
     };
 
-    auto make_V_from_B = [](const Eigen::MatrixXd& B1, const Eigen::MatrixXd& B2, int d1, int d2, int d3, int d4) {
+    
+    auto make_V_from_B_inplace = [](const Eigen::MatrixXd& B1, const Eigen::MatrixXd& B2, Eigen::Tensor<double, 4>& V_mo) {
         Eigen::MatrixXd V_mat = B1 * B2.transpose();
-        Eigen::Tensor<double, 4> V_mo(d1, d2, d3, d4);
+        if (V_mat.cwiseAbs().maxCoeff() < 1e-12) {
+            V_mo.setZero();
+            return false; 
+        }
         std::copy(V_mat.data(), V_mat.data() + V_mat.size(), V_mo.data());
-        return V_mo;
+        return true;
     };
 
     // Precompute 3-center MO Cholesky matrices once!
@@ -299,7 +323,7 @@ MP3Result UMP3::compute() {
     }
 
     // =========================================================================
-    // 1. TAHAP LADDER (vvvv) - Memory-free $O(N_aux n_o^2 n_v^3)$ Parallel
+    // 1. TAHAP LADDER (vvvv) - Memory-free O(N_aux n_o^2 n_v^3) Parallel
     // =========================================================================
     {
         Waa.setZero();
@@ -311,6 +335,7 @@ MP3Result UMP3::compute() {
         } else {
             #pragma omp parallel
             {
+                // Pra-alokasi tensor privat di luar kalang dinamis untuk menghindari memory thrashing
                 Eigen::Tensor<double, 4> W_priv(no_a_, no_a_, nv_a_, nv_a_); W_priv.setZero();
                 Eigen::Tensor<double, 4> X_priv(no_a_, no_a_, nv_a_, nv_a_);
                 TBLIS_VIEW_4D(t_W_priv, W_priv, no_a_, no_a_, nv_a_, nv_a_);
@@ -318,6 +343,9 @@ MP3Result UMP3::compute() {
 
                 #pragma omp for schedule(dynamic)
                 for (int P = 0; P < n_aux_; ++P) {
+                    // Screening numerik untuk memintas matriks nol/mendekati nol
+                    if (B_vv_a.col(P).cwiseAbs().maxCoeff() < 1e-12) continue;
+
                     TBLIS_VIEW_2D(t_B_P, B_vv_a.col(P).data(), nv_a_, nv_a_);
                     X_priv.setZero();
                     tblis::mult< double >(1.0, t_Taa, "ijef", t_B_P, "fb", 0.0, t_X_priv, "ijeb");
@@ -351,6 +379,8 @@ MP3Result UMP3::compute() {
 
                     #pragma omp for schedule(dynamic)
                     for (int P = 0; P < n_aux_; ++P) {
+                        if (B_vv_b.col(P).cwiseAbs().maxCoeff() < 1e-12) continue; // Screening numerik spin Beta
+                        
                         TBLIS_VIEW_2D(t_B_P, B_vv_b.col(P).data(), nv_b_, nv_b_);
                         X_priv.setZero();
                         tblis::mult< double >(1.0, t_Tbb, "ijef", t_B_P, "fb", 0.0, t_X_priv, "ijeb");
@@ -375,14 +405,17 @@ MP3Result UMP3::compute() {
             } else {
                 #pragma omp parallel
                 {
-                    Eigen::Tensor<double, 4> W_priv(no_a_, no_b_, nv_a_, nv_b_); 
-                    W_priv.setZero();
+                    Eigen::Tensor<double, 4> W_priv(no_a_, no_b_, nv_a_, nv_b_); W_priv.setZero();
                     Eigen::Tensor<double, 4> X_priv(no_a_, no_b_, nv_a_, nv_b_);
                     TBLIS_VIEW_4D(t_W_priv, W_priv, no_a_, no_b_, nv_a_, nv_b_);
                     TBLIS_VIEW_4D(t_X_priv, X_priv, no_a_, no_b_, nv_a_, nv_b_);
 
                     #pragma omp for schedule(dynamic)
                     for (int P = 0; P < n_aux_; ++P) {
+                        // Screening simultan untuk tensor cross-spin
+                        if (B_vv_a.col(P).cwiseAbs().maxCoeff() < 1e-12 && 
+                            B_vv_b.col(P).cwiseAbs().maxCoeff() < 1e-12) continue;
+
                         TBLIS_VIEW_2D(t_B_P_a, B_vv_a.col(P).data(), nv_a_, nv_a_);
                         TBLIS_VIEW_2D(t_B_P_b, B_vv_b.col(P).data(), nv_b_, nv_b_);
 
