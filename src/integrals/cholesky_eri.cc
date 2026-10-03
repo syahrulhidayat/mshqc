@@ -179,7 +179,6 @@ CholeskyDecompositionResult CholeskyERI::decompose(const Eigen::Tensor<double, 4
 
 
 
-
 void CholeskyERI::decompose_direct() {
     if (!integrals_ptr_ || !basis_ptr_) return;
     const auto& basis = *basis_ptr_;
@@ -209,7 +208,6 @@ void CholeskyERI::decompose_direct() {
             
             for(int i=0; i<dim1; ++i) {
                 for(int j=0; j<dim2; ++j) {
-                    // PERBAIKAN: Index buffer yang benar untuk blok diagonal (M, N, M, N)
                     size_t idx_buf = i + dim1 * (j + dim2 * (i + dim1 * j));
                     if (idx_buf >= buf.size()) continue;
                     
@@ -254,12 +252,12 @@ void CholeskyERI::decompose_direct() {
         {
             Eigen::VectorXd local_col_buf = Eigen::VectorXd::Zero(npair);
             
-            #pragma omp for schedule(dynamic, 1)
+            #pragma omp for schedule(dynamic, 16) // AGGRESSIVE CHUNKING
             for (size_t v = 0; v < valid_pairs.size(); ++v) {
                 int s1 = valid_pairs[v].first;
                 int s2 = valid_pairs[v].second;
 
-                if (shell_max[s1 * nshells + s2] * pivot_schwarz < 1e-12) continue;
+                if (shell_max[s1 * nshells + s2] * pivot_schwarz < threshold_) continue; // FIX SCREENING LOGIC
 
                 int pair_s = s1 * (s1 + 1) / 2 + s2;
                 bool swap_pairs = (pair_s < pair_pq);
@@ -299,10 +297,11 @@ void CholeskyERI::decompose_direct() {
             }
         } 
         
-        // PERBAIKAN: Operasi residual (pengurangan kolom L matriks) diletakkan DI LUAR OpenMP
-        // agar matriks col_buf global dapat dikurangi secara holistik tanpa cacat numerik.
         if (iter > 0) {
-            col_buf.noalias() -= L_store.leftCols(iter) * L_store.row(pivot_idx).head(iter).transpose();
+            // FAST LEVEL-2 BLAS (GEMV) BYPASSING MANUAL LOOP
+            Eigen::Map<const Eigen::MatrixXd> L_prev(L_store.data(), npair, iter);
+            Eigen::VectorXd L_piv = L_prev.row(pivot_idx);
+            col_buf.noalias() -= L_prev * L_piv; 
         }
         
         L_store.col(iter) = col_buf * inv_sqrt; 

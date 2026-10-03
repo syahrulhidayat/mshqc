@@ -144,7 +144,6 @@ void BaseSCF::init_integrals_incore() {
 
     if (pl_ && pl_->get_unique_quartets().empty()) pl_->build();
 
-    // Pass 1: Pre-calculate capacity to bypass push_back thrashing
     size_t est_ints = 0;
     if (pl_) {
         for (const auto& [M, N, P, Q, w] : pl_->get_unique_quartets()) {
@@ -173,7 +172,6 @@ void BaseSCF::init_integrals_incore() {
 
     auto process_quartet = [&](int M, int N, int P, int Q, double weight) {
         if (schwarz_(M, N) * schwarz_(P, Q) < shell_cutoff) return;
-        
         auto buf = integrals_->compute_shell_block(M, N, P, Q);
         
         int dimM = shell_sizes_[M]; int dimN = shell_sizes_[N];
@@ -181,30 +179,25 @@ void BaseSCF::init_integrals_incore() {
         int stM = shell_starts_[M]; int stN = shell_starts_[N];
         int stP = shell_starts_[P]; int stQ = shell_starts_[Q];
 
+        // Faktor simetri dihitung per-shell, seperti di fock_builder.cc
+        double fac = weight;
+        if (M == N) fac *= 0.5;
+        if (P == Q) fac *= 0.5;
+        if (M == P && N == Q) fac *= 0.5;
+
         for (int m = 0; m < dimM; ++m) {
             for (int n = 0; n < dimN; ++n) {
                 int mu = stM + m; int nu = stN + n;
-                if (M == N && mu < nu) continue; 
+                int packed_mn = (mu << 16) | nu;
                 
                 for (int p = 0; p < dimP; ++p) {
                     for (int q = 0; q < dimQ; ++q) {
                         int lam = stP + p; int sig = stQ + q;
-                        if (P == Q && lam < sig) continue; 
-                        
-                        // BITWISE PACKING (Menghapus '/' dan '%' di masa depan)
-                        int packed_mn = (mu << 16) | nu;
                         int packed_ls = (lam << 16) | sig;
-                        if (M == P && N == Q && packed_mn < packed_ls) continue; 
                         
-                        double val = buf[m + dimM * (n + dimN * (p + dimP * q))] * weight;
+                        double val = buf[m + dimM * (n + dimN * (p + dimP * q))] * fac;
                         if (std::abs(val) > sparse_threshold) {
-                            // PRE-CALCULATE SYMMETRY FACTOR
-                            double f = 1.0;
-                            if (mu == nu) f *= 0.5;
-                            if (lam == sig) f *= 0.5;
-                            if (packed_mn == packed_ls) f *= 0.5;
-                            
-                            J_val_[idx] = val * f; // Sudah terkalikan f!
+                            J_val_[idx] = val;
                             J_ind_[idx] = packed_mn;
                             K_ind_[idx] = packed_ls;
                             idx++;
@@ -216,18 +209,14 @@ void BaseSCF::init_integrals_incore() {
     };
 
     if (pl_) {
-        for (const auto& [M, N, P, Q, w] : pl_->get_unique_quartets()) {
-            process_quartet(M, N, P, Q, w);
-        }
+        for (const auto& [M, N, P, Q, w] : pl_->get_unique_quartets()) process_quartet(M, N, P, Q, w);
     } else {
         int nshells = basis_.n_shells();
         for (int M = 0; M < nshells; ++M) {
             for (int N = 0; N <= M; ++N) {
                 for (int P = 0; P <= M; ++P) {
                     int Q_max = (M == P) ? N : P;
-                    for (int Q = 0; Q <= Q_max; ++Q) {
-                        process_quartet(M, N, P, Q, 1.0);
-                    }
+                    for (int Q = 0; Q <= Q_max; ++Q) process_quartet(M, N, P, Q, 1.0);
                 }
             }
         }
@@ -531,27 +520,30 @@ void RHF::build_fock_matrix() {
                 
                 #pragma omp for schedule(dynamic, 2048)
                 for (size_t k = 0; k < n_ints; ++k) {
-                    // FAST BITWISE UNPACKING (0 overhead)
                     int p_mn = ind1[k]; int mu = (p_mn >> 16) & 0xFFFF; int nu = p_mn & 0xFFFF;
                     int p_ls = ind2[k]; int lam = (p_ls >> 16) & 0xFFFF; int sig = p_ls & 0xFFFF;
-                    double v = val[k]; // Faktor f sudah dihitung di init!
                     
-                    double vJ = 4.0 * v;
-                    G_local(mu, nu) += vJ * dP(lam, sig);
-                    if (p_mn != p_ls) G_local(lam, sig) += vJ * dP(mu, nu);
+                    double v = val[k];
+                    double v2 = v * 2.0;
+
+                    double pt_ls = dP(lam, sig) * 2.0;
+                    double pt_mn = dP(mu, nu) * 2.0;
                     
-                    G_local(mu, lam) -= v * dP(nu, sig);
-                    G_local(mu, sig) -= v * dP(nu, lam);
-                    G_local(nu, lam) -= v * dP(mu, sig);
-                    G_local(nu, sig) -= v * dP(mu, lam);
+                    G_local(mu, nu) += v2 * pt_ls;
+                    G_local(nu, mu) += v2 * pt_ls;
+                    G_local(lam, sig) += v2 * pt_mn;
+                    G_local(sig, lam) += v2 * pt_mn;
+                    
+                    G_local(mu, lam) -= v * dP(nu, sig); G_local(lam, mu) -= v * dP(sig, nu);
+                    G_local(nu, lam) -= v * dP(mu, sig); G_local(lam, nu) -= v * dP(sig, mu);
+                    G_local(mu, sig) -= v * dP(nu, lam); G_local(sig, mu) -= v * dP(lam, nu);
+                    G_local(nu, sig) -= v * dP(mu, lam); G_local(sig, nu) -= v * dP(lam, mu);
                 }
                 #pragma omp critical
                 { dG += G_local; }
             }
             
-            dG = dG + dG.transpose().eval();
-            for (int i = 0; i < nbasis_; ++i) dG(i, i) *= 0.5;
-            
+            dG = 0.5 * (dG + dG.transpose()).eval(); // Clean numerical noise
             G_accum_ += dG;
             F_alpha_ = H_ + G_accum_;
         }
@@ -1015,42 +1007,34 @@ void ROHF::build_fock_matrix() {
                 for (size_t k = 0; k < n_ints; ++k) {
                     int p_mn = ind1[k]; int mu = (p_mn >> 16) & 0xFFFF; int nu = p_mn & 0xFFFF;
                     int p_ls = ind2[k]; int lam = (p_ls >> 16) & 0xFFFF; int sig = p_ls & 0xFFFF;
+                    
                     double v = val[k];
+                    double v2 = v * 2.0;
 
                     double pt_ls = dP_tot(lam, sig);
                     double pt_mn = dP_tot(mu, nu);
                     
-                    double vJ = 4.0 * v;
-                    double J_mn = vJ * pt_ls;
-                    double J_ls = vJ * pt_mn;
+                    Ga_local(mu, nu) += v2 * pt_ls; Gb_local(mu, nu) += v2 * pt_ls;
+                    Ga_local(nu, mu) += v2 * pt_ls; Gb_local(nu, mu) += v2 * pt_ls;
+                    Ga_local(lam, sig) += v2 * pt_mn; Gb_local(lam, sig) += v2 * pt_mn;
+                    Ga_local(sig, lam) += v2 * pt_mn; Gb_local(sig, lam) += v2 * pt_mn;
+                    
+                    Ga_local(mu, lam) -= v * dPa(nu, sig); Ga_local(lam, mu) -= v * dPa(sig, nu);
+                    Ga_local(nu, lam) -= v * dPa(mu, sig); Ga_local(lam, nu) -= v * dPa(sig, mu);
+                    Ga_local(mu, sig) -= v * dPa(nu, lam); Ga_local(sig, mu) -= v * dPa(lam, nu);
+                    Ga_local(nu, sig) -= v * dPa(mu, lam); Ga_local(sig, nu) -= v * dPa(lam, mu);
 
-                    Ga_local(mu, nu) += J_mn;
-                    Gb_local(mu, nu) += J_mn;
-                    if (p_mn != p_ls) {
-                        Ga_local(lam, sig) += J_ls;
-                        Gb_local(lam, sig) += J_ls;
-                    }
-
-                    Ga_local(mu, lam) -= v * dPa(nu, sig);
-                    Ga_local(mu, sig) -= v * dPa(nu, lam);
-                    Ga_local(nu, lam) -= v * dPa(mu, sig);
-                    Ga_local(nu, sig) -= v * dPa(mu, lam);
-
-                    Gb_local(mu, lam) -= v * dPb(nu, sig);
-                    Gb_local(mu, sig) -= v * dPb(nu, lam);
-                    Gb_local(nu, lam) -= v * dPb(mu, sig);
-                    Gb_local(nu, sig) -= v * dPb(mu, lam);
+                    Gb_local(mu, lam) -= v * dPb(nu, sig); Gb_local(lam, mu) -= v * dPb(sig, nu);
+                    Gb_local(nu, lam) -= v * dPb(mu, sig); Gb_local(lam, nu) -= v * dPb(sig, mu);
+                    Gb_local(mu, sig) -= v * dPb(nu, lam); Gb_local(sig, mu) -= v * dPb(lam, nu);
+                    Gb_local(nu, sig) -= v * dPb(mu, lam); Gb_local(sig, nu) -= v * dPb(lam, mu);
                 }
                 #pragma omp critical
                 { dGa += Ga_local; dGb += Gb_local; }
             }
             
-            dGa = dGa + dGa.transpose().eval();
-            dGb = dGb + dGb.transpose().eval();
-            for (int i = 0; i < nbasis_; ++i) {
-                dGa(i, i) *= 0.5;
-                dGb(i, i) *= 0.5;
-            }
+            dGa = 0.5 * (dGa + dGa.transpose()).eval();
+            dGb = 0.5 * (dGb + dGb.transpose()).eval();
             
             G_accum_a_ += dGa;
             G_accum_b_ += dGb;
