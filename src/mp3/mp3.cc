@@ -147,35 +147,17 @@ MP3Result RMP3::compute() {
         B_vv = build_B(Cv, Cv);
     }
 
-    // 1. Ladder term (vvvv): Memasukkan screening threshold
-    if (config_.eri_method == "exact") {
-        auto V = get_V_exact(Cv, Cv, Cv, Cv);
-        TBLIS_VIEW_4D(t_V, V, nv_a_, nv_a_, nv_a_, nv_a_);
-        tblis::mult< double >(1.0, t_T, "ijef", t_V, "eafb", 1.0, t_W, "ijab");
-    } else {
-        #pragma omp parallel
-        {
-            Eigen::Tensor<double, 4> W_priv(no_a_, no_a_, nv_a_, nv_a_); W_priv.setZero();
-            Eigen::Tensor<double, 4> X_priv(no_a_, no_a_, nv_a_, nv_a_);
-            TBLIS_VIEW_4D(t_W_priv, W_priv, no_a_, no_a_, nv_a_, nv_a_);
-            TBLIS_VIEW_4D(t_X_priv, X_priv, no_a_, no_a_, nv_a_, nv_a_);
-
-            #pragma omp for schedule(dynamic)
-            for (int P = 0; P < n_aux_; ++P) {
-                // Terapkan penapisan numerik untuk melewatkan blok P yang tidak signifikan
-                if (B_vv.col(P).cwiseAbs().maxCoeff() < 1e-12) continue;
-                
-                TBLIS_VIEW_2D(t_B_P, B_vv.col(P).data(), nv_a_, nv_a_);
-                X_priv.setZero();
-                tblis::mult< double >(1.0, t_T, "ijef", t_B_P, "fb", 0.0, t_X_priv, "ijeb");
-                tblis::mult< double >(1.0, t_X_priv, "ijeb", t_B_P, "ea", 1.0, t_W_priv, "ijab");
-            }
-
-            #pragma omp critical
-            {
-                Eigen::Map<Eigen::VectorXd> map_W(W.data(), W.size());
-                Eigen::Map<const Eigen::VectorXd> map_priv(W_priv.data(), W_priv.size());
-                map_W += map_priv;
+    // 1. Ladder term (vvvv): Explicit GEMM Construction (OMP3 Strategy)
+    {
+        Eigen::Tensor<double, 4> V_vvvv(nv_a_, nv_a_, nv_a_, nv_a_);
+        if (config_.eri_method == "exact") {
+            V_vvvv = get_V_exact(Cv, Cv, Cv, Cv);
+            TBLIS_VIEW_4D(t_V, V_vvvv, nv_a_, nv_a_, nv_a_, nv_a_);
+            tblis::mult< double >(1.0, t_T, "ijef", t_V, "eafb", 1.0, t_W, "ijab");
+        } else {
+            if (make_V_from_B_inplace(B_vv, B_vv, V_vvvv)) {
+                TBLIS_VIEW_4D(t_V, V_vvvv, nv_a_, nv_a_, nv_a_, nv_a_);
+                tblis::mult< double >(1.0, t_T, "ijef", t_V, "eafb", 1.0, t_W, "ijab");
             }
         }
     }
@@ -412,113 +394,57 @@ MP3Result UMP3::compute() {
     }
 
     // =========================================================================
-    // 1. TAHAP LADDER (vvvv) - Memory-free O(N_aux n_o^2 n_v^3) Parallel
+    // 1. TAHAP LADDER (vvvv) - Explicit GEMM Construction (OMP3 Strategy)
     // =========================================================================
     {
         Waa.setZero();
+        Eigen::Tensor<double, 4> Vvvvv_aa(nv_a_, nv_a_, nv_a_, nv_a_);
+        bool calc_aa = true;
+
         if (config_.eri_method == "exact") {
-            auto Vaa = get_V_exact(Cav, Cav, Cav, Cav);
-            TBLIS_VIEW_4D(t_Vaa, Vaa, nv_a_, nv_a_, nv_a_, nv_a_);
+            Vvvvv_aa = get_V_exact(Cav, Cav, Cav, Cav);
+        } else {
+            calc_aa = make_V_from_B_inplace(B_vv_a, B_vv_a, Vvvvv_aa);
+        }
+
+        if (calc_aa) {
+            TBLIS_VIEW_4D(t_Vaa, Vvvvv_aa, nv_a_, nv_a_, nv_a_, nv_a_);
             tblis::mult< double >(1.0, t_Taa, "ijef", t_Vaa, "eafb", 1.0, t_Waa, "ijab");
             tblis::mult< double >(-1.0, t_Taa, "ijef", t_Vaa, "ebfa", 1.0, t_Waa, "ijab");
-        } else {
-            #pragma omp parallel
-            {
-                // Pra-alokasi tensor privat di luar kalang dinamis untuk menghindari memory thrashing
-                Eigen::Tensor<double, 4> W_priv(no_a_, no_a_, nv_a_, nv_a_); W_priv.setZero();
-                Eigen::Tensor<double, 4> X_priv(no_a_, no_a_, nv_a_, nv_a_);
-                TBLIS_VIEW_4D(t_W_priv, W_priv, no_a_, no_a_, nv_a_, nv_a_);
-                TBLIS_VIEW_4D(t_X_priv, X_priv, no_a_, no_a_, nv_a_, nv_a_);
-
-                #pragma omp for schedule(dynamic)
-                for (int P = 0; P < n_aux_; ++P) {
-                    // Screening numerik untuk memintas matriks nol/mendekati nol
-                    if (B_vv_a.col(P).cwiseAbs().maxCoeff() < 1e-12) continue;
-
-                    TBLIS_VIEW_2D(t_B_P, B_vv_a.col(P).data(), nv_a_, nv_a_);
-                    X_priv.setZero();
-                    tblis::mult< double >(1.0, t_Taa, "ijef", t_B_P, "fb", 0.0, t_X_priv, "ijeb");
-                    tblis::mult< double >(1.0, t_X_priv, "ijeb", t_B_P, "ea", 1.0, t_W_priv, "ijab");
-                    tblis::mult< double >(-1.0, t_X_priv, "ijea", t_B_P, "eb", 1.0, t_W_priv, "ijab");
-                }
-                #pragma omp critical
-                {
-                    Eigen::Map<Eigen::VectorXd> map_W(Waa.data(), Waa.size());
-                    Eigen::Map<const Eigen::VectorXd> map_priv(W_priv.data(), W_priv.size());
-                    map_W += map_priv;
-                }
-            }
         }
         e3_aa += 0.125 * tensor_dot(t2_aa_, Waa);
 
         if (no_b_ > 0 && nv_b_ > 0) {
             Wbb.setZero();
+            Eigen::Tensor<double, 4> Vvvvv_bb(nv_b_, nv_b_, nv_b_, nv_b_);
+            bool calc_bb = true;
+
             if (config_.eri_method == "exact") {
-                auto Vbb = get_V_exact(Cbv, Cbv, Cbv, Cbv);
-                TBLIS_VIEW_4D(t_Vbb, Vbb, nv_b_, nv_b_, nv_b_, nv_b_);
+                Vvvvv_bb = get_V_exact(Cbv, Cbv, Cbv, Cbv);
+            } else {
+                calc_bb = make_V_from_B_inplace(B_vv_b, B_vv_b, Vvvvv_bb);
+            }
+
+            if (calc_bb) {
+                TBLIS_VIEW_4D(t_Vbb, Vvvvv_bb, nv_b_, nv_b_, nv_b_, nv_b_);
                 tblis::mult< double >(1.0, t_Tbb, "ijef", t_Vbb, "eafb", 1.0, t_Wbb, "ijab");
                 tblis::mult< double >(-1.0, t_Tbb, "ijef", t_Vbb, "ebfa", 1.0, t_Wbb, "ijab");
-            } else {
-                #pragma omp parallel
-                {
-                    Eigen::Tensor<double, 4> W_priv(no_b_, no_b_, nv_b_, nv_b_); W_priv.setZero();
-                    Eigen::Tensor<double, 4> X_priv(no_b_, no_b_, nv_b_, nv_b_);
-                    TBLIS_VIEW_4D(t_W_priv, W_priv, no_b_, no_b_, nv_b_, nv_b_);
-                    TBLIS_VIEW_4D(t_X_priv, X_priv, no_b_, no_b_, nv_b_, nv_b_);
-
-                    #pragma omp for schedule(dynamic)
-                    for (int P = 0; P < n_aux_; ++P) {
-                        if (B_vv_b.col(P).cwiseAbs().maxCoeff() < 1e-12) continue; // Screening numerik spin Beta
-                        
-                        TBLIS_VIEW_2D(t_B_P, B_vv_b.col(P).data(), nv_b_, nv_b_);
-                        X_priv.setZero();
-                        tblis::mult< double >(1.0, t_Tbb, "ijef", t_B_P, "fb", 0.0, t_X_priv, "ijeb");
-                        tblis::mult< double >(1.0, t_X_priv, "ijeb", t_B_P, "ea", 1.0, t_W_priv, "ijab");
-                        tblis::mult< double >(-1.0, t_X_priv, "ijea", t_B_P, "eb", 1.0, t_W_priv, "ijab");
-                    }
-                    #pragma omp critical
-                    {
-                        Eigen::Map<Eigen::VectorXd> map_W(Wbb.data(), Wbb.size());
-                        Eigen::Map<const Eigen::VectorXd> map_priv(W_priv.data(), W_priv.size());
-                        map_W += map_priv;
-                    }
-                }
             }
             e3_bb += 0.125 * tensor_dot(t2_bb_, Wbb);
 
             Wab.setZero();
+            Eigen::Tensor<double, 4> Vvvvv_ab(nv_a_, nv_a_, nv_b_, nv_b_);
+            bool calc_ab = true;
+
             if (config_.eri_method == "exact") {
-                auto Vab = get_V_exact(Cav, Cav, Cbv, Cbv);
-                TBLIS_VIEW_4D(t_Vab, Vab, nv_a_, nv_a_, nv_b_, nv_b_);
-                tblis::mult< double >(1.0, t_Tab, "ijef", t_Vab, "eafb", 1.0, t_Wab, "ijab");
+                Vvvvv_ab = get_V_exact(Cav, Cav, Cbv, Cbv);
             } else {
-                #pragma omp parallel
-                {
-                    Eigen::Tensor<double, 4> W_priv(no_a_, no_b_, nv_a_, nv_b_); W_priv.setZero();
-                    Eigen::Tensor<double, 4> X_priv(no_a_, no_b_, nv_a_, nv_b_);
-                    TBLIS_VIEW_4D(t_W_priv, W_priv, no_a_, no_b_, nv_a_, nv_b_);
-                    TBLIS_VIEW_4D(t_X_priv, X_priv, no_a_, no_b_, nv_a_, nv_b_);
+                calc_ab = make_V_from_B_inplace(B_vv_a, B_vv_b, Vvvvv_ab);
+            }
 
-                    #pragma omp for schedule(dynamic)
-                    for (int P = 0; P < n_aux_; ++P) {
-                        // Screening simultan untuk tensor cross-spin
-                        if (B_vv_a.col(P).cwiseAbs().maxCoeff() < 1e-12 && 
-                            B_vv_b.col(P).cwiseAbs().maxCoeff() < 1e-12) continue;
-
-                        TBLIS_VIEW_2D(t_B_P_a, B_vv_a.col(P).data(), nv_a_, nv_a_);
-                        TBLIS_VIEW_2D(t_B_P_b, B_vv_b.col(P).data(), nv_b_, nv_b_);
-
-                        X_priv.setZero();
-                        tblis::mult< double >(1.0, t_Tab, "ijef", t_B_P_b, "fb", 0.0, t_X_priv, "ijeb");
-                        tblis::mult< double >(1.0, t_X_priv, "ijeb", t_B_P_a, "ea", 1.0, t_W_priv, "ijab");
-                    }
-                    #pragma omp critical
-                    {
-                        Eigen::Map<Eigen::VectorXd> map_W(Wab.data(), Wab.size());
-                        Eigen::Map<const Eigen::VectorXd> map_priv(W_priv.data(), W_priv.size());
-                        map_W += map_priv;
-                    }
-                }
+            if (calc_ab) {
+                TBLIS_VIEW_4D(t_Vab, Vvvvv_ab, nv_a_, nv_a_, nv_b_, nv_b_);
+                tblis::mult< double >(1.0, t_Tab, "ijef", t_Vab, "eafb", 1.0, t_Wab, "ijab");
             }
             e3_ab += 1.0 * tensor_dot(t2_ab_, Wab);
         }
