@@ -130,8 +130,18 @@ MP3Result RMP3::compute() {
         return B;
     };
 
-    auto make_V_from_B_inplace = [](const Eigen::MatrixXd& B1, const Eigen::MatrixXd& B2, Eigen::Tensor<double, 4>& V_mo) {
-        Eigen::MatrixXd V_mat = B1 * B2.transpose();
+    auto make_V_from_B_inplace = [&](const Eigen::MatrixXd& B1, const Eigen::MatrixXd& B2, Eigen::Tensor<double, 4>& V_mo) {
+        int d1 = B1.rows(); int d2 = B2.rows(); int n_aux = B1.cols();
+        
+
+        TBLIS_VIEW_2D(t_B1, const_cast<double*>(B1.data()), d1, n_aux);
+        TBLIS_VIEW_2D(t_B2, const_cast<double*>(B2.data()), d2, n_aux);
+        
+        Eigen::MatrixXd V_mat(d1, d2); V_mat.setZero();
+        TBLIS_VIEW_2D(t_Vmat, V_mat.data(), d1, d2);
+        
+        tblis::mult<double>(1.0, t_B1, "iP", t_B2, "jP", 0.0, t_Vmat, "ij");
+
         if (V_mat.cwiseAbs().maxCoeff() < 1e-12) {
             V_mo.setZero();
             return false;
@@ -368,8 +378,17 @@ MP3Result UMP3::compute() {
     };
 
     
-    auto make_V_from_B_inplace = [](const Eigen::MatrixXd& B1, const Eigen::MatrixXd& B2, Eigen::Tensor<double, 4>& V_mo) {
-        Eigen::MatrixXd V_mat = B1 * B2.transpose();
+    auto make_V_from_B_inplace = [&](const Eigen::MatrixXd& B1, const Eigen::MatrixXd& B2, Eigen::Tensor<double, 4>& V_mo) {
+        int d1 = B1.rows(); int d2 = B2.rows(); int n_aux = B1.cols();
+        
+        TBLIS_VIEW_2D(t_B1, const_cast<double*>(B1.data()), d1, n_aux);
+        TBLIS_VIEW_2D(t_B2, const_cast<double*>(B2.data()), d2, n_aux);
+        
+        Eigen::MatrixXd V_mat(d1, d2); V_mat.setZero();
+        TBLIS_VIEW_2D(t_Vmat, V_mat.data(), d1, d2);
+        
+        tblis::mult<double>(1.0, t_B1, "iP", t_B2, "jP", 0.0, t_Vmat, "ij");
+
         if (V_mat.cwiseAbs().maxCoeff() < 1e-12) {
             V_mo.setZero();
             return false;
@@ -507,8 +526,8 @@ MP3Result UMP3::compute() {
     // 3. TAHAP RING (ovov & oovv) - Kompak O(n_o^2 n_v^2)
     // =========================================================================
     {
-        Eigen::Tensor<double, 4> ovov_aa(no_a_, nv_a_, no_a_, nv_a_);
-        Eigen::Tensor<double, 4> oovv_aa(no_a_, no_a_, nv_a_, nv_a_);
+        Eigen::Tensor<double, 4> ovov_aa(no_a_, nv_a_, no_a_, nv_a_); ovov_aa.setZero();
+        Eigen::Tensor<double, 4> oovv_aa(no_a_, no_a_, nv_a_, nv_a_); oovv_aa.setZero();
         bool calc_aa = true;
 
         if (config_.eri_method == "exact") {
@@ -519,7 +538,6 @@ MP3Result UMP3::compute() {
                     eri_ao, Cao, Cav, occ_a_spaces, virt_a_spaces, nbf_
                 ); 
                 
-                ovov_aa.setZero();
                 #pragma omp parallel for schedule(dynamic)
                 for (size_t o1_idx = 0; o1_idx < occ_a_spaces.size(); ++o1_idx) {
                     const auto& o1 = occ_a_spaces[o1_idx];
@@ -564,11 +582,11 @@ MP3Result UMP3::compute() {
         }
 
         if (no_b_ > 0 && nv_b_ > 0) {
-            Eigen::Tensor<double, 4> ovov_bb(no_b_, nv_b_, no_b_, nv_b_);
-            Eigen::Tensor<double, 4> oovv_bb(no_b_, no_b_, nv_b_, nv_b_);
-            Eigen::Tensor<double, 4> ovov_ab(no_a_, nv_a_, no_b_, nv_b_);
-            Eigen::Tensor<double, 4> oovv_ab_ex(no_a_, no_a_, nv_b_, nv_b_);
-            Eigen::Tensor<double, 4> oovv_ba_ex(no_b_, no_b_, nv_a_, nv_a_);
+            Eigen::Tensor<double, 4> ovov_bb(no_b_, nv_b_, no_b_, nv_b_); ovov_bb.setZero();
+            Eigen::Tensor<double, 4> oovv_bb(no_b_, no_b_, nv_b_, nv_b_); oovv_bb.setZero();
+            Eigen::Tensor<double, 4> ovov_ab(no_a_, nv_a_, no_b_, nv_b_); ovov_ab.setZero();
+            Eigen::Tensor<double, 4> oovv_ab_ex(no_a_, no_a_, nv_b_, nv_b_); oovv_ab_ex.setZero();
+            Eigen::Tensor<double, 4> oovv_ba_ex(no_b_, no_b_, nv_a_, nv_a_); oovv_ba_ex.setZero();
             
             bool calc_bb = true, calc_ab = true;
 
@@ -583,7 +601,6 @@ MP3Result UMP3::compute() {
                         eri_ao, Cbo, Cbv, occ_b_spaces, virt_b_spaces, nbf_
                     );
                     
-                    ovov_bb.setZero();
                     #pragma omp parallel for schedule(dynamic)
                     for (size_t o1_idx = 0; o1_idx < occ_b_spaces.size(); ++o1_idx) {
                         const auto& o1 = occ_b_spaces[o1_idx];
