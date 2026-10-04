@@ -195,7 +195,7 @@ MP2Result RMP2::compute() {
     return result;
 }
 
-} 
+
 
 void UMP2::transform_integrals() {
     if (config_.eri_method != "exact") {
