@@ -86,23 +86,6 @@ MP3Result RMP3::compute() {
         return ERITransformer::transform_custom(*eri_ao_ptr, C1, C2, C3, C4, nbf_, d1, d2, d3, d4);
     };
 
-    auto build_B = [&](const Eigen::MatrixXd& C1, const Eigen::MatrixXd& C2) {
-        int d1 = C1.cols(); int d2 = C2.cols();
-        Eigen::MatrixXd B = Eigen::MatrixXd::Zero(d1 * d2, n_aux_);
-        Eigen::Map<const Eigen::MatrixXd> L_flat(scf_.L_mat.data(), nbf_, nbf_ * n_aux_);
-        Eigen::MatrixXd temp1 = C1.transpose() * L_flat;
-        #pragma omp parallel for schedule(static)
-        for (int P = 0; P < n_aux_; ++P) {
-            Eigen::Map<const Eigen::MatrixXd> tmp_P(temp1.data() + P * d1 * nbf_, d1, nbf_);
-            Eigen::MatrixXd L_pq = tmp_P * C2;
-            std::copy(L_pq.data(), L_pq.data() + (d1 * d2), B.col(P).data());
-        }
-        if (!B.allFinite()) {
-            throw std::runtime_error("[Critical] Cholesky B tensor menghasilkan nilai NaN/Inf!");
-        }
-        return B;
-    };
-
     // Bypass TBLIS/MKL thread limits with aggressive OpenMP row-wise distribution
     auto make_V_from_B_inplace = [&](const Eigen::MatrixXd& B1, const Eigen::MatrixXd& B2, Eigen::Tensor<double, 4>& V_mo) {
         int d1 = B1.rows(); int d2 = B2.rows(); 
@@ -123,22 +106,50 @@ MP3Result RMP3::compute() {
 
     Eigen::MatrixXd B_oo, B_ov, B_vv;
     if (config_.eri_method != "exact") {
-        B_oo = build_B(Co, Co);
-        B_ov = build_B(Co, Cv);
-        B_vv = build_B(Cv, Cv);
+        // [RE-USE VECTOR] Cukup transformasi apa yang tidak ada di MP2
+        B_ov = mp2_.B_ia_P_alpha; // Reuse dari MP2
+        
+        auto build_B_fast = [&](const Eigen::MatrixXd& C1, const Eigen::MatrixXd& C2) {
+            int d1 = C1.cols(); int d2 = C2.cols();
+            Eigen::MatrixXd B = Eigen::MatrixXd::Zero(d1 * d2, n_aux_);
+            Eigen::Map<const Eigen::MatrixXd> L_flat(scf_.L_mat.data(), nbf_, nbf_ * n_aux_);
+            Eigen::MatrixXd temp1 = C1.transpose() * L_flat;
+            #pragma omp parallel for schedule(static)
+            for (int P = 0; P < n_aux_; ++P) {
+                Eigen::Map<const Eigen::MatrixXd> tmp_P(temp1.data() + P * d1 * nbf_, d1, nbf_);
+                Eigen::MatrixXd L_pq = tmp_P * C2;
+                std::copy(L_pq.data(), L_pq.data() + (d1 * d2), B.col(P).data());
+            }
+            return B;
+        };
+
+        B_oo = build_B_fast(Co, Co);
+        B_vv = build_B_fast(Cv, Cv);
     }
 
-    // 1. Ladder term (vvvv)
+    // 1. Ladder term (vvvv) - MULTITHREADED SCLICING TBLIS
     {
         Eigen::Tensor<double, 4> V_vvvv(nv_a_, nv_a_, nv_a_, nv_a_);
-        if (config_.eri_method == "exact") {
-            V_vvvv = get_V_exact(Cv, Cv, Cv, Cv);
-            TBLIS_VIEW_4D(t_V, V_vvvv, nv_a_, nv_a_, nv_a_, nv_a_);
-            tblis::mult< double >(1.0, t_T, "ijef", t_V, "eafb", 1.0, t_W, "ijab");
-        } else {
-            if (make_V_from_B_inplace(B_vv, B_vv, V_vvvv)) {
+        if (config_.eri_method == "exact") V_vvvv = get_V_exact(Cv, Cv, Cv, Cv);
+        else make_V_from_B_inplace(B_vv, B_vv, V_vvvv);
+
+        if (V_vvvv.cwiseAbs().maxCoeff() > 1e-12) {
+            #pragma omp parallel
+            {
+                Eigen::Tensor<double, 4> W_priv(no_a_, no_a_, nv_a_, nv_a_); W_priv.setZero();
+                TBLIS_VIEW_4D(t_W_priv, W_priv, no_a_, no_a_, nv_a_, nv_a_);
                 TBLIS_VIEW_4D(t_V, V_vvvv, nv_a_, nv_a_, nv_a_, nv_a_);
-                tblis::mult< double >(1.0, t_T, "ijef", t_V, "eafb", 1.0, t_W, "ijab");
+                
+                #pragma omp for schedule(dynamic)
+                for (int i = 0; i < no_a_; ++i) {
+                    TBLIS_VIEW_3D(t_T_slice, t2_aa_.data() + i * (no_a_ * nv_a_ * nv_a_), no_a_, nv_a_, nv_a_);
+                    TBLIS_VIEW_3D(t_W_slice, W_priv.data() + i * (no_a_ * nv_a_ * nv_a_), no_a_, nv_a_, nv_a_);
+                    tblis::mult< double >(1.0, t_T_slice, "jef", t_V, "eafb", 1.0, t_W_slice, "jab");
+                }
+                #pragma omp critical
+                {
+                    Eigen::Map<Eigen::VectorXd>(W.data(), W.size()) += Eigen::Map<Eigen::VectorXd>(W_priv.data(), W_priv.size());
+                }
             }
         }
     }
@@ -266,21 +277,7 @@ MP3Result UMP3::compute() {
         return ERITransformer::transform_custom(*eri_ao_ptr, C1, C2, C3, C4, nbf_, d1, d2, d3, d4);
     };
 
-    auto build_B = [&](const Eigen::MatrixXd& C1, const Eigen::MatrixXd& C2) {
-        int d1 = C1.cols(); int d2 = C2.cols();
-        Eigen::MatrixXd B = Eigen::MatrixXd::Zero(d1 * d2, n_aux_);
-        Eigen::Map<const Eigen::MatrixXd> L_flat(scf_.L_mat.data(), nbf_, nbf_ * n_aux_);
-        Eigen::MatrixXd temp1 = C1.transpose() * L_flat;
-        #pragma omp parallel for schedule(static)
-        for (int P = 0; P < n_aux_; ++P) {
-            Eigen::Map<const Eigen::MatrixXd> tmp_P(temp1.data() + P * d1 * nbf_, d1, nbf_);
-            Eigen::MatrixXd L_pq = tmp_P * C2;
-            std::copy(L_pq.data(), L_pq.data() + (d1 * d2), B.col(P).data());
-        }
-        if (!B.allFinite()) throw std::runtime_error("[Critical] Cholesky B tensor menghasilkan NaN/Inf!");
-        return B;
-    };
-
+    
     auto make_V_from_B_inplace = [&](const Eigen::MatrixXd& B1, const Eigen::MatrixXd& B2, Eigen::Tensor<double, 4>& V_mo) {
         int d1 = B1.rows(); int d2 = B2.rows(); 
         Eigen::MatrixXd V_mat(d1, d2);
@@ -301,35 +298,58 @@ MP3Result UMP3::compute() {
     Eigen::MatrixXd B_oo_a, B_ov_a, B_vv_a;
     Eigen::MatrixXd B_oo_b, B_ov_b, B_vv_b;
     if (config_.eri_method != "exact") {
-        B_oo_a = build_B(Cao, Cao);
-        B_ov_a = build_B(Cao, Cav);
-        B_vv_a = build_B(Cav, Cav);
+        // [RE-USE VECTOR] Cukup transformasi apa yang tidak ada di MP2
+        B_ov_a = mp2_.B_ia_P_alpha; // Reuse dari MP2
+        if (no_b_ > 0 && nv_b_ > 0) B_ov_b = mp2_.B_ia_P_beta; // Reuse dari MP2
+
+        auto build_B_fast = [&](const Eigen::MatrixXd& C1, const Eigen::MatrixXd& C2) {
+            int d1 = C1.cols(); int d2 = C2.cols();
+            Eigen::MatrixXd B = Eigen::MatrixXd::Zero(d1 * d2, n_aux_);
+            Eigen::Map<const Eigen::MatrixXd> L_flat(scf_.L_mat.data(), nbf_, nbf_ * n_aux_);
+            Eigen::MatrixXd temp1 = C1.transpose() * L_flat;
+            #pragma omp parallel for schedule(static)
+            for (int P = 0; P < n_aux_; ++P) {
+                Eigen::Map<const Eigen::MatrixXd> tmp_P(temp1.data() + P * d1 * nbf_, d1, nbf_);
+                Eigen::MatrixXd L_pq = tmp_P * C2;
+                std::copy(L_pq.data(), L_pq.data() + (d1 * d2), B.col(P).data());
+            }
+            return B;
+        };
+
+        B_oo_a = build_B_fast(Cao, Cao);
+        B_vv_a = build_B_fast(Cav, Cav);
 
         if (no_b_ > 0 && nv_b_ > 0) {
-            B_oo_b = build_B(Cbo, Cbo);
-            B_ov_b = build_B(Cbo, Cbv);
-            B_vv_b = build_B(Cbv, Cbv);
+            B_oo_b = build_B_fast(Cbo, Cbo);
+            B_vv_b = build_B_fast(Cbv, Cbv);
         }
     }
 
     // =========================================================================
-    // 1. TAHAP LADDER (vvvv) 
+    // 1. TAHAP LADDER (vvvv) - MULTITHREADED SLICING
     // =========================================================================
     {
         Waa.setZero();
         Eigen::Tensor<double, 4> Vvvvv_aa(nv_a_, nv_a_, nv_a_, nv_a_);
-        bool calc_aa = true;
-
-        if (config_.eri_method == "exact") {
-            Vvvvv_aa = get_V_exact(Cav, Cav, Cav, Cav);
-        } else {
-            calc_aa = make_V_from_B_inplace(B_vv_a, B_vv_a, Vvvvv_aa);
-        }
+        bool calc_aa = (config_.eri_method == "exact") ? (Vvvvv_aa = get_V_exact(Cav, Cav, Cav, Cav), true) 
+                                                       : make_V_from_B_inplace(B_vv_a, B_vv_a, Vvvvv_aa);
 
         if (calc_aa) {
-            TBLIS_VIEW_4D(t_Vaa, Vvvvv_aa, nv_a_, nv_a_, nv_a_, nv_a_);
-            tblis::mult< double >(1.0, t_Taa, "ijef", t_Vaa, "eafb", 1.0, t_Waa, "ijab");
-            tblis::mult< double >(-1.0, t_Taa, "ijef", t_Vaa, "ebfa", 1.0, t_Waa, "ijab");
+            #pragma omp parallel
+            {
+                Eigen::Tensor<double, 4> W_priv(no_a_, no_a_, nv_a_, nv_a_); W_priv.setZero();
+                TBLIS_VIEW_4D(t_Vaa, Vvvvv_aa, nv_a_, nv_a_, nv_a_, nv_a_);
+                
+                #pragma omp for schedule(dynamic)
+                for (int i = 0; i < no_a_; ++i) {
+                    TBLIS_VIEW_3D(t_T_slc, t2_aa_.data() + i * (no_a_ * nv_a_ * nv_a_), no_a_, nv_a_, nv_a_);
+                    TBLIS_VIEW_3D(t_W_slc, W_priv.data() + i * (no_a_ * nv_a_ * nv_a_), no_a_, nv_a_, nv_a_);
+                    tblis::mult< double >(1.0, t_T_slc, "jef", t_Vaa, "eafb", 1.0, t_W_slc, "jab");
+                    tblis::mult< double >(-1.0, t_T_slc, "jef", t_Vaa, "ebfa", 1.0, t_W_slc, "jab");
+                }
+                #pragma omp critical
+                { Eigen::Map<Eigen::VectorXd>(Waa.data(), Waa.size()) += Eigen::Map<Eigen::VectorXd>(W_priv.data(), W_priv.size()); }
+            }
         }
         e3_aa += 0.125 * tensor_dot(t2_aa_, Waa);
 
