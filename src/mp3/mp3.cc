@@ -127,13 +127,18 @@ MP3Result RMP3::compute() {
         B_vv = build_B_fast(Cv, Cv);
     }
 
-    // 1. Ladder term (vvvv) - MULTITHREADED SCLICING TBLIS
+    // 1. Ladder term (vvvv) - MULTITHREADED SLICING TBLIS
     {
         Eigen::Tensor<double, 4> V_vvvv(nv_a_, nv_a_, nv_a_, nv_a_);
-        if (config_.eri_method == "exact") V_vvvv = get_V_exact(Cv, Cv, Cv, Cv);
-        else make_V_from_B_inplace(B_vv, B_vv, V_vvvv);
+        bool calc_vvvv = true;
+        
+        if (config_.eri_method == "exact") {
+            V_vvvv = get_V_exact(Cv, Cv, Cv, Cv);
+        } else {
+            calc_vvvv = make_V_from_B_inplace(B_vv, B_vv, V_vvvv);
+        }
 
-        if (V_vvvv.cwiseAbs().maxCoeff() > 1e-12) {
+        if (calc_vvvv) {
             #pragma omp parallel
             {
                 Eigen::Tensor<double, 4> W_priv(no_a_, no_a_, nv_a_, nv_a_); W_priv.setZero();

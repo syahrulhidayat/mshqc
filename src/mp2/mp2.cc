@@ -193,13 +193,10 @@ MP2Result RMP2::compute() {
         std::cout << "Total RMP2:      " << std::setw(14) << result.energy_total << " Ha\n";
         std::cout << "Time:            " << std::chrono::duration<double>(t2-t1).count() << " s\n";
     }
-    
     return result;
 }
 
 } // namespace foundation
-
-
 
 void UMP2::transform_integrals() {
     if (config_.eri_method != "exact") {
