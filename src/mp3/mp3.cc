@@ -159,23 +159,8 @@ MP3Result RMP3::compute() {
         }
 
         if (calc_vvvv) {
-            #pragma omp parallel
-            {
-                Eigen::Tensor<double, 4> W_priv(no_a_, no_a_, nv_a_, nv_a_); W_priv.setZero();
-                TBLIS_VIEW_4D(t_W_priv, W_priv, no_a_, no_a_, nv_a_, nv_a_);
-                TBLIS_VIEW_4D(t_V, V_vvvv, nv_a_, nv_a_, nv_a_, nv_a_);
-                
-                #pragma omp for schedule(dynamic)
-                for (int i = 0; i < no_a_; ++i) {
-                    TBLIS_VIEW_3D(t_T_slice, t2_aa_.data() + i * (no_a_ * nv_a_ * nv_a_), no_a_, nv_a_, nv_a_);
-                    TBLIS_VIEW_3D(t_W_slice, W_priv.data() + i * (no_a_ * nv_a_ * nv_a_), no_a_, nv_a_, nv_a_);
-                    tblis::mult< double >(1.0, t_T_slice, "jef", t_V, "eafb", 1.0, t_W_slice, "jab");
-                }
-                #pragma omp critical
-                {
-                    Eigen::Map<Eigen::VectorXd>(W.data(), W.size()) += Eigen::Map<Eigen::VectorXd>(W_priv.data(), W_priv.size());
-                }
-            }
+            TBLIS_VIEW_4D(t_V, V_vvvv, nv_a_, nv_a_, nv_a_, nv_a_);
+            tblis::mult< double >(1.0, t_T, "ijef", t_V, "eafb", 1.0, t_W, "ijab");
         }
     }
 
@@ -212,16 +197,11 @@ MP3Result RMP3::compute() {
         TBLIS_VIEW_4D(t_Voovv, V_oovv, no_a_, no_a_, nv_a_, nv_a_);
 
         if (calc_ovov) {
-            tblis::mult< double >(2.0,  t_Vovov, "iakc", t_T, "kjcb", 1.0, t_W, "ijab");
-            tblis::mult< double >(2.0,  t_T, "ikac", t_Vovov, "kcjb", 1.0, t_W, "ijab");
-            tblis::mult< double >(-1.0, t_T, "ikca", t_Vovov, "kcjb", 1.0, t_W, "ijab"); 
-            tblis::mult< double >(-1.0, t_Vovov, "iakc", t_T, "kjbc", 1.0, t_W, "ijab");
+            tblis::mult< double >(2.0, t_Vovov, "iakc", t_T, "kjcb", 1.0, t_W, "ijab");
+            tblis::mult< double >(-1.0, t_Vovov, "iakc", t_T, "kjac", 1.0, t_W, "ijab");
         }
         if (calc_oovv) {
-            tblis::mult< double >(-1.0, t_Voovv, "ikac", t_T, "kjcb", 1.0, t_W, "ijab");
-            tblis::mult< double >(-1.0, t_T, "ikac", t_Voovv, "kjcb", 1.0, t_W, "ijab");
-            tblis::mult< double >(-1.0, t_Voovv, "ikbc", t_T, "kjac", 1.0, t_W, "ijab");
-            tblis::mult< double >(-1.0, t_T, "ikcb", t_Voovv, "jkac", 1.0, t_W, "ijab"); 
+            tblis::mult< double >(-1.0, t_Voovv, "ikca", t_T, "kjcb", 1.0, t_W, "ijab");
         }
     }
 
@@ -231,8 +211,8 @@ MP3Result RMP3::compute() {
         for (int j = 0; j < no_a_; ++j) {
             for (int a = 0; a < nv_a_; ++a) {
                 for (int b = 0; b < nv_a_; ++b) {
-                    // W is fully spin-adapted, so direct mult is correct (No double counting)
-                    e_mp3 += W(i, j, a, b) * t2_aa_(i, j, a, b);
+                    // Menerapkan faktor adaptasi spin yang tepat untuk mengevaluasi korelasi spasial penuh
+                    e_mp3 += W(i, j, a, b) * (2.0 * t2_aa_(i, j, a, b) - t2_aa_(i, j, b, a));
                 }
             }
         }
@@ -379,21 +359,9 @@ MP3Result UMP3::compute() {
                                                        : make_V_from_B_inplace(B_vv_a, B_vv_a, Vvvvv_aa);
 
         if (calc_aa) {
-            #pragma omp parallel
-            {
-                Eigen::Tensor<double, 4> W_priv(no_a_, no_a_, nv_a_, nv_a_); W_priv.setZero();
-                TBLIS_VIEW_4D(t_Vaa, Vvvvv_aa, nv_a_, nv_a_, nv_a_, nv_a_);
-                
-                #pragma omp for schedule(dynamic)
-                for (int i = 0; i < no_a_; ++i) {
-                    TBLIS_VIEW_3D(t_T_slc, t2_aa_.data() + i * (no_a_ * nv_a_ * nv_a_), no_a_, nv_a_, nv_a_);
-                    TBLIS_VIEW_3D(t_W_slc, W_priv.data() + i * (no_a_ * nv_a_ * nv_a_), no_a_, nv_a_, nv_a_);
-                    tblis::mult< double >(1.0, t_T_slc, "jef", t_Vaa, "eafb", 1.0, t_W_slc, "jab");
-                    tblis::mult< double >(-1.0, t_T_slc, "jef", t_Vaa, "ebfa", 1.0, t_W_slc, "jab");
-                }
-                #pragma omp critical
-                { Eigen::Map<Eigen::VectorXd>(Waa.data(), Waa.size()) += Eigen::Map<Eigen::VectorXd>(W_priv.data(), W_priv.size()); }
-            }
+            TBLIS_VIEW_4D(t_Vaa, Vvvvv_aa, nv_a_, nv_a_, nv_a_, nv_a_);
+            tblis::mult< double >(1.0, t_Taa, "ijef", t_Vaa, "eafb", 1.0, t_Waa, "ijab");
+            tblis::mult< double >(-1.0, t_Taa, "ijef", t_Vaa, "ebfa", 1.0, t_Waa, "ijab");
         }
         e3_aa += 0.125 * tensor_dot(t2_aa_, Waa);
 
@@ -507,21 +475,8 @@ MP3Result UMP3::compute() {
 
         Waa.setZero();
         if (calc_aa) {
-            // Identity
             tblis::mult< double >(1.0, t_ovov_aa, "iakc", t_Taa, "kjcb", 1.0, t_Waa, "ijab");
-            tblis::mult< double >(-1.0, t_oovv_aa, "ikac", t_Taa, "kjcb", 1.0, t_Waa, "ijab");
-            
-            // Permutasi P(ij)
-            tblis::mult< double >(-1.0, t_ovov_aa, "jakc", t_Taa, "kicb", 1.0, t_Waa, "ijab");
-            tblis::mult< double >(1.0, t_oovv_aa, "jkac", t_Taa, "kicb", 1.0, t_Waa, "ijab");
-            
-            // Permutasi P(ab)
-            tblis::mult< double >(-1.0, t_ovov_aa, "ibkc", t_Taa, "kjca", 1.0, t_Waa, "ijab");
-            tblis::mult< double >(1.0, t_oovv_aa, "ikbc", t_Taa, "kjca", 1.0, t_Waa, "ijab");
-            
-            // Permutasi P(ij)P(ab)
-            tblis::mult< double >(1.0, t_ovov_aa, "jbkc", t_Taa, "kica", 1.0, t_Waa, "ijab");
-            tblis::mult< double >(-1.0, t_oovv_aa, "jkbc", t_Taa, "kica", 1.0, t_Waa, "ijab");
+            tblis::mult< double >(-1.0, t_oovv_aa, "ikca", t_Taa, "kjcb", 1.0, t_Waa, "ijab");
         }
 
         if (no_b_ > 0 && nv_b_ > 0) {
@@ -558,21 +513,8 @@ MP3Result UMP3::compute() {
 
             Wbb.setZero();
             if (calc_bb) {
-                // Identity
                 tblis::mult< double >(1.0, t_ovov_bb, "iakc", t_Tbb, "kjcb", 1.0, t_Wbb, "ijab");
-                tblis::mult< double >(-1.0, t_oovv_bb, "ikac", t_Tbb, "kjcb", 1.0, t_Wbb, "ijab");
-                
-                // Permutasi P(ij)
-                tblis::mult< double >(-1.0, t_ovov_bb, "jakc", t_Tbb, "kicb", 1.0, t_Wbb, "ijab");
-                tblis::mult< double >(1.0, t_oovv_bb, "jkac", t_Tbb, "kicb", 1.0, t_Wbb, "ijab");
-
-                // Permutasi P(ab)
-                tblis::mult< double >(-1.0, t_ovov_bb, "ibkc", t_Tbb, "kjca", 1.0, t_Wbb, "ijab");
-                tblis::mult< double >(1.0, t_oovv_bb, "ikbc", t_Tbb, "kjca", 1.0, t_Wbb, "ijab");
-
-                // Permutasi P(ij)P(ab)
-                tblis::mult< double >(1.0, t_ovov_bb, "jbkc", t_Tbb, "kica", 1.0, t_Wbb, "ijab");
-                tblis::mult< double >(-1.0, t_oovv_bb, "jkbc", t_Tbb, "kica", 1.0, t_Wbb, "ijab");
+                tblis::mult< double >(-1.0, t_oovv_bb, "ikca", t_Tbb, "kjcb", 1.0, t_Wbb, "ijab");
             }
             if (calc_ab) tblis::mult< double >(1.0, t_ovov_ab, "kcia", t_Tab, "kjcb", 1.0, t_Wbb, "ijab"); 
             e3_bb += 1.0 * tensor_dot(t2_bb_, Wbb);
@@ -580,7 +522,7 @@ MP3Result UMP3::compute() {
             Wab.setZero();
             if (calc_aa) {
                 tblis::mult< double >(1.0,  t_ovov_aa, "iakc", t_Tab, "kjcb", 1.0, t_Wab, "ijab");
-                tblis::mult< double >(-1.0, t_oovv_aa, "ikac", t_Tab, "kjcb", 1.0, t_Wab, "ijab");
+                tblis::mult< double >(-1.0, t_oovv_aa, "ikca", t_Tab, "kjcb", 1.0, t_Wab, "ijab");
             }
             if (calc_bb) {
                 tblis::mult< double >(1.0,  t_Tab, "ikac", t_ovov_bb, "kcjb", 1.0, t_Wab, "ijab");
@@ -614,6 +556,7 @@ MP3Result UMP3::compute() {
     }
     return res;
 }
+
 
 
 double OMP3::get_correlation_energy() const {
