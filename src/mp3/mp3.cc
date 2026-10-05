@@ -642,7 +642,7 @@ void OMP3::compute_mp3_correction() {
             TBLIS_VIEW_4D(t_Voovv, V_oovv, na_, na_, va_, va_);
 
             tblis::mult< double >(2.0,  t_Vovov, "iakc", t_T, "kjcb", 1.0, t_W, "ijab");
-            tblis::mult< double >(-1.0, t_Voovv, "ikac", t_T, "kjcb", 1.0, t_W, "ijab"); //bisa ikca
+            tblis::mult< double >(-1.0, t_Voovv, "ikca", t_T, "kjcb", 1.0, t_W, "ijab"); //bisa ikac
             tblis::mult< double >(2.0,  t_T, "ikac", t_Vovov, "kcjb", 1.0, t_W, "ijab");
             tblis::mult< double >(-1.0, t_T, "ikac", t_Voovv, "kjcb", 1.0, t_W, "ijab");
             tblis::mult< double >(-1.0, t_T, "ikca", t_Vovov, "kcjb", 1.0, t_W, "ijab"); 
@@ -894,7 +894,7 @@ void OMP3::compute_mp3_correction() {
 
         tblis::mult< double >(1.0, t_T, "mnab", t_Voooo, "minj", 1.0, t_W, "ijab");
         tblis::mult< double >(2.0,  t_Vovov, "iakc", t_T, "kjcb", 1.0, t_W, "ijab");
-        tblis::mult< double >(-1.0, t_Voovv, "ikac", t_T, "kjcb", 1.0, t_W, "ijab"); //ikca
+        tblis::mult< double >(-1.0, t_Voovv, "ikca", t_T, "kjcb", 1.0, t_W, "ijab"); //ikac
         tblis::mult< double >(2.0,  t_T, "ikac", t_Vovov, "kcjb", 1.0, t_W, "ijab");
         tblis::mult< double >(-1.0, t_T, "ikac", t_Voovv, "kjcb", 1.0, t_W, "ijab");
         tblis::mult< double >(-1.0, t_T, "ikca", t_Vovov, "kcjb", 1.0, t_W, "ijab"); 
