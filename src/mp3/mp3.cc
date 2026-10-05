@@ -198,7 +198,7 @@ MP3Result RMP3::compute() {
 
         if (calc_ovov) {
             tblis::mult< double >(2.0,  t_Vovov, "iakc", t_T, "kjcb", 1.0, t_W, "ijab");
-            tblis::mult< double >(-1.0, t_Vovov, "iakc", t_T, "kjac", 1.0, t_W, "ijab");
+            tblis::mult< double >(-1.0, t_Vovov, "iakc", t_T, "kjbc", 1.0, t_W, "ijab"); 
             tblis::mult< double >(-1.0, t_Vovov, "jakc", t_T, "kicb", 1.0, t_W, "ijab"); 
         }
         if (calc_oovv) {
