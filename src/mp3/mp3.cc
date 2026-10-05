@@ -86,7 +86,7 @@ MP3Result RMP3::compute() {
         return ERITransformer::transform_custom(*eri_ao_ptr, C1, C2, C3, C4, nbf_, d1, d2, d3, d4);
     };
 
-    // Bypass TBLIS/MKL thread limits with aggressive OpenMP row-wise distribution
+    // Bypass TBLIS/MKL thread limits with explicit layout-respecting mapping
     auto make_V_from_B_inplace = [&](const Eigen::MatrixXd& B1, const Eigen::MatrixXd& B2, Eigen::Tensor<double, 4>& V_mo) {
         int d1 = B1.rows(); int d2 = B2.rows(); 
         Eigen::MatrixXd V_mat(d1, d2);
@@ -100,14 +100,30 @@ MP3Result RMP3::compute() {
             V_mo.setZero();
             return false;
         }
-        std::copy(V_mat.data(), V_mat.data() + V_mat.size(), V_mo.data());
+        
+        int dim0 = V_mo.dimension(0);
+        int dim1 = V_mo.dimension(1);
+        int dim2 = V_mo.dimension(2);
+        int dim3 = V_mo.dimension(3);
+
+        #pragma omp parallel for collapse(4)
+        for (int i = 0; i < dim0; ++i) {
+            for (int j = 0; j < dim1; ++j) {
+                for (int k = 0; k < dim2; ++k) {
+                    for (int l = 0; l < dim3; ++l) {
+                        int row = i * dim1 + j; 
+                        int col = k * dim3 + l;
+                        V_mo(i, j, k, l) = V_mat(row, col);
+                    }
+                }
+            }
+        }
         return true;
     };
 
     Eigen::MatrixXd B_oo, B_ov, B_vv;
     if (config_.eri_method != "exact") {
-        // [RE-USE VECTOR] Cukup transformasi apa yang tidak ada di MP2
-        B_ov = mp2_.B_ia_P_alpha; // Reuse dari MP2
+        B_ov = mp2_.B_ia_P_alpha; 
         
         auto build_B_fast = [&](const Eigen::MatrixXd& C1, const Eigen::MatrixXd& C2) {
             int d1 = C1.cols(); int d2 = C2.cols();
@@ -118,7 +134,11 @@ MP3Result RMP3::compute() {
             for (int P = 0; P < n_aux_; ++P) {
                 Eigen::Map<const Eigen::MatrixXd> tmp_P(temp1.data() + P * d1 * nbf_, d1, nbf_);
                 Eigen::MatrixXd L_pq = tmp_P * C2;
-                std::copy(L_pq.data(), L_pq.data() + (d1 * d2), B.col(P).data());
+                for (int x = 0; x < d1; ++x) {
+                    for (int y = 0; y < d2; ++y) {
+                        B(x * d2 + y, P) = L_pq(x, y);
+                    }
+                }
             }
             return B;
         };
@@ -127,7 +147,7 @@ MP3Result RMP3::compute() {
         B_vv = build_B_fast(Cv, Cv);
     }
 
-    // 1. Ladder term (vvvv) - MULTITHREADED SLICING TBLIS
+    // 1. Ladder term (vvvv) 
     {
         Eigen::Tensor<double, 4> V_vvvv(nv_a_, nv_a_, nv_a_, nv_a_);
         bool calc_vvvv = true;
@@ -181,7 +201,6 @@ MP3Result RMP3::compute() {
         bool calc_ovov = true, calc_oovv = true;
 
         if (config_.eri_method == "exact") {
-            // Restore proper EXACT generation like MP2, eliminate missing symmetry blocks
             V_ovov = get_V_exact(Co, Cv, Co, Cv);
             V_oovv = get_V_exact(Co, Co, Cv, Cv);
         } else {
@@ -212,7 +231,8 @@ MP3Result RMP3::compute() {
         for (int j = 0; j < no_a_; ++j) {
             for (int a = 0; a < nv_a_; ++a) {
                 for (int b = 0; b < nv_a_; ++b) {
-                    e_mp3 += W(i, j, a, b) * (2.0 * t2_aa_(i, j, a, b) - t2_aa_(i, j, b, a));
+                    // W is fully spin-adapted, so direct mult is correct (No double counting)
+                    e_mp3 += W(i, j, a, b) * t2_aa_(i, j, a, b);
                 }
             }
         }
@@ -282,7 +302,6 @@ MP3Result UMP3::compute() {
         return ERITransformer::transform_custom(*eri_ao_ptr, C1, C2, C3, C4, nbf_, d1, d2, d3, d4);
     };
 
-    
     auto make_V_from_B_inplace = [&](const Eigen::MatrixXd& B1, const Eigen::MatrixXd& B2, Eigen::Tensor<double, 4>& V_mo) {
         int d1 = B1.rows(); int d2 = B2.rows(); 
         Eigen::MatrixXd V_mat(d1, d2);
@@ -296,16 +315,32 @@ MP3Result UMP3::compute() {
             V_mo.setZero();
             return false;
         }
-        std::copy(V_mat.data(), V_mat.data() + V_mat.size(), V_mo.data());
+
+        int dim0 = V_mo.dimension(0);
+        int dim1 = V_mo.dimension(1);
+        int dim2 = V_mo.dimension(2);
+        int dim3 = V_mo.dimension(3);
+
+        #pragma omp parallel for collapse(4)
+        for (int i = 0; i < dim0; ++i) {
+            for (int j = 0; j < dim1; ++j) {
+                for (int k = 0; k < dim2; ++k) {
+                    for (int l = 0; l < dim3; ++l) {
+                        int row = i * dim1 + j; 
+                        int col = k * dim3 + l;
+                        V_mo(i, j, k, l) = V_mat(row, col);
+                    }
+                }
+            }
+        }
         return true;
     };
 
     Eigen::MatrixXd B_oo_a, B_ov_a, B_vv_a;
     Eigen::MatrixXd B_oo_b, B_ov_b, B_vv_b;
     if (config_.eri_method != "exact") {
-        // [RE-USE VECTOR] Cukup transformasi apa yang tidak ada di MP2
-        B_ov_a = mp2_.B_ia_P_alpha; // Reuse dari MP2
-        if (no_b_ > 0 && nv_b_ > 0) B_ov_b = mp2_.B_ia_P_beta; // Reuse dari MP2
+        B_ov_a = mp2_.B_ia_P_alpha; 
+        if (no_b_ > 0 && nv_b_ > 0) B_ov_b = mp2_.B_ia_P_beta;
 
         auto build_B_fast = [&](const Eigen::MatrixXd& C1, const Eigen::MatrixXd& C2) {
             int d1 = C1.cols(); int d2 = C2.cols();
@@ -316,7 +351,11 @@ MP3Result UMP3::compute() {
             for (int P = 0; P < n_aux_; ++P) {
                 Eigen::Map<const Eigen::MatrixXd> tmp_P(temp1.data() + P * d1 * nbf_, d1, nbf_);
                 Eigen::MatrixXd L_pq = tmp_P * C2;
-                std::copy(L_pq.data(), L_pq.data() + (d1 * d2), B.col(P).data());
+                for (int x = 0; x < d1; ++x) {
+                    for (int y = 0; y < d2; ++y) {
+                        B(x * d2 + y, P) = L_pq(x, y);
+                    }
+                }
             }
             return B;
         };
@@ -331,7 +370,7 @@ MP3Result UMP3::compute() {
     }
 
     // =========================================================================
-    // 1. TAHAP LADDER (vvvv) - MULTITHREADED SLICING
+    // 1. TAHAP LADDER (vvvv) 
     // =========================================================================
     {
         Waa.setZero();
@@ -468,8 +507,21 @@ MP3Result UMP3::compute() {
 
         Waa.setZero();
         if (calc_aa) {
+            // Identity
             tblis::mult< double >(1.0, t_ovov_aa, "iakc", t_Taa, "kjcb", 1.0, t_Waa, "ijab");
             tblis::mult< double >(-1.0, t_oovv_aa, "ikac", t_Taa, "kjcb", 1.0, t_Waa, "ijab");
+            
+            // Permutasi P(ij)
+            tblis::mult< double >(-1.0, t_ovov_aa, "jakc", t_Taa, "kicb", 1.0, t_Waa, "ijab");
+            tblis::mult< double >(1.0, t_oovv_aa, "jkac", t_Taa, "kicb", 1.0, t_Waa, "ijab");
+            
+            // Permutasi P(ab)
+            tblis::mult< double >(-1.0, t_ovov_aa, "ibkc", t_Taa, "kjca", 1.0, t_Waa, "ijab");
+            tblis::mult< double >(1.0, t_oovv_aa, "ikbc", t_Taa, "kjca", 1.0, t_Waa, "ijab");
+            
+            // Permutasi P(ij)P(ab)
+            tblis::mult< double >(1.0, t_ovov_aa, "jbkc", t_Taa, "kica", 1.0, t_Waa, "ijab");
+            tblis::mult< double >(-1.0, t_oovv_aa, "jkbc", t_Taa, "kica", 1.0, t_Waa, "ijab");
         }
 
         if (no_b_ > 0 && nv_b_ > 0) {
@@ -506,8 +558,21 @@ MP3Result UMP3::compute() {
 
             Wbb.setZero();
             if (calc_bb) {
+                // Identity
                 tblis::mult< double >(1.0, t_ovov_bb, "iakc", t_Tbb, "kjcb", 1.0, t_Wbb, "ijab");
                 tblis::mult< double >(-1.0, t_oovv_bb, "ikac", t_Tbb, "kjcb", 1.0, t_Wbb, "ijab");
+                
+                // Permutasi P(ij)
+                tblis::mult< double >(-1.0, t_ovov_bb, "jakc", t_Tbb, "kicb", 1.0, t_Wbb, "ijab");
+                tblis::mult< double >(1.0, t_oovv_bb, "jkac", t_Tbb, "kicb", 1.0, t_Wbb, "ijab");
+
+                // Permutasi P(ab)
+                tblis::mult< double >(-1.0, t_ovov_bb, "ibkc", t_Tbb, "kjca", 1.0, t_Wbb, "ijab");
+                tblis::mult< double >(1.0, t_oovv_bb, "ikbc", t_Tbb, "kjca", 1.0, t_Wbb, "ijab");
+
+                // Permutasi P(ij)P(ab)
+                tblis::mult< double >(1.0, t_ovov_bb, "jbkc", t_Tbb, "kica", 1.0, t_Wbb, "ijab");
+                tblis::mult< double >(-1.0, t_oovv_bb, "jkbc", t_Tbb, "kica", 1.0, t_Wbb, "ijab");
             }
             if (calc_ab) tblis::mult< double >(1.0, t_ovov_ab, "kcia", t_Tab, "kjcb", 1.0, t_Wbb, "ijab"); 
             e3_bb += 1.0 * tensor_dot(t2_bb_, Wbb);
@@ -549,6 +614,8 @@ MP3Result UMP3::compute() {
     }
     return res;
 }
+
+} // namespace mshqc
 
 double OMP3::get_correlation_energy() const {
     return e_ss_ + e_os_ + e_mp3_tot_;
