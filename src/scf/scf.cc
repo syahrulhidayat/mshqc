@@ -404,9 +404,6 @@ void RHF::update_densities() {
     P_beta_ = P_alpha_; 
 }
 
-
-
-
 void RHF::build_fock_matrix() {
     if (config_.eri_method == "cholesky" || config_.use_df) {
         Eigen::MatrixXd dP = (iter_scf_ == 1) ? P_alpha_ : (P_alpha_ - P_old_); 
@@ -425,6 +422,16 @@ void RHF::build_fock_matrix() {
             
             int chunk_size = is_ooc ? 128 : n_chol; 
             
+            // [FAST BLAS RE-USE VECTOR] Memetakan densitas menjadi vektor 1D
+            Eigen::Map<const Eigen::VectorXd> dP_flat(dP.data(), nbasis_ * nbasis_);
+
+            // Jika In-Core, jalankan operasi BLAS sekaligus untuk efisiensi L3 Cache maksimum
+            if (!is_ooc) {
+                Eigen::VectorXd X_J = L_mat_.transpose() * dP_flat; 
+                Eigen::VectorXd J_flat = L_mat_ * X_J;                 
+                dJ_mat = Eigen::Map<Eigen::MatrixXd>(J_flat.data(), nbasis_, nbasis_);
+            }
+            
             for (int K_start = 0; K_start < n_chol; K_start += chunk_size) {
                 int K_end = std::min(n_chol, K_start + chunk_size);
                 int k_size = K_end - K_start;
@@ -433,25 +440,15 @@ void RHF::build_fock_matrix() {
                 if (is_ooc) {
                     L_chunk.resize(nbasis_ * nbasis_, k_size);
                     io->read_slice_4d("df_tensor", {K_start, 0, 0, 0}, {k_size, (long)nbasis_, (long)nbasis_, 1}, L_chunk.data());
+                    
+                    // Operasi BLAS secara chunking untuk Out-Of-Core, memanfaatkan bandwidth lokal
+                    Eigen::VectorXd X_J_chunk = L_chunk.transpose() * dP_flat;
+                    Eigen::VectorXd J_flat_chunk = L_chunk * X_J_chunk;
+                    dJ_mat += Eigen::Map<Eigen::MatrixXd>(J_flat_chunk.data(), nbasis_, nbasis_);
                 }
-                
-                
-                #pragma omp parallel
-                {
-                    Eigen::MatrixXd J_priv = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-                    #pragma omp for schedule(dynamic)
-                    for (int k = 0; k < k_size; ++k) {
-                        int K_global = K_start + k;
-                        Eigen::Map<const Eigen::MatrixXd> L_K(is_ooc ? L_chunk.col(k).data() : L_mat_.col(K_global).data(), nbasis_, nbasis_);
-                        double val_J = (L_K.cwiseProduct(dP)).sum();
-                        J_priv += val_J * L_K;
-                    }
-                    #pragma omp critical
-                    { dJ_mat += J_priv; }
-                }
-
                 
                 if (use_mo_alg && n_alpha_ > 0) {
+                    // Algoritma basis-MO menggunakan TBLIS untuk matriks Exchange (K)
                     using tblis::len_type; using tblis::stride_type; using tblis::varray_view;
                     std::vector<len_type> len_L = { (len_type)nbasis_, (len_type)nbasis_, (len_type)k_size };
                     std::vector<stride_type> str_L = { 1, (stride_type)nbasis_, (stride_type)(nbasis_ * nbasis_) };
@@ -467,16 +464,15 @@ void RHF::build_fock_matrix() {
                     std::vector<stride_type> str_Ta = { 1, (stride_type)nbasis_, (stride_type)(nbasis_ * n_alpha_) };
                     varray_view<double> t_Ta(len_Ta, Ta_buf.data(), str_Ta);
 
-                    
                     tblis::mult<double>(1.0, t_L, "mnP", t_Ca, "ni", 0.0, t_Ta, "miP");
 
                     std::vector<len_type> len_K = { (len_type)nbasis_, (len_type)nbasis_ };
                     std::vector<stride_type> str_K = { 1, (stride_type)nbasis_ };
                     varray_view<double> t_K(len_K, dK_acc.data(), str_K);
 
-                    
                     tblis::mult<double>(1.0, t_Ta, "miP", t_Ta, "niP", 1.0, t_K, "mn");
                 } else if (!use_mo_alg) {
+                    // Fallback basis AO dengan loop OpenMP konvensional
                     #pragma omp parallel
                     {
                         Eigen::MatrixXd K_priv = Eigen::MatrixXd::Zero(nbasis_, nbasis_); 
@@ -502,6 +498,7 @@ void RHF::build_fock_matrix() {
             }
         }
     } else if (config_.scf_type == "incore") {
+        // [Optimasi Cache-Locality dari Kode 2]
         Eigen::MatrixXd dP = (iter_scf_ == 1) ? P_alpha_ : (P_alpha_ - P_old_);
         double max_dP = dP.cwiseAbs().maxCoeff(); 
         if (max_dP < 1e-11) {
@@ -529,10 +526,8 @@ void RHF::build_fock_matrix() {
                     double pt_ls = dP(lam, sig) * 2.0;
                     double pt_mn = dP(mu, nu) * 2.0;
                     
-                    G_local(mu, nu) += v2 * pt_ls;
-                    G_local(nu, mu) += v2 * pt_ls;
-                    G_local(lam, sig) += v2 * pt_mn;
-                    G_local(sig, lam) += v2 * pt_mn;
+                    G_local(mu, nu) += v2 * pt_ls; G_local(nu, mu) += v2 * pt_ls;
+                    if (p_mn != p_ls) { G_local(lam, sig) += v2 * pt_mn; G_local(sig, lam) += v2 * pt_mn; }
                     
                     G_local(mu, lam) -= v * dP(nu, sig); G_local(lam, mu) -= v * dP(sig, nu);
                     G_local(nu, lam) -= v * dP(mu, sig); G_local(lam, nu) -= v * dP(sig, mu);
@@ -553,6 +548,202 @@ void RHF::build_fock_matrix() {
     }
     P_old_ = P_alpha_; 
     F_beta_ = F_alpha_;
+}
+
+
+void UHF::build_fock_matrix() { 
+    if (config_.eri_method == "cholesky" || config_.use_df) {
+        Eigen::MatrixXd dPa = (iter_scf_ == 1) ? P_alpha_ : (P_alpha_ - P_alpha_old_);
+        Eigen::MatrixXd dPb = (iter_scf_ == 1) ? P_beta_  : (P_beta_ - P_beta_old_);
+        Eigen::MatrixXd dP_tot = dPa + dPb;
+
+        if (dP_tot.cwiseAbs().maxCoeff() < 1e-11) {
+            if (C_alpha_.rows() != nbasis_) { F_alpha_ = H_ + G_accum_a_; F_beta_  = H_ + G_accum_b_; }
+        } else {
+            bool use_mo_alg = (iter_scf_ > 1) && (C_alpha_.rows() == nbasis_) && (C_beta_.rows() == nbasis_);
+            Eigen::MatrixXd dJ_mat = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+            Eigen::MatrixXd dKa_acc = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+            Eigen::MatrixXd dKb_acc = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+            
+            int n_chol = L_mat_.cols();
+            bool is_ooc = (L_mat_.rows() == 0 && n_chol > 0);
+            std::unique_ptr<utils::HDF5TensorIO> io = nullptr;
+            if (is_ooc) io = std::make_unique<utils::HDF5TensorIO>("df_tensor.h5", utils::HDF5TensorIO::Mode::READ_ONLY);
+            int chunk_size = is_ooc ? 128 : n_chol;
+            
+            // [FAST BLAS RE-USE VECTOR] Memetakan densitas menjadi vektor 1D
+            Eigen::Map<const Eigen::VectorXd> dP_tot_flat(dP_tot.data(), nbasis_ * nbasis_);
+
+            // Jika In-Core, jalankan operasi BLAS sekaligus untuk efisiensi L3 Cache maksimum
+            if (!is_ooc) {
+                Eigen::VectorXd X_J = L_mat_.transpose() * dP_tot_flat; 
+                Eigen::VectorXd J_flat = L_mat_ * X_J;                 
+                dJ_mat = Eigen::Map<Eigen::MatrixXd>(J_flat.data(), nbasis_, nbasis_);
+            }
+            
+            for (int K_start = 0; K_start < n_chol; K_start += chunk_size) {
+                int K_end = std::min(n_chol, K_start + chunk_size);
+                int k_size = K_end - K_start;
+                
+                Eigen::MatrixXd L_chunk;
+                if (is_ooc) {
+                    L_chunk.resize(nbasis_ * nbasis_, k_size);
+                    io->read_slice_4d("df_tensor", {K_start, 0, 0, 0}, {k_size, (long)nbasis_, (long)nbasis_, 1}, L_chunk.data());
+                    
+                    // Operasi BLAS secara chunking untuk Out-Of-Core, memanfaatkan bandwidth lokal
+                    Eigen::VectorXd X_J_chunk = L_chunk.transpose() * dP_tot_flat;
+                    Eigen::VectorXd J_flat_chunk = L_chunk * X_J_chunk;
+                    dJ_mat += Eigen::Map<Eigen::MatrixXd>(J_flat_chunk.data(), nbasis_, nbasis_);
+                }
+
+                if (use_mo_alg) {
+                    // Algoritma basis-MO menggunakan TBLIS untuk kompleksitas waktu lebih rendah
+                    using tblis::len_type; using tblis::stride_type; using tblis::varray_view;
+                    std::vector<len_type> len_L = { (len_type)nbasis_, (len_type)nbasis_, (len_type)k_size };
+                    std::vector<stride_type> str_L = { 1, (stride_type)nbasis_, (stride_type)(nbasis_ * nbasis_) };
+                    varray_view<double> t_L(len_L, is_ooc ? L_chunk.data() : const_cast<double*>(L_mat_.col(K_start).data()), str_L);
+
+                    if (n_alpha_ > 0) {
+                        Eigen::MatrixXd Ca_occ = C_alpha_.leftCols(n_alpha_);
+                        std::vector<len_type> len_Ca = { (len_type)nbasis_, (len_type)n_alpha_ };
+                        std::vector<stride_type> str_Ca = { 1, (stride_type)nbasis_ };
+                        varray_view<double> t_Ca(len_Ca, Ca_occ.data(), str_Ca);
+
+                        std::vector<double> Ta_buf(nbasis_ * n_alpha_ * k_size, 0.0);
+                        std::vector<len_type> len_Ta = { (len_type)nbasis_, (len_type)n_alpha_, (len_type)k_size };
+                        std::vector<stride_type> str_Ta = { 1, (stride_type)nbasis_, (stride_type)(nbasis_ * n_alpha_) };
+                        varray_view<double> t_Ta(len_Ta, Ta_buf.data(), str_Ta);
+
+                        tblis::mult<double>(1.0, t_L, "mnP", t_Ca, "ni", 0.0, t_Ta, "miP");
+                        
+                        std::vector<len_type> len_Ka = { (len_type)nbasis_, (len_type)nbasis_ };
+                        std::vector<stride_type> str_Ka = { 1, (stride_type)nbasis_ };
+                        varray_view<double> t_Ka(len_Ka, dKa_acc.data(), str_Ka);
+                        tblis::mult<double>(1.0, t_Ta, "miP", t_Ta, "niP", 1.0, t_Ka, "mn");
+                    }
+
+                    if (n_beta_ > 0) {
+                        Eigen::MatrixXd Cb_occ = C_beta_.leftCols(n_beta_);
+                        std::vector<len_type> len_Cb = { (len_type)nbasis_, (len_type)n_beta_ };
+                        std::vector<stride_type> str_Cb = { 1, (stride_type)nbasis_ };
+                        varray_view<double> t_Cb(len_Cb, Cb_occ.data(), str_Cb);
+
+                        std::vector<double> Tb_buf(nbasis_ * n_beta_ * k_size, 0.0);
+                        std::vector<len_type> len_Tb = { (len_type)nbasis_, (len_type)n_beta_, (len_type)k_size };
+                        std::vector<stride_type> str_Tb = { 1, (stride_type)nbasis_, (stride_type)(nbasis_ * n_beta_) };
+                        varray_view<double> t_Tb(len_Tb, Tb_buf.data(), str_Tb);
+
+                        tblis::mult<double>(1.0, t_L, "mnP", t_Cb, "ni", 0.0, t_Tb, "miP");
+                        
+                        std::vector<len_type> len_Kb = { (len_type)nbasis_, (len_type)nbasis_ };
+                        std::vector<stride_type> str_Kb = { 1, (stride_type)nbasis_ };
+                        varray_view<double> t_Kb(len_Kb, dKb_acc.data(), str_Kb);
+                        tblis::mult<double>(1.0, t_Tb, "miP", t_Tb, "niP", 1.0, t_Kb, "mn");
+                    }
+                } else {
+                    // Fallback basis AO dengan loop OpenMP konvensional
+                    #pragma omp parallel
+                    {
+                        Eigen::MatrixXd Ka_priv = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+                        Eigen::MatrixXd Kb_priv = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+                        Eigen::MatrixXd Ta_buf(nbasis_, nbasis_);
+                        Eigen::MatrixXd Tb_buf(nbasis_, nbasis_);
+                        #pragma omp for schedule(dynamic)
+                        for (int k = 0; k < k_size; ++k) {
+                            int K_global = K_start + k;
+                            Eigen::Map<const Eigen::MatrixXd> L_K(is_ooc ? L_chunk.col(k).data() : L_mat_.col(K_global).data(), nbasis_, nbasis_);
+                            Ta_buf.noalias() = L_K * dPa; Ka_priv.noalias() += Ta_buf * L_K;
+                            Tb_buf.noalias() = L_K * dPb; Kb_priv.noalias() += Tb_buf * L_K;
+                        }
+                        #pragma omp critical
+                        { dKa_acc += Ka_priv; dKb_acc += Kb_priv; }
+                    }
+                }
+            } 
+            
+            if (use_mo_alg) {
+                G_J_accum_a_ += dJ_mat; G_J_accum_b_ += dJ_mat;
+                F_alpha_ = H_ + G_J_accum_a_ - dKa_acc; F_beta_  = H_ + G_J_accum_b_ - dKb_acc;
+            } else {
+                G_J_accum_a_ += dJ_mat; G_J_accum_b_ += dJ_mat; 
+                G_accum_a_ += (dJ_mat - dKa_acc); G_accum_b_ += (dJ_mat - dKb_acc);
+                F_alpha_ = H_ + G_accum_a_; F_beta_  = H_ + G_accum_b_;
+            }
+        }
+    } else if (config_.scf_type == "incore") {
+        // [Kode 1 Dipertahankan: Cache-Locality Optimisation pada penulisan mu,nu/lam,sig]
+        Eigen::MatrixXd dPa = (iter_scf_ == 1) ? P_alpha_ : (P_alpha_ - P_alpha_old_);
+        Eigen::MatrixXd dPb = (iter_scf_ == 1) ? P_beta_ : (P_beta_ - P_beta_old_);
+        Eigen::MatrixXd dP_tot = dPa + dPb; 
+        double max_dP = dP_tot.cwiseAbs().maxCoeff(); 
+
+        if (max_dP < 1e-11) {
+            F_alpha_ = H_ + G_accum_a_;
+            F_beta_  = H_ + G_accum_b_;
+        } else {
+            const double* val = J_val_.data();
+            const int* ind1 = J_ind_.data();
+            const int* ind2 = K_ind_.data();
+            size_t n_ints = J_val_.size();
+
+            Eigen::MatrixXd dGa = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+            Eigen::MatrixXd dGb = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+
+            #pragma omp parallel
+            {
+                Eigen::MatrixXd Ga_local = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+                Eigen::MatrixXd Gb_local = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+                
+                #pragma omp for schedule(dynamic, 2048)
+                for (size_t k = 0; k < n_ints; ++k) {
+                    int p_mn = ind1[k]; int mu = (p_mn >> 16) & 0xFFFF; int nu = p_mn & 0xFFFF;
+                    int p_ls = ind2[k]; int lam = (p_ls >> 16) & 0xFFFF; int sig = p_ls & 0xFFFF;
+                    double v = val[k];
+
+                    double pt_ls = dP_tot(lam, sig);
+                    double pt_mn = dP_tot(mu, nu);
+                    
+                    double vJ = 4.0 * v;
+                    double J_mn = vJ * pt_ls;
+                    double J_ls = vJ * pt_mn;
+
+                    Ga_local(mu, nu) += J_mn;
+                    Gb_local(mu, nu) += J_mn;
+                    if (p_mn != p_ls) {
+                        Ga_local(lam, sig) += J_ls;
+                        Gb_local(lam, sig) += J_ls;
+                    }
+
+                    Ga_local(mu, lam) -= v * dPa(nu, sig);
+                    Ga_local(mu, sig) -= v * dPa(nu, lam);
+                    Ga_local(nu, lam) -= v * dPa(mu, sig);
+                    Ga_local(nu, sig) -= v * dPa(mu, lam);
+
+                    Gb_local(mu, lam) -= v * dPb(nu, sig);
+                    Gb_local(mu, sig) -= v * dPb(nu, lam);
+                    Gb_local(nu, lam) -= v * dPb(mu, sig);
+                    Gb_local(nu, sig) -= v * dPb(mu, lam);
+                }
+                #pragma omp critical
+                { dGa += Ga_local; dGb += Gb_local; }
+            }
+            
+            dGa = dGa + dGa.transpose().eval();
+            dGb = dGb + dGb.transpose().eval();
+            for (int i = 0; i < nbasis_; ++i) {
+                dGa(i, i) *= 0.5;
+                dGb(i, i) *= 0.5;
+            }
+            
+            G_accum_a_ += dGa;
+            G_accum_b_ += dGb;
+            F_alpha_ = H_ + G_accum_a_; 
+            F_beta_  = H_ + G_accum_b_;
+        }
+    } else {
+        fock_engine_->compute(P_alpha_, P_beta_, F_alpha_, F_beta_); 
+    }
+    P_alpha_old_ = P_alpha_; P_beta_old_  = P_beta_; 
 }
 
 double RHF::compute_energy() { return P_alpha_.cwiseProduct(H_ + F_alpha_).sum(); }
@@ -615,110 +806,7 @@ void UHF::update_densities() {
         P_beta_.noalias() = C_beta_.leftCols(n_beta_) * C_beta_.leftCols(n_beta_).transpose();
     }
 }
-void UHF::build_fock_matrix() { 
-    if (config_.eri_method == "cholesky" || config_.use_df) {
-        Eigen::MatrixXd dPa = (iter_scf_ == 1) ? P_alpha_ : (P_alpha_ - P_alpha_old_);
-        Eigen::MatrixXd dPb = (iter_scf_ == 1) ? P_beta_  : (P_beta_ - P_beta_old_);
-        Eigen::MatrixXd dP_tot = dPa + dPb;
 
-        if (dP_tot.cwiseAbs().maxCoeff() < 1e-11) {
-            F_alpha_ = H_ + G_accum_a_; F_beta_  = H_ + G_accum_b_; 
-        } else {
-            int n_chol = L_mat_.cols();
-            Eigen::MatrixXd dJ_mat = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-            Eigen::MatrixXd dKa_acc = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-            Eigen::MatrixXd dKb_acc = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-
-            // [FAST BLAS RE-USE VECTOR] 
-            Eigen::Map<const Eigen::VectorXd> dP_tot_flat(dP_tot.data(), nbasis_ * nbasis_);
-            Eigen::VectorXd X_J = L_mat_.transpose() * dP_tot_flat; 
-            Eigen::VectorXd J_flat = L_mat_ * X_J;                 
-            dJ_mat = Eigen::Map<Eigen::MatrixXd>(J_flat.data(), nbasis_, nbasis_);
-            
-            int chunk_size = 128;
-            #pragma omp parallel
-            {
-                Eigen::MatrixXd Ka_priv = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-                Eigen::MatrixXd Kb_priv = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-                Eigen::MatrixXd Ta_buf(nbasis_, nbasis_);
-                Eigen::MatrixXd Tb_buf(nbasis_, nbasis_);
-                #pragma omp for schedule(dynamic)
-                for (int K_start = 0; K_start < n_chol; K_start += chunk_size) {
-                    int K_end = std::min(n_chol, K_start + chunk_size);
-                    for (int k = K_start; k < K_end; ++k) {
-                        Eigen::Map<const Eigen::MatrixXd> L_K(L_mat_.col(k).data(), nbasis_, nbasis_);
-                        Ta_buf.noalias() = L_K * dPa; Ka_priv.noalias() += Ta_buf * L_K;
-                        Tb_buf.noalias() = L_K * dPb; Kb_priv.noalias() += Tb_buf * L_K;
-                    }
-                }
-                #pragma omp critical
-                { dKa_acc += Ka_priv; dKb_acc += Kb_priv; }
-            } 
-            
-            G_J_accum_a_ += dJ_mat; G_J_accum_b_ += dJ_mat; 
-            G_accum_a_ += (dJ_mat - dKa_acc); G_accum_b_ += (dJ_mat - dKb_acc);
-            F_alpha_ = H_ + G_accum_a_; F_beta_  = H_ + G_accum_b_;
-        }
-    } else if (config_.scf_type == "incore") {
-        Eigen::MatrixXd dPa = (iter_scf_ == 1) ? P_alpha_ : (P_alpha_ - P_alpha_old_);
-        Eigen::MatrixXd dPb = (iter_scf_ == 1) ? P_beta_ : (P_beta_ - P_beta_old_);
-        Eigen::MatrixXd dP_tot = dPa + dPb; 
-        double max_dP = dP_tot.cwiseAbs().maxCoeff(); 
-
-        if (max_dP < 1e-11) {
-            F_alpha_ = H_ + G_accum_a_; F_beta_  = H_ + G_accum_b_;
-        } else {
-            const double* val = J_val_.data();
-            const int* ind1 = J_ind_.data(); const int* ind2 = K_ind_.data();
-            size_t n_ints = J_val_.size();
-
-            Eigen::MatrixXd dGa = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-            Eigen::MatrixXd dGb = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-
-            #pragma omp parallel
-            {
-                Eigen::MatrixXd Ga_local = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-                Eigen::MatrixXd Gb_local = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-                
-                #pragma omp for schedule(dynamic, 2048)
-                for (size_t k = 0; k < n_ints; ++k) {
-                    int p_mn = ind1[k]; int mu = (p_mn >> 16) & 0xFFFF; int nu = p_mn & 0xFFFF;
-                    int p_ls = ind2[k]; int lam = (p_ls >> 16) & 0xFFFF; int sig = p_ls & 0xFFFF;
-                    
-                    double v = val[k]; double v2 = v * 2.0;
-
-                    double pt_ls = dP_tot(lam, sig); double pt_mn = dP_tot(mu, nu);
-                    double J_ls = v2 * pt_ls; double J_mn = v2 * pt_mn;
-
-                    Ga_local(mu, nu) += J_ls; Gb_local(mu, nu) += J_ls;
-                    Ga_local(nu, mu) += J_ls; Gb_local(nu, mu) += J_ls;
-                    if (p_mn != p_ls) {
-                        Ga_local(lam, sig) += J_mn; Gb_local(lam, sig) += J_mn;
-                        Ga_local(sig, lam) += J_mn; Gb_local(sig, lam) += J_mn;
-                    }
-
-                    Ga_local(mu, lam) -= v * dPa(nu, sig); Ga_local(lam, mu) -= v * dPa(sig, nu);
-                    Ga_local(nu, lam) -= v * dPa(mu, sig); Ga_local(lam, nu) -= v * dPa(sig, mu);
-                    Ga_local(mu, sig) -= v * dPa(nu, lam); Ga_local(sig, mu) -= v * dPa(lam, nu);
-                    Ga_local(nu, sig) -= v * dPa(mu, lam); Ga_local(sig, nu) -= v * dPa(lam, mu);
-
-                    Gb_local(mu, lam) -= v * dPb(nu, sig); Gb_local(lam, mu) -= v * dPb(sig, nu);
-                    Gb_local(nu, lam) -= v * dPb(mu, sig); Gb_local(lam, nu) -= v * dPb(sig, mu);
-                    Gb_local(mu, sig) -= v * dPb(nu, lam); Gb_local(sig, mu) -= v * dPb(lam, nu);
-                    Gb_local(nu, sig) -= v * dPb(mu, lam); Gb_local(sig, nu) -= v * dPb(lam, mu);
-                }
-                #pragma omp critical
-                { dGa += Ga_local; dGb += Gb_local; }
-            }
-            dGa = 0.5 * (dGa + dGa.transpose()).eval(); dGb = 0.5 * (dGb + dGb.transpose()).eval();
-            G_accum_a_ += dGa; G_accum_b_ += dGb;
-            F_alpha_ = H_ + G_accum_a_; F_beta_  = H_ + G_accum_b_;
-        }
-    } else {
-        fock_engine_->compute(P_alpha_, P_beta_, F_alpha_, F_beta_); 
-    }
-    P_alpha_old_ = P_alpha_; P_beta_old_  = P_beta_; 
-}
 
 double UHF::compute_energy() { return 0.5 * (P_alpha_.cwiseProduct(H_ + F_alpha_).sum() + P_beta_.cwiseProduct(H_ + F_beta_).sum()); }
 
@@ -785,54 +873,131 @@ void ROHF::build_fock_matrix() {
         Eigen::MatrixXd dP_tot = dPa + dPb;
 
         if (dP_tot.cwiseAbs().maxCoeff() < 1e-11) {
-            F_alpha_ = H_ + G_accum_a_; F_beta_  = H_ + G_accum_b_; 
+            if (C_alpha_.rows() != nbasis_) { F_alpha_ = H_ + G_accum_a_; F_beta_  = H_ + G_accum_b_; }
         } else {
-            int n_chol = L_mat_.cols();
+            bool use_mo_alg = (iter_scf_ > 1) && (C_alpha_.rows() == nbasis_);
             Eigen::MatrixXd dJ_mat = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
             Eigen::MatrixXd dKa_acc = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
             Eigen::MatrixXd dKb_acc = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-
-            // [FAST BLAS RE-USE VECTOR] 
-            Eigen::Map<const Eigen::VectorXd> dP_tot_flat(dP_tot.data(), nbasis_ * nbasis_);
-            Eigen::VectorXd X_J = L_mat_.transpose() * dP_tot_flat; 
-            Eigen::VectorXd J_flat = L_mat_ * X_J;                 
-            dJ_mat = Eigen::Map<Eigen::MatrixXd>(J_flat.data(), nbasis_, nbasis_);
             
-            int chunk_size = 128;
-            #pragma omp parallel
-            {
-                Eigen::MatrixXd Ka_priv = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-                Eigen::MatrixXd Kb_priv = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-                Eigen::MatrixXd Ta_buf(nbasis_, nbasis_);
-                Eigen::MatrixXd Tb_buf(nbasis_, nbasis_);
-                #pragma omp for schedule(dynamic)
-                for (int K_start = 0; K_start < n_chol; K_start += chunk_size) {
-                    int K_end = std::min(n_chol, K_start + chunk_size);
-                    for (int k = K_start; k < K_end; ++k) {
-                        Eigen::Map<const Eigen::MatrixXd> L_K(L_mat_.col(k).data(), nbasis_, nbasis_);
-                        Ta_buf.noalias() = L_K * dPa; Ka_priv.noalias() += Ta_buf * L_K;
-                        Tb_buf.noalias() = L_K * dPb; Kb_priv.noalias() += Tb_buf * L_K;
+            int n_chol = L_mat_.cols();
+            bool is_ooc = (L_mat_.rows() == 0 && n_chol > 0);
+            std::unique_ptr<utils::HDF5TensorIO> io = nullptr;
+            if (is_ooc) io = std::make_unique<utils::HDF5TensorIO>("df_tensor.h5", utils::HDF5TensorIO::Mode::READ_ONLY);
+            int chunk_size = is_ooc ? 128 : n_chol;
+            
+            // [FAST BLAS RE-USE VECTOR] Memetakan densitas menjadi vektor 1D
+            Eigen::Map<const Eigen::VectorXd> dP_tot_flat(dP_tot.data(), nbasis_ * nbasis_);
+
+            // Jika In-Core, jalankan operasi BLAS sekaligus untuk efisiensi L3 Cache maksimum
+            if (!is_ooc) {
+                Eigen::VectorXd X_J = L_mat_.transpose() * dP_tot_flat; 
+                Eigen::VectorXd J_flat = L_mat_ * X_J;                 
+                dJ_mat = Eigen::Map<Eigen::MatrixXd>(J_flat.data(), nbasis_, nbasis_);
+            }
+            
+            for (int K_start = 0; K_start < n_chol; K_start += chunk_size) {
+                int K_end = std::min(n_chol, K_start + chunk_size);
+                int k_size = K_end - K_start;
+                
+                Eigen::MatrixXd L_chunk;
+                if (is_ooc) {
+                    L_chunk.resize(nbasis_ * nbasis_, k_size);
+                    io->read_slice_4d("df_tensor", {K_start, 0, 0, 0}, {k_size, (long)nbasis_, (long)nbasis_, 1}, L_chunk.data());
+                    
+                    // Operasi BLAS secara chunking untuk Out-Of-Core, memanfaatkan bandwidth lokal
+                    Eigen::VectorXd X_J_chunk = L_chunk.transpose() * dP_tot_flat;
+                    Eigen::VectorXd J_flat_chunk = L_chunk * X_J_chunk;
+                    dJ_mat += Eigen::Map<Eigen::MatrixXd>(J_flat_chunk.data(), nbasis_, nbasis_);
+                }
+
+                if (use_mo_alg) {
+                    using tblis::len_type; using tblis::stride_type; using tblis::varray_view;
+                    std::vector<len_type> len_L = { (len_type)nbasis_, (len_type)nbasis_, (len_type)k_size };
+                    std::vector<stride_type> str_L = { 1, (stride_type)nbasis_, (stride_type)(nbasis_ * nbasis_) };
+                    varray_view<double> t_L(len_L, is_ooc ? L_chunk.data() : const_cast<double*>(L_mat_.col(K_start).data()), str_L);
+
+                    if (n_alpha_ > 0) {
+                        Eigen::MatrixXd Ca_occ = C_alpha_.leftCols(n_alpha_);
+                        std::vector<len_type> len_Ca = { (len_type)nbasis_, (len_type)n_alpha_ };
+                        std::vector<stride_type> str_Ca = { 1, (stride_type)nbasis_ };
+                        varray_view<double> t_Ca(len_Ca, Ca_occ.data(), str_Ca);
+
+                        std::vector<double> Ta_buf(nbasis_ * n_alpha_ * k_size, 0.0);
+                        std::vector<len_type> len_Ta = { (len_type)nbasis_, (len_type)n_alpha_, (len_type)k_size };
+                        std::vector<stride_type> str_Ta = { 1, (stride_type)nbasis_, (stride_type)(nbasis_ * n_alpha_) };
+                        varray_view<double> t_Ta(len_Ta, Ta_buf.data(), str_Ta);
+
+                        tblis::mult<double>(1.0, t_L, "mnP", t_Ca, "ni", 0.0, t_Ta, "miP");
+                        
+                        std::vector<len_type> len_Ka = { (len_type)nbasis_, (len_type)nbasis_ };
+                        std::vector<stride_type> str_Ka = { 1, (stride_type)nbasis_ };
+                        varray_view<double> t_Ka(len_Ka, dKa_acc.data(), str_Ka);
+                        tblis::mult<double>(1.0, t_Ta, "miP", t_Ta, "niP", 1.0, t_Ka, "mn");
+                    }
+
+                    if (n_beta_ > 0) {
+                        Eigen::MatrixXd Cb_occ = C_alpha_.leftCols(n_beta_); 
+                        std::vector<len_type> len_Cb = { (len_type)nbasis_, (len_type)n_beta_ };
+                        std::vector<stride_type> str_Cb = { 1, (stride_type)nbasis_ };
+                        varray_view<double> t_Cb(len_Cb, Cb_occ.data(), str_Cb);
+
+                        std::vector<double> Tb_buf(nbasis_ * n_beta_ * k_size, 0.0);
+                        std::vector<len_type> len_Tb = { (len_type)nbasis_, (len_type)n_beta_, (len_type)k_size };
+                        std::vector<stride_type> str_Tb = { 1, (stride_type)nbasis_, (stride_type)(nbasis_ * n_beta_) };
+                        varray_view<double> t_Tb(len_Tb, Tb_buf.data(), str_Tb);
+
+                        tblis::mult<double>(1.0, t_L, "mnP", t_Cb, "ni", 0.0, t_Tb, "miP");
+                        
+                        std::vector<len_type> len_Kb = { (len_type)nbasis_, (len_type)nbasis_ };
+                        std::vector<stride_type> str_Kb = { 1, (stride_type)nbasis_ };
+                        varray_view<double> t_Kb(len_Kb, dKb_acc.data(), str_Kb);
+                        tblis::mult<double>(1.0, t_Tb, "miP", t_Tb, "niP", 1.0, t_Kb, "mn");
+                    }
+                } else {
+                    // Fallback basis AO dengan loop OpenMP konvensional
+                    #pragma omp parallel
+                    {
+                        Eigen::MatrixXd Ka_priv = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+                        Eigen::MatrixXd Kb_priv = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+                        Eigen::MatrixXd Ta_buf(nbasis_, nbasis_);
+                        Eigen::MatrixXd Tb_buf(nbasis_, nbasis_);
+                        #pragma omp for schedule(dynamic)
+                        for (int k = 0; k < k_size; ++k) {
+                            int K_global = K_start + k;
+                            Eigen::Map<const Eigen::MatrixXd> L_K(is_ooc ? L_chunk.col(k).data() : L_mat_.col(K_global).data(), nbasis_, nbasis_);
+                            Ta_buf.noalias() = L_K * dPa; Ka_priv.noalias() += Ta_buf * L_K;
+                            Tb_buf.noalias() = L_K * dPb; Kb_priv.noalias() += Tb_buf * L_K;
+                        }
+                        #pragma omp critical
+                        { dKa_acc += Ka_priv; dKb_acc += Kb_priv; }
                     }
                 }
-                #pragma omp critical
-                { dKa_acc += Ka_priv; dKb_acc += Kb_priv; }
             } 
             
-            G_J_accum_a_ += dJ_mat; G_J_accum_b_ += dJ_mat; 
-            G_accum_a_ += (dJ_mat - dKa_acc); G_accum_b_ += (dJ_mat - dKb_acc);
-            F_alpha_ = H_ + G_accum_a_; F_beta_  = H_ + G_accum_b_;
+            if (use_mo_alg) {
+                G_J_accum_a_ += dJ_mat; G_J_accum_b_ += dJ_mat;
+                F_alpha_ = H_ + G_J_accum_a_ - dKa_acc; F_beta_  = H_ + G_J_accum_b_ - dKb_acc;
+            } else {
+                G_J_accum_a_ += dJ_mat; G_J_accum_b_ += dJ_mat; 
+                G_accum_a_ += (dJ_mat - dKa_acc); G_accum_b_ += (dJ_mat - dKb_acc);
+                F_alpha_ = H_ + G_accum_a_; F_beta_  = H_ + G_accum_b_;
+            }
         }
     } else if (config_.scf_type == "incore") {
+        // [Optimasi Cache-Locality pada penulisan mu,nu/lam,sig]
         Eigen::MatrixXd dPa = (iter_scf_ == 1) ? P_alpha_ : (P_alpha_ - P_alpha_old_);
         Eigen::MatrixXd dPb = (iter_scf_ == 1) ? P_beta_ : (P_beta_ - P_beta_old_);
         Eigen::MatrixXd dP_tot = dPa + dPb; 
         double max_dP = dP_tot.cwiseAbs().maxCoeff(); 
 
         if (max_dP < 1e-11) {
-            F_alpha_ = H_ + G_accum_a_; F_beta_  = H_ + G_accum_b_;
+            F_alpha_ = H_ + G_accum_a_;
+            F_beta_  = H_ + G_accum_b_;
         } else {
             const double* val = J_val_.data();
-            const int* ind1 = J_ind_.data(); const int* ind2 = K_ind_.data();
+            const int* ind1 = J_ind_.data();
+            const int* ind2 = K_ind_.data();
             size_t n_ints = J_val_.size();
 
             Eigen::MatrixXd dGa = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
@@ -847,35 +1012,47 @@ void ROHF::build_fock_matrix() {
                 for (size_t k = 0; k < n_ints; ++k) {
                     int p_mn = ind1[k]; int mu = (p_mn >> 16) & 0xFFFF; int nu = p_mn & 0xFFFF;
                     int p_ls = ind2[k]; int lam = (p_ls >> 16) & 0xFFFF; int sig = p_ls & 0xFFFF;
+                    double v = val[k];
+
+                    double pt_ls = dP_tot(lam, sig);
+                    double pt_mn = dP_tot(mu, nu);
                     
-                    double v = val[k]; double v2 = v * 2.0;
+                    double vJ = 4.0 * v;
+                    double J_mn = vJ * pt_ls;
+                    double J_ls = vJ * pt_mn;
 
-                    double pt_ls = dP_tot(lam, sig); double pt_mn = dP_tot(mu, nu);
-                    double J_ls = v2 * pt_ls; double J_mn = v2 * pt_mn;
-
-                    Ga_local(mu, nu) += J_ls; Gb_local(mu, nu) += J_ls;
-                    Ga_local(nu, mu) += J_ls; Gb_local(nu, mu) += J_ls;
+                    Ga_local(mu, nu) += J_mn;
+                    Gb_local(mu, nu) += J_mn;
                     if (p_mn != p_ls) {
-                        Ga_local(lam, sig) += J_mn; Gb_local(lam, sig) += J_mn;
-                        Ga_local(sig, lam) += J_mn; Gb_local(sig, lam) += J_mn;
+                        Ga_local(lam, sig) += J_ls;
+                        Gb_local(lam, sig) += J_ls;
                     }
 
-                    Ga_local(mu, lam) -= v * dPa(nu, sig); Ga_local(lam, mu) -= v * dPa(sig, nu);
-                    Ga_local(nu, lam) -= v * dPa(mu, sig); Ga_local(lam, nu) -= v * dPa(sig, mu);
-                    Ga_local(mu, sig) -= v * dPa(nu, lam); Ga_local(sig, mu) -= v * dPa(lam, nu);
-                    Ga_local(nu, sig) -= v * dPa(mu, lam); Ga_local(sig, nu) -= v * dPa(lam, mu);
+                    Ga_local(mu, lam) -= v * dPa(nu, sig);
+                    Ga_local(mu, sig) -= v * dPa(nu, lam);
+                    Ga_local(nu, lam) -= v * dPa(mu, sig);
+                    Ga_local(nu, sig) -= v * dPa(mu, lam);
 
-                    Gb_local(mu, lam) -= v * dPb(nu, sig); Gb_local(lam, mu) -= v * dPb(sig, nu);
-                    Gb_local(nu, lam) -= v * dPb(mu, sig); Gb_local(lam, nu) -= v * dPb(sig, mu);
-                    Gb_local(mu, sig) -= v * dPb(nu, lam); Gb_local(sig, mu) -= v * dPb(lam, nu);
-                    Gb_local(nu, sig) -= v * dPb(mu, lam); Gb_local(sig, nu) -= v * dPb(lam, mu);
+                    Gb_local(mu, lam) -= v * dPb(nu, sig);
+                    Gb_local(mu, sig) -= v * dPb(nu, lam);
+                    Gb_local(nu, lam) -= v * dPb(mu, sig);
+                    Gb_local(nu, sig) -= v * dPb(mu, lam);
                 }
                 #pragma omp critical
                 { dGa += Ga_local; dGb += Gb_local; }
             }
-            dGa = 0.5 * (dGa + dGa.transpose()).eval(); dGb = 0.5 * (dGb + dGb.transpose()).eval();
-            G_accum_a_ += dGa; G_accum_b_ += dGb;
-            F_alpha_ = H_ + G_accum_a_; F_beta_  = H_ + G_accum_b_;
+            
+            dGa = dGa + dGa.transpose().eval();
+            dGb = dGb + dGb.transpose().eval();
+            for (int i = 0; i < nbasis_; ++i) {
+                dGa(i, i) *= 0.5;
+                dGb(i, i) *= 0.5;
+            }
+            
+            G_accum_a_ += dGa;
+            G_accum_b_ += dGb;
+            F_alpha_ = H_ + G_accum_a_; 
+            F_beta_  = H_ + G_accum_b_;
         }
     } else {
         fock_engine_->compute(P_alpha_, P_beta_, F_alpha_, F_beta_); 
