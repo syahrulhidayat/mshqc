@@ -197,8 +197,9 @@ MP3Result RMP3::compute() {
         TBLIS_VIEW_4D(t_Voovv, V_oovv, no_a_, no_a_, nv_a_, nv_a_);
 
         if (calc_ovov) {
-            tblis::mult< double >(2.0, t_Vovov, "iakc", t_T, "kjcb", 1.0, t_W, "ijab");
+            tblis::mult< double >(2.0,  t_Vovov, "iakc", t_T, "kjcb", 1.0, t_W, "ijab");
             tblis::mult< double >(-1.0, t_Vovov, "iakc", t_T, "kjac", 1.0, t_W, "ijab");
+            tblis::mult< double >(-1.0, t_Vovov, "jakc", t_T, "kicb", 1.0, t_W, "ijab"); // INI SUKU YANG HILANG
         }
         if (calc_oovv) {
             tblis::mult< double >(-1.0, t_Voovv, "ikca", t_T, "kjcb", 1.0, t_W, "ijab");
