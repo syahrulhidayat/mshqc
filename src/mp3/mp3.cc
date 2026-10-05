@@ -615,7 +615,6 @@ MP3Result UMP3::compute() {
     return res;
 }
 
-} // namespace mshqc
 
 double OMP3::get_correlation_energy() const {
     return e_ss_ + e_os_ + e_mp3_tot_;
