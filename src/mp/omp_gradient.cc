@@ -32,7 +32,6 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
     auto* t_ab_blk = has_beta ? t2_ab_.get_block(0,0,0,0) : nullptr;
     auto* t_bb_blk = has_beta ? t2_bb_.get_block(0,0,0,0) : nullptr;
     
-    // 1. Ekspansi Tensor T2 menjadi Matriks 2D
     Eigen::MatrixXd T2_aa = Eigen::MatrixXd::Zero(na_ * va_, na_ * va_);
     if (is_restricted && t_aa_blk) {
         #pragma omp parallel for collapse(2)
@@ -89,15 +88,11 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
         }
     }
 
-    // =========================================================================
-    // PENGAMANAN MEMORI: Eksekusi GEMM di luar OpenMP (Meniru Algoritma DF)
-    // Ini menghilangkan tcache double free karena tidak ada malloc multi-thread.
-    // =========================================================================
     Eigen::MatrixXd X_a = T2_aa * B_ia_P_alpha_;
     Eigen::MatrixXd X_b;
     
     if (has_beta) {
-        X_a.noalias() += T2_ab * B_ia_P_beta_;
+        X_a += T2_ab * B_ia_P_beta_;
         X_b = T2_bb * B_ia_P_beta_ + T2_ab.transpose() * B_ia_P_alpha_;
     }
 
@@ -109,6 +104,9 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
         Z_vv_b = Eigen::MatrixXd::Zero(vb_, vb_);
     }
 
+    // =========================================================================
+    // TAHAP 1: SAFE OMP PARALLELIZATION (Declarando objetos locais DENTRO do loop)
+    // =========================================================================
     #pragma omp parallel
     {
         Eigen::MatrixXd Z_loc_a = Eigen::MatrixXd::Zero(va_, na_);
@@ -122,58 +120,38 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
             Z_oo_loc_b = Eigen::MatrixXd::Zero(nb_, nb_);
             Z_vv_loc_b = Eigen::MatrixXd::Zero(vb_, vb_);
         }
-        
-        // Buffer eksplisit untuk mencegah alokasi heap sementara oleh Eigen
-        Eigen::MatrixXd T_ao_a(nbf_, na_);
-        Eigen::MatrixXd T_av_a(nbf_, va_);
-        Eigen::MatrixXd T_ao_b, T_av_b;
-        if (has_beta) {
-            T_ao_b.resize(nbf_, nb_);
-            T_av_b.resize(nbf_, vb_);
-        }
-
-        Eigen::MatrixXd B_oo_a(na_, na_), B_vv_a(va_, va_);
-        Eigen::MatrixXd B_oo_b, B_vv_b;
-        if (has_beta) {
-            B_oo_b.resize(nb_, nb_);
-            B_vv_b.resize(vb_, vb_);
-        }
 
         #pragma omp for schedule(dynamic)
         for (int P = 0; P < n_chol; ++P) {
-            Eigen::Map<const Eigen::MatrixXd> B_AO(scf_.L_mat.col(P).data(), nbf_, nbf_);
+            Eigen::Map< const Eigen::MatrixXd > B_AO(scf_.L_mat.col(P).data(), nbf_, nbf_);
             
-            T_ao_a.noalias() = B_AO * scf_.C_alpha.leftCols(na_);
-            B_oo_a.noalias() = scf_.C_alpha.leftCols(na_).transpose() * T_ao_a;
+            // Variáveis instanciadas aqui evitam corrupção do tcache do Eigen
+            Eigen::MatrixXd T_ao_a = B_AO * scf_.C_alpha.leftCols(na_);
+            Eigen::MatrixXd B_oo_a = scf_.C_alpha.leftCols(na_).transpose() * T_ao_a;
 
-            T_av_a.noalias() = B_AO * scf_.C_alpha.rightCols(va_);
-            B_vv_a.noalias() = scf_.C_alpha.rightCols(va_).transpose() * T_av_a;
+            Eigen::MatrixXd T_av_a = B_AO * scf_.C_alpha.rightCols(va_);
+            Eigen::MatrixXd B_vv_a = scf_.C_alpha.rightCols(va_).transpose() * T_av_a;
 
-            Eigen::Map<const Eigen::MatrixXd> X_ai(X_a.col(P).data(), va_, na_);
-            Eigen::Map<const Eigen::MatrixXd> B_ai(B_ia_P_alpha_.col(P).data(), va_, na_);
+            Eigen::Map< const Eigen::MatrixXd > X_ai(X_a.col(P).data(), va_, na_);
+            Eigen::Map< const Eigen::MatrixXd > B_ai(B_ia_P_alpha_.col(P).data(), va_, na_);
 
-            // Pemisahan rantai operator untuk menghindari alokasi temporary pengurangan
-            Z_loc_a.noalias() += B_vv_a * X_ai;
-            Z_loc_a.noalias() -= X_ai * B_oo_a;
-
-            Z_oo_loc_a.noalias() += X_ai.transpose() * B_ai;
-            Z_vv_loc_a.noalias() -= X_ai * B_ai.transpose();
+            Z_loc_a += B_vv_a * X_ai - X_ai * B_oo_a;
+            Z_oo_loc_a += X_ai.transpose() * B_ai;
+            Z_vv_loc_a -= X_ai * B_ai.transpose();
 
             if (has_beta) {
-                T_ao_b.noalias() = B_AO * scf_.C_beta.leftCols(nb_);
-                B_oo_b.noalias() = scf_.C_beta.leftCols(nb_).transpose() * T_ao_b;
+                Eigen::MatrixXd T_ao_b = B_AO * scf_.C_beta.leftCols(nb_);
+                Eigen::MatrixXd B_oo_b = scf_.C_beta.leftCols(nb_).transpose() * T_ao_b;
 
-                T_av_b.noalias() = B_AO * scf_.C_beta.rightCols(vb_);
-                B_vv_b.noalias() = scf_.C_beta.rightCols(vb_).transpose() * T_av_b;
+                Eigen::MatrixXd T_av_b = B_AO * scf_.C_beta.rightCols(vb_);
+                Eigen::MatrixXd B_vv_b = scf_.C_beta.rightCols(vb_).transpose() * T_av_b;
 
-                Eigen::Map<const Eigen::MatrixXd> X_bi(X_b.col(P).data(), vb_, nb_);
-                Eigen::Map<const Eigen::MatrixXd> B_bi(B_ia_P_beta_.col(P).data(), vb_, nb_);
+                Eigen::Map< const Eigen::MatrixXd > X_bi(X_b.col(P).data(), vb_, nb_);
+                Eigen::Map< const Eigen::MatrixXd > B_bi(B_ia_P_beta_.col(P).data(), vb_, nb_);
 
-                Z_loc_b.noalias() += B_vv_b * X_bi;
-                Z_loc_b.noalias() -= X_bi * B_oo_b;
-
-                Z_oo_loc_b.noalias() += X_bi.transpose() * B_bi;
-                Z_vv_loc_b.noalias() -= X_bi * B_bi.transpose();
+                Z_loc_b += B_vv_b * X_bi - X_bi * B_oo_b;
+                Z_oo_loc_b += X_bi.transpose() * B_bi;
+                Z_vv_loc_b -= X_bi * B_bi.transpose();
             }
         }
 
@@ -191,7 +169,7 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
     }
 
     // =========================================================================
-    // TAHAP 4: MATRIX-FREE MINI-CPHF SOLVER (FULLY RELAXED INTERNAL RESPONSE)
+    // TAHAP 4: MATRIX-FREE MINI-CPHF SOLVER
     // =========================================================================
     const auto& ea = scf_.orbital_energies_alpha;
     const auto& eb = scf_.orbital_energies_beta;
@@ -209,52 +187,30 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
     
     #pragma omp parallel
     {
-        // PENGHAPUSAN priv_oo_a & priv_vv_a (Menghemat RAM hingga puluhan GB / OOM Fix)
-        
-        // Buffer eksplisit
-        Eigen::MatrixXd T_ao_a(nbf_, na_);
-        Eigen::MatrixXd T_av_a(nbf_, va_);
-        Eigen::MatrixXd T_ao_b, T_av_b;
-        if (has_beta) {
-            T_ao_b.resize(nbf_, nb_);
-            T_av_b.resize(nbf_, vb_);
-        }
-
-        Eigen::MatrixXd MO_oo_a(na_, na_), MO_vv_a(va_, va_);
-        Eigen::MatrixXd MO_oo_b, MO_vv_b;
-        if (has_beta) {
-            MO_oo_b.resize(nb_, nb_);
-            MO_vv_b.resize(vb_, vb_);
-        }
-
         #pragma omp for schedule(dynamic)
         for (int P = 0; P < n_aux; ++P) {
             Eigen::Map< const Eigen::MatrixXd > B_AO(scf_.L_mat.col(P).data(), nbf_, nbf_);
             
-            T_ao_a.noalias() = B_AO * scf_.C_alpha.leftCols(na_);
-            MO_oo_a.noalias() = scf_.C_alpha.leftCols(na_).transpose() * T_ao_a;
+            Eigen::MatrixXd T_ao_a = B_AO * scf_.C_alpha.leftCols(na_);
+            Eigen::MatrixXd MO_oo_a = scf_.C_alpha.leftCols(na_).transpose() * T_ao_a;
             
-            T_av_a.noalias() = B_AO * scf_.C_alpha.rightCols(va_);
-            MO_vv_a.noalias() = scf_.C_alpha.rightCols(va_).transpose() * T_av_a;
+            Eigen::MatrixXd T_av_a = B_AO * scf_.C_alpha.rightCols(va_);
+            Eigen::MatrixXd MO_vv_a = scf_.C_alpha.rightCols(va_).transpose() * T_av_a;
             
-            // [REUSE VEKTOR] Penulisan langsung (Direct Mapping) ke matriks global
-            // Aman dari race condition karena setiap thread memegang index 'P' yang unik
             B_oo_flat_a.col(P) = Eigen::Map< const Eigen::VectorXd >(MO_oo_a.data(), na_ * na_);
             B_vv_flat_a.col(P) = Eigen::Map< const Eigen::VectorXd >(MO_vv_a.data(), va_ * va_);
 
             if (has_beta) {
-                T_ao_b.noalias() = B_AO * scf_.C_beta.leftCols(nb_);
-                MO_oo_b.noalias() = scf_.C_beta.leftCols(nb_).transpose() * T_ao_b;
+                Eigen::MatrixXd T_ao_b = B_AO * scf_.C_beta.leftCols(nb_);
+                Eigen::MatrixXd MO_oo_b = scf_.C_beta.leftCols(nb_).transpose() * T_ao_b;
                 
-                T_av_b.noalias() = B_AO * scf_.C_beta.rightCols(vb_);
-                MO_vv_b.noalias() = scf_.C_beta.rightCols(vb_).transpose() * T_av_b;
+                Eigen::MatrixXd T_av_b = B_AO * scf_.C_beta.rightCols(vb_);
+                Eigen::MatrixXd MO_vv_b = scf_.C_beta.rightCols(vb_).transpose() * T_av_b;
                 
                 B_oo_flat_b.col(P) = Eigen::Map< const Eigen::VectorXd >(MO_oo_b.data(), nb_ * nb_);
                 B_vv_flat_b.col(P) = Eigen::Map< const Eigen::VectorXd >(MO_vv_b.data(), vb_ * vb_);
             }
         }
-        
-        // Blok #pragma omp critical DIHAPUS karena tidak ada lagi proses reduksi antar thread
     }
 
     auto solve_mini_cphf = [&](const Eigen::MatrixXd& Z_in, const Eigen::VectorXd& eps, const Eigen::MatrixXd& B_flat, int dim, int offset) -> Eigen::MatrixXd {
