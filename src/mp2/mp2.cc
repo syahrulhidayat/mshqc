@@ -841,13 +841,17 @@ double OMP2::execute_micro_iterations() {
     C_b_current_ = scf_.C_beta;
 
     if (config_.eri_method == "cholesky") {
-        bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
         scf_.irreps_alpha.assign(nbf_, 0);
         if (!is_restricted && nb_ > 0) {
             scf_.irreps_beta.assign(nbf_, 0);
         }       
+        
+       
         transform_3center_mo_cholesky();
-        compute_t2_and_energy_cholesky();
+        
+        transform_integrals();
+        compute_t2_amplitudes();
+        compute_mp2_energy();
         
     } else if (config_.eri_method == "df") {
         transform_3center_mo(); 
@@ -857,7 +861,6 @@ double OMP2::execute_micro_iterations() {
         
     } else {
         transform_integrals(); 
-
         compute_t2_amplitudes();
         compute_mp2_energy();
     }
