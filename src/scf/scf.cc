@@ -521,16 +521,13 @@ void RHF::build_fock_matrix() {
                     
                     double v = val[k];
                     double vJ = 4.0 * v; 
-                    double vK = 2.0 * v;
-
+                    double vK = 1.0 * v; 
                     double pt_ls = dP(lam, sig); 
                     double pt_mn = dP(mu, nu);
                     
                     // Coulomb
                     G_local(mu, nu) += vJ * pt_ls;
-                    if (p_mn != p_ls) { 
-                        G_local(lam, sig) += vJ * pt_mn; 
-                    }
+                    G_local(lam, sig) += vJ * pt_mn; 
                     
                     // Exchange
                     G_local(mu, lam) -= vK * dP(nu, sig); 
@@ -717,10 +714,9 @@ void UHF::build_fock_matrix() {
 
                     Ga_local(mu, nu) += J_mn;
                     Gb_local(mu, nu) += J_mn;
-                    if (p_mn != p_ls) {
-                        Ga_local(lam, sig) += J_ls;
-                        Gb_local(lam, sig) += J_ls;
-                    }
+                    // Perbaikan: Eksekusi tanpa syarat if (p_mn != p_ls)
+                    Ga_local(lam, sig) += J_ls;
+                    Gb_local(lam, sig) += J_ls;
 
                     Ga_local(mu, lam) -= vK * dPa(nu, sig);
                     Ga_local(mu, sig) -= vK * dPa(nu, lam);
@@ -1025,7 +1021,7 @@ void ROHF::build_fock_matrix() {
                     double pt_ls = dP_tot(lam, sig);
                     double pt_mn = dP_tot(mu, nu);
                     
-                    // Perbaikan: vJ harus 2.0, bukan 4.0 (menghindari double Coulomb)
+                    
                     double vJ = 2.0 * v; 
                     double vK = 1.0 * v;
 
@@ -1034,10 +1030,9 @@ void ROHF::build_fock_matrix() {
 
                     Ga_local(mu, nu) += J_mn;
                     Gb_local(mu, nu) += J_mn;
-                    if (p_mn != p_ls) {
-                        Ga_local(lam, sig) += J_ls;
-                        Gb_local(lam, sig) += J_ls;
-                    }
+                 
+                    Ga_local(lam, sig) += J_ls;
+                    Gb_local(lam, sig) += J_ls;
 
                     Ga_local(mu, lam) -= vK * dPa(nu, sig);
                     Ga_local(mu, sig) -= vK * dPa(nu, lam);
