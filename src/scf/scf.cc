@@ -74,9 +74,14 @@ BaseSCF::BaseSCF(const Molecule& mol, const BasisSet& basis,
         auto df_engine = std::make_shared<integrals::DensityFittingERI>(basis_, aux_basis, df_integrals, config_.df_threshold);
         df_engine->compute();
         
-        
-        
-        this->L_mat_.resize(0, aux_basis.n_basis_functions()); 
+        if (config_.scf_type == "incore") {
+            int n_aux = aux_basis.n_basis_functions();
+            this->L_mat_.resize(nbasis_ * nbasis_, n_aux);
+            utils::HDF5TensorIO io("df_tensor.h5", utils::HDF5TensorIO::Mode::READ_ONLY);
+            io.read_slice_4d("df_tensor", {0, 0, 0, 0}, {(long)n_aux, (long)nbasis_, (long)nbasis_, 1}, this->L_mat_.data());
+        } else {
+            this->L_mat_.resize(0, aux_basis.n_basis_functions()); 
+        }
     }
 }
 
