@@ -499,7 +499,7 @@ void RHF::build_fock_matrix() {
             #pragma omp parallel
             {
                 Eigen::MatrixXd G_local = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-                #pragma omp for schedule(dynamic, 64)
+                #pragma omp for schedule(static)
                 for (size_t i = 0; i < incore_quartets_.size(); ++i) {
                     const auto& cq = incore_quartets_[i];
                     int M = cq.M; int N = cq.N; int P = cq.P; int Q = cq.Q;
@@ -701,7 +701,7 @@ void UHF::build_fock_matrix() {
                 Eigen::MatrixXd Ga_local = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
                 Eigen::MatrixXd Gb_local = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
                 
-                #pragma omp for schedule(dynamic, 64)
+                #pragma omp for schedule(static)
                 for (size_t i = 0; i < incore_quartets_.size(); ++i) {
                     const auto& cq = incore_quartets_[i];
                     int M = cq.M; int N = cq.N; int P = cq.P; int Q = cq.Q;
@@ -1031,7 +1031,7 @@ void ROHF::build_fock_matrix() {
                 Eigen::MatrixXd Ga_local = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
                 Eigen::MatrixXd Gb_local = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
                 
-                #pragma omp for schedule(dynamic, 64)
+                #pragma omp for schedule(static)
                 for (size_t i = 0; i < incore_quartets_.size(); ++i) {
                     const auto& cq = incore_quartets_[i];
                     int M = cq.M; int N = cq.N; int P = cq.P; int Q = cq.Q;
