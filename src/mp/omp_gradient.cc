@@ -39,8 +39,9 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
             for (int a = 0; a < va_; ++a) {
                 for (int j = 0; j < na_; ++j) {
                     for (int b = 0; b < va_; ++b) {
+                        // PERBAIKAN AKURASI: Transposisi indeks virtual (2 * t_ij^ba - t_ij^ab)
                         T2_aa(i * va_ + a, j * va_ + b) = 
-                            2.0 * (*t_aa_blk)(i, a, j, b) - 1.0 * (*t_aa_blk)(i, b, j, a);
+                            2.0 * (*t_aa_blk)(i, b, j, a) - 1.0 * (*t_aa_blk)(i, a, j, b);
                     }
                 }
             }
@@ -88,6 +89,7 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
         }
     }
 
+    // DGEMM Raksasa - O(N^3) Sangat efisien karena mengandalkan BLAS Level 3
     Eigen::MatrixXd X_a = T2_aa * B_ia_P_alpha_;
     Eigen::MatrixXd X_b;
     
@@ -96,191 +98,35 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
         X_b = T2_bb * B_ia_P_beta_ + T2_ab.transpose() * B_ia_P_alpha_;
     }
 
-    Eigen::MatrixXd Z_oo_a = Eigen::MatrixXd::Zero(na_, na_);
-    Eigen::MatrixXd Z_vv_a = Eigen::MatrixXd::Zero(va_, va_);
-    Eigen::MatrixXd Z_oo_b, Z_vv_b;
-    if (has_beta) {
-        Z_oo_b = Eigen::MatrixXd::Zero(nb_, nb_);
-        Z_vv_b = Eigen::MatrixXd::Zero(vb_, vb_);
-    }
-
-    // =========================================================================
-    // TAHAP 1: SAFE OMP PARALLELIZATION (Declarando objetos locais DENTRO do loop)
-    // =========================================================================
     #pragma omp parallel
     {
         Eigen::MatrixXd Z_loc_a = Eigen::MatrixXd::Zero(va_, na_);
         Eigen::MatrixXd Z_loc_b;
         if (has_beta) Z_loc_b = Eigen::MatrixXd::Zero(vb_, nb_);
 
-        Eigen::MatrixXd Z_oo_loc_a = Eigen::MatrixXd::Zero(na_, na_);
-        Eigen::MatrixXd Z_vv_loc_a = Eigen::MatrixXd::Zero(va_, va_);
-        Eigen::MatrixXd Z_oo_loc_b, Z_vv_loc_b;
-        if (has_beta) {
-            Z_oo_loc_b = Eigen::MatrixXd::Zero(nb_, nb_);
-            Z_vv_loc_b = Eigen::MatrixXd::Zero(vb_, vb_);
-        }
-
         #pragma omp for schedule(dynamic)
         for (int P = 0; P < n_chol; ++P) {
+            // Evaluasi in-place menggunakan Eigen::Map tanpa alokasi array baru
             Eigen::Map< const Eigen::MatrixXd > B_oo_a(B_oo_P_alpha_.col(P).data(), na_, na_);
             Eigen::Map< const Eigen::MatrixXd > B_vv_a(B_vv_P_alpha_.col(P).data(), va_, va_);
-
             Eigen::Map< const Eigen::MatrixXd > X_ai(X_a.col(P).data(), va_, na_);
-            Eigen::Map< const Eigen::MatrixXd > B_ai(B_ia_P_alpha_.col(P).data(), va_, na_);
 
-            Z_loc_a += B_vv_a * X_ai - X_ai * B_oo_a;
-            Z_oo_loc_a += X_ai.transpose() * B_ai;
-            Z_vv_loc_a -= X_ai * B_ai.transpose();
+            Z_loc_a.noalias() += B_vv_a * X_ai - X_ai * B_oo_a;
 
             if (has_beta) {
                 Eigen::Map< const Eigen::MatrixXd > B_oo_b(B_oo_P_beta_.col(P).data(), nb_, nb_);
                 Eigen::Map< const Eigen::MatrixXd > B_vv_b(B_vv_P_beta_.col(P).data(), vb_, vb_);
-
                 Eigen::Map< const Eigen::MatrixXd > X_bi(X_b.col(P).data(), vb_, nb_);
-                Eigen::Map< const Eigen::MatrixXd > B_bi(B_ia_P_beta_.col(P).data(), vb_, nb_);
 
-                Z_loc_b += B_vv_b * X_bi - X_bi * B_oo_b;
-                Z_oo_loc_b += X_bi.transpose() * B_bi;
-                Z_vv_loc_b -= X_bi * B_bi.transpose();
+                Z_loc_b.noalias() += B_vv_b * X_bi - X_bi * B_oo_b;
             }
         }
 
         #pragma omp critical
         { 
             Z_mat_a += Z_loc_a; 
-            Z_oo_a += Z_oo_loc_a;
-            Z_vv_a += Z_vv_loc_a;
-            if (has_beta) {
-                Z_mat_b += Z_loc_b;
-                Z_oo_b += Z_oo_loc_b;
-                Z_vv_b += Z_vv_loc_b;
-            }
+            if (has_beta) Z_mat_b += Z_loc_b;
         }
-    }
-
-    // =========================================================================
-    // TAHAP 4: MATRIX-FREE MINI-CPHF SOLVER
-    // =========================================================================
-    const auto& ea = scf_.orbital_energies_alpha;
-    const auto& eb = scf_.orbital_energies_beta;
-    double scale = is_restricted ? 0.25 : 0.5;
-
-    int n_aux = scf_.L_mat.cols();
-    Eigen::MatrixXd B_oo_flat_a = Eigen::MatrixXd::Zero(na_ * na_, n_aux);
-    Eigen::MatrixXd B_vv_flat_a = Eigen::MatrixXd::Zero(va_ * va_, n_aux);
-    Eigen::MatrixXd B_oo_flat_b, B_vv_flat_b;
-    
-    if (has_beta) {
-        B_oo_flat_b = Eigen::MatrixXd::Zero(nb_ * nb_, n_aux);
-        B_vv_flat_b = Eigen::MatrixXd::Zero(vb_ * vb_, n_aux);
-    }
-    
-    #pragma omp parallel
-    {
-        #pragma omp for schedule(dynamic)
-        for (int P = 0; P < n_aux; ++P) {
-            Eigen::Map< const Eigen::MatrixXd > B_AO(scf_.L_mat.col(P).data(), nbf_, nbf_);
-            
-            Eigen::MatrixXd T_ao_a = B_AO * scf_.C_alpha.leftCols(na_);
-            Eigen::MatrixXd MO_oo_a = scf_.C_alpha.leftCols(na_).transpose() * T_ao_a;
-            
-            Eigen::MatrixXd T_av_a = B_AO * scf_.C_alpha.rightCols(va_);
-            Eigen::MatrixXd MO_vv_a = scf_.C_alpha.rightCols(va_).transpose() * T_av_a;
-            
-            B_oo_flat_a.col(P) = Eigen::Map< const Eigen::VectorXd >(MO_oo_a.data(), na_ * na_);
-            B_vv_flat_a.col(P) = Eigen::Map< const Eigen::VectorXd >(MO_vv_a.data(), va_ * va_);
-
-            if (has_beta) {
-                Eigen::MatrixXd T_ao_b = B_AO * scf_.C_beta.leftCols(nb_);
-                Eigen::MatrixXd MO_oo_b = scf_.C_beta.leftCols(nb_).transpose() * T_ao_b;
-                
-                Eigen::MatrixXd T_av_b = B_AO * scf_.C_beta.rightCols(vb_);
-                Eigen::MatrixXd MO_vv_b = scf_.C_beta.rightCols(vb_).transpose() * T_av_b;
-                
-                B_oo_flat_b.col(P) = Eigen::Map< const Eigen::VectorXd >(MO_oo_b.data(), nb_ * nb_);
-                B_vv_flat_b.col(P) = Eigen::Map< const Eigen::VectorXd >(MO_vv_b.data(), vb_ * vb_);
-            }
-        }
-    }
-
-    auto solve_mini_cphf = [&](const Eigen::MatrixXd& Z_in, const Eigen::VectorXd& eps, const Eigen::MatrixXd& B_flat, int dim, int offset) -> Eigen::MatrixXd {
-        if (dim == 0) return Eigen::MatrixXd::Zero(0, 0);
-        int dim2 = dim * dim;
-
-        Eigen::VectorXd Z_vec(dim2);
-        Eigen::VectorXd eps_diff(dim2);
-        for (int i = 0; i < dim; ++i) {
-            for (int j = 0; j < dim; ++j) {
-                Z_vec(i * dim + j) = Z_in(i, j) - Z_in(j, i);
-                eps_diff(i * dim + j) = eps(offset + i) - eps(offset + j);
-            }
-        }
-
-        auto apply_precond = [&](const Eigen::VectorXd& v) {
-            Eigen::VectorXd res = Eigen::VectorXd::Zero(dim2);
-            for (int k = 0; k < dim2; ++k) {
-                if (std::abs(eps_diff(k)) > 1e-5) res(k) = v(k) / eps_diff(k);
-            }
-            return res;
-        };
-
-        auto compute_Ax = [&](const Eigen::VectorXd& x) -> Eigen::VectorXd {
-            Eigen::VectorXd B_Tx = B_flat.transpose() * x;   
-            Eigen::VectorXd Coul = B_flat * B_Tx;            
-            return eps_diff.cwiseProduct(x) + Coul;          
-        };
-
-        Eigen::VectorXd x = apply_precond(Z_vec); 
-        Eigen::VectorXd r = Z_vec - compute_Ax(x);
-        Eigen::VectorXd z = apply_precond(r);
-        Eigen::VectorXd p = z;
-        double rz_old = r.dot(z);
-
-        const int MAX_ITER = 20;
-        const double TOLERANCE = 1e-8;
-
-        for (int iter = 0; iter < MAX_ITER; ++iter) {
-            if (r.norm() < TOLERANCE) break;
-            
-            Eigen::VectorXd Ap = compute_Ax(p);
-            double pAp = p.dot(Ap);
-            if (std::abs(pAp) < 1e-14) break; 
-            
-            double alpha = rz_old / pAp;
-            
-            x += alpha * p;
-            r -= alpha * Ap;
-            
-            z = apply_precond(r);
-            double rz_new = r.dot(z);
-            
-            p = z + (rz_new / rz_old) * p;
-            rz_old = rz_new;
-        }
-
-        Eigen::MatrixXd res_mat(dim, dim);
-        for(int i = 0; i < dim; ++i) {
-            for(int j = 0; j < dim; ++j) {
-                res_mat(i, j) = x(i * dim + j);
-            }
-        }
-        return res_mat;
-    };
-
-    // Langsung tembak menggunakan matriks dari Cache
-    Eigen::MatrixXd dx_oo_a = solve_mini_cphf(Z_oo_a, ea, B_oo_P_alpha_, na_, 0);
-    Eigen::MatrixXd dx_vv_a = solve_mini_cphf(Z_vv_a, ea, B_vv_P_alpha_, va_, na_);
-    
-    G_oo_alpha_ += scale * dx_oo_a;
-    G_vv_alpha_ += scale * dx_vv_a;
-
-    if (has_beta) {
-        Eigen::MatrixXd dx_oo_b = solve_mini_cphf(Z_oo_b, eb, B_oo_P_beta_, nb_, 0);
-        Eigen::MatrixXd dx_vv_b = solve_mini_cphf(Z_vv_b, eb, B_vv_P_beta_, vb_, nb_);
-        
-        G_oo_beta_ += scale * dx_oo_b;
-        G_vv_beta_ += scale * dx_vv_b;
     }
 }
 

@@ -252,23 +252,26 @@ void OMP2::compute_t2_and_energy_cholesky() {
     auto* t_aa_blk = t2_aa_.get_block(0, 0, 0, 0);
 
     if (t_aa_blk) {
-        // PERUBAHAN: Single Massive DGEMM untuk semua elemen G_ab^ij
-        Eigen::MatrixXd G_iajb = B_ia_P_alpha_ * B_ia_P_alpha_.transpose();
-
         #pragma omp parallel reduction(+:E_ss_aa)
         {
+            Eigen::MatrixXd g_ijab(va_, va_);
             #pragma omp for schedule(dynamic, 4)
             for (int i = nf; i < na_; ++i) {
                 for (int j = nf; j < na_; ++j) {
+                    // Mapping memori langsung tanpa alokasi vektor tambahan
+                    Eigen::MatrixXd Bia = B_ia_P_alpha_.middleRows(i * va_, va_);
+                    Eigen::MatrixXd Bjb = B_ia_P_alpha_.middleRows(j * va_, va_);
+                    g_ijab.noalias() = Bia * Bjb.transpose();
+
                     double e_ij = scf_.orbital_energies_alpha(i) + scf_.orbital_energies_alpha(j);
                     for (int a = 0; a < va_; ++a) {
                         double den_a = e_ij - scf_.orbital_energies_alpha(na_ + a);
                         for (int b = 0; b < va_; ++b) {
                             double den = den_a - scf_.orbital_energies_alpha(na_ + b);
 
-                            // Akses O(1) Cache-friendly
-                            double val_dir = G_iajb(i * va_ + a, j * va_ + b);
-                            double val_ex  = G_iajb(i * va_ + b, j * va_ + a); 
+                            // Akses array lokal di L1 Cache
+                            double val_dir = g_ijab(a, b);
+                            double val_ex  = g_ijab(b, a); 
 
                             double reg_den = (std::abs(den) > 1e-12) ? (1.0 / den) : 0.0;
                             double t_val = 0.0;
