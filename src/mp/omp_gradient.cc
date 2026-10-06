@@ -201,6 +201,7 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
     Eigen::MatrixXd B_oo_flat_a = Eigen::MatrixXd::Zero(na_ * na_, n_aux);
     Eigen::MatrixXd B_vv_flat_a = Eigen::MatrixXd::Zero(va_ * va_, n_aux);
     Eigen::MatrixXd B_oo_flat_b, B_vv_flat_b;
+    
     if (has_beta) {
         B_oo_flat_b = Eigen::MatrixXd::Zero(nb_ * nb_, n_aux);
         B_vv_flat_b = Eigen::MatrixXd::Zero(vb_ * vb_, n_aux);
@@ -208,13 +209,6 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
     
     #pragma omp parallel
     {
-        Eigen::MatrixXd priv_oo_a = Eigen::MatrixXd::Zero(na_ * na_, n_aux);
-        Eigen::MatrixXd priv_vv_a = Eigen::MatrixXd::Zero(va_ * va_, n_aux);
-        Eigen::MatrixXd priv_oo_b, priv_vv_b;
-        if (has_beta) {
-            priv_oo_b = Eigen::MatrixXd::Zero(nb_ * nb_, n_aux);
-            priv_vv_b = Eigen::MatrixXd::Zero(vb_ * vb_, n_aux);
-        }
         
         // Buffer eksplisit
         Eigen::MatrixXd T_ao_a(nbf_, na_);
@@ -234,16 +228,16 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
 
         #pragma omp for schedule(dynamic)
         for (int P = 0; P < n_aux; ++P) {
-            Eigen::Map<const Eigen::MatrixXd> B_AO(scf_.L_mat.col(P).data(), nbf_, nbf_);
+            Eigen::Map B_AO(scf_.L_mat.col(P).data(), nbf_, nbf_);
             
             T_ao_a.noalias() = B_AO * scf_.C_alpha.leftCols(na_);
             MO_oo_a.noalias() = scf_.C_alpha.leftCols(na_).transpose() * T_ao_a;
             
             T_av_a.noalias() = B_AO * scf_.C_alpha.rightCols(va_);
             MO_vv_a.noalias() = scf_.C_alpha.rightCols(va_).transpose() * T_av_a;
-            
-            priv_oo_a.col(P) = Eigen::Map<const Eigen::VectorXd>(MO_oo_a.data(), na_ * na_);
-            priv_vv_a.col(P) = Eigen::Map<const Eigen::VectorXd>(MO_vv_a.data(), va_ * va_);
+           
+            B_oo_flat_a.col(P) = Eigen::Map(MO_oo_a.data(), na_ * na_);
+            B_vv_flat_a.col(P) = Eigen::Map(MO_vv_a.data(), va_ * va_);
 
             if (has_beta) {
                 T_ao_b.noalias() = B_AO * scf_.C_beta.leftCols(nb_);
@@ -252,20 +246,12 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
                 T_av_b.noalias() = B_AO * scf_.C_beta.rightCols(vb_);
                 MO_vv_b.noalias() = scf_.C_beta.rightCols(vb_).transpose() * T_av_b;
                 
-                priv_oo_b.col(P) = Eigen::Map<const Eigen::VectorXd>(MO_oo_b.data(), nb_ * nb_);
-                priv_vv_b.col(P) = Eigen::Map<const Eigen::VectorXd>(MO_vv_b.data(), vb_ * vb_);
+                B_oo_flat_b.col(P) = Eigen::Map(MO_oo_b.data(), nb_ * nb_);
+                B_vv_flat_b.col(P) = Eigen::Map(MO_vv_b.data(), vb_ * vb_);
             }
         }
         
-        #pragma omp critical
-        {
-            B_oo_flat_a += priv_oo_a;
-            B_vv_flat_a += priv_vv_a;
-            if (has_beta) {
-                B_oo_flat_b += priv_oo_b;
-                B_vv_flat_b += priv_vv_b;
-            }
-        }
+        
     }
 
     auto solve_mini_cphf = [&](const Eigen::MatrixXd& Z_in, const Eigen::VectorXd& eps, const Eigen::MatrixXd& B_flat, int dim, int offset) -> Eigen::MatrixXd {
