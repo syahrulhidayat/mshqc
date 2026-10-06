@@ -701,12 +701,14 @@ void OMP2::transform_integrals() {
 void OMP2::pseudocanonicalize() {
     Eigen::MatrixXd F_ao_a, F_ao_b;
     build_fock_fast(scf_.P_alpha, scf_.P_beta, F_ao_a, F_ao_b);
+    
+    bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
+    // Deteksi instan: Open-shell namun spasial C_alpha & C_beta identik
+    bool is_rohf = (!is_restricted && nb_ > 0 && (scf_.C_alpha - scf_.C_beta).cwiseAbs().maxCoeff() < 1e-10);
 
     auto diag_block = [&](const Eigen::MatrixXd& F_ao, Eigen::MatrixXd& C, Eigen::VectorXd& eps, int nocc, int nvir) {
-     
         Eigen::MatrixXd C_occ = C.leftCols(nocc);
         Eigen::MatrixXd C_vir = C.rightCols(nvir);
-
         Eigen::MatrixXd F_oo(nocc, nocc);
         Eigen::MatrixXd F_vv(nvir, nvir);
         F_oo.noalias() = C_occ.transpose() * (F_ao * C_occ);
@@ -717,17 +719,33 @@ void OMP2::pseudocanonicalize() {
         C.leftCols(nocc).noalias() = C_occ * es_o.eigenvectors();
         C.rightCols(nvir).noalias() = C_vir * es_v.eigenvectors();
 
-        // 5. Pembaruan energi orbital
         eps.resize(nocc + nvir);
         eps.head(nocc) = es_o.eigenvalues();
         eps.tail(nvir) = es_v.eigenvalues();
     };
-    diag_block(F_ao_a, scf_.C_alpha, scf_.orbital_energies_alpha, na_, va_);
-    scf_.P_alpha.noalias() = scf_.C_alpha.leftCols(na_) * scf_.C_alpha.leftCols(na_).transpose();
 
-    if (nb_ > 0 && vb_ > 0) {
-        diag_block(F_ao_b, scf_.C_beta, scf_.orbital_energies_beta, nb_, vb_);
+    if (is_rohf) {
+        // RO-OMP2: Semi-kanonikalisasi via Unified Fock (Rata-rata spasial)
+        Eigen::MatrixXd F_ao_uni = 0.5 * (F_ao_a + F_ao_b);
+        diag_block(F_ao_uni, scf_.C_alpha, scf_.orbital_energies_alpha, na_, va_);
+        
+        // Kunci sinkronisasi C_beta
+        scf_.C_beta = scf_.C_alpha;
+        scf_.orbital_energies_beta.resize(nbf_);
+        scf_.orbital_energies_beta.head(nb_) = scf_.orbital_energies_alpha.head(nb_);
+        scf_.orbital_energies_beta.tail(vb_) = scf_.orbital_energies_alpha.tail(va_);
+        
+        scf_.P_alpha.noalias() = scf_.C_alpha.leftCols(na_) * scf_.C_alpha.leftCols(na_).transpose();
         scf_.P_beta.noalias() = scf_.C_beta.leftCols(nb_) * scf_.C_beta.leftCols(nb_).transpose();
+    } else {
+        // UMP2 Normal
+        diag_block(F_ao_a, scf_.C_alpha, scf_.orbital_energies_alpha, na_, va_);
+        scf_.P_alpha.noalias() = scf_.C_alpha.leftCols(na_) * scf_.C_alpha.leftCols(na_).transpose();
+
+        if (nb_ > 0 && vb_ > 0) {
+            diag_block(F_ao_b, scf_.C_beta, scf_.orbital_energies_beta, nb_, vb_);
+            scf_.P_beta.noalias() = scf_.C_beta.leftCols(nb_) * scf_.C_beta.leftCols(nb_).transpose();
+        }
     }
 }
 
@@ -836,10 +854,12 @@ void OMP2::execute_macro_iterations(DIIS& diis_a, DIIS& diis_b, int macro_iter) 
     build_generalized_fock();
 
     bool is_restricted = (na_ == nb_ && va_ == vb_);
+    bool is_rohf = (!is_restricted && nb_ > 0 && (C_a_current_ - C_b_current_).cwiseAbs().maxCoeff() < 1e-10);
+
     if (is_restricted && nb_ > 0) F_gen_b_ = F_gen_a_; 
 
     int dim_a = va_ * na_;
-    int dim_b = (is_restricted) ? 0 : (nb_ > 0 ? vb_ * nb_ : 0);
+    int dim_b = (is_restricted || is_rohf) ? 0 : (nb_ > 0 ? vb_ * nb_ : 0); // Matikan parameter beta untuk ROHF
     int n_params = dim_a + dim_b;
 
     if (orbital_gradient_.size() != n_params) orbital_gradient_.resize(n_params);
@@ -847,7 +867,8 @@ void OMP2::execute_macro_iterations(DIIS& diis_a, DIIS& diis_b, int macro_iter) 
     int idx = 0;
     bool use_sym = (!scf_.irreps_alpha.empty() && scf_.irreps_alpha[0] != -1);
     
-    if (!is_restricted && nb_ > 0) {
+    if (!is_restricted && nb_ > 0 && !is_rohf) {
+        // UMP2 NORMAL (Sesuai kode asli)
         Eigen::MatrixXd wa = 2.0 * F_gen_a_.block(na_, 0, va_, na_);
         for (int i = 0; i < na_; ++i) {
             for (int a = 0; a < va_; ++a) {
@@ -860,6 +881,18 @@ void OMP2::execute_macro_iterations(DIIS& diis_a, DIIS& diis_b, int macro_iter) 
             for (int b = 0; b < vb_; ++b) {
                 if (use_sym && (scf_.irreps_beta[i] ^ scf_.irreps_beta[nb_ + b]) != 0) orbital_gradient_(idx++) = 0.0;
                 else orbital_gradient_(idx++) = wb(b, i);
+            }
+        }
+    } else if (is_rohf) {
+        // RO-OMP2: Gabungkan & kompres gradien Doubly Occupied
+        Eigen::MatrixXd wa = 2.0 * F_gen_a_.block(na_, 0, va_, na_);
+        Eigen::MatrixXd wb = 2.0 * F_gen_b_.block(nb_, 0, vb_, nb_);
+        for (int i = 0; i < na_; ++i) {
+            for (int a = 0; a < va_; ++a) {
+                double grad_val = wa(a, i);
+                if (i < nb_) grad_val = 0.5 * (wa(a, i) + wb(a, i)); // Rata-rata pada wilayah core
+                if (use_sym && (scf_.irreps_alpha[i] ^ scf_.irreps_alpha[na_ + a]) != 0) orbital_gradient_(idx++) = 0.0;
+                else orbital_gradient_(idx++) = grad_val;
             }
         }
     } else {
