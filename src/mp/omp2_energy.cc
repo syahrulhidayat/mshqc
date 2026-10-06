@@ -252,13 +252,14 @@ void OMP2::compute_t2_and_energy_cholesky() {
     auto* t_aa_blk = t2_aa_.get_block(0, 0, 0, 0);
 
     if (t_aa_blk) {
+        t_aa_blk->setZero(); // <-- INI PENYELAMATNYA: Kuras memori kotor dari OS
+        
         #pragma omp parallel reduction(+:E_ss_aa)
         {
             Eigen::MatrixXd g_ijab(va_, va_);
             #pragma omp for schedule(dynamic, 4)
             for (int i = nf; i < na_; ++i) {
                 for (int j = nf; j < na_; ++j) {
-                    // Mapping memori langsung tanpa alokasi vektor tambahan
                     Eigen::MatrixXd Bia = B_ia_P_alpha_.middleRows(i * va_, va_);
                     Eigen::MatrixXd Bjb = B_ia_P_alpha_.middleRows(j * va_, va_);
                     g_ijab.noalias() = Bia * Bjb.transpose();
@@ -269,7 +270,6 @@ void OMP2::compute_t2_and_energy_cholesky() {
                         for (int b = 0; b < va_; ++b) {
                             double den = den_a - scf_.orbital_energies_alpha(na_ + b);
 
-                            // Akses array lokal di L1 Cache
                             double val_dir = g_ijab(a, b);
                             double val_ex  = g_ijab(b, a); 
 
@@ -294,9 +294,11 @@ void OMP2::compute_t2_and_energy_cholesky() {
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
         t2_bb_.allocate_block(0, 0, 0, 0, nb_, nb_, vb_, vb_);
         auto* t_bb_blk = t2_bb_.get_block(0, 0, 0, 0);
+        if (t_bb_blk) t_bb_blk->setZero(); // <-- Kuras memori
 
         t2_ab_.allocate_block(0, 0, 0, 0, na_, nb_, va_, vb_);
         auto* t_ab_blk = t2_ab_.get_block(0, 0, 0, 0);
+        if (t_ab_blk) t_ab_blk->setZero(); // <-- Kuras memori
 
         if (t_bb_blk) {
             #pragma omp parallel reduction(+:E_ss_bb)
