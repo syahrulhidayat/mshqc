@@ -520,7 +520,7 @@ void RHF::build_fock_matrix() {
                     int p_ls = ind2[k]; int lam = (p_ls >> 16) & 0xFFFF; int sig = p_ls & 0xFFFF;
                     
                     double v = val[k];
-                    double vJ = 4.0 * v; 
+                    double vJ = 2.0 * v; 
                     double vK = 1.0 * v; 
                     double pt_ls = dP(lam, sig); 
                     double pt_mn = dP(mu, nu);
