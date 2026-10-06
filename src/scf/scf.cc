@@ -136,76 +136,57 @@ Eigen::MatrixXd BaseSCF::precompute_shell_schwarz() {
 }
 
 void BaseSCF::init_integrals_incore() {
-    if (config_.print_level > 0) std::cout << "  [SCF] Building Optimized PK-InCore Integrals (4D Symmetry)... " << std::flush;
+    if (config_.print_level > 0) std::cout << "  [SCF] Building Optimized Shell-Block InCore Integrals... " << std::flush;
 
-    J_val_.clear(); J_ind_.clear(); K_ind_.clear();
+    incore_quartets_.clear();
+    incore_eri_pool_.clear();
+    
     double shell_cutoff = 1e-12;
-    const double sparse_threshold = 1e-12;
 
     if (pl_ && pl_->get_unique_quartets().empty()) pl_->build();
 
-    size_t est_ints = 0;
+    // 1. Hitung total memori yang dibutuhkan agar alokasi Vektor efisien (mencegah realokasi lambat)
+    size_t total_ints = 0;
+    auto count_quartet = [&](int M, int N, int P, int Q) {
+        if (schwarz_(M, N) * schwarz_(P, Q) < shell_cutoff) return;
+        total_ints += shell_sizes_[M] * shell_sizes_[N] * shell_sizes_[P] * shell_sizes_[Q];
+    };
+
     if (pl_) {
-        for (const auto& [M, N, P, Q, w] : pl_->get_unique_quartets()) {
-            if (schwarz_(M, N) * schwarz_(P, Q) < shell_cutoff) continue;
-            est_ints += shell_sizes_[M] * shell_sizes_[N] * shell_sizes_[P] * shell_sizes_[Q];
-        }
+        for (const auto& [M, N, P, Q, w] : pl_->get_unique_quartets()) count_quartet(M, N, P, Q);
     } else {
         int nshells = basis_.n_shells();
         for (int M = 0; M < nshells; ++M) {
             for (int N = 0; N <= M; ++N) {
                 for (int P = 0; P <= M; ++P) {
                     int Q_max = (M == P) ? N : P;
-                    for (int Q = 0; Q <= Q_max; ++Q) {
-                        if (schwarz_(M, N) * schwarz_(P, Q) < shell_cutoff) continue;
-                        est_ints += shell_sizes_[M] * shell_sizes_[N] * shell_sizes_[P] * shell_sizes_[Q];
-                    }
+                    for (int Q = 0; Q <= Q_max; ++Q) count_quartet(M, N, P, Q);
                 }
             }
         }
     }
 
-    J_val_.assign(est_ints, 0.0);
-    J_ind_.assign(est_ints, 0);
-    K_ind_.assign(est_ints, 0);
-    size_t idx = 0;
+    incore_eri_pool_.reserve(total_ints);
+    incore_quartets_.reserve(total_ints / 16); // Perkiraan rata-rata ukuran blok
 
+    // 2. Ekstraksi dan Penyimpanan Blok ERI
     auto process_quartet = [&](int M, int N, int P, int Q, double weight) {
         if (schwarz_(M, N) * schwarz_(P, Q) < shell_cutoff) return;
-        auto buf = integrals_->compute_shell_block(M, N, P, Q);
         
-        int dimM = shell_sizes_[M]; int dimN = shell_sizes_[N];
-        int dimP = shell_sizes_[P]; int dimQ = shell_sizes_[Q];
-        int stM = shell_starts_[M]; int stN = shell_starts_[N];
-        int stP = shell_starts_[P]; int stQ = shell_starts_[Q];
+        // Ambil blok utuh dari libcint
+        auto buf = integrals_->compute_shell_block(M, N, P, Q);
+        if (buf.empty()) return;
 
-        // Faktor simetri dihitung per-shell, seperti di fock_builder.cc
-        double fac = weight;
-        if (M == N) fac *= 0.5;
-        if (P == Q) fac *= 0.5;
-        if (M == P && N == Q) fac *= 0.5;
-
-        for (int m = 0; m < dimM; ++m) {
-            for (int n = 0; n < dimN; ++n) {
-                int mu = stM + m; int nu = stN + n;
-                int packed_mn = (mu << 16) | nu;
-                
-                for (int p = 0; p < dimP; ++p) {
-                    for (int q = 0; q < dimQ; ++q) {
-                        int lam = stP + p; int sig = stQ + q;
-                        int packed_ls = (lam << 16) | sig;
-                        
-                        double val = buf[m + dimM * (n + dimN * (p + dimP * q))] * fac;
-                        if (std::abs(val) > sparse_threshold) {
-                            J_val_[idx] = val;
-                            J_ind_[idx] = packed_mn;
-                            K_ind_[idx] = packed_ls;
-                            idx++;
-                        }
-                    }
-                }
-            }
-        }
+        // Simpan metadata
+        CachedQuartet cq;
+        cq.M = M; cq.N = N; cq.P = P; cq.Q = Q;
+        cq.weight = weight;
+        cq.data_offset = incore_eri_pool_.size();
+        
+        incore_quartets_.push_back(cq);
+        
+        // Gabungkan nilai blok ke pool memori utama
+        incore_eri_pool_.insert(incore_eri_pool_.end(), buf.begin(), buf.end());
     };
 
     if (pl_) {
@@ -222,9 +203,10 @@ void BaseSCF::init_integrals_incore() {
         }
     }
 
-    J_val_.resize(idx); J_ind_.resize(idx); K_ind_.resize(idx);
-    K_val_.clear(); J_ptr_.clear(); K_ptr_.clear(); row_map_.clear(); 
-    if (config_.print_level > 0) std::cout << "Done. (Stored PK Integrals: " << idx << ")\n";
+    if (config_.print_level > 0) {
+        std::cout << "Done. (Quartets: " << incore_quartets_.size() 
+                  << " | RAM: " << (incore_eri_pool_.size() * 8.0 / (1024.0 * 1024.0)) << " MB)\n";
+    }
 }
 void BaseSCF::init_integrals_cholesky() {
     if (config_.print_level > 0) std::cout << "  [SCF] Decomposing Integrals (Cholesky)... " << std::flush;
@@ -498,49 +480,64 @@ void RHF::build_fock_matrix() {
             }
         }
     } else if (config_.scf_type == "incore") {
-        // [Optimasi Cache-Locality dari Kode 2]
         Eigen::MatrixXd dP = (iter_scf_ == 1) ? P_alpha_ : (P_alpha_ - P_old_);
-        double max_dP = dP.cwiseAbs().maxCoeff(); 
-        if (max_dP < 1e-11) {
+        if (dP.cwiseAbs().maxCoeff() < 1e-12) {
             F_alpha_ = H_ + G_accum_;
         } else {
-            const double* val = J_val_.data();
-            const int* ind1 = J_ind_.data();
-            const int* ind2 = K_ind_.data();
-            size_t n_ints = J_val_.size();
-
             Eigen::MatrixXd dG = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-
             #pragma omp parallel
             {
                 Eigen::MatrixXd G_local = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-                #pragma omp for schedule(dynamic, 2048)
-                for (size_t k = 0; k < n_ints; ++k) {
-                    int p_mn = ind1[k]; int mu = (p_mn >> 16) & 0xFFFF; int nu = p_mn & 0xFFFF;
-                    int p_ls = ind2[k]; int lam = (p_ls >> 16) & 0xFFFF; int sig = p_ls & 0xFFFF;
-                    
-                    double v = val[k];
-                    double vJ = 2.0 * v; 
-                    double vK = 1.0 * v; 
-                    double pt_ls = dP(lam, sig); 
-                    double pt_mn = dP(mu, nu);
-                    
-                    // Coulomb
-                    G_local(mu, nu) += vJ * pt_ls;
-                    G_local(lam, sig) += vJ * pt_mn; 
-                    
-                    // Exchange
-                    G_local(mu, lam) -= vK * dP(nu, sig); 
-                    G_local(mu, sig) -= vK * dP(nu, lam);
-                    G_local(nu, lam) -= vK * dP(mu, sig); 
-                    G_local(nu, sig) -= vK * dP(mu, lam);
+                #pragma omp for schedule(dynamic, 64)
+                for (size_t i = 0; i < incore_quartets_.size(); ++i) {
+                    const auto& cq = incore_quartets_[i];
+                    int M = cq.M; int N = cq.N; int P = cq.P; int Q = cq.Q;
+                    double fac = cq.weight;
+                    if (M == N) fac *= 0.5;
+                    if (P == Q) fac *= 0.5;
+                    if (M == P && N == Q) fac *= 0.5;
+
+                    int dM = shell_sizes_[M]; int offM = shell_starts_[M];
+                    int dN = shell_sizes_[N]; int offN = shell_starts_[N];
+                    int dP = shell_sizes_[P]; int offP = shell_starts_[P];
+                    int dQ = shell_sizes_[Q]; int offQ = shell_starts_[Q];
+
+                    const double* I_ptr = &incore_eri_pool_[cq.data_offset];
+
+                    for (int q = 0; q < dQ; ++q) {
+                        int sig = offQ + q;
+                        for (int p = 0; p < dP; ++p) {
+                            int lam = offP + p;
+                            for (int n = 0; n < dN; ++n) {
+                                int nu = offN + n;
+                                for (int m = 0; m < dM; ++m) {
+                                    int mu = offM + m;
+                                    double val = *I_ptr++;
+                                    if (std::abs(val) < 1e-12) continue;
+
+                                    double v = val * fac;
+                                    double v2 = v * 2.0;
+
+                                    // Faktor 2.0 karena P total = 2 * P_alpha pada RHF
+                                    double pt_ls = dP(lam, sig) * 2.0; 
+                                    double pt_mn = dP(mu, nu) * 2.0;
+
+                                    G_local(mu, nu) += v2 * pt_ls; G_local(nu, mu) += v2 * pt_ls;
+                                    G_local(lam, sig) += v2 * pt_mn; G_local(sig, lam) += v2 * pt_mn;
+
+                                    G_local(mu, lam) -= v * dP(nu, sig); G_local(lam, mu) -= v * dP(sig, nu);
+                                    G_local(nu, lam) -= v * dP(mu, sig); G_local(lam, nu) -= v * dP(sig, mu);
+                                    G_local(mu, sig) -= v * dP(nu, lam); G_local(sig, mu) -= v * dP(lam, nu);
+                                    G_local(nu, sig) -= v * dP(mu, lam); G_local(sig, nu) -= v * dP(lam, mu);
+                                }
+                            }
+                        }
+                    }
                 }
                 #pragma omp critical
                 { dG += G_local; }
             }
-            dG = dG + dG.transpose().eval();
-            for (int i = 0; i < nbasis_; ++i) dG(i, i) *= 0.5;
-            
+            dG = 0.5 * (dG + dG.transpose());
             G_accum_ += dG;
             F_alpha_ = H_ + G_accum_;
         }
@@ -673,21 +670,14 @@ void UHF::build_fock_matrix() {
             }
         }
     } else if (config_.scf_type == "incore") {
-        // [Kode 1 Dipertahankan: Cache-Locality Optimisation pada penulisan mu,nu/lam,sig]
         Eigen::MatrixXd dPa = (iter_scf_ == 1) ? P_alpha_ : (P_alpha_ - P_alpha_old_);
-        Eigen::MatrixXd dPb = (iter_scf_ == 1) ? P_beta_ : (P_beta_ - P_beta_old_);
-        Eigen::MatrixXd dP_tot = dPa + dPb; 
-        double max_dP = dP_tot.cwiseAbs().maxCoeff(); 
+        Eigen::MatrixXd dPb = (iter_scf_ == 1) ? P_beta_  : (P_beta_ - P_beta_old_);
+        double max_dP = std::max(dPa.cwiseAbs().maxCoeff(), dPb.cwiseAbs().maxCoeff()); 
 
-        if (max_dP < 1e-11) {
+        if (max_dP < 1e-12) {
             F_alpha_ = H_ + G_accum_a_;
             F_beta_  = H_ + G_accum_b_;
         } else {
-            const double* val = J_val_.data();
-            const int* ind1 = J_ind_.data();
-            const int* ind2 = K_ind_.data();
-            size_t n_ints = J_val_.size();
-
             Eigen::MatrixXd dGa = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
             Eigen::MatrixXd dGb = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
 
@@ -696,48 +686,63 @@ void UHF::build_fock_matrix() {
                 Eigen::MatrixXd Ga_local = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
                 Eigen::MatrixXd Gb_local = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
                 
-                #pragma omp for schedule(dynamic, 2048)
-                for (size_t k = 0; k < n_ints; ++k) {
-                    int p_mn = ind1[k]; int mu = (p_mn >> 16) & 0xFFFF; int nu = p_mn & 0xFFFF;
-                    int p_ls = ind2[k]; int lam = (p_ls >> 16) & 0xFFFF; int sig = p_ls & 0xFFFF;
-                    double v = val[k];
+                #pragma omp for schedule(dynamic, 64)
+                for (size_t i = 0; i < incore_quartets_.size(); ++i) {
+                    const auto& cq = incore_quartets_[i];
+                    int M = cq.M; int N = cq.N; int P = cq.P; int Q = cq.Q;
+                    double fac = cq.weight;
+                    if (M == N) fac *= 0.5;
+                    if (P == Q) fac *= 0.5;
+                    if (M == P && N == Q) fac *= 0.5;
 
-                    double pt_ls = dP_tot(lam, sig);
-                    double pt_mn = dP_tot(mu, nu);
-                    
-                    // Perbaikan: vJ harus 2.0, bukan 4.0 (menghindari double Coulomb)
-                    double vJ = 2.0 * v; 
-                    double vK = 1.0 * v;
+                    int dM = shell_sizes_[M]; int offM = shell_starts_[M];
+                    int dN = shell_sizes_[N]; int offN = shell_starts_[N];
+                    int dP = shell_sizes_[P]; int offP = shell_starts_[P];
+                    int dQ = shell_sizes_[Q]; int offQ = shell_starts_[Q];
 
-                    double J_mn = vJ * pt_ls;
-                    double J_ls = vJ * pt_mn;
+                    const double* I_ptr = &incore_eri_pool_[cq.data_offset];
 
-                    Ga_local(mu, nu) += J_mn;
-                    Gb_local(mu, nu) += J_mn;
-                    // Perbaikan: Eksekusi tanpa syarat if (p_mn != p_ls)
-                    Ga_local(lam, sig) += J_ls;
-                    Gb_local(lam, sig) += J_ls;
+                    for (int q = 0; q < dQ; ++q) {
+                        int sig = offQ + q;
+                        for (int p = 0; p < dP; ++p) {
+                            int lam = offP + p;
+                            for (int n = 0; n < dN; ++n) {
+                                int nu = offN + n;
+                                for (int m = 0; m < dM; ++m) {
+                                    int mu = offM + m;
+                                    double val = *I_ptr++;
+                                    if (std::abs(val) < 1e-12) continue;
 
-                    Ga_local(mu, lam) -= vK * dPa(nu, sig);
-                    Ga_local(mu, sig) -= vK * dPa(nu, lam);
-                    Ga_local(nu, lam) -= vK * dPa(mu, sig);
-                    Ga_local(nu, sig) -= vK * dPa(mu, lam);
+                                    double v = val * fac;
+                                    double pt_ls = dPa(lam, sig) + dPb(lam, sig);
+                                    double pt_mn = dPa(mu, nu) + dPb(mu, nu);
+                                    double v2 = v * 2.0;
 
-                    Gb_local(mu, lam) -= vK * dPb(nu, sig);
-                    Gb_local(mu, sig) -= vK * dPb(nu, lam);
-                    Gb_local(nu, lam) -= vK * dPb(mu, sig);
-                    Gb_local(nu, sig) -= vK * dPb(mu, lam);
+                                    Ga_local(mu, nu) += v2 * pt_ls; Gb_local(mu, nu) += v2 * pt_ls;
+                                    Ga_local(nu, mu) += v2 * pt_ls; Gb_local(nu, mu) += v2 * pt_ls;
+                                    Ga_local(lam, sig) += v2 * pt_mn; Gb_local(lam, sig) += v2 * pt_mn;
+                                    Ga_local(sig, lam) += v2 * pt_mn; Gb_local(sig, lam) += v2 * pt_mn;
+
+                                    Ga_local(mu, lam) -= v * dPa(nu, sig); Ga_local(lam, mu) -= v * dPa(sig, nu);
+                                    Ga_local(nu, lam) -= v * dPa(mu, sig); Ga_local(lam, nu) -= v * dPa(sig, mu);
+                                    Ga_local(mu, sig) -= v * dPa(nu, lam); Ga_local(sig, mu) -= v * dPa(lam, nu);
+                                    Ga_local(nu, sig) -= v * dPa(mu, lam); Ga_local(sig, nu) -= v * dPa(lam, mu);
+
+                                    Gb_local(mu, lam) -= v * dPb(nu, sig); Gb_local(lam, mu) -= v * dPb(sig, nu);
+                                    Gb_local(nu, lam) -= v * dPb(mu, sig); Gb_local(lam, nu) -= v * dPb(sig, mu);
+                                    Gb_local(mu, sig) -= v * dPb(nu, lam); Gb_local(sig, mu) -= v * dPb(lam, nu);
+                                    Gb_local(nu, sig) -= v * dPb(mu, lam); Gb_local(sig, nu) -= v * dPb(lam, mu);
+                                }
+                            }
+                        }
+                    }
                 }
                 #pragma omp critical
                 { dGa += Ga_local; dGb += Gb_local; }
             }
             
-            dGa = dGa + dGa.transpose().eval();
-            dGb = dGb + dGb.transpose().eval();
-            for (int i = 0; i < nbasis_; ++i) {
-                dGa(i, i) *= 0.5;
-                dGb(i, i) *= 0.5;
-            }
+            dGa = 0.5 * (dGa + dGa.transpose());
+            dGb = 0.5 * (dGb + dGb.transpose());
             
             G_accum_a_ += dGa;
             G_accum_b_ += dGb;
@@ -989,21 +994,14 @@ void ROHF::build_fock_matrix() {
             }
         }
     } else if (config_.scf_type == "incore") {
-        // [Optimasi Cache-Locality pada penulisan mu,nu/lam,sig]
         Eigen::MatrixXd dPa = (iter_scf_ == 1) ? P_alpha_ : (P_alpha_ - P_alpha_old_);
-        Eigen::MatrixXd dPb = (iter_scf_ == 1) ? P_beta_ : (P_beta_ - P_beta_old_);
-        Eigen::MatrixXd dP_tot = dPa + dPb; 
-        double max_dP = dP_tot.cwiseAbs().maxCoeff(); 
+        Eigen::MatrixXd dPb = (iter_scf_ == 1) ? P_beta_  : (P_beta_ - P_beta_old_);
+        double max_dP = std::max(dPa.cwiseAbs().maxCoeff(), dPb.cwiseAbs().maxCoeff()); 
 
-        if (max_dP < 1e-11) {
+        if (max_dP < 1e-12) {
             F_alpha_ = H_ + G_accum_a_;
             F_beta_  = H_ + G_accum_b_;
         } else {
-            const double* val = J_val_.data();
-            const int* ind1 = J_ind_.data();
-            const int* ind2 = K_ind_.data();
-            size_t n_ints = J_val_.size();
-
             Eigen::MatrixXd dGa = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
             Eigen::MatrixXd dGb = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
 
@@ -1012,55 +1010,70 @@ void ROHF::build_fock_matrix() {
                 Eigen::MatrixXd Ga_local = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
                 Eigen::MatrixXd Gb_local = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
                 
-                #pragma omp for schedule(dynamic, 2048)
-                for (size_t k = 0; k < n_ints; ++k) {
-                    int p_mn = ind1[k]; int mu = (p_mn >> 16) & 0xFFFF; int nu = p_mn & 0xFFFF;
-                    int p_ls = ind2[k]; int lam = (p_ls >> 16) & 0xFFFF; int sig = p_ls & 0xFFFF;
-                    double v = val[k];
+                #pragma omp for schedule(dynamic, 64)
+                for (size_t i = 0; i < incore_quartets_.size(); ++i) {
+                    const auto& cq = incore_quartets_[i];
+                    int M = cq.M; int N = cq.N; int P = cq.P; int Q = cq.Q;
+                    double fac = cq.weight;
+                    if (M == N) fac *= 0.5;
+                    if (P == Q) fac *= 0.5;
+                    if (M == P && N == Q) fac *= 0.5;
 
-                    double pt_ls = dP_tot(lam, sig);
-                    double pt_mn = dP_tot(mu, nu);
-                    
-                    
-                    double vJ = 2.0 * v; 
-                    double vK = 1.0 * v;
+                    int dM = shell_sizes_[M]; int offM = shell_starts_[M];
+                    int dN = shell_sizes_[N]; int offN = shell_starts_[N];
+                    int dP = shell_sizes_[P]; int offP = shell_starts_[P];
+                    int dQ = shell_sizes_[Q]; int offQ = shell_starts_[Q];
 
-                    double J_mn = vJ * pt_ls;
-                    double J_ls = vJ * pt_mn;
+                    const double* I_ptr = &incore_eri_pool_[cq.data_offset];
 
-                    Ga_local(mu, nu) += J_mn;
-                    Gb_local(mu, nu) += J_mn;
-                 
-                    Ga_local(lam, sig) += J_ls;
-                    Gb_local(lam, sig) += J_ls;
+                    for (int q = 0; q < dQ; ++q) {
+                        int sig = offQ + q;
+                        for (int p = 0; p < dP; ++p) {
+                            int lam = offP + p;
+                            for (int n = 0; n < dN; ++n) {
+                                int nu = offN + n;
+                                for (int m = 0; m < dM; ++m) {
+                                    int mu = offM + m;
+                                    double val = *I_ptr++;
+                                    if (std::abs(val) < 1e-12) continue;
 
-                    Ga_local(mu, lam) -= vK * dPa(nu, sig);
-                    Ga_local(mu, sig) -= vK * dPa(nu, lam);
-                    Ga_local(nu, lam) -= vK * dPa(mu, sig);
-                    Ga_local(nu, sig) -= vK * dPa(mu, lam);
+                                    double v = val * fac;
+                                    double pt_ls = dPa(lam, sig) + dPb(lam, sig);
+                                    double pt_mn = dPa(mu, nu) + dPb(mu, nu);
+                                    double v2 = v * 2.0;
 
-                    Gb_local(mu, lam) -= vK * dPb(nu, sig);
-                    Gb_local(mu, sig) -= vK * dPb(nu, lam);
-                    Gb_local(nu, lam) -= vK * dPb(mu, sig);
-                    Gb_local(nu, sig) -= vK * dPb(mu, lam);
+                                    Ga_local(mu, nu) += v2 * pt_ls; Gb_local(mu, nu) += v2 * pt_ls;
+                                    Ga_local(nu, mu) += v2 * pt_ls; Gb_local(nu, mu) += v2 * pt_ls;
+                                    Ga_local(lam, sig) += v2 * pt_mn; Gb_local(lam, sig) += v2 * pt_mn;
+                                    Ga_local(sig, lam) += v2 * pt_mn; Gb_local(sig, lam) += v2 * pt_mn;
+
+                                    Ga_local(mu, lam) -= v * dPa(nu, sig); Ga_local(lam, mu) -= v * dPa(sig, nu);
+                                    Ga_local(nu, lam) -= v * dPa(mu, sig); Ga_local(lam, nu) -= v * dPa(sig, mu);
+                                    Ga_local(mu, sig) -= v * dPa(nu, lam); Ga_local(sig, mu) -= v * dPa(lam, nu);
+                                    Ga_local(nu, sig) -= v * dPa(mu, lam); Ga_local(sig, nu) -= v * dPa(lam, mu);
+
+                                    Gb_local(mu, lam) -= v * dPb(nu, sig); Gb_local(lam, mu) -= v * dPb(sig, nu);
+                                    Gb_local(nu, lam) -= v * dPb(mu, sig); Gb_local(lam, nu) -= v * dPb(sig, mu);
+                                    Gb_local(mu, sig) -= v * dPb(nu, lam); Gb_local(sig, mu) -= v * dPb(lam, nu);
+                                    Gb_local(nu, sig) -= v * dPb(mu, lam); Gb_local(sig, nu) -= v * dPb(lam, mu);
+                                }
+                            }
+                        }
+                    }
                 }
                 #pragma omp critical
                 { dGa += Ga_local; dGb += Gb_local; }
             }
             
-            dGa = dGa + dGa.transpose().eval();
-            dGb = dGb + dGb.transpose().eval();
-            for (int i = 0; i < nbasis_; ++i) {
-                dGa(i, i) *= 0.5;
-                dGb(i, i) *= 0.5;
-            }
+            dGa = 0.5 * (dGa + dGa.transpose());
+            dGb = 0.5 * (dGb + dGb.transpose());
             
             G_accum_a_ += dGa;
             G_accum_b_ += dGb;
             F_alpha_ = H_ + G_accum_a_; 
             F_beta_  = H_ + G_accum_b_;
         }
-    } else {
+    }else {
         fock_engine_->compute(P_alpha_, P_beta_, F_alpha_, F_beta_); 
     }
     P_alpha_old_ = P_alpha_; P_beta_old_  = P_beta_; 

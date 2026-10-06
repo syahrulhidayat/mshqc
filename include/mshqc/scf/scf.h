@@ -97,16 +97,12 @@ protected:
     std::unique_ptr<BasisSymmetrizer> symmetrizer_;
     SCFConfig config_;
 
-    
-
     int nbasis_;
     int n_alpha_;
     int n_beta_;
     double energy_ = 0.0;
     double energy_old_ = 0.0;
     int iter_scf_ = 0;
-
-    
 
     Eigen::MatrixXd S_, H_, X_, schwarz_;
     Eigen::MatrixXd C_alpha_, C_beta_;
@@ -116,30 +112,21 @@ protected:
     Eigen::VectorXd occ_numbers_alpha_, occ_numbers_beta_;
     std::vector<int> salc_irreps_;
 
-    
-
     std::vector<int> shell_starts_, shell_sizes_;
     std::vector<std::pair<int, int>> row_map_;
-    std::vector<double> J_val_, K_val_;
-    std::vector<int> J_ind_, K_ind_;
-    std::vector<size_t> J_ptr_, K_ptr_;
+    struct CachedQuartet {
+        int M, N, P, Q;
+        double weight;
+        size_t data_offset;
+    };
+    std::vector<CachedQuartet> incore_quartets_;
+    std::vector<double> incore_eri_pool_;
     Eigen::MatrixXd schwarz_basis_;
-
-    
-
+  
     std::unique_ptr<integrals::CholeskyERI> internal_cholesky_;
     std::vector<Eigen::MatrixXd> L_vecs_; 
-    Eigen::MatrixXd L_mat_;
-
-    
-
+    Eigen::MatrixXd L_mat_;   
     std::unique_ptr<FockBuilder> fock_engine_;
-
-    
-
-    
-
-    
 
     void init_integrals();
     void init_integrals_incore();
@@ -148,12 +135,6 @@ protected:
     Eigen::VectorXd smear_electrons(const Eigen::VectorXd& eps, int target_electrons);
     void solve_fock(const Eigen::MatrixXd& F, Eigen::MatrixXd& C, Eigen::VectorXd& eps);
     void print_final(const SCFResult& r);
-
-    
-
-    
-
-    
 
     virtual void initial_guess() = 0;
     virtual void update_densities() = 0;
@@ -184,10 +165,6 @@ public:
 
 
 
-
-
-
-
 class RHF : public BaseSCF {
 public:
     RHF(const Molecule& mol, const BasisSet& basis, 
@@ -214,11 +191,6 @@ private:
 
     
 };
-
-
-
-
-
 
 
 class ROHF : public BaseSCF {
@@ -251,12 +223,6 @@ private:
     Eigen::MatrixXd G_J_accum_b_;
     Eigen::MatrixXd C_;
 };
-
-
-
-
-
-
 
 class UHF : public BaseSCF {
 public:
