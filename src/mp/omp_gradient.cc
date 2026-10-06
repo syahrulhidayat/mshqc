@@ -123,7 +123,6 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
 
         #pragma omp for schedule(dynamic)
         for (int P = 0; P < n_chol; ++P) {
-            // HAPUS SEMUA EVALUASI B_AO. Ganti dengan mapped cache.
             Eigen::Map< const Eigen::MatrixXd > B_oo_a(B_oo_P_alpha_.col(P).data(), na_, na_);
             Eigen::Map< const Eigen::MatrixXd > B_vv_a(B_vv_P_alpha_.col(P).data(), va_, va_);
 

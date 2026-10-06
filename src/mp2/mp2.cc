@@ -780,6 +780,7 @@ void OMP2::transform_3center_mo_cholesky() {
         int P_end = std::min(n_chol, P_start + chunk_size);
         int P_size = P_end - P_start;
 
+        // Gunakan sintaks deklarasi Tipe lengkap
         Eigen::Map< const Eigen::MatrixXd > L_chunk(scf_.L_mat.col(P_start).data(), nbf_ * nbf_, P_size);
         Eigen::Map< const Eigen::MatrixXd > L_reshaped(L_chunk.data(), nbf_, nbf_ * P_size);
 
@@ -790,10 +791,14 @@ void OMP2::transform_3center_mo_cholesky() {
             Eigen::Map< Eigen::MatrixXd > X_P_occ(X_a_occ.data() + p * na_ * nbf_, na_, nbf_);
             Eigen::Map< Eigen::MatrixXd > X_P_vir(X_a_vir.data() + p * va_ * nbf_, va_, nbf_);
             
-            // Evaluasi O(N^3) menggunakan BLAS 3
-            B_oo_P_alpha_.col(P_start + p) = Eigen::Map< Eigen::VectorXd >((X_P_occ * Ca_occ).data(), na_ * na_);
-            B_ia_P_alpha_.col(P_start + p) = Eigen::Map< Eigen::VectorXd >((X_P_vir * Ca_occ).data(), va_ * na_);
-            B_vv_P_alpha_.col(P_start + p) = Eigen::Map< Eigen::VectorXd >((X_P_vir * Ca_vir).data(), va_ * va_);
+            // Simpan perkalian matriks ke dalam sementara baru dipetakan ke .col()
+            Eigen::MatrixXd B_oo_tmp = X_P_occ * Ca_occ;
+            Eigen::MatrixXd B_ia_tmp = X_P_vir * Ca_occ;
+            Eigen::MatrixXd B_vv_tmp = X_P_vir * Ca_vir;
+            
+            B_oo_P_alpha_.col(P_start + p) = Eigen::Map< Eigen::VectorXd >(B_oo_tmp.data(), na_ * na_);
+            B_ia_P_alpha_.col(P_start + p) = Eigen::Map< Eigen::VectorXd >(B_ia_tmp.data(), va_ * na_);
+            B_vv_P_alpha_.col(P_start + p) = Eigen::Map< Eigen::VectorXd >(B_vv_tmp.data(), va_ * va_);
         }
 
         if (has_beta) {
@@ -804,9 +809,13 @@ void OMP2::transform_3center_mo_cholesky() {
                 Eigen::Map< Eigen::MatrixXd > X_P_occ_b(X_b_occ.data() + p * nb_ * nbf_, nb_, nbf_);
                 Eigen::Map< Eigen::MatrixXd > X_P_vir_b(X_b_vir.data() + p * vb_ * nbf_, vb_, nbf_);
                 
-                B_oo_P_beta_.col(P_start + p) = Eigen::Map< Eigen::VectorXd >((X_P_occ_b * Cb_occ).data(), nb_ * nb_);
-                B_ia_P_beta_.col(P_start + p) = Eigen::Map< Eigen::VectorXd >((X_P_vir_b * Cb_occ).data(), vb_ * nb_);
-                B_vv_P_beta_.col(P_start + p) = Eigen::Map< Eigen::VectorXd >((X_P_vir_b * Cb_vir).data(), vb_ * vb_);
+                Eigen::MatrixXd B_oo_tmp_b = X_P_occ_b * Cb_occ;
+                Eigen::MatrixXd B_ia_tmp_b = X_P_vir_b * Cb_occ;
+                Eigen::MatrixXd B_vv_tmp_b = X_P_vir_b * Cb_vir;
+                
+                B_oo_P_beta_.col(P_start + p) = Eigen::Map< Eigen::VectorXd >(B_oo_tmp_b.data(), nb_ * nb_);
+                B_ia_P_beta_.col(P_start + p) = Eigen::Map< Eigen::VectorXd >(B_ia_tmp_b.data(), vb_ * nb_);
+                B_vv_P_beta_.col(P_start + p) = Eigen::Map< Eigen::VectorXd >(B_vv_tmp_b.data(), vb_ * vb_);
             }
         }
     }
