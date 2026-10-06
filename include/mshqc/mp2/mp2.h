@@ -80,6 +80,10 @@ struct MP2Result {
     Eigen::Tensor<double, 4> t2_ab;
     Eigen::MatrixXd B_ia_P_alpha;
     Eigen::MatrixXd B_ia_P_beta;
+    Eigen::MatrixXd B_oo_P_alpha_;
+    Eigen::MatrixXd B_vv_P_alpha_;
+    Eigen::MatrixXd B_oo_P_beta_;
+    Eigen::MatrixXd B_vv_P_beta_;
     int n_occ_alpha = 0;
     int n_occ_beta = 0;
     int n_virt_alpha = 0;

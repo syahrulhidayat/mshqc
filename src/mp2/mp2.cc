@@ -753,15 +753,20 @@ void OMP2::pseudocanonicalize() {
 void OMP2::transform_3center_mo_cholesky() {
     int n_chol = scf_.L_mat.cols();
     B_ia_P_alpha_ = Eigen::MatrixXd::Zero(na_ * va_, n_chol);
+    B_oo_P_alpha_ = Eigen::MatrixXd::Zero(na_ * na_, n_chol);
+    B_vv_P_alpha_ = Eigen::MatrixXd::Zero(va_ * va_, n_chol);
+    
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     bool has_beta = (!is_restricted && nb_ > 0 && vb_ > 0);
+    
     if (has_beta) {
         B_ia_P_beta_ = Eigen::MatrixXd::Zero(nb_ * vb_, n_chol);
+        B_oo_P_beta_ = Eigen::MatrixXd::Zero(nb_ * nb_, n_chol);
+        B_vv_P_beta_ = Eigen::MatrixXd::Zero(vb_ * vb_, n_chol);
     }
 
     const Eigen::MatrixXd& Ca_occ = scf_.C_alpha.leftCols(na_);
     const Eigen::MatrixXd& Ca_vir = scf_.C_alpha.rightCols(va_);
-
     Eigen::MatrixXd Cb_occ, Cb_vir;
     if (has_beta) {
         Cb_occ = scf_.C_beta.leftCols(nb_);
@@ -775,39 +780,41 @@ void OMP2::transform_3center_mo_cholesky() {
         int P_end = std::min(n_chol, P_start + chunk_size);
         int P_size = P_end - P_start;
 
-        Eigen::Map<const Eigen::MatrixXd> L_chunk(scf_.L_mat.col(P_start).data(), nbf_ * nbf_, P_size);
-        Eigen::Map<const Eigen::MatrixXd> L_reshaped(L_chunk.data(), nbf_, nbf_ * P_size);
+        Eigen::Map L_chunk(scf_.L_mat.col(P_start).data(), nbf_ * nbf_, P_size);
+        Eigen::Map L_reshaped(L_chunk.data(), nbf_, nbf_ * P_size);
 
-        Eigen::MatrixXd X_a = Ca_vir.transpose() * L_reshaped;
+        Eigen::MatrixXd X_a_occ = Ca_occ.transpose() * L_reshaped;
+        Eigen::MatrixXd X_a_vir = Ca_vir.transpose() * L_reshaped;
 
         for (int p = 0; p < P_size; ++p) {
-            Eigen::Map<Eigen::MatrixXd> X_P(X_a.data() + p * va_ * nbf_, va_, nbf_);
-            Eigen::MatrixXd B_MO_a = X_P * Ca_occ; 
-
-            for (int i = 0; i < na_; ++i) {
-                for (int a = 0; a < va_; ++a) {
-                    B_ia_P_alpha_(i * va_ + a, P_start + p) = B_MO_a(a, i);
-                }
-            }
+            Eigen::Map X_P_occ(X_a_occ.data() + p * na_ * nbf_, na_, nbf_);
+            Eigen::Map X_P_vir(X_a_vir.data() + p * va_ * nbf_, va_, nbf_);
+            
+            // Evaluasi O(N^3) menggunakan BLAS 3
+            B_oo_P_alpha_.col(P_start + p) = Eigen::Map((X_P_occ * Ca_occ).data(), na_ * na_);
+            B_ia_P_alpha_.col(P_start + p) = Eigen::Map((X_P_vir * Ca_occ).data(), va_ * na_);
+            B_vv_P_alpha_.col(P_start + p) = Eigen::Map((X_P_vir * Ca_vir).data(), va_ * va_);
         }
 
         if (has_beta) {
-            Eigen::MatrixXd X_b = Cb_vir.transpose() * L_reshaped;
+            Eigen::MatrixXd X_b_occ = Cb_occ.transpose() * L_reshaped;
+            Eigen::MatrixXd X_b_vir = Cb_vir.transpose() * L_reshaped;
 
             for (int p = 0; p < P_size; ++p) {
-                Eigen::Map<Eigen::MatrixXd> X_P_b(X_b.data() + p * vb_ * nbf_, vb_, nbf_);
-                Eigen::MatrixXd B_MO_b = X_P_b * Cb_occ; 
-
-                for (int i = 0; i < nb_; ++i) {
-                    for (int a = 0; a < vb_; ++a) {
-                        B_ia_P_beta_(i * vb_ + a, P_start + p) = B_MO_b(a, i);
-                    }
-                }
+                Eigen::Map X_P_occ_b(X_b_occ.data() + p * nb_ * nbf_, nb_, nbf_);
+                Eigen::Map X_P_vir_b(X_b_vir.data() + p * vb_ * nbf_, vb_, nbf_);
+                
+                B_oo_P_beta_.col(P_start + p) = Eigen::Map((X_P_occ_b * Cb_occ).data(), nb_ * nb_);
+                B_ia_P_beta_.col(P_start + p) = Eigen::Map((X_P_vir_b * Cb_occ).data(), vb_ * nb_);
+                B_vv_P_beta_.col(P_start + p) = Eigen::Map((X_P_vir_b * Cb_vir).data(), vb_ * vb_);
             }
         }
     }
+    
     if (is_restricted && nb_ > 0 && vb_ > 0) {
         B_ia_P_beta_ = B_ia_P_alpha_;
+        B_oo_P_beta_ = B_oo_P_alpha_;
+        B_vv_P_beta_ = B_vv_P_alpha_;
     }
 }
 

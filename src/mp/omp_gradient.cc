@@ -123,14 +123,9 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
 
         #pragma omp for schedule(dynamic)
         for (int P = 0; P < n_chol; ++P) {
-            Eigen::Map< const Eigen::MatrixXd > B_AO(scf_.L_mat.col(P).data(), nbf_, nbf_);
-            
-            // Variáveis instanciadas aqui evitam corrupção do tcache do Eigen
-            Eigen::MatrixXd T_ao_a = B_AO * scf_.C_alpha.leftCols(na_);
-            Eigen::MatrixXd B_oo_a = scf_.C_alpha.leftCols(na_).transpose() * T_ao_a;
-
-            Eigen::MatrixXd T_av_a = B_AO * scf_.C_alpha.rightCols(va_);
-            Eigen::MatrixXd B_vv_a = scf_.C_alpha.rightCols(va_).transpose() * T_av_a;
+            // HAPUS SEMUA EVALUASI B_AO. Ganti dengan mapped cache.
+            Eigen::Map B_oo_a(B_oo_P_alpha_.col(P).data(), na_, na_);
+            Eigen::Map B_vv_a(B_vv_P_alpha_.col(P).data(), va_, va_);
 
             Eigen::Map< const Eigen::MatrixXd > X_ai(X_a.col(P).data(), va_, na_);
             Eigen::Map< const Eigen::MatrixXd > B_ai(B_ia_P_alpha_.col(P).data(), va_, na_);
@@ -140,11 +135,8 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
             Z_vv_loc_a -= X_ai * B_ai.transpose();
 
             if (has_beta) {
-                Eigen::MatrixXd T_ao_b = B_AO * scf_.C_beta.leftCols(nb_);
-                Eigen::MatrixXd B_oo_b = scf_.C_beta.leftCols(nb_).transpose() * T_ao_b;
-
-                Eigen::MatrixXd T_av_b = B_AO * scf_.C_beta.rightCols(vb_);
-                Eigen::MatrixXd B_vv_b = scf_.C_beta.rightCols(vb_).transpose() * T_av_b;
+                Eigen::Map B_oo_b(B_oo_P_beta_.col(P).data(), nb_, nb_);
+                Eigen::Map B_vv_b(B_vv_P_beta_.col(P).data(), vb_, vb_);
 
                 Eigen::Map< const Eigen::MatrixXd > X_bi(X_b.col(P).data(), vb_, nb_);
                 Eigen::Map< const Eigen::MatrixXd > B_bi(B_ia_P_beta_.col(P).data(), vb_, nb_);
@@ -277,15 +269,16 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
         return res_mat;
     };
 
-    Eigen::MatrixXd dx_oo_a = solve_mini_cphf(Z_oo_a, ea, B_oo_flat_a, na_, 0);
-    Eigen::MatrixXd dx_vv_a = solve_mini_cphf(Z_vv_a, ea, B_vv_flat_a, va_, na_);
+    // Langsung tembak menggunakan matriks dari Cache
+    Eigen::MatrixXd dx_oo_a = solve_mini_cphf(Z_oo_a, ea, B_oo_P_alpha_, na_, 0);
+    Eigen::MatrixXd dx_vv_a = solve_mini_cphf(Z_vv_a, ea, B_vv_P_alpha_, va_, na_);
     
     G_oo_alpha_ += scale * dx_oo_a;
     G_vv_alpha_ += scale * dx_vv_a;
 
     if (has_beta) {
-        Eigen::MatrixXd dx_oo_b = solve_mini_cphf(Z_oo_b, eb, B_oo_flat_b, nb_, 0);
-        Eigen::MatrixXd dx_vv_b = solve_mini_cphf(Z_vv_b, eb, B_vv_flat_b, vb_, nb_);
+        Eigen::MatrixXd dx_oo_b = solve_mini_cphf(Z_oo_b, eb, B_oo_P_beta_, nb_, 0);
+        Eigen::MatrixXd dx_vv_b = solve_mini_cphf(Z_vv_b, eb, B_vv_P_beta_, vb_, nb_);
         
         G_oo_beta_ += scale * dx_oo_b;
         G_vv_beta_ += scale * dx_vv_b;
