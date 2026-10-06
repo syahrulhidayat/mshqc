@@ -39,9 +39,9 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
             for (int a = 0; a < va_; ++a) {
                 for (int j = 0; j < na_; ++j) {
                     for (int b = 0; b < va_; ++b) {
-                        // PERBAIKAN AKURASI: Transposisi indeks virtual (2 * t_ij^ba - t_ij^ab)
+                        // KOREKSI MATEMATIS: 2 * t_ij^ab - t_ij^ba
                         T2_aa(i * va_ + a, j * va_ + b) = 
-                            2.0 * (*t_aa_blk)(i, b, j, a) - 1.0 * (*t_aa_blk)(i, a, j, b);
+                            2.0 * (*t_aa_blk)(i, a, j, b) - 1.0 * (*t_aa_blk)(i, b, j, a);
                     }
                 }
             }
@@ -89,7 +89,7 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
         }
     }
 
-    // DGEMM Raksasa - O(N^3) Sangat efisien karena mengandalkan BLAS Level 3
+    // DGEMM Raksasa - O(N^3) Sangat efisien mengandalkan BLAS Level 3
     Eigen::MatrixXd X_a = T2_aa * B_ia_P_alpha_;
     Eigen::MatrixXd X_b;
     
@@ -106,7 +106,7 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
 
         #pragma omp for schedule(dynamic)
         for (int P = 0; P < n_chol; ++P) {
-            // Evaluasi in-place menggunakan Eigen::Map tanpa alokasi array baru
+            // Evaluasi in-place menggunakan Eigen::Map tanpa alokasi memori dinamis
             Eigen::Map< const Eigen::MatrixXd > B_oo_a(B_oo_P_alpha_.col(P).data(), na_, na_);
             Eigen::Map< const Eigen::MatrixXd > B_vv_a(B_vv_P_alpha_.col(P).data(), va_, va_);
             Eigen::Map< const Eigen::MatrixXd > X_ai(X_a.col(P).data(), va_, na_);
