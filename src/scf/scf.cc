@@ -480,7 +480,13 @@ void RHF::build_fock_matrix() {
             }
         }
     } else if (config_.scf_type == "incore") {
-        Eigen::MatrixXd dP = (iter_scf_ == 1) ? P_alpha_ : (P_alpha_ - P_old_);
+        Eigen::MatrixXd dP;
+        if (iter_scf_ == 1) {
+            dP = P_alpha_;
+        } else {
+            dP = (P_alpha_ - P_old_).eval();
+        }
+        
         if (dP.cwiseAbs().maxCoeff() < 1e-12) {
             F_alpha_ = H_ + G_accum_;
         } else {
@@ -570,10 +576,8 @@ void UHF::build_fock_matrix() {
             if (is_ooc) io = std::make_unique<utils::HDF5TensorIO>("df_tensor.h5", utils::HDF5TensorIO::Mode::READ_ONLY);
             int chunk_size = is_ooc ? 128 : n_chol;
             
-            // [FAST BLAS RE-USE VECTOR] Memetakan densitas menjadi vektor 1D
             Eigen::Map<const Eigen::VectorXd> dP_tot_flat(dP_tot.data(), nbasis_ * nbasis_);
-
-            // Jika In-Core, jalankan operasi BLAS sekaligus untuk efisiensi L3 Cache maksimum
+  
             if (!is_ooc) {
                 Eigen::VectorXd X_J = L_mat_.transpose() * dP_tot_flat; 
                 Eigen::VectorXd J_flat = L_mat_ * X_J;                 
@@ -670,8 +674,14 @@ void UHF::build_fock_matrix() {
             }
         }
     } else if (config_.scf_type == "incore") {
-        Eigen::MatrixXd dPa = (iter_scf_ == 1) ? P_alpha_ : (P_alpha_ - P_alpha_old_);
-        Eigen::MatrixXd dPb = (iter_scf_ == 1) ? P_beta_  : (P_beta_ - P_beta_old_);
+        Eigen::MatrixXd dPa, dPb;
+        if (iter_scf_ == 1) {
+            dPa = P_alpha_;
+            dPb = P_beta_;
+        } else {
+            dPa = (P_alpha_ - P_alpha_old_).eval();
+            dPb = (P_beta_ - P_beta_old_).eval();
+        }
         double max_dP = std::max(dPa.cwiseAbs().maxCoeff(), dPb.cwiseAbs().maxCoeff()); 
 
         if (max_dP < 1e-12) {
@@ -994,8 +1004,14 @@ void ROHF::build_fock_matrix() {
             }
         }
     } else if (config_.scf_type == "incore") {
-        Eigen::MatrixXd dPa = (iter_scf_ == 1) ? P_alpha_ : (P_alpha_ - P_alpha_old_);
-        Eigen::MatrixXd dPb = (iter_scf_ == 1) ? P_beta_  : (P_beta_ - P_beta_old_);
+        Eigen::MatrixXd dPa, dPb;
+        if (iter_scf_ == 1) {
+            dPa = P_alpha_;
+            dPb = P_beta_;
+        } else {
+            dPa = (P_alpha_ - P_alpha_old_).eval();
+            dPb = (P_beta_ - P_beta_old_).eval();
+        }
         double max_dP = std::max(dPa.cwiseAbs().maxCoeff(), dPb.cwiseAbs().maxCoeff()); 
 
         if (max_dP < 1e-12) {
