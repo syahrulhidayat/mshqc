@@ -514,31 +514,36 @@ void RHF::build_fock_matrix() {
             #pragma omp parallel
             {
                 Eigen::MatrixXd G_local = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-                
                 #pragma omp for schedule(dynamic, 2048)
                 for (size_t k = 0; k < n_ints; ++k) {
                     int p_mn = ind1[k]; int mu = (p_mn >> 16) & 0xFFFF; int nu = p_mn & 0xFFFF;
                     int p_ls = ind2[k]; int lam = (p_ls >> 16) & 0xFFFF; int sig = p_ls & 0xFFFF;
                     
                     double v = val[k];
-                    double v2 = v * 2.0;
+                    double vJ = 4.0 * v; 
+                    double vK = 2.0 * v;
 
-                    double pt_ls = dP(lam, sig) * 2.0;
-                    double pt_mn = dP(mu, nu) * 2.0;
+                    double pt_ls = dP(lam, sig); 
+                    double pt_mn = dP(mu, nu);
                     
-                    G_local(mu, nu) += v2 * pt_ls; G_local(nu, mu) += v2 * pt_ls;
-                    if (p_mn != p_ls) { G_local(lam, sig) += v2 * pt_mn; G_local(sig, lam) += v2 * pt_mn; }
+                    // Coulomb
+                    G_local(mu, nu) += vJ * pt_ls;
+                    if (p_mn != p_ls) { 
+                        G_local(lam, sig) += vJ * pt_mn; 
+                    }
                     
-                    G_local(mu, lam) -= v * dP(nu, sig); G_local(lam, mu) -= v * dP(sig, nu);
-                    G_local(nu, lam) -= v * dP(mu, sig); G_local(lam, nu) -= v * dP(sig, mu);
-                    G_local(mu, sig) -= v * dP(nu, lam); G_local(sig, mu) -= v * dP(lam, nu);
-                    G_local(nu, sig) -= v * dP(mu, lam); G_local(sig, nu) -= v * dP(lam, mu);
+                    // Exchange
+                    G_local(mu, lam) -= vK * dP(nu, sig); 
+                    G_local(mu, sig) -= vK * dP(nu, lam);
+                    G_local(nu, lam) -= vK * dP(mu, sig); 
+                    G_local(nu, sig) -= vK * dP(mu, lam);
                 }
                 #pragma omp critical
                 { dG += G_local; }
             }
+            dG = dG + dG.transpose().eval();
+            for (int i = 0; i < nbasis_; ++i) dG(i, i) *= 0.5;
             
-            dG = 0.5 * (dG + dG.transpose()).eval(); // Clean numerical noise
             G_accum_ += dG;
             F_alpha_ = H_ + G_accum_;
         }
@@ -703,7 +708,10 @@ void UHF::build_fock_matrix() {
                     double pt_ls = dP_tot(lam, sig);
                     double pt_mn = dP_tot(mu, nu);
                     
-                    double vJ = 4.0 * v;
+                    // Perbaikan: vJ harus 2.0, bukan 4.0 (menghindari double Coulomb)
+                    double vJ = 2.0 * v; 
+                    double vK = 1.0 * v;
+
                     double J_mn = vJ * pt_ls;
                     double J_ls = vJ * pt_mn;
 
@@ -714,15 +722,15 @@ void UHF::build_fock_matrix() {
                         Gb_local(lam, sig) += J_ls;
                     }
 
-                    Ga_local(mu, lam) -= v * dPa(nu, sig);
-                    Ga_local(mu, sig) -= v * dPa(nu, lam);
-                    Ga_local(nu, lam) -= v * dPa(mu, sig);
-                    Ga_local(nu, sig) -= v * dPa(mu, lam);
+                    Ga_local(mu, lam) -= vK * dPa(nu, sig);
+                    Ga_local(mu, sig) -= vK * dPa(nu, lam);
+                    Ga_local(nu, lam) -= vK * dPa(mu, sig);
+                    Ga_local(nu, sig) -= vK * dPa(mu, lam);
 
-                    Gb_local(mu, lam) -= v * dPb(nu, sig);
-                    Gb_local(mu, sig) -= v * dPb(nu, lam);
-                    Gb_local(nu, lam) -= v * dPb(mu, sig);
-                    Gb_local(nu, sig) -= v * dPb(mu, lam);
+                    Gb_local(mu, lam) -= vK * dPb(nu, sig);
+                    Gb_local(mu, sig) -= vK * dPb(nu, lam);
+                    Gb_local(nu, lam) -= vK * dPb(mu, sig);
+                    Gb_local(nu, sig) -= vK * dPb(mu, lam);
                 }
                 #pragma omp critical
                 { dGa += Ga_local; dGb += Gb_local; }
@@ -1017,7 +1025,10 @@ void ROHF::build_fock_matrix() {
                     double pt_ls = dP_tot(lam, sig);
                     double pt_mn = dP_tot(mu, nu);
                     
-                    double vJ = 4.0 * v;
+                    // Perbaikan: vJ harus 2.0, bukan 4.0 (menghindari double Coulomb)
+                    double vJ = 2.0 * v; 
+                    double vK = 1.0 * v;
+
                     double J_mn = vJ * pt_ls;
                     double J_ls = vJ * pt_mn;
 
@@ -1028,15 +1039,15 @@ void ROHF::build_fock_matrix() {
                         Gb_local(lam, sig) += J_ls;
                     }
 
-                    Ga_local(mu, lam) -= v * dPa(nu, sig);
-                    Ga_local(mu, sig) -= v * dPa(nu, lam);
-                    Ga_local(nu, lam) -= v * dPa(mu, sig);
-                    Ga_local(nu, sig) -= v * dPa(mu, lam);
+                    Ga_local(mu, lam) -= vK * dPa(nu, sig);
+                    Ga_local(mu, sig) -= vK * dPa(nu, lam);
+                    Ga_local(nu, lam) -= vK * dPa(mu, sig);
+                    Ga_local(nu, sig) -= vK * dPa(mu, lam);
 
-                    Gb_local(mu, lam) -= v * dPb(nu, sig);
-                    Gb_local(mu, sig) -= v * dPb(nu, lam);
-                    Gb_local(nu, lam) -= v * dPb(mu, sig);
-                    Gb_local(nu, sig) -= v * dPb(mu, lam);
+                    Gb_local(mu, lam) -= vK * dPb(nu, sig);
+                    Gb_local(mu, sig) -= vK * dPb(nu, lam);
+                    Gb_local(nu, lam) -= vK * dPb(mu, sig);
+                    Gb_local(nu, sig) -= vK * dPb(mu, lam);
                 }
                 #pragma omp critical
                 { dGa += Ga_local; dGb += Gb_local; }
