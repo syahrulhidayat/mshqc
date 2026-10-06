@@ -503,20 +503,20 @@ void RHF::build_fock_matrix() {
                     if (P == Q) fac *= 0.5;
                     if (M == P && N == Q) fac *= 0.5;
 
-                    int dM = shell_sizes_[M]; int offM = shell_starts_[M];
-                    int dN = shell_sizes_[N]; int offN = shell_starts_[N];
-                    int dP = shell_sizes_[P]; int offP = shell_starts_[P];
-                    int dQ = shell_sizes_[Q]; int offQ = shell_starts_[Q];
+                    int dimM = shell_sizes_[M]; int offM = shell_starts_[M];
+                    int dimN = shell_sizes_[N]; int offN = shell_starts_[N];
+                    int dimP = shell_sizes_[P]; int offP = shell_starts_[P];
+                    int dimQ = shell_sizes_[Q]; int offQ = shell_starts_[Q];
 
                     const double* I_ptr = &incore_eri_pool_[cq.data_offset];
 
-                    for (int q = 0; q < dQ; ++q) {
+                    for (int q = 0; q < dimQ; ++q) {
                         int sig = offQ + q;
-                        for (int p = 0; p < dP; ++p) {
+                        for (int p = 0; p < dimP; ++p) {
                             int lam = offP + p;
-                            for (int n = 0; n < dN; ++n) {
+                            for (int n = 0; n < dimN; ++n) {
                                 int nu = offN + n;
-                                for (int m = 0; m < dM; ++m) {
+                                for (int m = 0; m < dimM; ++m) {
                                     int mu = offM + m;
                                     double val = *I_ptr++;
                                     if (std::abs(val) < 1e-12) continue;
@@ -705,20 +705,20 @@ void UHF::build_fock_matrix() {
                     if (P == Q) fac *= 0.5;
                     if (M == P && N == Q) fac *= 0.5;
 
-                    int dM = shell_sizes_[M]; int offM = shell_starts_[M];
-                    int dN = shell_sizes_[N]; int offN = shell_starts_[N];
-                    int dP = shell_sizes_[P]; int offP = shell_starts_[P];
-                    int dQ = shell_sizes_[Q]; int offQ = shell_starts_[Q];
+                    int dimM = shell_sizes_[M]; int offM = shell_starts_[M];
+                    int dimN = shell_sizes_[N]; int offN = shell_starts_[N];
+                    int dimP = shell_sizes_[P]; int offP = shell_starts_[P];
+                    int dimQ = shell_sizes_[Q]; int offQ = shell_starts_[Q];
 
                     const double* I_ptr = &incore_eri_pool_[cq.data_offset];
 
-                    for (int q = 0; q < dQ; ++q) {
+                    for (int q = 0; q < dimQ; ++q) {
                         int sig = offQ + q;
-                        for (int p = 0; p < dP; ++p) {
+                        for (int p = 0; p < dimP; ++p) {
                             int lam = offP + p;
-                            for (int n = 0; n < dN; ++n) {
+                            for (int n = 0; n < dimN; ++n) {
                                 int nu = offN + n;
-                                for (int m = 0; m < dM; ++m) {
+                                for (int m = 0; m < dimM; ++m) {
                                     int mu = offM + m;
                                     double val = *I_ptr++;
                                     if (std::abs(val) < 1e-12) continue;
@@ -1035,20 +1035,20 @@ void ROHF::build_fock_matrix() {
                     if (P == Q) fac *= 0.5;
                     if (M == P && N == Q) fac *= 0.5;
 
-                    int dM = shell_sizes_[M]; int offM = shell_starts_[M];
-                    int dN = shell_sizes_[N]; int offN = shell_starts_[N];
-                    int dP = shell_sizes_[P]; int offP = shell_starts_[P];
-                    int dQ = shell_sizes_[Q]; int offQ = shell_starts_[Q];
+                    int dimM = shell_sizes_[M]; int offM = shell_starts_[M];
+                    int dimN = shell_sizes_[N]; int offN = shell_starts_[N];
+                    int dimP = shell_sizes_[P]; int offP = shell_starts_[P];
+                    int dimQ = shell_sizes_[Q]; int offQ = shell_starts_[Q];
 
                     const double* I_ptr = &incore_eri_pool_[cq.data_offset];
 
-                    for (int q = 0; q < dQ; ++q) {
+                    for (int q = 0; q < dimQ; ++q) {
                         int sig = offQ + q;
-                        for (int p = 0; p < dP; ++p) {
+                        for (int p = 0; p < dimP; ++p) {
                             int lam = offP + p;
-                            for (int n = 0; n < dN; ++n) {
+                            for (int n = 0; n < dimN; ++n) {
                                 int nu = offN + n;
-                                for (int m = 0; m < dM; ++m) {
+                                for (int m = 0; m < dimM; ++m) {
                                     int mu = offM + m;
                                     double val = *I_ptr++;
                                     if (std::abs(val) < 1e-12) continue;
