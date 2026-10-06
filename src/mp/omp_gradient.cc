@@ -123,9 +123,8 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
 
         #pragma omp for schedule(dynamic)
         for (int P = 0; P < n_chol; ++P) {
-            // HAPUS SEMUA EVALUASI B_AO. Ganti dengan mapped cache.
-            Eigen::Map B_oo_a(B_oo_P_alpha_.col(P).data(), na_, na_);
-            Eigen::Map B_vv_a(B_vv_P_alpha_.col(P).data(), va_, va_);
+            Eigen::Map< const Eigen::MatrixXd > B_oo_a(B_oo_P_alpha_.col(P).data(), na_, na_);
+            Eigen::Map< const Eigen::MatrixXd > B_vv_a(B_vv_P_alpha_.col(P).data(), va_, va_);
 
             Eigen::Map< const Eigen::MatrixXd > X_ai(X_a.col(P).data(), va_, na_);
             Eigen::Map< const Eigen::MatrixXd > B_ai(B_ia_P_alpha_.col(P).data(), va_, na_);
@@ -135,8 +134,8 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
             Z_vv_loc_a -= X_ai * B_ai.transpose();
 
             if (has_beta) {
-                Eigen::Map B_oo_b(B_oo_P_beta_.col(P).data(), nb_, nb_);
-                Eigen::Map B_vv_b(B_vv_P_beta_.col(P).data(), vb_, vb_);
+                Eigen::Map< const Eigen::MatrixXd > B_oo_b(B_oo_P_beta_.col(P).data(), nb_, nb_);
+                Eigen::Map< const Eigen::MatrixXd > B_vv_b(B_vv_P_beta_.col(P).data(), vb_, vb_);
 
                 Eigen::Map< const Eigen::MatrixXd > X_bi(X_b.col(P).data(), vb_, nb_);
                 Eigen::Map< const Eigen::MatrixXd > B_bi(B_ia_P_beta_.col(P).data(), vb_, nb_);
