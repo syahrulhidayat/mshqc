@@ -388,32 +388,38 @@ MP2Result UMP2::compute() {
 
     if (is_rohf) {
         if (config_.print_level > 0) {
-            std::cout << "  [UMP2] Menerapkan Semikanonikalisasi Orbital (Referensi ROHF)...\n";
+            std::cout << "  [UMP2] Menerapkan Semikanonikalisasi Orbital 3-Space (Referensi ROHF)...\n";
         }
+        int ndo = nocc_b_;
+        int nso = nocc_a_ - nocc_b_;
+        int nva = nvir_a_;
 
-        auto diag_spin = [&](const Eigen::MatrixXd& F_ao, Eigen::MatrixXd& C, Eigen::VectorXd& eps, int nocc, int nvir) {
-            Eigen::MatrixXd F_mo = C.transpose() * F_ao * C;
-            
-            // Diagonalisasi penuh pada blok Occupied
-            if (nocc > 0) {
-                Eigen::MatrixXd F_occ = F_mo.block(0, 0, nocc, nocc);
-                Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_occ(F_occ);
-                C.middleCols(0, nocc) = C.middleCols(0, nocc) * es_occ.eigenvectors();
-                eps.segment(0, nocc) = es_occ.eigenvalues();
-            }
-            
-            // Diagonalisasi penuh pada blok Virtual (termasuk SO untuk Beta)
-            if (nvir > 0) {
-                Eigen::MatrixXd F_vir = F_mo.block(nocc, nocc, nvir, nvir);
-                Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_vir(F_vir);
-                C.middleCols(nocc, nvir) = C.middleCols(nocc, nvir) * es_vir.eigenvectors();
-                eps.segment(nocc, nvir) = es_vir.eigenvalues();
-            }
+      
+        Eigen::MatrixXd F_ao_uni = 0.5 * (scf_.F_alpha + scf_.F_beta);
+        Eigen::MatrixXd F_mo_uni = scf_.C_alpha.transpose() * F_ao_uni * scf_.C_alpha;
+        
+        Eigen::MatrixXd C_new = scf_.C_alpha;
+        
+        auto diag_blk = [&](int start, int size) {
+            if (size <= 0) return;
+            Eigen::MatrixXd F_blk = F_mo_uni.block(start, start, size, size);
+            Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(F_blk);
+            C_new.middleCols(start, size) = C_new.middleCols(start, size) * es.eigenvectors();
         };
+        
+        diag_blk(0, ndo);               // Ruang Doubly Occupied (DO)
+        diag_blk(ndo, nso);             // Ruang Singly Occupied (SO)
+        diag_blk(ndo + nso, nva);       // Ruang Virtual (VIR)
 
-        // Semikanonikalisasi independen sesuai batas fisik masing-masing spin
-        diag_spin(scf_.F_alpha, scf_.C_alpha, scf_.orbital_energies_alpha, nocc_a_, nvir_a_);
-        diag_spin(scf_.F_beta, scf_.C_beta, scf_.orbital_energies_beta, nocc_b_, nvir_b_);
+        scf_.C_alpha = C_new;
+        scf_.C_beta = C_new;
+
+        // 2. Ekstrak energi orbital perturbasi dari diagonal F^alpha dan F^beta
+        Eigen::MatrixXd F_mo_a = C_new.transpose() * scf_.F_alpha * C_new;
+        Eigen::MatrixXd F_mo_b = C_new.transpose() * scf_.F_beta * C_new;
+
+        scf_.orbital_energies_alpha = F_mo_a.diagonal();
+        scf_.orbital_energies_beta  = F_mo_b.diagonal();
     }
     // -----------------------------
 
@@ -761,13 +767,28 @@ void OMP2::pseudocanonicalize() {
     };
 
     if (is_rohf) {
-        // RO-OMP2: Semi-kanonikalisasi via Unified Fock (Rata-rata spasial)
+        // RO-OMP2: Semi-kanonikalisasi 3-Space via Unified Fock
         Eigen::MatrixXd F_ao_uni = 0.5 * (F_ao_a + F_ao_b);
-        diag_block(F_ao_uni, scf_.C_alpha, scf_.orbital_energies_alpha, na_, va_);
+        Eigen::MatrixXd F_mo_uni = scf_.C_alpha.transpose() * F_ao_uni * scf_.C_alpha;
         
-        // Kunci sinkronisasi C_beta
+        auto diag_blk_rohf = [&](int start, int size) {
+            if (size <= 0) return;
+            Eigen::MatrixXd F_blk = F_mo_uni.block(start, start, size, size);
+            Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(F_blk);
+            scf_.C_alpha.middleCols(start, size) = scf_.C_alpha.middleCols(start, size) * es.eigenvectors();
+        };
+        
+        diag_blk_rohf(0, nb_);
+        diag_blk_rohf(nb_, na_ - nb_);
+        diag_blk_rohf(na_, va_);
+        
         scf_.C_beta = scf_.C_alpha;
-        scf_.orbital_energies_beta = scf_.orbital_energies_alpha;
+        
+        Eigen::MatrixXd F_mo_a = scf_.C_alpha.transpose() * F_ao_a * scf_.C_alpha;
+        Eigen::MatrixXd F_mo_b = scf_.C_beta.transpose() * F_ao_b * scf_.C_beta;
+        
+        scf_.orbital_energies_alpha = F_mo_a.diagonal();
+        scf_.orbital_energies_beta  = F_mo_b.diagonal();
         
         scf_.P_alpha.noalias() = scf_.C_alpha.leftCols(na_) * scf_.C_alpha.leftCols(na_).transpose();
         scf_.P_beta.noalias() = scf_.C_beta.leftCols(nb_) * scf_.C_beta.leftCols(nb_).transpose();
