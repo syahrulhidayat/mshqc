@@ -129,7 +129,13 @@ void RMP2::compute_amplitudes_and_energy() {
     double e_corr_sum = 0.0;
     bool is_exact = (config_.eri_method == "exact");
 
-    #pragma omp parallel for collapse(2) reduction(+:e_corr_sum) schedule(dynamic)
+    // TAHAP OPTIMASI: GIANT DGEMM PENGGANTI LOOP .DOT()
+    Eigen::MatrixXd G_aa;
+    if (!is_exact) {
+        G_aa = B_ia_P_alpha_ * B_ia_P_alpha_.transpose();
+    }
+
+    #pragma omp parallel for collapse(2) reduction(+:e_corr_sum) schedule(static)
     for (int i = 0; i < nocc_a_; ++i) {
         for (int j = 0; j < nocc_a_; ++j) {
             if (i < n_frozen_ || j < n_frozen_) continue;
@@ -137,6 +143,9 @@ void RMP2::compute_amplitudes_and_energy() {
 
             for (int a = 0; a < nvir_a_; ++a) {
                 double den_a = e_ij - eps(nocc_a_ + a);
+                int idx_ia = (!is_exact) ? (i * nvir_a_ + a) : 0;
+                int idx_ja = (!is_exact) ? (j * nvir_a_ + a) : 0;
+
                 for (int b = 0; b < nvir_a_; ++b) {
                     double denom = den_a - eps(nocc_a_ + b);
                     if (std::abs(denom) < 1e-12) {
@@ -150,14 +159,12 @@ void RMP2::compute_amplitudes_and_energy() {
                         val_iajb = eri_mo_(i, j, a, b);
                         val_ibja = eri_mo_(i, j, b, a);
                     } else {
-
-                        int idx_ia = i * nvir_a_ + a;
                         int idx_jb = j * nvir_a_ + b;
                         int idx_ib = i * nvir_a_ + b;
-                        int idx_ja = j * nvir_a_ + a;
-
-                        val_iajb = B_ia_P_alpha_.row(idx_ia).dot(B_ia_P_alpha_.row(idx_jb));
-                        val_ibja = B_ia_P_alpha_.row(idx_ib).dot(B_ia_P_alpha_.row(idx_ja));
+                        
+                        // O(1) Memory Access menggantikan O(N) .dot() loop
+                        val_iajb = G_aa(idx_ia, idx_jb);
+                        val_ibja = G_aa(idx_ib, idx_ja);
                     }
 
                     double t_val = val_iajb / denom;
@@ -210,8 +217,6 @@ double UMP2::compute_ss_alpha() {
         const auto eri_ao = integrals_->compute_eri();
         const Eigen::MatrixXd& Ca_occ = scf_.C_alpha.leftCols(nocc_a_);
         const Eigen::MatrixXd& Ca_vir = scf_.C_alpha.rightCols(nvir_a_);
-        
-      
         auto eri_chem = integrals::ERITransformer::transform_custom(
             eri_ao, Ca_occ, Ca_vir, Ca_occ, Ca_vir, nbf_, nocc_a_, nvir_a_, nocc_a_, nvir_a_
         );
@@ -225,7 +230,10 @@ double UMP2::compute_ss_alpha() {
     const auto& ev = scf_.orbital_energies_alpha.tail(nvir_a_);
     double e_sum = 0.0;
 
-    #pragma omp parallel for collapse(3) reduction(+:e_sum) schedule(dynamic)
+    Eigen::MatrixXd G_aa;
+    if (!is_exact) G_aa = B_ia_P_alpha_ * B_ia_P_alpha_.transpose();
+
+    #pragma omp parallel for collapse(3) reduction(+:e_sum) schedule(static)
     for(int b = 0; b < nvir_a_; ++b) {
         for(int a = 0; a < nvir_a_; ++a) {
             for(int j = 0; j < nocc_a_; ++j) {
@@ -236,26 +244,18 @@ double UMP2::compute_ss_alpha() {
                     if (i < n_frozen_) continue;
                     double den = den_partial + eo(i);
                     double val_iajb = 0.0, val_ibja = 0.0;
+                    
                     if (is_exact) {
                         val_iajb = eri_aaaa_(i, j, a, b);
                         val_ibja = eri_aaaa_(i, j, b, a);
                     } else {
-                        int idx_ia = i * nvir_a_ + a;
-                        int idx_jb = j * nvir_a_ + b;
-                        int idx_ib = i * nvir_a_ + b;
-                        int idx_ja = j * nvir_a_ + a;
-                        val_iajb = B_ia_P_alpha_.row(idx_ia).dot(B_ia_P_alpha_.row(idx_jb));
-                        val_ibja = B_ia_P_alpha_.row(idx_ib).dot(B_ia_P_alpha_.row(idx_ja));
+                        val_iajb = G_aa(i * nvir_a_ + a, j * nvir_a_ + b);
+                        val_ibja = G_aa(i * nvir_a_ + b, j * nvir_a_ + a);
                     }
 
-                    
                     double val_num = val_iajb - val_ibja;
-
-                   
                     double safe_den = (std::abs(den) < config_.level_shift) 
-                                    ? std::copysign(config_.level_shift, den) 
-                                    : den;
-
+                                    ? std::copysign(config_.level_shift, den) : den;
                    
                     double val_t = val_num / safe_den;
                     t2_aa_(i, j, a, b) = val_t;
