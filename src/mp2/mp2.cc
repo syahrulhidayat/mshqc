@@ -387,32 +387,42 @@ MP2Result UMP2::compute() {
     bool is_rohf = (!is_restricted && nocc_b_ > 0 && (scf_.C_alpha - scf_.C_beta).cwiseAbs().maxCoeff() < 1e-10);
 
     if (is_rohf) {
-        // RO-OMP2: Semi-kanonikalisasi Standar untuk Konsistensi Gradien & Energi
-        Eigen::MatrixXd F_mo_a_init = scf_.C_alpha.transpose() * F_ao_a * scf_.C_alpha;
-        Eigen::MatrixXd F_mo_b_init = scf_.C_beta.transpose() * F_ao_b * scf_.C_beta;
+        if (config_.print_level > 0) {
+            std::cout << "  [UMP2] Menerapkan Semikanonikalisasi ROMP2 Standar (Referensi ROHF)...\n";
+        }
+        int ndo = nocc_b_;               // Doubly occupied (closed)
+        int nso = nocc_a_ - nocc_b_;     // Singly occupied (open)
+        int nva = nvir_a_;               // Virtual
+
+        Eigen::MatrixXd F_mo_a = scf_.C_alpha.transpose() * scf_.F_alpha * scf_.C_alpha;
+        Eigen::MatrixXd F_mo_b = scf_.C_beta.transpose() * scf_.F_beta * scf_.C_beta;
         
-        auto diag_blk_rohf = [](const Eigen::MatrixXd& F_mo_ref, Eigen::MatrixXd& C_new, int start, int size) {
+        Eigen::MatrixXd C_new_a = scf_.C_alpha;
+        Eigen::MatrixXd C_new_b = scf_.C_beta;
+        
+        auto diag_blk = [](const Eigen::MatrixXd& F_mo_ref, Eigen::MatrixXd& C_new, int start, int size) {
             if (size <= 0) return;
             Eigen::MatrixXd F_blk = F_mo_ref.block(start, start, size, size);
             Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(F_blk);
             C_new.middleCols(start, size) = C_new.middleCols(start, size) * es.eigenvectors();
         };
         
-        // Alpha
-        diag_blk_rohf(F_mo_a_init, scf_.C_alpha, nb_, na_ - nb_);
-        diag_blk_rohf(F_mo_a_init, scf_.C_alpha, na_, va_);
+        // Alpha: Blok Open (SO) dan Virtual (VIR) didiagonalisasi dengan F_alpha
+        diag_blk(F_mo_a, C_new_a, ndo, nso);       
+        diag_blk(F_mo_a, C_new_a, ndo + nso, nva); 
         
-        // Beta
-        diag_blk_rohf(F_mo_b_init, scf_.C_beta, nb_, vb_);
-        
-        Eigen::MatrixXd F_mo_a_new = scf_.C_alpha.transpose() * F_ao_a * scf_.C_alpha;
-        Eigen::MatrixXd F_mo_b_new = scf_.C_beta.transpose() * F_ao_b * scf_.C_beta;
+        // Beta: Blok Virtual (VIR) didiagonalisasi dengan F_beta
+        diag_blk(F_mo_b, C_new_b, ndo, nva);       
+
+        scf_.C_alpha = C_new_a;
+        scf_.C_beta = C_new_b;
+
+        // Ekstrak energi orbital perturbasi presisi dari diagonal Fock baru
+        Eigen::MatrixXd F_mo_a_new = C_new_a.transpose() * scf_.F_alpha * C_new_a;
+        Eigen::MatrixXd F_mo_b_new = C_new_b.transpose() * scf_.F_beta * C_new_b;
         
         scf_.orbital_energies_alpha = F_mo_a_new.diagonal();
         scf_.orbital_energies_beta  = F_mo_b_new.diagonal();
-        
-        scf_.P_alpha.noalias() = scf_.C_alpha.leftCols(na_) * scf_.C_alpha.leftCols(na_).transpose();
-        scf_.P_beta.noalias() = scf_.C_beta.leftCols(nb_) * scf_.C_beta.leftCols(nb_).transpose();
     }
     // -----------------------------
 
