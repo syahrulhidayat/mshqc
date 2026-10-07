@@ -382,6 +382,38 @@ double UMP2::compute_os() {
 MP2Result UMP2::compute() {
     auto start_time = std::chrono::high_resolution_clock::now();
 
+    // -- SEMIKANONIKALISASI ROHF --
+    bool is_restricted = (nocc_a_ == nocc_b_ && nvir_a_ == nvir_b_ && mol_.multiplicity() == 1);
+    bool is_rohf = (!is_restricted && nocc_b_ > 0 && (scf_.C_alpha - scf_.C_beta).cwiseAbs().maxCoeff() < 1e-10);
+
+    if (is_rohf) {
+        if (config_.print_level > 0) {
+            std::cout << "  [UMP2] Menerapkan Semikanonikalisasi Orbital (Referensi ROHF)...\n";
+        }
+        int ndo = nocc_b_;
+        int nso = nocc_a_ - nocc_b_;
+        int nva = nvir_a_;
+
+        auto diag_subblocks = [&](const Eigen::MatrixXd& F_ao, Eigen::MatrixXd& C, Eigen::VectorXd& eps) {
+            Eigen::MatrixXd F_mo = C.transpose() * F_ao * C;
+            auto diag_blk = [&](int start, int size) {
+                if (size <= 0) return;
+                Eigen::MatrixXd F_blk = F_mo.block(start, start, size, size);
+                Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(F_blk);
+                Eigen::MatrixXd C_blk = C.middleCols(start, size);
+                C.middleCols(start, size) = C_blk * es.eigenvectors();
+                eps.segment(start, size) = es.eigenvalues();
+            };
+            diag_blk(0, ndo);
+            diag_blk(ndo, nso);
+            diag_blk(ndo + nso, nva);
+        };
+
+        diag_subblocks(scf_.F_alpha, scf_.C_alpha, scf_.orbital_energies_alpha);
+        diag_subblocks(scf_.F_beta, scf_.C_beta, scf_.orbital_energies_beta);
+    }
+    // -----------------------------
+
     transform_integrals();
     double e_ss_aa = compute_ss_alpha();
     double e_ss_bb = compute_ss_beta();
