@@ -770,32 +770,41 @@ void OMP2::pseudocanonicalize() {
     };
 
     if (is_rohf) {
-        // RO-OMP2: Semi-kanonikalisasi Standar untuk Konsistensi Gradien & Energi
-        Eigen::MatrixXd F_mo_a_init = scf_.C_alpha.transpose() * F_ao_a * scf_.C_alpha;
-        Eigen::MatrixXd F_mo_b_init = scf_.C_beta.transpose() * F_ao_b * scf_.C_beta;
+        if (config_.print_level > 0) {
+            std::cout << "  [UMP2] Menerapkan Semikanonikalisasi Spasial (ROHF strict)...\n";
+        }
+        int ndo = nocc_b_;
+        int nso = nocc_a_ - nocc_b_;
+        int nva = nvir_a_;
+
+        // Gunakan satu set C untuk membuat Fock awal
+        Eigen::MatrixXd F_mo_a = scf_.C_alpha.transpose() * scf_.F_alpha * scf_.C_alpha;
+        Eigen::MatrixXd F_mo_b = scf_.C_alpha.transpose() * scf_.F_beta * scf_.C_alpha;
         
-        auto diag_blk_rohf = [](const Eigen::MatrixXd& F_mo_ref, Eigen::MatrixXd& C_new, int start, int size) {
+        Eigen::MatrixXd C_new = scf_.C_alpha;
+        
+        auto diag_blk = [&](const Eigen::MatrixXd& F_mo_ref, int start, int size) {
             if (size <= 0) return;
             Eigen::MatrixXd F_blk = F_mo_ref.block(start, start, size, size);
             Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(F_blk);
             C_new.middleCols(start, size) = C_new.middleCols(start, size) * es.eigenvectors();
         };
         
-        // Alpha
-        diag_blk_rohf(F_mo_a_init, scf_.C_alpha, nb_, na_ - nb_);
-        diag_blk_rohf(F_mo_a_init, scf_.C_alpha, na_, va_);
-        
-        // Beta
-        diag_blk_rohf(F_mo_b_init, scf_.C_beta, nb_, vb_);
-        
-        Eigen::MatrixXd F_mo_a_new = scf_.C_alpha.transpose() * F_ao_a * scf_.C_alpha;
-        Eigen::MatrixXd F_mo_b_new = scf_.C_beta.transpose() * F_ao_b * scf_.C_beta;
+        // Terapkan rotasi ke SATU SET orbital saja (C_new)
+        diag_blk(F_mo_b, 0, ndo);               // Doubly Occupied
+        diag_blk(F_mo_a, ndo, nso);             // Singly Occupied
+        diag_blk(F_mo_b, ndo + nso, nva);       // Virtual (atau F_mo_a, tergantung varian)
+
+        // KUNCI: Paksa Beta mengikuti Alpha persis 100% agar simetri spasial mutlak terjaga
+        scf_.C_alpha = C_new;
+        scf_.C_beta  = C_new; 
+
+        // Ekstrak epsilon
+        Eigen::MatrixXd F_mo_a_new = C_new.transpose() * scf_.F_alpha * C_new;
+        Eigen::MatrixXd F_mo_b_new = C_new.transpose() * scf_.F_beta * C_new;
         
         scf_.orbital_energies_alpha = F_mo_a_new.diagonal();
         scf_.orbital_energies_beta  = F_mo_b_new.diagonal();
-        
-        scf_.P_alpha.noalias() = scf_.C_alpha.leftCols(na_) * scf_.C_alpha.leftCols(na_).transpose();
-        scf_.P_beta.noalias() = scf_.C_beta.leftCols(nb_) * scf_.C_beta.leftCols(nb_).transpose();
     } else {
         // UMP2 Normal
         diag_block(F_ao_a, scf_.C_alpha, scf_.orbital_energies_alpha, na_, va_);
