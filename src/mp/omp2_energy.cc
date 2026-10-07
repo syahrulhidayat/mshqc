@@ -257,7 +257,7 @@ void OMP2::compute_t2_and_energy_cholesky() {
         #pragma omp parallel reduction(+:E_ss_aa)
         {
             Eigen::MatrixXd g_ijab(va_, va_);
-            #pragma omp for schedule(dynamic, 4)
+            #pragma omp for schedule(static)
             for (int i = nf; i < na_; ++i) {
                 for (int j = nf; j < na_; ++j) {
                     Eigen::MatrixXd Bia = B_ia_P_alpha_.middleRows(i * va_, va_);
@@ -304,7 +304,7 @@ void OMP2::compute_t2_and_energy_cholesky() {
             #pragma omp parallel reduction(+:E_ss_bb)
             {
                 Eigen::MatrixXd g_ijab(vb_, vb_);
-                #pragma omp for schedule(dynamic, 4)
+                #pragma omp for schedule(static)
                 for (int i = nf; i < nb_; ++i) {
                     for (int j = nf; j < nb_; ++j) {
                         Eigen::MatrixXd Bia = B_ia_P_beta_.middleRows(i * vb_, vb_);
@@ -337,7 +337,7 @@ void OMP2::compute_t2_and_energy_cholesky() {
             #pragma omp parallel reduction(+:E_os)
             {
                 Eigen::MatrixXd g_ijab(va_, vb_);
-                #pragma omp for schedule(dynamic, 4)
+                #pragma omp for schedule(static)
                 for (int i = nf; i < na_; ++i) {
                     for (int j = nf; j < nb_; ++j) {
                         Eigen::MatrixXd Bia = B_ia_P_alpha_.middleRows(i * va_, va_);

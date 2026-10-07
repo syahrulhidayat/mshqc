@@ -78,9 +78,12 @@ void CholeskyERI::compute() {
         std::cerr << "[Error] CholeskyERI: Missing Engine/Basis! Cannot run compute().\n";
         return;
     }
-    decompose_direct();
+    if (n_basis_ <= 300) {
+        decompose(integrals_ptr_->compute_eri());
+    } else {
+        decompose_direct();
+    }
 }
-
 
 CholeskyDecompositionResult CholeskyERI::decompose(const Eigen::Tensor<double, 4>& eri_full) {
     

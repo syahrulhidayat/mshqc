@@ -101,7 +101,7 @@ void OMP2::build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_
         Eigen::MatrixXd Ga_local = Eigen::MatrixXd::Zero(nbf_, nbf_);
         Eigen::MatrixXd Gb_local = Eigen::MatrixXd::Zero(nbf_, nbf_);
 
-        #pragma omp for schedule(dynamic, 32)
+        #pragma omp for schedule(static)
         for (size_t r = 0; r < n_rows; ++r) {
             int mu = row_map_[r].first;
             int nu = row_map_[r].second;
@@ -207,7 +207,7 @@ void OMP2::build_opdm_alpha() {
         {
             Eigen::MatrixXd G_vv_local = Eigen::MatrixXd::Zero(va_, va_);
             
-            #pragma omp for schedule(dynamic)
+            #pragma omp for schedule(static)
             for (int jc = 0; jc < na_ * va_; ++jc) {
                 int j = jc % na_;
                 int c = jc / na_;
@@ -274,7 +274,7 @@ void OMP2::build_opdm_beta() {
         #pragma omp parallel
         {
             Eigen::MatrixXd G_vv_local = Eigen::MatrixXd::Zero(vb_, vb_);
-            #pragma omp for schedule(dynamic)
+            #pragma omp for schedule(static)
             for (int jc = 0; jc < nb_ * vb_; ++jc) {
                 int j = jc % nb_;
                 int c = jc / nb_;
@@ -297,7 +297,7 @@ void OMP2::build_opdm_beta() {
         #pragma omp parallel
         {
             Eigen::MatrixXd G_oo_local = Eigen::MatrixXd::Zero(nb_, nb_);
-            #pragma omp for schedule(dynamic)
+            #pragma omp for schedule(static)
             for (int ab = 0; ab < va_ * vb_; ++ab) {
                 int a = ab % va_;
                 int b = ab / va_;
@@ -387,7 +387,7 @@ void OMP2::build_generalized_fock() {
                 Eigen::MatrixXd Z_local = Eigen::MatrixXd::Zero(va_, na_);
                 std::vector<double> z_buffer(na_ * va_, 0.0);
 
-                #pragma omp for schedule(dynamic)
+                #pragma omp for schedule(static)
                 for (int s_i = 0; s_i < occ_spaces_a.size(); ++s_i) {
                     const auto& o_i = occ_spaces_a[s_i];
                     if (o_i.size == 0) continue; 

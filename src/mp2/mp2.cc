@@ -846,12 +846,9 @@ double OMP2::execute_micro_iterations() {
             scf_.irreps_beta.assign(nbf_, 0);
         }       
         
-       
+        // Rute HPC khusus Cholesky: langsung hitung energi tanpa alokasi tensor raksasa
         transform_3center_mo_cholesky();
-        
-        transform_integrals();
-        compute_t2_amplitudes();
-        compute_mp2_energy();
+        compute_t2_and_energy_cholesky();
         
     } else if (config_.eri_method == "df") {
         transform_3center_mo(); 

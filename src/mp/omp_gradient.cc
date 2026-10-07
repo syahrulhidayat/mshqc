@@ -104,7 +104,7 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
         Eigen::MatrixXd Z_loc_b;
         if (has_beta) Z_loc_b = Eigen::MatrixXd::Zero(vb_, nb_);
 
-        #pragma omp for schedule(dynamic)
+        #pragma omp for schedule(static)
         for (int P = 0; P < n_chol; ++P) {
             // Evaluasi in-place menggunakan Eigen::Map tanpa alokasi memori dinamis
             Eigen::Map< const Eigen::MatrixXd > B_oo_a(B_oo_P_alpha_.col(P).data(), na_, na_);
