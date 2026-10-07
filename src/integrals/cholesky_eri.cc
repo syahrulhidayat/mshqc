@@ -78,11 +78,8 @@ void CholeskyERI::compute() {
         std::cerr << "[Error] CholeskyERI: Missing Engine/Basis! Cannot run compute().\n";
         return;
     }
-    if (n_basis_ <= 300) {
-        decompose(integrals_ptr_->compute_eri());
-    } else {
-        decompose_direct();
-    }
+
+    decompose_direct();
 }
 
 CholeskyDecompositionResult CholeskyERI::decompose(const Eigen::Tensor<double, 4>& eri_full) {
@@ -231,14 +228,43 @@ void CholeskyERI::decompose_direct() {
             }
         }
     }
+    std::vector<bool> is_1center(npair, false);
+    for (int s1 = 0; s1 < nshells; ++s1) {
+        auto pos1 = basis.shell(s1).position();
+        for (int s2 = 0; s2 <= s1; ++s2) {
+            auto pos2 = basis.shell(s2).position();
+            double dist2 = std::pow(pos1[0]-pos2[0], 2) + std::pow(pos1[1]-pos2[1], 2) + std::pow(pos1[2]-pos2[2], 2);
+            
+            if (dist2 < 1e-8) { 
+                int st1 = shell_starts[s1]; int dim1 = basis.shell(s1).n_functions();
+                int st2 = shell_starts[s2]; int dim2 = basis.shell(s2).n_functions();
+                for (int i = 0; i < dim1; ++i) {
+                    for (int j = 0; j < dim2; ++j) {
+                        is_1center[(st1 + i) * n_basis_ + (st2 + j)] = true;
+                        is_1center[(st2 + j) * n_basis_ + (st1 + i)] = true;
+                    }
+                }
+            }
+        }
+    }
 
     int est_rank = std::min(npair, std::max(200, n_basis_ * 5));
     Eigen::MatrixXd L_store(npair, est_rank);
 
     int iter = 0;
     while (true) {
-        int pivot_idx; double D_max = D.maxCoeff(&pivot_idx);
-        if (D_max < threshold_ || iter >= npair) break;
+      
+        int pivot_idx = -1; 
+        double D_max = -1.0;
+        for (int p = 0; p < npair; ++p) {
+            if (is_1center[p] && D(p) > D_max) {
+                D_max = D(p);
+                pivot_idx = p;
+            }
+        }
+        
+      
+        if (D_max < threshold_ || pivot_idx == -1 || iter >= npair) break;
         if (iter >= L_store.cols()) L_store.conservativeResize(Eigen::NoChange, L_store.cols() * 2);
 
         int p = pivot_idx / n_basis_; int q = pivot_idx % n_basis_;

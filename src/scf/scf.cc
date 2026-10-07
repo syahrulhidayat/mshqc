@@ -459,21 +459,28 @@ void RHF::build_fock_matrix() {
 
                     tblis::mult<double>(1.0, t_Ta, "miP", t_Ta, "niP", 1.0, t_K, "mn");
                 } else if (!use_mo_alg) {
-                    // Fallback basis AO dengan loop OpenMP konvensional
-                    #pragma omp parallel
-                    {
-                        Eigen::MatrixXd K_priv = Eigen::MatrixXd::Zero(nbasis_, nbasis_); 
-                        Eigen::MatrixXd T_buf(nbasis_, nbasis_);
-                        #pragma omp for schedule(static)
-                        for (int k = 0; k < k_size; ++k) {
-                            int K_global = K_start + k;
-                            Eigen::Map<const Eigen::MatrixXd> L_K(is_ooc ? L_chunk.col(k).data() : L_mat_.col(K_global).data(), nbasis_, nbasis_);
-                            T_buf.noalias() = L_K * dP; 
-                            K_priv.noalias() += T_buf * L_K;
-                        }
-                        #pragma omp critical
-                        { dK_acc += K_priv; }
-                    }
+                    // TBLIS BLAS-3 AO Fallback untuk OMP2
+                    using tblis::len_type; using tblis::stride_type; using tblis::varray_view;
+                    std::vector<len_type> len_L = { (len_type)nbasis_, (len_type)nbasis_, (len_type)k_size };
+                    std::vector<stride_type> str_L = { 1, (stride_type)nbasis_, (stride_type)(nbasis_ * nbasis_) };
+                    varray_view<double> t_L(len_L, is_ooc ? L_chunk.data() : const_cast<double*>(L_mat_.col(K_start).data()), str_L);
+
+                    std::vector<len_type> len_P = { (len_type)nbasis_, (len_type)nbasis_ };
+                    std::vector<stride_type> str_P = { 1, (stride_type)nbasis_ };
+                    varray_view<double> t_P(len_P, const_cast<double*>(dP.data()), str_P);
+
+                    std::vector<double> T_buf(nbasis_ * nbasis_ * k_size, 0.0);
+                    std::vector<len_type> len_T = { (len_type)nbasis_, (len_type)nbasis_, (len_type)k_size };
+                    std::vector<stride_type> str_T = { 1, (stride_type)nbasis_, (stride_type)(nbasis_ * nbasis_) };
+                    varray_view<double> t_T(len_T, T_buf.data(), str_T);
+
+                    tblis::mult<double>(1.0, t_L, "mnP", t_P, "ns", 0.0, t_T, "msP");
+
+                    std::vector<len_type> len_K = { (len_type)nbasis_, (len_type)nbasis_ };
+                    std::vector<stride_type> str_K = { 1, (stride_type)nbasis_ };
+                    varray_view<double> t_K(len_K, dK_acc.data(), str_K);
+
+                    tblis::mult<double>(1.0, t_T, "msP", t_L, "nsP", 1.0, t_K, "mn");
                 }
             } 
 
@@ -649,23 +656,28 @@ void UHF::build_fock_matrix() {
                         tblis::mult<double>(1.0, t_Tb, "miP", t_Tb, "niP", 1.0, t_Kb, "mn");
                     }
                 } else {
-                    // Fallback basis AO dengan loop OpenMP konvensional
-                    #pragma omp parallel
-                    {
-                        Eigen::MatrixXd Ka_priv = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-                        Eigen::MatrixXd Kb_priv = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-                        Eigen::MatrixXd Ta_buf(nbasis_, nbasis_);
-                        Eigen::MatrixXd Tb_buf(nbasis_, nbasis_);
-                        #pragma omp for schedule(static)
-                        for (int k = 0; k < k_size; ++k) {
-                            int K_global = K_start + k;
-                            Eigen::Map<const Eigen::MatrixXd> L_K(is_ooc ? L_chunk.col(k).data() : L_mat_.col(K_global).data(), nbasis_, nbasis_);
-                            Ta_buf.noalias() = L_K * dPa; Ka_priv.noalias() += Ta_buf * L_K;
-                            Tb_buf.noalias() = L_K * dPb; Kb_priv.noalias() += Tb_buf * L_K;
-                        }
-                        #pragma omp critical
-                        { dKa_acc += Ka_priv; dKb_acc += Kb_priv; }
-                    }
+                    // TBLIS BLAS-3 AO Fallback untuk OMP2 (Alpha & Beta)
+                    using tblis::len_type; using tblis::stride_type; using tblis::varray_view;
+                    std::vector<len_type> len_L = { (len_type)nbasis_, (len_type)nbasis_, (len_type)k_size };
+                    std::vector<stride_type> str_L = { 1, (stride_type)nbasis_, (stride_type)(nbasis_ * nbasis_) };
+                    varray_view<double> t_L(len_L, is_ooc ? L_chunk.data() : const_cast<double*>(L_mat_.col(K_start).data()), str_L);
+
+                    varray_view<double> t_Pa({(len_type)nbasis_, (len_type)nbasis_}, const_cast<double*>(dPa.data()), {1, (stride_type)nbasis_});
+                    varray_view<double> t_Pb({(len_type)nbasis_, (len_type)nbasis_}, const_cast<double*>(dPb.data()), {1, (stride_type)nbasis_});
+
+                    std::vector<double> Ta_buf(nbasis_ * nbasis_ * k_size, 0.0);
+                    std::vector<double> Tb_buf(nbasis_ * nbasis_ * k_size, 0.0);
+                    varray_view<double> t_Ta({(len_type)nbasis_, (len_type)nbasis_, (len_type)k_size}, Ta_buf.data(), {1, (stride_type)nbasis_, (stride_type)(nbasis_ * nbasis_)});
+                    varray_view<double> t_Tb({(len_type)nbasis_, (len_type)nbasis_, (len_type)k_size}, Tb_buf.data(), {1, (stride_type)nbasis_, (stride_type)(nbasis_ * nbasis_)});
+
+                    tblis::mult<double>(1.0, t_L, "mnP", t_Pa, "ns", 0.0, t_Ta, "msP");
+                    tblis::mult<double>(1.0, t_L, "mnP", t_Pb, "ns", 0.0, t_Tb, "msP");
+
+                    varray_view<double> t_Ka({(len_type)nbasis_, (len_type)nbasis_}, dKa_acc.data(), {1, (stride_type)nbasis_});
+                    varray_view<double> t_Kb({(len_type)nbasis_, (len_type)nbasis_}, dKb_acc.data(), {1, (stride_type)nbasis_});
+
+                    tblis::mult<double>(1.0, t_Ta, "msP", t_L, "nsP", 1.0, t_Ka, "mn");
+                    tblis::mult<double>(1.0, t_Tb, "msP", t_L, "nsP", 1.0, t_Kb, "mn");
                 }
             } 
             
@@ -979,23 +991,28 @@ void ROHF::build_fock_matrix() {
                         tblis::mult<double>(1.0, t_Tb, "miP", t_Tb, "niP", 1.0, t_Kb, "mn");
                     }
                 } else {
-                    // Fallback basis AO dengan loop OpenMP konvensional
-                    #pragma omp parallel
-                    {
-                        Eigen::MatrixXd Ka_priv = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-                        Eigen::MatrixXd Kb_priv = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-                        Eigen::MatrixXd Ta_buf(nbasis_, nbasis_);
-                        Eigen::MatrixXd Tb_buf(nbasis_, nbasis_);
-                        #pragma omp for schedule(static)
-                        for (int k = 0; k < k_size; ++k) {
-                            int K_global = K_start + k;
-                            Eigen::Map<const Eigen::MatrixXd> L_K(is_ooc ? L_chunk.col(k).data() : L_mat_.col(K_global).data(), nbasis_, nbasis_);
-                            Ta_buf.noalias() = L_K * dPa; Ka_priv.noalias() += Ta_buf * L_K;
-                            Tb_buf.noalias() = L_K * dPb; Kb_priv.noalias() += Tb_buf * L_K;
-                        }
-                        #pragma omp critical
-                        { dKa_acc += Ka_priv; dKb_acc += Kb_priv; }
-                    }
+                    // TBLIS BLAS-3 AO Fallback untuk OMP2 (Alpha & Beta)
+                    using tblis::len_type; using tblis::stride_type; using tblis::varray_view;
+                    std::vector<len_type> len_L = { (len_type)nbasis_, (len_type)nbasis_, (len_type)k_size };
+                    std::vector<stride_type> str_L = { 1, (stride_type)nbasis_, (stride_type)(nbasis_ * nbasis_) };
+                    varray_view<double> t_L(len_L, is_ooc ? L_chunk.data() : const_cast<double*>(L_mat_.col(K_start).data()), str_L);
+
+                    varray_view<double> t_Pa({(len_type)nbasis_, (len_type)nbasis_}, const_cast<double*>(dPa.data()), {1, (stride_type)nbasis_});
+                    varray_view<double> t_Pb({(len_type)nbasis_, (len_type)nbasis_}, const_cast<double*>(dPb.data()), {1, (stride_type)nbasis_});
+
+                    std::vector<double> Ta_buf(nbasis_ * nbasis_ * k_size, 0.0);
+                    std::vector<double> Tb_buf(nbasis_ * nbasis_ * k_size, 0.0);
+                    varray_view<double> t_Ta({(len_type)nbasis_, (len_type)nbasis_, (len_type)k_size}, Ta_buf.data(), {1, (stride_type)nbasis_, (stride_type)(nbasis_ * nbasis_)});
+                    varray_view<double> t_Tb({(len_type)nbasis_, (len_type)nbasis_, (len_type)k_size}, Tb_buf.data(), {1, (stride_type)nbasis_, (stride_type)(nbasis_ * nbasis_)});
+
+                    tblis::mult<double>(1.0, t_L, "mnP", t_Pa, "ns", 0.0, t_Ta, "msP");
+                    tblis::mult<double>(1.0, t_L, "mnP", t_Pb, "ns", 0.0, t_Tb, "msP");
+
+                    varray_view<double> t_Ka({(len_type)nbasis_, (len_type)nbasis_}, dKa_acc.data(), {1, (stride_type)nbasis_});
+                    varray_view<double> t_Kb({(len_type)nbasis_, (len_type)nbasis_}, dKb_acc.data(), {1, (stride_type)nbasis_});
+
+                    tblis::mult<double>(1.0, t_Ta, "msP", t_L, "nsP", 1.0, t_Ka, "mn");
+                    tblis::mult<double>(1.0, t_Tb, "msP", t_L, "nsP", 1.0, t_Kb, "mn");
                 }
             } 
             
