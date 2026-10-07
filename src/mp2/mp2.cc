@@ -387,39 +387,32 @@ MP2Result UMP2::compute() {
     bool is_rohf = (!is_restricted && nocc_b_ > 0 && (scf_.C_alpha - scf_.C_beta).cwiseAbs().maxCoeff() < 1e-10);
 
     if (is_rohf) {
-        if (config_.print_level > 0) {
-            std::cout << "  [UMP2] Menerapkan Semikanonikalisasi ZAPT-Style (Referensi ROHF)...\n";
-        }
-        int ndo = nocc_b_;
-        int nso = nocc_a_ - nocc_b_;
-        int nva = nvir_a_;
-
-        Eigen::MatrixXd F_mo_a = scf_.C_alpha.transpose() * scf_.F_alpha * scf_.C_alpha;
-        Eigen::MatrixXd F_mo_b = scf_.C_alpha.transpose() * scf_.F_beta * scf_.C_alpha;
+        // RO-OMP2: Semi-kanonikalisasi Standar untuk Konsistensi Gradien & Energi
+        Eigen::MatrixXd F_mo_a_init = scf_.C_alpha.transpose() * F_ao_a * scf_.C_alpha;
+        Eigen::MatrixXd F_mo_b_init = scf_.C_beta.transpose() * F_ao_b * scf_.C_beta;
         
-        Eigen::MatrixXd C_new = scf_.C_alpha;
-        
-        auto diag_blk = [&](const Eigen::MatrixXd& F_mo_ref, int start, int size) {
+        auto diag_blk_rohf = [](const Eigen::MatrixXd& F_mo_ref, Eigen::MatrixXd& C_new, int start, int size) {
             if (size <= 0) return;
             Eigen::MatrixXd F_blk = F_mo_ref.block(start, start, size, size);
             Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(F_blk);
             C_new.middleCols(start, size) = C_new.middleCols(start, size) * es.eigenvectors();
         };
         
-        // Konvensi Semikanonikal: DO dengan F_beta, SO dan VIR dengan F_alpha
-        diag_blk(F_mo_b, 0, ndo);               
-        diag_blk(F_mo_a, ndo, nso);             
-        diag_blk(F_mo_a, ndo + nso, nva);       
-
-        scf_.C_alpha = C_new;
-        scf_.C_beta = C_new;
-
-        // Ekstrak energi orbital perturbasi presisi dari diagonal Fock baru
-        Eigen::MatrixXd F_mo_a_new = C_new.transpose() * scf_.F_alpha * C_new;
-        Eigen::MatrixXd F_mo_b_new = C_new.transpose() * scf_.F_beta * C_new;
+        // Alpha
+        diag_blk_rohf(F_mo_a_init, scf_.C_alpha, nb_, na_ - nb_);
+        diag_blk_rohf(F_mo_a_init, scf_.C_alpha, na_, va_);
+        
+        // Beta
+        diag_blk_rohf(F_mo_b_init, scf_.C_beta, nb_, vb_);
+        
+        Eigen::MatrixXd F_mo_a_new = scf_.C_alpha.transpose() * F_ao_a * scf_.C_alpha;
+        Eigen::MatrixXd F_mo_b_new = scf_.C_beta.transpose() * F_ao_b * scf_.C_beta;
         
         scf_.orbital_energies_alpha = F_mo_a_new.diagonal();
         scf_.orbital_energies_beta  = F_mo_b_new.diagonal();
+        
+        scf_.P_alpha.noalias() = scf_.C_alpha.leftCols(na_) * scf_.C_alpha.leftCols(na_).transpose();
+        scf_.P_beta.noalias() = scf_.C_beta.leftCols(nb_) * scf_.C_beta.leftCols(nb_).transpose();
     }
     // -----------------------------
 
