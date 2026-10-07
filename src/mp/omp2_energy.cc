@@ -252,39 +252,42 @@ void OMP2::compute_t2_and_energy_cholesky() {
     auto* t_aa_blk = t2_aa_.get_block(0, 0, 0, 0);
 
     if (t_aa_blk) {
-        t_aa_blk->setZero(); // <-- INI PENYELAMATNYA: Kuras memori kotor dari OS
+        t_aa_blk->setZero();
         
-        #pragma omp parallel reduction(+:E_ss_aa)
-        {
-            Eigen::MatrixXd g_ijab(va_, va_);
-            #pragma omp for schedule(static)
-            for (int i = nf; i < na_; ++i) {
-                for (int j = nf; j < na_; ++j) {
-                    Eigen::MatrixXd Bia = B_ia_P_alpha_.middleRows(i * va_, va_);
-                    Eigen::MatrixXd Bjb = B_ia_P_alpha_.middleRows(j * va_, va_);
-                    g_ijab.noalias() = Bia * Bjb.transpose();
+        // GIANT DGEMM: Hitung semua kombinasi (ia|jb) dalam satu instruksi BLAS-3
+        // Ini memindahkan beban dari loop CPU ke hardware akselerator matriks
+        Eigen::MatrixXd G_aa = B_ia_P_alpha_ * B_ia_P_alpha_.transpose();
+        
+        const double* eps_a = scf_.orbital_energies_alpha.data();
+        
+        #pragma omp parallel for reduction(+:E_ss_aa) schedule(static)
+        for (int i = nf; i < na_; ++i) {
+            for (int j = nf; j < na_; ++j) {
+                double e_ij = eps_a[i] + eps_a[j];
+                for (int a = 0; a < va_; ++a) {
+                    double den_a = e_ij - eps_a[na_ + a];
+                    int idx_ia = i * va_ + a;
+                    
+                    for (int b = 0; b < va_; ++b) {
+                        double den = den_a - eps_a[na_ + b];
+                        int idx_jb = j * va_ + b;
+                        int idx_ib = i * va_ + b;
+                        int idx_ja = j * va_ + a;
 
-                    double e_ij = scf_.orbital_energies_alpha(i) + scf_.orbital_energies_alpha(j);
-                    for (int a = 0; a < va_; ++a) {
-                        double den_a = e_ij - scf_.orbital_energies_alpha(na_ + a);
-                        for (int b = 0; b < va_; ++b) {
-                            double den = den_a - scf_.orbital_energies_alpha(na_ + b);
+                        double val_dir = G_aa(idx_ia, idx_jb);
+                        double val_ex  = G_aa(idx_ib, idx_ja); 
 
-                            double val_dir = g_ijab(a, b);
-                            double val_ex  = g_ijab(b, a); 
+                        double reg_den = (std::abs(den) > 1e-12) ? (1.0 / den) : 0.0;
+                        double t_val = 0.0;
 
-                            double reg_den = (std::abs(den) > 1e-12) ? (1.0 / den) : 0.0;
-                            double t_val = 0.0;
-
-                            if (is_restricted) {
-                                t_val = val_dir * reg_den;
-                                E_ss_aa += t_val * (2.0 * val_dir - val_ex); 
-                            } else {
-                                t_val = (val_dir - val_ex) * reg_den;
-                                E_ss_aa += t_val * (val_dir - val_ex); 
-                            }
-                            (*t_aa_blk)(i, a, j, b) = t_val;
+                        if (is_restricted) {
+                            t_val = val_dir * reg_den;
+                            E_ss_aa += t_val * (2.0 * val_dir - val_ex); 
+                        } else {
+                            t_val = (val_dir - val_ex) * reg_den;
+                            E_ss_aa += t_val * (val_dir - val_ex); 
                         }
+                        (*t_aa_blk)(i, a, j, b) = t_val;
                     }
                 }
             }
@@ -294,39 +297,39 @@ void OMP2::compute_t2_and_energy_cholesky() {
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
         t2_bb_.allocate_block(0, 0, 0, 0, nb_, nb_, vb_, vb_);
         auto* t_bb_blk = t2_bb_.get_block(0, 0, 0, 0);
-        if (t_bb_blk) t_bb_blk->setZero(); // <-- Kuras memori
+        if (t_bb_blk) t_bb_blk->setZero();
 
         t2_ab_.allocate_block(0, 0, 0, 0, na_, nb_, va_, vb_);
         auto* t_ab_blk = t2_ab_.get_block(0, 0, 0, 0);
-        if (t_ab_blk) t_ab_blk->setZero(); // <-- Kuras memori
+        if (t_ab_blk) t_ab_blk->setZero();
+
+        const double* eps_b = scf_.orbital_energies_beta.data();
 
         if (t_bb_blk) {
-            #pragma omp parallel reduction(+:E_ss_bb)
-            {
-                Eigen::MatrixXd g_ijab(vb_, vb_);
-                #pragma omp for schedule(static)
-                for (int i = nf; i < nb_; ++i) {
-                    for (int j = nf; j < nb_; ++j) {
-                        Eigen::MatrixXd Bia = B_ia_P_beta_.middleRows(i * vb_, vb_);
-                        Eigen::MatrixXd Bjb = B_ia_P_beta_.middleRows(j * vb_, vb_);
-                        g_ijab.noalias() = Bia * Bjb.transpose();
+            Eigen::MatrixXd G_bb = B_ia_P_beta_ * B_ia_P_beta_.transpose();
+            
+            #pragma omp parallel for reduction(+:E_ss_bb) schedule(static)
+            for (int i = nf; i < nb_; ++i) {
+                for (int j = nf; j < nb_; ++j) {
+                    double e_ij = eps_b[i] + eps_b[j];
+                    for (int a = 0; a < vb_; ++a) {
+                        double den_a = e_ij - eps_b[nb_ + a];
+                        int idx_ia = i * vb_ + a;
+                        
+                        for (int b = 0; b < vb_; ++b) {
+                            double den = den_a - eps_b[nb_ + b];
+                            int idx_jb = j * vb_ + b;
+                            int idx_ib = i * vb_ + b;
+                            int idx_ja = j * vb_ + a;
 
-                        double e_ij = scf_.orbital_energies_beta(i) + scf_.orbital_energies_beta(j);
-
-                        for (int a = 0; a < vb_; ++a) {
-                            double den_a = e_ij - scf_.orbital_energies_beta(nb_ + a);
-                            for (int b = 0; b < vb_; ++b) {
-                                double den = den_a - scf_.orbital_energies_beta(nb_ + b);
-
-                                double val_dir = g_ijab(a, b);
-                                double val_ex  = g_ijab(b, a);
-                                
-                                double reg_den = (std::abs(den) > 1e-12) ? (1.0 / den) : 0.0;
-                                double t_val = (val_dir - val_ex) * reg_den;
-                                
-                                E_ss_bb += t_val * (val_dir - val_ex);
-                                (*t_bb_blk)(i, j, a, b) = t_val; 
-                            }
+                            double val_dir = G_bb(idx_ia, idx_jb);
+                            double val_ex  = G_bb(idx_ib, idx_ja);
+                            
+                            double reg_den = (std::abs(den) > 1e-12) ? (1.0 / den) : 0.0;
+                            double t_val = (val_dir - val_ex) * reg_den;
+                            
+                            E_ss_bb += t_val * (val_dir - val_ex);
+                            (*t_bb_blk)(i, j, a, b) = t_val; 
                         }
                     }
                 }
@@ -334,30 +337,27 @@ void OMP2::compute_t2_and_energy_cholesky() {
         }
 
         if (t_ab_blk) {
-            #pragma omp parallel reduction(+:E_os)
-            {
-                Eigen::MatrixXd g_ijab(va_, vb_);
-                #pragma omp for schedule(static)
-                for (int i = nf; i < na_; ++i) {
-                    for (int j = nf; j < nb_; ++j) {
-                        Eigen::MatrixXd Bia = B_ia_P_alpha_.middleRows(i * va_, va_);
-                        Eigen::MatrixXd Bjb = B_ia_P_beta_.middleRows(j * vb_, vb_);
-                        g_ijab.noalias() = Bia * Bjb.transpose(); 
+            Eigen::MatrixXd G_ab = B_ia_P_alpha_ * B_ia_P_beta_.transpose();
+            const double* eps_a = scf_.orbital_energies_alpha.data();
+            
+            #pragma omp parallel for reduction(+:E_os) schedule(static)
+            for (int i = nf; i < na_; ++i) {
+                for (int j = nf; j < nb_; ++j) {
+                    double e_ij = eps_a[i] + eps_b[j];
+                    for (int a = 0; a < va_; ++a) {
+                        double den_a = e_ij - eps_a[na_ + a];
+                        int idx_ia = i * va_ + a;
+                        
+                        for (int b = 0; b < vb_; ++b) {
+                            double den = den_a - eps_b[nb_ + b];
+                            int idx_jb = j * vb_ + b;
 
-                        double e_ij = scf_.orbital_energies_alpha(i) + scf_.orbital_energies_beta(j);
-
-                        for (int a = 0; a < va_; ++a) {
-                            double den_a = e_ij - scf_.orbital_energies_alpha(na_ + a);
-                            for (int b = 0; b < vb_; ++b) {
-                                double den = den_a - scf_.orbital_energies_beta(nb_ + b);
-
-                                double val_dir = g_ijab(a, b);
-                                double reg_den = (std::abs(den) > 1e-12) ? (1.0 / den) : 0.0;
-                                double t_val = val_dir * reg_den;
-                                
-                                E_os += t_val * val_dir; 
-                                (*t_ab_blk)(i, j, a, b) = t_val;
-                            }
+                            double val_dir = G_ab(idx_ia, idx_jb);
+                            double reg_den = (std::abs(den) > 1e-12) ? (1.0 / den) : 0.0;
+                            double t_val = val_dir * reg_den;
+                            
+                            E_os += t_val * val_dir; 
+                            (*t_ab_blk)(i, j, a, b) = t_val;
                         }
                     }
                 }
