@@ -397,7 +397,7 @@ void RHF::build_fock_matrix() {
         if (dP.cwiseAbs().maxCoeff() < 1e-11) {
             if (C_alpha_.rows() != nbasis_) F_alpha_ = H_ + G_accum_;
         } else {
-            bool use_mo_alg = (iter_scf_ > 1) && (C_alpha_.rows() == nbasis_) && (C_alpha_.cols() == nbasis_);
+            bool use_mo_alg = (C_alpha_.rows() == nbasis_) && (C_alpha_.cols() == nbasis_);
             Eigen::MatrixXd dJ_mat = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
             Eigen::MatrixXd dK_acc = Eigen::MatrixXd::Zero(nbasis_, nbasis_); 
             
@@ -464,7 +464,7 @@ void RHF::build_fock_matrix() {
                     {
                         Eigen::MatrixXd K_priv = Eigen::MatrixXd::Zero(nbasis_, nbasis_); 
                         Eigen::MatrixXd T_buf(nbasis_, nbasis_);
-                        #pragma omp for schedule(dynamic)
+                        #pragma omp for schedule(static)
                         for (int k = 0; k < k_size; ++k) {
                             int K_global = K_start + k;
                             Eigen::Map<const Eigen::MatrixXd> L_K(is_ooc ? L_chunk.col(k).data() : L_mat_.col(K_global).data(), nbasis_, nbasis_);
@@ -570,7 +570,7 @@ void UHF::build_fock_matrix() {
         if (dP_tot.cwiseAbs().maxCoeff() < 1e-11) {
             if (C_alpha_.rows() != nbasis_) { F_alpha_ = H_ + G_accum_a_; F_beta_  = H_ + G_accum_b_; }
         } else {
-            bool use_mo_alg = (iter_scf_ > 1) && (C_alpha_.rows() == nbasis_) && (C_beta_.rows() == nbasis_);
+            bool use_mo_alg = (C_alpha_.rows() == nbasis_) && (C_beta_.rows() == nbasis_);
             Eigen::MatrixXd dJ_mat = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
             Eigen::MatrixXd dKa_acc = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
             Eigen::MatrixXd dKb_acc = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
@@ -656,7 +656,7 @@ void UHF::build_fock_matrix() {
                         Eigen::MatrixXd Kb_priv = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
                         Eigen::MatrixXd Ta_buf(nbasis_, nbasis_);
                         Eigen::MatrixXd Tb_buf(nbasis_, nbasis_);
-                        #pragma omp for schedule(dynamic)
+                        #pragma omp for schedule(static)
                         for (int k = 0; k < k_size; ++k) {
                             int K_global = K_start + k;
                             Eigen::Map<const Eigen::MatrixXd> L_K(is_ooc ? L_chunk.col(k).data() : L_mat_.col(K_global).data(), nbasis_, nbasis_);
@@ -899,7 +899,7 @@ void ROHF::build_fock_matrix() {
         if (dP_tot.cwiseAbs().maxCoeff() < 1e-11) {
             if (C_alpha_.rows() != nbasis_) { F_alpha_ = H_ + G_accum_a_; F_beta_  = H_ + G_accum_b_; }
         } else {
-            bool use_mo_alg = (iter_scf_ > 1) && (C_alpha_.rows() == nbasis_);
+            bool use_mo_alg = (C_alpha_.rows() == nbasis_);
             Eigen::MatrixXd dJ_mat = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
             Eigen::MatrixXd dKa_acc = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
             Eigen::MatrixXd dKb_acc = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
@@ -986,7 +986,7 @@ void ROHF::build_fock_matrix() {
                         Eigen::MatrixXd Kb_priv = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
                         Eigen::MatrixXd Ta_buf(nbasis_, nbasis_);
                         Eigen::MatrixXd Tb_buf(nbasis_, nbasis_);
-                        #pragma omp for schedule(dynamic)
+                        #pragma omp for schedule(static)
                         for (int k = 0; k < k_size; ++k) {
                             int K_global = K_start + k;
                             Eigen::Map<const Eigen::MatrixXd> L_K(is_ooc ? L_chunk.col(k).data() : L_mat_.col(K_global).data(), nbasis_, nbasis_);
