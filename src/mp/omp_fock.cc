@@ -146,116 +146,65 @@ void OMP2::build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_
 }
 void OMP2::build_opdm_alpha() {
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
-    
     G_oo_alpha_ = Eigen::MatrixXd::Zero(na_, na_);
     G_vv_alpha_ = Eigen::MatrixXd::Zero(va_, va_);
     
-    if (is_restricted) { 
-        auto* t_blk = t2_aa_.get_block(0,0,0,0);
-        if (t_blk) {
-            #pragma omp parallel for
-            for (int i = 0; i < na_; ++i) {
-                for (int j = 0; j < na_; ++j) {
-                    double p_oo = 0.0;
-                    for (int k = 0; k < na_; ++k) {
-                        for (int a = 0; a < va_; ++a) {
-                            for (int b = 0; b < va_; ++b) {
-                                double t_ik = (*t_blk)(i, a, k, b);
-                                double t_jk = (*t_blk)(j, a, k, b);
-                                double t_jk_ex = (*t_blk)(j, b, k, a); 
-                                p_oo += t_ik * (2.0 * t_jk - t_jk_ex);
-                            }
-                        }
-                    }
-                    G_oo_alpha_(i, j) = -1.0 * p_oo;
-                }
-            }
-            #pragma omp parallel for
-            for (int a = 0; a < va_; ++a) {
-                for (int b = 0; b < va_; ++b) {
-                    double p_vv = 0.0;
-                    for (int i = 0; i < na_; ++i) {
-                        for (int j = 0; j < na_; ++j) {
-                            for (int c = 0; c < va_; ++c) {
-                                double t_ac = (*t_blk)(i, a, j, c);
-                                double t_bc = (*t_blk)(i, b, j, c);
-                                double t_cb = (*t_blk)(i, c, j, b);
-                                p_vv += t_ac * (2.0 * t_bc - t_cb);
-                            }
-                        }
-                    }
-                    G_vv_alpha_(a, b) = 1.0 * p_vv;
-                }
-            }
-        }
-        return; 
-    }
-
-    // --- UMP2 OPDM DENGAN EIGEN DGEMM (BEBAS OOM, ZERO-ALLOCATION) ---
     auto* t_aa_blk = t2_aa_.get_block(0,0,0,0);
-    if (t_aa_blk) {
-        // Blok G_oo_alpha_: Sudah optimal menggunakan Map.
-        Eigen::Map<const Eigen::MatrixXd> T_mat(t_aa_blk->data(), na_, va_ * na_ * va_);
-        G_oo_alpha_.noalias() = -0.5 * (T_mat * T_mat.transpose());
+    if (!t_aa_blk) return;
 
-        // Blok G_vv_alpha_: PERBAIKAN FATAL OOM
-        // Dimensi ColMajor (i, a, j, c) -> Stride i=1, a=na_, j=na_*va_, c=na_*va_*na_
-        // Untuk j dan c yang tetap, elemen (i, a) membentuk matriks berurutan berukuran na_ x va_.
-        const double* base_ptr = t_aa_blk->data();
-        
-        #pragma omp parallel
-        {
-            Eigen::MatrixXd G_vv_local = Eigen::MatrixXd::Zero(va_, va_);
-            
-            #pragma omp for schedule(static)
-            for (int jc = 0; jc < na_ * va_; ++jc) {
-                int j = jc % na_;
-                int c = jc / na_;
-                
-                size_t offset = j * (na_ * va_) + c * (na_ * va_ * na_);
-                
-                // M adalah pemetaan matriks T_ij (ukuran na_ x va_)
-                Eigen::Map<const Eigen::MatrixXd> M(base_ptr + offset, na_, va_);
-                
-                // G_ab += (T_ij)^T * T_ij
-                G_vv_local.noalias() += M.transpose() * M;
-            }
-            
-            #pragma omp critical
-            {
-                G_vv_alpha_ += 0.5 * G_vv_local;
+    // Repack T2_aa dari bentuk (i,a,j,b) menjadi (i,j,a,b) agar presisi dengan TBLIS view
+    Eigen::Tensor<double, 4> T2_aa_ijab(na_, na_, va_, va_);
+    #pragma omp parallel for collapse(4) schedule(static)
+    for(int i = 0; i < na_; ++i) {
+        for(int j = 0; j < na_; ++j) {
+            for(int a = 0; a < va_; ++a) {
+                for(int b = 0; b < va_; ++b) {
+                    T2_aa_ijab(i,j,a,b) = (*t_aa_blk)(i,a,j,b);
+                }
             }
         }
     }
 
-    if (nb_ > 0 && vb_ > 0) {
-        auto* t_ab_blk = t2_ab_.get_block(0,0,0,0);
-        if (t_ab_blk) {
-            Eigen::Map<const Eigen::MatrixXd> Tab_mat(t_ab_blk->data(), na_, nb_ * va_ * vb_);
-            G_oo_alpha_.noalias() -= Tab_mat * Tab_mat.transpose();
+    TBLIS_VIEW_2D(t_Goo_a, G_oo_alpha_.data(), na_, na_);
+    TBLIS_VIEW_2D(t_Gvv_a, G_vv_alpha_.data(), va_, va_);
 
-           
-            const double* base_ab = t_ab_blk->data(); 
-            
-            #pragma omp parallel
-            {
-                Eigen::MatrixXd G_vv_local = Eigen::MatrixXd::Zero(va_, va_);
-                
-                #pragma omp for schedule(dynamic)
-                for (int b = 0; b < vb_; ++b) {
-                    size_t offset = b * (na_ * nb_ * va_);
-                    
-                    Eigen::Map<const Eigen::MatrixXd> M(base_ab + offset, na_ * nb_, va_);
-                    G_vv_local.noalias() += M.transpose() * M;
-                }
-                
-                #pragma omp critical
-                {
-                   
-                    G_vv_alpha_ += G_vv_local; 
+    if (is_restricted) {
+        Eigen::Tensor<double, 4> T2_tilde(na_, na_, va_, va_);
+        #pragma omp parallel for collapse(4) schedule(static)
+        for (int i = 0; i < na_; ++i) {
+            for (int j = 0; j < na_; ++j) {
+                for (int a = 0; a < va_; ++a) {
+                    for (int b = 0; b < va_; ++b) {
+                        T2_tilde(i,j,a,b) = 2.0 * T2_aa_ijab(i,j,a,b) - T2_aa_ijab(i,j,b,a);
+                    }
                 }
             }
         }
+
+        TBLIS_VIEW_4D(t_T2, T2_aa_ijab, na_, na_, va_, va_);
+        TBLIS_VIEW_4D(t_T2t, T2_tilde, na_, na_, va_, va_);
+
+        // G_ij = - T_ikab * T_tilde_jkab
+        tblis::mult<double>(-1.0, t_T2, "ikab", t_T2t, "jkab", 0.0, t_Goo_a, "ij");
+        // G_ab = T_ijac * T_tilde_ijbc
+        tblis::mult<double>(1.0, t_T2, "ijac", t_T2t, "ijbc", 0.0, t_Gvv_a, "ab");
+
+        return;
+    }
+
+    TBLIS_VIEW_4D(t_T2aa, T2_aa_ijab, na_, na_, va_, va_);
+
+    // Evaluasi OPDM UMP2 Alpha-Alpha
+    tblis::mult<double>(-0.5, t_T2aa, "ikab", t_T2aa, "jkab", 0.0, t_Goo_a, "ij");
+    tblis::mult<double>(0.5, t_T2aa, "ijac", t_T2aa, "ijbc", 0.0, t_Gvv_a, "ab");
+
+    auto* t_ab_blk = t2_ab_.get_block(0,0,0,0);
+    if (nb_ > 0 && vb_ > 0 && t_ab_blk) {
+        TBLIS_VIEW_4D(t_T2ab, (*t_ab_blk), na_, nb_, va_, vb_);
+        
+        // Evaluasi OPDM UMP2 Alpha-Beta
+        tblis::mult<double>(-1.0, t_T2ab, "ikab", t_T2ab, "jkab", 1.0, t_Goo_a, "ij");
+        tblis::mult<double>(1.0, t_T2ab, "ijac", t_T2ab, "ijbc", 1.0, t_Gvv_a, "ab");
     }
 }
 void OMP2::build_opdm_beta() {
@@ -266,65 +215,28 @@ void OMP2::build_opdm_beta() {
     auto* t_bb_blk = t2_bb_.get_block(0,0,0,0);
     auto* t_ab_blk = t2_ab_.get_block(0,0,0,0);
 
+    TBLIS_VIEW_2D(t_Goo_b, G_oo_beta_.data(), nb_, nb_);
+    TBLIS_VIEW_2D(t_Gvv_b, G_vv_beta_.data(), vb_, vb_);
+
     if (t_bb_blk) {
-        Eigen::Map<const Eigen::MatrixXd> T_mat(t_bb_blk->data(), nb_, vb_ * nb_ * vb_);
-        G_oo_beta_.noalias() = -0.5 * (T_mat * T_mat.transpose());
-        const double* base_bb = t_bb_blk->data();
-        
-        #pragma omp parallel
-        {
-            Eigen::MatrixXd G_vv_local = Eigen::MatrixXd::Zero(vb_, vb_);
-            #pragma omp for schedule(static)
-            for (int jc = 0; jc < nb_ * vb_; ++jc) {
-                int j = jc % nb_;
-                int c = jc / nb_;
-                size_t offset = j * nb_ + c * (nb_ * nb_ * vb_);
-                Eigen::Map<const Eigen::MatrixXd, 0, Eigen::OuterStride<Eigen::Dynamic>> M(
-                base_bb + offset, nb_, vb_, Eigen::OuterStride<Eigen::Dynamic>(nb_ * nb_)
-            );
-                
-                G_vv_local.noalias() += M.transpose() * M;
-            }
-            #pragma omp critical
-            {
-                G_vv_beta_ += 0.5 * G_vv_local;
-            }
-        }
+        // T2_bb blok secara memori sudah berformat (i,j,a,b) sejak awal
+        TBLIS_VIEW_4D(t_T2bb, (*t_bb_blk), nb_, nb_, vb_, vb_);
+        tblis::mult<double>(-0.5, t_T2bb, "ikab", t_T2bb, "jkab", 0.0, t_Goo_b, "ij");
+        tblis::mult<double>(0.5, t_T2bb, "ijac", t_T2bb, "ijbc", 0.0, t_Gvv_b, "ab");
     }
 
     if (t_ab_blk) {
-        const double* base_ab = t_ab_blk->data();
-        #pragma omp parallel
-        {
-            Eigen::MatrixXd G_oo_local = Eigen::MatrixXd::Zero(nb_, nb_);
-            #pragma omp for schedule(static)
-            for (int ab = 0; ab < va_ * vb_; ++ab) {
-                int a = ab % va_;
-                int b = ab / va_;
-                
-                size_t offset = a * (na_ * nb_) + b * (na_ * nb_ * va_);
-                Eigen::Map<const Eigen::MatrixXd> M(base_ab + offset, na_, nb_);
-                
-                G_oo_local.noalias() += M.transpose() * M;
-            }
-            #pragma omp critical
-            {
-                G_oo_beta_ -= G_oo_local;
-            }
-        }
-
-        Eigen::Map<const Eigen::MatrixXd> M_vv(base_ab, na_ * nb_ * va_, vb_);
-        G_vv_beta_.noalias() += M_vv.transpose() * M_vv;
+        // T2_ab memiliki layout (na, nb, va, vb)
+        TBLIS_VIEW_4D(t_T2ab, (*t_ab_blk), na_, nb_, va_, vb_);
+        
+        // Trace over index alpha (k = alpha, i,j = beta)
+        tblis::mult<double>(-1.0, t_T2ab, "kiab", t_T2ab, "kjab", 1.0, t_Goo_b, "ij");
+        // Trace over index alpha (c = alpha, a,b = beta)
+        tblis::mult<double>(1.0, t_T2ab, "ijca", t_T2ab, "ijcb", 1.0, t_Gvv_b, "ab");
     }
 }
 void OMP2::build_generalized_fock() {
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
-
-    // =========================================================================
-    // TAHAP 1: EVALUASI Z-VECTOR (WAJIB DIEKSEKUSI PERTAMA)
-    // Di tahap ini evaluate_z_vector_cholesky akan memutasi/menyuntikkan CPHF 
-    // ke dalam G_oo_alpha_ dan G_vv_alpha_.
-    // =========================================================================
     Eigen::MatrixXd Z_mat_a = Eigen::MatrixXd::Zero(va_, na_);
     Eigen::MatrixXd Z_mat_b = Eigen::MatrixXd::Zero(vb_, nb_);
 
