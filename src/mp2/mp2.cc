@@ -390,29 +390,33 @@ MP2Result UMP2::compute() {
         if (config_.print_level > 0) {
             std::cout << "  [UMP2] Menerapkan Semikanonikalisasi Orbital (Referensi ROHF)...\n";
         }
-        int ndo = nocc_b_;
-        int nso = nocc_a_ - nocc_b_;
-        int nva = nvir_a_;
 
-        auto diag_subblocks = [&](const Eigen::MatrixXd& F_ao, Eigen::MatrixXd& C, Eigen::VectorXd& eps) {
+        auto diag_spin = [&](const Eigen::MatrixXd& F_ao, Eigen::MatrixXd& C, Eigen::VectorXd& eps, int nocc, int nvir) {
             Eigen::MatrixXd F_mo = C.transpose() * F_ao * C;
-            auto diag_blk = [&](int start, int size) {
-                if (size <= 0) return;
-                Eigen::MatrixXd F_blk = F_mo.block(start, start, size, size);
-                Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(F_blk);
-                Eigen::MatrixXd C_blk = C.middleCols(start, size);
-                C.middleCols(start, size) = C_blk * es.eigenvectors();
-                eps.segment(start, size) = es.eigenvalues();
-            };
-            diag_blk(0, ndo);
-            diag_blk(ndo, nso);
-            diag_blk(ndo + nso, nva);
+            
+            // Diagonalisasi penuh pada blok Occupied
+            if (nocc > 0) {
+                Eigen::MatrixXd F_occ = F_mo.block(0, 0, nocc, nocc);
+                Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_occ(F_occ);
+                C.middleCols(0, nocc) = C.middleCols(0, nocc) * es_occ.eigenvectors();
+                eps.segment(0, nocc) = es_occ.eigenvalues();
+            }
+            
+            // Diagonalisasi penuh pada blok Virtual (termasuk SO untuk Beta)
+            if (nvir > 0) {
+                Eigen::MatrixXd F_vir = F_mo.block(nocc, nocc, nvir, nvir);
+                Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_vir(F_vir);
+                C.middleCols(nocc, nvir) = C.middleCols(nocc, nvir) * es_vir.eigenvectors();
+                eps.segment(nocc, nvir) = es_vir.eigenvalues();
+            }
         };
 
-        diag_subblocks(scf_.F_alpha, scf_.C_alpha, scf_.orbital_energies_alpha);
-        diag_subblocks(scf_.F_beta, scf_.C_beta, scf_.orbital_energies_beta);
+        // Semikanonikalisasi independen sesuai batas fisik masing-masing spin
+        diag_spin(scf_.F_alpha, scf_.C_alpha, scf_.orbital_energies_alpha, nocc_a_, nvir_a_);
+        diag_spin(scf_.F_beta, scf_.C_beta, scf_.orbital_energies_beta, nocc_b_, nvir_b_);
     }
     // -----------------------------
+
 
     transform_integrals();
     double e_ss_aa = compute_ss_alpha();
