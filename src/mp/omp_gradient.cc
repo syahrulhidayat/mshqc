@@ -137,9 +137,9 @@ void OMP2::build_hessian_diagonal(Eigen::VectorXd& diag_H, double grad_norm) {
     int idx = 0;
     double level_shift = (grad_norm > 0.1) ? 0.05 : 0.005;
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
-    bool is_rohf = (n_params == na_ * va_ && !is_restricted); 
+     
     
-    double spin_factor = (is_restricted || is_rohf) ? 4.0 : 2.0;
+    double spin_factor = is_restricted ? 4.0 : 2.0;
     
     for (int i = 0; i < na_; ++i) {             
         for (int a = 0; a < va_; ++a) {        
@@ -154,12 +154,12 @@ void OMP2::build_hessian_diagonal(Eigen::VectorXd& diag_H, double grad_norm) {
             }
             
             // Singly occupied (alpha only) dievaluasi dengan factor setengah dari doubly
-            double factor = (is_rohf && i >= nb_) ? 2.0 : spin_factor; 
+            double factor = spin_factor; 
             diag_H(idx++) = factor * safe_diff + 2.0 * factor * J_ia + level_shift;  
         }
     }
     
-    if (!is_restricted && nb_ > 0 && !is_rohf) {
+    if (!is_restricted && nb_ > 0) {
         for (int i = 0; i < nb_; ++i) {         
             for (int a = 0; a < vb_; ++a) {    
                 double eps_diff = scf_.orbital_energies_beta(nb_ + a) - scf_.orbital_energies_beta(i);
@@ -190,8 +190,8 @@ Eigen::VectorXd OMP2::compute_soscf_step(double trust_radius, double& expected_c
     }
 
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
-    bool is_rohf = (n_params == na_ * va_ && !is_restricted);
-    double spin_factor = (is_restricted || is_rohf) ? 4.0 : 2.0;
+    
+    double spin_factor = is_restricted ? 4.0 : 2.0;
 
     mshqc::gradient::TrustRegionConfig tr_conf;
     tr_conf.micro_thresh = std::min(1e-4, grad_norm * 0.1); 
@@ -200,13 +200,13 @@ Eigen::VectorXd OMP2::compute_soscf_step(double trust_radius, double& expected_c
     auto compute_hessian_vector = [&](const Eigen::VectorXd& p_vec) -> Eigen::VectorXd {
         Eigen::VectorXd Hp = Eigen::VectorXd::Zero(n_params);
         int dim_a = va_ * na_;
-        int dim_b = (is_restricted || is_rohf) ? 0 : (vb_ * nb_); 
+        int dim_b = is_restricted ? 0 : (vb_ * nb_); 
         
         int temp_idx = 0;
         for (int i = 0; i < na_; ++i) {
             for (int a = 0; a < va_; ++a) {
                 double eps_diff = scf_.orbital_energies_alpha(na_ + a) - scf_.orbital_energies_alpha(i);
-                double factor = (is_rohf && i >= nb_) ? 2.0 : spin_factor; 
+                double factor = spin_factor; 
                 Hp(temp_idx) = factor * std::max(std::abs(eps_diff), 1e-4) * p_vec(temp_idx);
                 temp_idx++;
             }
@@ -251,7 +251,7 @@ Eigen::VectorXd OMP2::compute_soscf_step(double trust_radius, double& expected_c
         if (!is_restricted && dim_b > 0) {
             P1_b = scf_.C_beta.leftCols(nb_) * kappa_b * scf_.C_beta.rightCols(vb_).transpose();
             P1_b = (P1_b + P1_b.transpose()).eval();
-        } else if (is_restricted || is_rohf) {
+        } else if (is_restricted) {
             P1_b = P1_a; 
         }
     
@@ -262,21 +262,13 @@ Eigen::VectorXd OMP2::compute_soscf_step(double trust_radius, double& expected_c
     
         if (dim_a > 0) {
             Eigen::MatrixXd H_kappa_a = scf_.C_alpha.leftCols(na_).transpose() * F1_a * scf_.C_alpha.rightCols(va_);
-            Eigen::MatrixXd H_kappa_b;
-            if (is_rohf) {
-                H_kappa_b = scf_.C_beta.leftCols(nb_).transpose() * F1_b * scf_.C_beta.rightCols(vb_);
-            }
             
             int idx_h = 0;
             for (int i = 0; i < na_; ++i) {
                 for (int a = 0; a < va_; ++a) {
                     double val = H_kappa_a(i, a);
-                    if (is_rohf && i < nb_) {
-                        int b_idx = (na_ + a) - nb_; 
-                        val = 0.5 * (val + H_kappa_b(i, b_idx)); 
-                    }
-                    double factor = (is_rohf && i >= nb_) ? 2.0 : spin_factor; 
-                    Hp(idx_h++) += factor * val; 
+                    double factor = spin_factor; 
+                    Hp(idx_h++) += factor * val;
                 }
             }
         }
@@ -335,7 +327,7 @@ Eigen::VectorXd OMP2::compute_soscf_step(double trust_radius, double& expected_c
 void OMP2::apply_orbital_rotation(const Eigen::VectorXd& kappa) {
     if (kappa.norm() < 1e-12) return;
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
-    bool is_rohf = (kappa.size() == na_ * va_ && !is_restricted);
+    
     
     int idx = 0;
     int n_mo_a = na_ + va_;
@@ -350,11 +342,7 @@ void OMP2::apply_orbital_rotation(const Eigen::VectorXd& kappa) {
     }
     C_a_current_ = C_a_current_ * K_a.exp();
 
-    // Sinkronisasi spasial absolut (Memutus cost overhead Matrix Exponentials)
-    if (is_rohf) {
-        C_b_current_ = C_a_current_;
-        return; 
-    }
+   
 
     // Lanjutkan rotasi UMP2 asli jika unrestricted
     int n_mo_b = nb_ + vb_;

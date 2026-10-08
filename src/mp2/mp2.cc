@@ -382,49 +382,6 @@ double UMP2::compute_os() {
 MP2Result UMP2::compute() {
     auto start_time = std::chrono::high_resolution_clock::now();
 
-    // -- SEMIKANONIKALISASI ROHF --
-    bool is_restricted = (nocc_a_ == nocc_b_ && nvir_a_ == nvir_b_ && mol_.multiplicity() == 1);
-    bool is_rohf = (!is_restricted && nocc_b_ > 0 && (scf_.C_alpha - scf_.C_beta).cwiseAbs().maxCoeff() < 1e-10);
-
-    if (is_rohf) {
-        if (config_.print_level > 0) {
-            std::cout << "  [UMP2] Menerapkan Semikanonikalisasi ROMP2 Standar (Referensi ROHF)...\n";
-        }
-        int ndo = nocc_b_;               // Doubly occupied (closed)
-        int nso = nocc_a_ - nocc_b_;     // Singly occupied (open)
-        int nva = nvir_a_;               // Virtual
-
-        Eigen::MatrixXd F_mo_a = scf_.C_alpha.transpose() * scf_.F_alpha * scf_.C_alpha;
-        Eigen::MatrixXd F_mo_b = scf_.C_beta.transpose() * scf_.F_beta * scf_.C_beta;
-        
-        Eigen::MatrixXd C_new_a = scf_.C_alpha;
-        Eigen::MatrixXd C_new_b = scf_.C_beta;
-        
-        auto diag_blk = [](const Eigen::MatrixXd& F_mo_ref, Eigen::MatrixXd& C_new, int start, int size) {
-            if (size <= 0) return;
-            Eigen::MatrixXd F_blk = F_mo_ref.block(start, start, size, size);
-            Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(F_blk);
-            C_new.middleCols(start, size) = C_new.middleCols(start, size) * es.eigenvectors();
-        };
-        
-        // Alpha: Blok Open (SO) dan Virtual (VIR) didiagonalisasi dengan F_alpha
-        diag_blk(F_mo_a, C_new_a, ndo, nso);       
-        diag_blk(F_mo_a, C_new_a, ndo + nso, nva); 
-        
-        // Beta: Blok Virtual (VIR) didiagonalisasi dengan F_beta
-        diag_blk(F_mo_b, C_new_b, ndo, nva);       
-
-        scf_.C_alpha = C_new_a;
-        scf_.C_beta = C_new_b;
-
-        // Ekstrak energi orbital perturbasi presisi dari diagonal Fock baru
-        Eigen::MatrixXd F_mo_a_new = C_new_a.transpose() * scf_.F_alpha * C_new_a;
-        Eigen::MatrixXd F_mo_b_new = C_new_b.transpose() * scf_.F_beta * C_new_b;
-        
-        scf_.orbital_energies_alpha = F_mo_a_new.diagonal();
-        scf_.orbital_energies_beta  = F_mo_b_new.diagonal();
-    }
-    // -----------------------------
 
 
     transform_integrals();
@@ -747,10 +704,6 @@ void OMP2::pseudocanonicalize() {
     Eigen::MatrixXd F_ao_a, F_ao_b;
     build_fock_fast(scf_.P_alpha, scf_.P_beta, F_ao_a, F_ao_b);
     
-    bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
-    // Deteksi instan: Open-shell namun spasial C_alpha & C_beta identik
-    bool is_rohf = (!is_restricted && nb_ > 0 && (scf_.C_alpha - scf_.C_beta).cwiseAbs().maxCoeff() < 1e-10);
-
     auto diag_block = [&](const Eigen::MatrixXd& F_ao, Eigen::MatrixXd& C, Eigen::VectorXd& eps, int nocc, int nvir) {
         Eigen::MatrixXd C_occ = C.leftCols(nocc);
         Eigen::MatrixXd C_vir = C.rightCols(nvir);
@@ -769,54 +722,14 @@ void OMP2::pseudocanonicalize() {
         eps.tail(nvir) = es_v.eigenvalues();
     };
 
-    if (is_rohf) {
-        if (config_.print_level > 0) {
-            std::cout << "  [UMP2] Menerapkan Semikanonikalisasi Spasial (ROHF strict)...\n";
-        }
-        int ndo = nocc_b_;
-        int nso = nocc_a_ - nocc_b_;
-        int nva = nvir_a_;
+    diag_block(F_ao_a, scf_.C_alpha, scf_.orbital_energies_alpha, na_, va_);
+    scf_.P_alpha.noalias() = scf_.C_alpha.leftCols(na_) * scf_.C_alpha.leftCols(na_).transpose();
 
-        // Gunakan satu set C untuk membuat Fock awal
-        Eigen::MatrixXd F_mo_a = scf_.C_alpha.transpose() * scf_.F_alpha * scf_.C_alpha;
-        Eigen::MatrixXd F_mo_b = scf_.C_alpha.transpose() * scf_.F_beta * scf_.C_alpha;
-        
-        Eigen::MatrixXd C_new = scf_.C_alpha;
-        
-        auto diag_blk = [&](const Eigen::MatrixXd& F_mo_ref, int start, int size) {
-            if (size <= 0) return;
-            Eigen::MatrixXd F_blk = F_mo_ref.block(start, start, size, size);
-            Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(F_blk);
-            C_new.middleCols(start, size) = C_new.middleCols(start, size) * es.eigenvectors();
-        };
-        
-        // Terapkan rotasi ke SATU SET orbital saja (C_new)
-        diag_blk(F_mo_b, 0, ndo);               // Doubly Occupied
-        diag_blk(F_mo_a, ndo, nso);             // Singly Occupied
-        diag_blk(F_mo_b, ndo + nso, nva);       // Virtual (atau F_mo_a, tergantung varian)
-
-        // KUNCI: Paksa Beta mengikuti Alpha persis 100% agar simetri spasial mutlak terjaga
-        scf_.C_alpha = C_new;
-        scf_.C_beta  = C_new; 
-
-        // Ekstrak epsilon
-        Eigen::MatrixXd F_mo_a_new = C_new.transpose() * scf_.F_alpha * C_new;
-        Eigen::MatrixXd F_mo_b_new = C_new.transpose() * scf_.F_beta * C_new;
-        
-        scf_.orbital_energies_alpha = F_mo_a_new.diagonal();
-        scf_.orbital_energies_beta  = F_mo_b_new.diagonal();
-    } else {
-        // UMP2 Normal
-        diag_block(F_ao_a, scf_.C_alpha, scf_.orbital_energies_alpha, na_, va_);
-        scf_.P_alpha.noalias() = scf_.C_alpha.leftCols(na_) * scf_.C_alpha.leftCols(na_).transpose();
-
-        if (nb_ > 0 && vb_ > 0) {
-            diag_block(F_ao_b, scf_.C_beta, scf_.orbital_energies_beta, nb_, vb_);
-            scf_.P_beta.noalias() = scf_.C_beta.leftCols(nb_) * scf_.C_beta.leftCols(nb_).transpose();
-        }
+    if (nb_ > 0 && vb_ > 0) {
+        diag_block(F_ao_b, scf_.C_beta, scf_.orbital_energies_beta, nb_, vb_);
+        scf_.P_beta.noalias() = scf_.C_beta.leftCols(nb_) * scf_.C_beta.leftCols(nb_).transpose();
     }
 }
-
 
 void OMP2::transform_3center_mo_cholesky() {
     int n_chol = scf_.L_mat.cols();
@@ -943,12 +856,12 @@ void OMP2::execute_macro_iterations(DIIS& diis_a, DIIS& diis_b, int macro_iter) 
     build_generalized_fock();
 
     bool is_restricted = (na_ == nb_ && va_ == vb_);
-    bool is_rohf = (!is_restricted && nb_ > 0 && (C_a_current_ - C_b_current_).cwiseAbs().maxCoeff() < 1e-10);
+    
 
     if (is_restricted && nb_ > 0) F_gen_b_ = F_gen_a_; 
 
     int dim_a = va_ * na_;
-    int dim_b = (is_restricted || is_rohf) ? 0 : (nb_ > 0 ? vb_ * nb_ : 0); // Matikan parameter beta untuk ROHF
+    int dim_b = is_restricted ? 0 : (nb_ > 0 ? vb_ * nb_ : 0);
     int n_params = dim_a + dim_b;
 
     if (orbital_gradient_.size() != n_params) orbital_gradient_.resize(n_params);
@@ -956,8 +869,8 @@ void OMP2::execute_macro_iterations(DIIS& diis_a, DIIS& diis_b, int macro_iter) 
     int idx = 0;
     bool use_sym = (!scf_.irreps_alpha.empty() && scf_.irreps_alpha[0] != -1);
     
-    if (!is_restricted && nb_ > 0 && !is_rohf) {
-        // UMP2 NORMAL (Sesuai kode asli)
+    if (!is_restricted && nb_ > 0) {
+    
         Eigen::MatrixXd wa = 2.0 * F_gen_a_.block(na_, 0, va_, na_);
         for (int i = 0; i < na_; ++i) {
             for (int a = 0; a < va_; ++a) {
@@ -972,19 +885,8 @@ void OMP2::execute_macro_iterations(DIIS& diis_a, DIIS& diis_b, int macro_iter) 
                 else orbital_gradient_(idx++) = wb(b, i);
             }
         }
-    } else if (is_rohf) {
-        // RO-OMP2: Gabungkan & kompres gradien Doubly Occupied
-        Eigen::MatrixXd wa = 2.0 * F_gen_a_.block(na_, 0, va_, na_);
-        Eigen::MatrixXd wb = 2.0 * F_gen_b_.block(nb_, 0, vb_, nb_);
-        for (int i = 0; i < na_; ++i) {
-            for (int a = 0; a < va_; ++a) {
-                double grad_val = wa(a, i);
-                if (i < nb_) grad_val = 0.5 * (wa(a, i) + wb(a, i)); // Rata-rata pada wilayah core
-                if (use_sym && (scf_.irreps_alpha[i] ^ scf_.irreps_alpha[na_ + a]) != 0) orbital_gradient_(idx++) = 0.0;
-                else orbital_gradient_(idx++) = grad_val;
-            }
-        }
     } else {
+    
         Eigen::MatrixXd wa = 2.0 * F_gen_a_.block(na_, 0, va_, na_);
         Eigen::MatrixXd wb = 2.0 * F_gen_b_.block(nb_, 0, vb_, nb_);
         Eigen::MatrixXd w_sym = wa + wb;
@@ -1185,6 +1087,7 @@ MP2Result OMP2::compute() {
 
     return res;
 }
+
 void OMP2::reset_diis() {}
 Eigen::MatrixXd OMP2::build_opdm() { return G_oo_alpha_ + G_oo_beta_; } 
 Eigen::MatrixXd OMP2::extrapolate_diis(std::vector<Eigen::MatrixXd>&, std::vector<Eigen::MatrixXd>&) { return Eigen::MatrixXd(); }
