@@ -1295,13 +1295,14 @@ void OMP3::build_opdm_beta() {
 }
 void OMP3::build_generalized_fock() {
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
+    const auto& ea = scf_.orbital_energies_alpha;
+    const auto& eb = scf_.orbital_energies_beta;
 
     const Eigen::MatrixXd& Cao = scf_.C_alpha.leftCols(na_);
     const Eigen::MatrixXd& Cav = scf_.C_alpha.rightCols(va_);
     const Eigen::MatrixXd& Cbo = scf_.C_beta.leftCols(nb_);
     const Eigen::MatrixXd& Cbv = scf_.C_beta.rightCols(vb_);
 
-    // Hanya matriks gradien rotasi Occupied-Virtual yang kita butuhkan
     Eigen::MatrixXd Z_mat_a = Eigen::MatrixXd::Zero(va_, na_);
     Eigen::MatrixXd Z_mat_b;
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
@@ -1312,22 +1313,18 @@ void OMP3::build_generalized_fock() {
     auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
     auto* t2_bb_dense = t2_bb_.get_block(0,0,0,0);
 
-    // =========================================================================
-    // 1. PEMBENTUKAN Z_MAT (Occupied-Virtual Response Murni)
+     // =========================================================================
+    // 1. PEMBENTUKAN Z_MAT (Occupied-Virtual Response)
     // =========================================================================
     if (config_.eri_method == "exact") {
         if (is_restricted) {
             Eigen::Tensor< double, 4 > Teff(na_, na_, va_, va_);
-            
-            // Spin-adaptation untuk spatial trace RHF (2T - T_exchange)
             #pragma omp parallel for collapse(4) schedule(static)
             for(int i = 0; i < na_; ++i) {
                 for(int j = 0; j < na_; ++j) {
                     for(int a = 0; a < va_; ++a) {
                         for(int b = 0; b < va_; ++b) {
-                            double t_dir = (*t_aa_dense)(i,a,j,b) + L2_aa_(i,j,a,b);
-                            double t_ex  = (*t_aa_dense)(i,b,j,a) + L2_aa_(i,j,b,a);
-                            Teff(i,j,a,b) = 2.0 * t_dir - t_ex;
+                            Teff(i,j,a,b) = (*t_aa_dense)(i,a,j,b) + L2_aa_(i,j,a,b);
                         }
                     }
                 }
@@ -1437,7 +1434,6 @@ void OMP3::build_generalized_fock() {
             }
         }
     } else {
-        // Density Fitting (DF) Branch
         int n_aux = scf_.L_mat.cols();
         Eigen::MatrixXd B_oo_flat_a = Eigen::MatrixXd::Zero(na_ * na_, n_aux);
         Eigen::MatrixXd B_vv_flat_a = Eigen::MatrixXd::Zero(va_ * va_, n_aux);
@@ -1478,28 +1474,12 @@ void OMP3::build_generalized_fock() {
         Eigen::MatrixXd Teff_bb = Eigen::MatrixXd::Zero(nb_ * vb_, nb_ * vb_);
 
         if (t_aa_dense) {
-            if (is_restricted) {
-                // Spin-adaptation DF untuk RHF (2T - Tex)
-                #pragma omp parallel for collapse(2) schedule(static)
-                for (int i = 0; i < na_; ++i) {
-                    for (int a = 0; a < va_; ++a) {
-                        for (int j = 0; j < na_; ++j) {
-                            for (int b = 0; b < va_; ++b) {
-                                double t_dir = (*t_aa_dense)(i, a, j, b) + L2_aa_(i, j, a, b);
-                                double t_ex  = (*t_aa_dense)(i, b, j, a) + L2_aa_(i, j, b, a);
-                                Teff_aa(i * va_ + a, j * va_ + b) = 2.0 * t_dir - t_ex;
-                            }
-                        }
-                    }
-                }
-            } else {
-                #pragma omp parallel for collapse(2) schedule(static)
-                for (int i = 0; i < na_; ++i) {
-                    for (int a = 0; a < va_; ++a) {
-                        for (int j = 0; j < na_; ++j) {
-                            for (int b = 0; b < va_; ++b) {
-                                Teff_aa(i * va_ + a, j * va_ + b) = (*t_aa_dense)(i, a, j, b) + L2_aa_(i, j, a, b);
-                            }
+            #pragma omp parallel for collapse(2) schedule(static)
+            for (int i = 0; i < na_; ++i) {
+                for (int a = 0; a < va_; ++a) {
+                    for (int j = 0; j < na_; ++j) {
+                        for (int b = 0; b < va_; ++b) {
+                            Teff_aa(i * va_ + a, j * va_ + b) = (*t_aa_dense)(i, a, j, b) + L2_aa_(i, j, a, b);
                         }
                     }
                 }
@@ -1573,7 +1553,7 @@ void OMP3::build_generalized_fock() {
     }
 
     // =========================================================================
-    // 2. PEMBENTUKAN GENERALIZED FOCK SEJATI (TANPA ROTASI & TANPA CPHF)
+    // 2. PEMBENTUKAN GENERALIZED FOCK SEBELUM ROTASI
     // =========================================================================
     Eigen::MatrixXd G_full_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
     G_full_a.block(0, 0, na_, na_) = G_oo_alpha_;
@@ -1615,7 +1595,6 @@ void OMP3::build_generalized_fock() {
         Eigen::MatrixXd F_HF_vo_a = F_HF_mo_a.block(na_, 0, va_, na_);
         Eigen::MatrixXd L_sep_a = F_HF_vo_a * G_oo_alpha_ - G_vv_alpha_ * F_HF_vo_a;
         
-        // Murni menyuntikkan Z_mat (Tanpa kompensasi CPHF yang membahayakan Trust-Region)
         F_gen_a_.block(na_, 0, va_, na_) += L_sep_a + Z_mat_a;
         F_gen_a_.block(0, na_, na_, va_) += (L_sep_a + Z_mat_a).transpose();
     }
@@ -1627,6 +1606,58 @@ void OMP3::build_generalized_fock() {
 
         F_gen_b_.block(nb_, 0, vb_, nb_) += L_sep_b + Z_mat_b;
         F_gen_b_.block(0, nb_, nb_, vb_) += (L_sep_b + Z_mat_b).transpose();
+    } else if (is_restricted) {
+        F_gen_b_ = F_gen_a_;
+    }
+
+    // =========================================================================
+    // 3. DIAGONALISASI EKSAK & TRANSFORMASI BASIS KONSISTEN
+    // =========================================================================
+    Eigen::MatrixXd U_a = Eigen::MatrixXd::Identity(nbf_, nbf_);
+    if (na_ > 0) {
+        Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_oo_a(F_gen_a_.block(0, 0, na_, na_));
+        scf_.C_alpha.leftCols(na_) *= es_oo_a.eigenvectors();
+        scf_.orbital_energies_alpha.segment(0, na_) = es_oo_a.eigenvalues();
+        U_a.block(0, 0, na_, na_) = es_oo_a.eigenvectors();
+    }
+    if (va_ > 0) {
+        Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_vv_a(F_gen_a_.block(na_, na_, va_, va_));
+        scf_.C_alpha.rightCols(va_) *= es_vv_a.eigenvectors();
+        scf_.orbital_energies_alpha.segment(na_, va_) = es_vv_a.eigenvalues();
+        U_a.block(na_, na_, va_, va_) = es_vv_a.eigenvectors();
+    }
+
+    // KUNCI: Mensejajarkan ulang matriks gradien (F_gen) ke vektor eigen yang baru!
+    F_gen_a_ = U_a.transpose() * F_gen_a_ * U_a;
+    
+    // Paksa noise numerik mati pada blok internal
+    F_gen_a_.block(0, 0, na_, na_).setZero();
+    F_gen_a_.block(0, 0, na_, na_).diagonal() = scf_.orbital_energies_alpha.segment(0, na_);
+    F_gen_a_.block(na_, na_, va_, va_).setZero();
+    F_gen_a_.block(na_, na_, va_, va_).diagonal() = scf_.orbital_energies_alpha.segment(na_, va_);
+
+    if (!is_restricted && nb_ > 0 && vb_ > 0) {
+        Eigen::MatrixXd U_b = Eigen::MatrixXd::Identity(nbf_, nbf_);
+        if (nb_ > 0) {
+            Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_oo_b(F_gen_b_.block(0, 0, nb_, nb_));
+            scf_.C_beta.leftCols(nb_) *= es_oo_b.eigenvectors();
+            scf_.orbital_energies_beta.segment(0, nb_) = es_oo_b.eigenvalues();
+            U_b.block(0, 0, nb_, nb_) = es_oo_b.eigenvectors();
+        }
+        if (vb_ > 0) {
+            Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_vv_b(F_gen_b_.block(nb_, nb_, vb_, vb_));
+            scf_.C_beta.rightCols(vb_) *= es_vv_b.eigenvectors();
+            scf_.orbital_energies_beta.segment(nb_, vb_) = es_vv_b.eigenvalues();
+            U_b.block(nb_, nb_, vb_, vb_) = es_vv_b.eigenvectors();
+        }
+        
+        // KUNCI B: Sama untuk beta orbital
+        F_gen_b_ = U_b.transpose() * F_gen_b_ * U_b;
+        
+        F_gen_b_.block(0, 0, nb_, nb_).setZero();
+        F_gen_b_.block(0, 0, nb_, nb_).diagonal() = scf_.orbital_energies_beta.segment(0, nb_);
+        F_gen_b_.block(nb_, nb_, vb_, vb_).setZero();
+        F_gen_b_.block(nb_, nb_, vb_, vb_).diagonal() = scf_.orbital_energies_beta.segment(nb_, vb_);
     } else if (is_restricted) {
         F_gen_b_ = F_gen_a_;
     }
