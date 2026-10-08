@@ -1336,7 +1336,7 @@ void OMP3::build_generalized_fock() {
 
     // =========================================================================
     // 3. KALKULASI Z-VECTOR (RESPONS 2-ELEKTRON VIRTUAL-OCCUPIED)
-    // *Ini adalah bagian vital yang "dihalu" dan dibuang secara salah oleh AI
+    // Blok ini diperbaiki: Wajib ada Spin-Adaptation untuk sistem RHF
     // =========================================================================
     Eigen::MatrixXd Z_mat_a = Eigen::MatrixXd::Zero(va_, na_);
     Eigen::MatrixXd Z_mat_b = Eigen::MatrixXd::Zero(vb_, nb_);
@@ -1355,7 +1355,10 @@ void OMP3::build_generalized_fock() {
                 for(int j = 0; j < na_; ++j) {
                     for(int a = 0; a < va_; ++a) {
                         for(int b = 0; b < va_; ++b) {
-                            Teff(i,j,a,b) = (*t_aa_dense)(i,a,j,b) + L2_aa_(i,j,a,b);
+                            // PERBAIKAN: ADAPTASI SPIN MUTLAK UNTUK CLOSED-SHELL
+                            double t_dir = (*t_aa_dense)(i,a,j,b) + L2_aa_(i,j,a,b);
+                            double t_ex  = (*t_aa_dense)(i,b,j,a) + L2_aa_(i,j,b,a);
+                            Teff(i,j,a,b) = 2.0 * t_dir - 1.0 * t_ex;
                         }
                     }
                 }
@@ -1380,6 +1383,7 @@ void OMP3::build_generalized_fock() {
             Eigen::Tensor< double, 4 > Teff_bb(nb_, nb_, vb_, vb_);
             Eigen::Tensor< double, 4 > Teff_ab(na_, nb_, va_, vb_);
 
+            // UHF tidak butuh adaptasi 2*T - T_ex karena dievaluasi by direct sum
             #pragma omp parallel for collapse(4) schedule(static)
             for(int i = 0; i < na_; ++i) for(int j = 0; j < na_; ++j) for(int a = 0; a < va_; ++a) for(int b = 0; b < va_; ++b)
                 Teff_aa(i,j,a,b) = (*t_aa_dense)(i,a,j,b) + L2_aa_(i,j,a,b);
@@ -1488,7 +1492,14 @@ void OMP3::build_generalized_fock() {
                 for (int a = 0; a < va_; ++a) {
                     for (int j = 0; j < na_; ++j) {
                         for (int b = 0; b < va_; ++b) {
-                            Teff_aa(i * va_ + a, j * va_ + b) = (*t_aa_dense)(i, a, j, b) + L2_aa_(i, j, a, b);
+                            if (is_restricted) {
+                                // PERBAIKAN: ADAPTASI SPIN MUTLAK UNTUK DF CLOSED-SHELL
+                                double t_dir = (*t_aa_dense)(i,a,j,b) + L2_aa_(i,j,a,b);
+                                double t_ex  = (*t_aa_dense)(i,b,j,a) + L2_aa_(i,j,b,a);
+                                Teff_aa(i * va_ + a, j * va_ + b) = 2.0 * t_dir - 1.0 * t_ex;
+                            } else {
+                                Teff_aa(i * va_ + a, j * va_ + b) = (*t_aa_dense)(i,a,j,b) + L2_aa_(i,j,a,b);
+                            }
                         }
                     }
                 }
@@ -1564,7 +1575,6 @@ void OMP3::build_generalized_fock() {
         Eigen::MatrixXd F_HF_vo_a = F_HF_mo_a.block(na_, 0, va_, na_);
         Eigen::MatrixXd L_sep_a = F_HF_vo_a * G_oo_alpha_ - G_vv_alpha_ * F_HF_vo_a;
         
-        // Z_mat_a ditambahkan di sini secara eksplisit (sebagai turunan dE/dU_vo)
         F_gen_a_.block(na_, 0, va_, na_) += L_sep_a + Z_mat_a;
         F_gen_a_.block(0, na_, na_, va_) += (L_sep_a + Z_mat_a).transpose();
     }
