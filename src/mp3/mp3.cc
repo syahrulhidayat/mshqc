@@ -1348,8 +1348,6 @@ Eigen::MatrixXd OMP3::solve_cphf_pcg_ov(const Eigen::MatrixXd& Z_ov, const Eigen
 }
 void OMP3::build_generalized_fock() {
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
-    const auto& ea = scf_.orbital_energies_alpha;
-    const auto& eb = scf_.orbital_energies_beta;
 
     const Eigen::MatrixXd& Cao = scf_.C_alpha.leftCols(na_);
     const Eigen::MatrixXd& Cav = scf_.C_alpha.rightCols(va_);
@@ -1357,12 +1355,10 @@ void OMP3::build_generalized_fock() {
     const Eigen::MatrixXd& Cbv = scf_.C_beta.rightCols(vb_);
 
     Eigen::MatrixXd Z_mat_a = Eigen::MatrixXd::Zero(va_, na_);
-    Eigen::MatrixXd Delta_G_ia_a = Eigen::MatrixXd::Zero(va_, na_);
     
-    Eigen::MatrixXd Z_mat_b, Delta_G_ia_b;
+    Eigen::MatrixXd Z_mat_b;
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
         Z_mat_b = Eigen::MatrixXd::Zero(vb_, nb_);
-        Delta_G_ia_b = Eigen::MatrixXd::Zero(vb_, nb_);
     }
 
     auto* t_aa_dense = t2_aa_.get_block(0,0,0,0);
@@ -1370,7 +1366,7 @@ void OMP3::build_generalized_fock() {
     auto* t2_bb_dense = t2_bb_.get_block(0,0,0,0);
 
     // =========================================================================
-    // 1. PEMBENTUKAN Z_MAT (Hanya Blok Occupied-Virtual)
+    // 1. PEMBENTUKAN Z_MAT 
     // =========================================================================
     if (config_.eri_method == "exact") {
         if (is_restricted) {
@@ -1612,16 +1608,7 @@ void OMP3::build_generalized_fock() {
     } // End of DF block
 
     // =========================================================================
-    // EKSEKUSI PCG SOLVER
-    // =========================================================================
-    Delta_G_ia_a = solve_cphf_pcg_ov(Z_mat_a, ea, na_, va_, false);
-    
-    if (!is_restricted && nb_ > 0 && vb_ > 0) {
-        Delta_G_ia_b = solve_cphf_pcg_ov(Z_mat_b, eb, nb_, vb_, true);
-    }
-
-    // =========================================================================
-    // 2. PEMBENTUKAN GENERALIZED FOCK (Dengan Delta_G Penuh)
+    // 2. PEMBENTUKAN GENERALIZED FOCK 
     // =========================================================================
     Eigen::MatrixXd G_full_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
     G_full_a.block(0, 0, na_, na_) = G_oo_alpha_;
@@ -1663,8 +1650,9 @@ void OMP3::build_generalized_fock() {
         Eigen::MatrixXd F_HF_vo_a = F_HF_mo_a.block(na_, 0, va_, na_);
         Eigen::MatrixXd L_sep_a = F_HF_vo_a * G_oo_alpha_ - G_vv_alpha_ * F_HF_vo_a;
         
-        F_gen_a_.block(na_, 0, va_, na_) += L_sep_a + Z_mat_a + Delta_G_ia_a;
-        F_gen_a_.block(0, na_, na_, va_) += (L_sep_a + Z_mat_a + Delta_G_ia_a).transpose();
+        // HANYA Z_mat_a. FDA approach sama seperti Psi4.
+        F_gen_a_.block(na_, 0, va_, na_) += L_sep_a + Z_mat_a; 
+        F_gen_a_.block(0, na_, na_, va_) += (L_sep_a + Z_mat_a).transpose();
     }
 
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
@@ -1672,8 +1660,8 @@ void OMP3::build_generalized_fock() {
         Eigen::MatrixXd F_HF_vo_b = F_HF_mo_b.block(nb_, 0, vb_, nb_);
         Eigen::MatrixXd L_sep_b = F_HF_vo_b * G_oo_beta_ - G_vv_beta_ * F_HF_vo_b;
 
-        F_gen_b_.block(nb_, 0, vb_, nb_) += L_sep_b + Z_mat_b + Delta_G_ia_b;
-        F_gen_b_.block(0, nb_, nb_, vb_) += (L_sep_b + Z_mat_b + Delta_G_ia_b).transpose();
+        F_gen_b_.block(nb_, 0, vb_, nb_) += L_sep_b + Z_mat_b;
+        F_gen_b_.block(0, nb_, nb_, vb_) += (L_sep_b + Z_mat_b).transpose();
     } else if (is_restricted) {
         F_gen_b_ = F_gen_a_;
     }
