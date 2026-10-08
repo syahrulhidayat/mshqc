@@ -279,11 +279,13 @@ protected:
     virtual void build_opdm_beta();
 
     virtual void build_hessian_diagonal(Eigen::VectorXd& diag_H, double grad_norm);
+    
 
     // Sisa fungsi private/protected...
     void execute_macro_iterations();
     void execute_macro_iterations(DIIS& diis_a, DIIS& diis_b, int macro_iter);
     Eigen::VectorXd compute_soscf_step(double trust_radius, double& expected_change);
+    Eigen::MatrixXd solve_cphf_pcg_ov(const Eigen::MatrixXd& Z_ov, const Eigen::VectorXd& eps, int na, int va);
     void apply_orbital_rotation(const Eigen::VectorXd& kappa);
     void init_fast_integrals(); 
     void pseudocanonicalize();

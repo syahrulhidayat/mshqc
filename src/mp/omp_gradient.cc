@@ -364,7 +364,7 @@ void OMP2::apply_orbital_rotation(const Eigen::VectorXd& kappa) {
         C_b_current_ = C_b_current_ * K_b.exp();
     }
 }
-Eigen::MatrixXd solve_cphf_pcg_ov(const Eigen::MatrixXd& Z_ov, const Eigen::VectorXd& eps, int na, int va) {
+Eigen::MatrixXd OMP2::solve_cphf_pcg_ov(const Eigen::MatrixXd& Z_ov, const Eigen::VectorXd& eps, int na, int va) {
     Eigen::MatrixXd X = Eigen::MatrixXd::Zero(va, na);
     Eigen::MatrixXd R = Z_ov;
     Eigen::MatrixXd P = R;

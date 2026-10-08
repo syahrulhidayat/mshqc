@@ -47,7 +47,7 @@ protected:
     void debug_gradient_fd(int i_target, int a_target);
     Eigen::Tensor<double, 4> V_vvvv_, V_oooo_, V_ovov_, V_oovv_, V_vvov_, V_ooov_;
     Eigen::Tensor<double, 4> eri_ao_cached_;
-    Eigen::MatrixXd solve_cphf_pcg_ov(const Eigen::MatrixXd& Z_ov, const Eigen::VectorXd& eps, int n_occ, int n_vir, bool is_beta);
+
 
     double e_mp3_aa_ = 0.0;
     double e_mp3_bb_ = 0.0;
