@@ -364,4 +364,52 @@ void OMP2::apply_orbital_rotation(const Eigen::VectorXd& kappa) {
         C_b_current_ = C_b_current_ * K_b.exp();
     }
 }
+Eigen::MatrixXd solve_cphf_pcg_ov(const Eigen::MatrixXd& Z_ov, const Eigen::VectorXd& eps, int na, int va) {
+    Eigen::MatrixXd X = Eigen::MatrixXd::Zero(va, na);
+    Eigen::MatrixXd R = Z_ov;
+    Eigen::MatrixXd P = R;
+    
+    double rsold = R.squaredNorm();
+    const int max_iter = 50;
+    const double tol = 1e-10;
+
+    for (int iter = 0; iter < max_iter; ++iter) {
+        Eigen::MatrixXd AP = Eigen::MatrixXd::Zero(va, na);
+        
+        // 1. Evaluasi Komponen Diagonal HF (Selisih Eigenenergi)
+        for (int i = 0; i < na; ++i) {
+            for (int a = 0; a < va; ++a) {
+                AP(a, i) = (eps(na + a) - eps(i)) * P(a, i);
+            }
+        }
+
+        // 2. Evaluasi On-The-Fly Interaksi 2-Elektron (Hessian-Vector Product)
+        // Membentuk matriks pseudo-densitas P1 dari tebakan P
+        Eigen::MatrixXd P1 = scf_.C_alpha.leftCols(na) * P.transpose() * scf_.C_alpha.rightCols(va).transpose();
+        P1 = (P1 + P1.transpose()).eval();
+        
+        Eigen::MatrixXd F1_a, F1_b;
+        // build_fock_fast akan menangani kontraksi tensor 2-elektron secara efisien
+        build_fock_fast(P1, P1, F1_a, F1_b); 
+        F1_a -= H_core_; // Menghilangkan komponen 1-elektron untuk mengekstraksi murni respons J dan K
+        
+        // Menambahkan respons 2-elektron ke dalam AP
+        AP += 2.0 * scf_.C_alpha.rightCols(va).transpose() * F1_a * scf_.C_alpha.leftCols(na);
+
+        // 3. Update Preconditioned Conjugate Gradient
+        double alpha = rsold / P.cwiseProduct(AP).sum();
+        X += alpha * P;
+        R -= alpha * AP;
+        
+        double rsnew = R.squaredNorm();
+        if (std::sqrt(rsnew) < tol) {
+            break; // CPHF Konvergen
+        }
+        
+        P = R + (rsnew / rsold) * P;
+        rsold = rsnew;
+    }
+    
+    return X;
+}
 } // namespace mshqc
