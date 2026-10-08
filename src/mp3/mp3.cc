@@ -1379,17 +1379,23 @@ void OMP3::build_generalized_fock() {
     if (config_.eri_method == "exact") {
         if (is_restricted) {
             Eigen::Tensor< double, 4 > Teff(na_, na_, va_, va_);
+            Eigen::Tensor< double, 4 > T2_tilde(na_, na_, va_, va_); // Tambahkan ini
+            
             #pragma omp parallel for collapse(4) schedule(static)
             for(int i = 0; i < na_; ++i) {
                 for(int j = 0; j < na_; ++j) {
                     for(int a = 0; a < va_; ++a) {
                         for(int b = 0; b < va_; ++b) {
                             Teff(i,j,a,b) = (*t_aa_dense)(i,a,j,b) + L2_aa_(i,j,a,b);
+                            // Bentuk T2 tilde untuk evaluasi TPDM
+                            T2_tilde(i,j,a,b) = 2.0 * (*t_aa_dense)(i,a,j,b) - (*t_aa_dense)(i,b,j,a);
                         }
                     }
                 }
             }
             TBLIS_VIEW_4D(t_Teff, Teff, na_, na_, va_, va_);
+            TBLIS_VIEW_4D(t_T2, (*t_aa_dense), na_, na_, va_, va_);
+            TBLIS_VIEW_4D(t_T2t, T2_tilde, na_, na_, va_, va_);
 
             if (eri_ao_cached_.size() == 0) {
                 eri_ao_cached_ = integrals_->compute_eri();
@@ -1404,6 +1410,24 @@ void OMP3::build_generalized_fock() {
             auto V_ooov = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cao, Cao, Cao, Cav, nbf_, na_, na_, na_, va_);
             TBLIS_VIEW_4D(t_Vooov, V_ooov, na_, na_, na_, va_);
             tblis::mult< double >(-1.0, t_Vooov, "jikc", t_Teff, "jkac", 1.0, t_Zmat, "ai");
+
+            // =====================================================================
+            // PERBAIKAN FATAL MSHQC: Injeksi TPDM VVVV dan OOOO (Meniru Psi4)
+            // =====================================================================
+            Eigen::Tensor< double, 4 > Gamma_vvvv(va_, va_, va_, va_);
+            TBLIS_VIEW_4D(t_Gamma_vvvv, Gamma_vvvv, va_, va_, va_, va_);
+            // Gamma_abcd = sum_{ij} (2*t_ijab - t_ijba) * t_ijcd
+            tblis::mult<double>(1.0, t_T2t, "ijab", t_T2, "ijcd", 0.0, t_Gamma_vvvv, "abcd");
+            // Z_ai += sum_{bcd} Gamma_abcd * V_icbd (Kontraksi dengan V_OVVV)
+            tblis::mult<double>(1.0, t_Gamma_vvvv, "abcd", t_Vovvv_ex, "ibcd", 1.0, t_Zmat, "ai");
+
+            Eigen::Tensor< double, 4 > Gamma_oooo(na_, na_, na_, na_);
+            TBLIS_VIEW_4D(t_Gamma_oooo, Gamma_oooo, na_, na_, na_, na_);
+            // Gamma_ijkl = sum_{ab} (2*t_ijab - t_ijba) * t_klab
+            tblis::mult<double>(1.0, t_T2t, "ijab", t_T2, "klab", 0.0, t_Gamma_oooo, "ijkl");
+            // Z_ai -= sum_{jkl} Gamma_ijkl * V_ajkl (Kontraksi dengan V_OOOV)
+            tblis::mult<double>(-1.0, t_Gamma_oooo, "ijkl", t_Vooov, "jkla", 1.0, t_Zmat, "ai");
+            // =====================================================================
 
         } else {
             if (eri_ao_cached_.size() == 0) {
