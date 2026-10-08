@@ -1293,58 +1293,7 @@ void OMP3::build_opdm_beta() {
     tblis::mult<double>(0.5, t_T2ab, "ijca", t_T3ab, "ijcb", 1.0, t_Gvv_b, "ab");   
     tblis::mult<double>(0.5, t_T3ab, "ijca", t_T2ab, "ijcb", 1.0, t_Gvv_b, "ab");
 }
-void OMP3::pseudocanonicalize_orbitals() {
-    bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
-    
-    // 1. Bentuk matriks Generalized Fock di basis MO saat ini
-    Eigen::MatrixXd F_ao_a, F_ao_b;
-    build_fock_fast(scf_.P_alpha, scf_.P_beta, F_ao_a, F_ao_b); // Evaluasi Fock murni
-    
-    Eigen::MatrixXd F_mo_a = scf_.C_alpha.transpose() * F_ao_a * scf_.C_alpha;
-    
-    // 2. Isolasi blok Occupied dan Virtual
-    Eigen::MatrixXd F_oo_a = F_mo_a.block(0, 0, na_, na_);
-    Eigen::MatrixXd F_vv_a = F_mo_a.block(na_, na_, va_, va_);
-    
-    // 3. Diagonalisasi Eksak (Sangat cepat untuk dimensi N_occ dan N_vir)
-    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> solver_oo_a(F_oo_a);
-    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> solver_vv_a(F_vv_a);
-    
-    // 4. Update Energi Orbital (Nilai Eigen absolut untuk denominator)
-    scf_.orbital_energies_alpha.segment(0, na_) = solver_oo_a.eigenvalues();
-    scf_.orbital_energies_alpha.segment(na_, va_) = solver_vv_a.eigenvalues();
-    
-    // 5. Rotasi Matriks Koefisien (U_oo dan U_vv)
-    scf_.C_alpha.leftCols(na_) *= solver_oo_a.eigenvectors();
-    scf_.C_alpha.rightCols(va_) *= solver_vv_a.eigenvectors();
 
-    if (!is_restricted && nb_ > 0 && vb_ > 0) {
-        Eigen::MatrixXd F_mo_b = scf_.C_beta.transpose() * F_ao_b * scf_.C_beta;
-        
-        Eigen::MatrixXd F_oo_b = F_mo_b.block(0, 0, nb_, nb_);
-        Eigen::MatrixXd F_vv_b = F_mo_b.block(nb_, nb_, vb_, vb_);
-        
-        Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> solver_oo_b(F_oo_b);
-        Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> solver_vv_b(F_vv_b);
-        
-        scf_.orbital_energies_beta.segment(0, nb_) = solver_oo_b.eigenvalues();
-        scf_.orbital_energies_beta.segment(nb_, vb_) = solver_vv_b.eigenvalues();
-        
-        scf_.C_beta.leftCols(nb_) *= solver_oo_b.eigenvectors();
-        scf_.C_beta.rightCols(vb_) *= solver_vv_b.eigenvectors();
-    } else if (is_restricted) {
-        scf_.orbital_energies_beta = scf_.orbital_energies_alpha;
-        scf_.C_beta = scf_.C_alpha;
-    }
-
-    // Perbarui Matriks Densitas
-    scf_.P_alpha = scf_.C_alpha.leftCols(na_) * scf_.C_alpha.leftCols(na_).transpose();
-    if (!is_restricted && nb_ > 0) {
-        scf_.P_beta = scf_.C_beta.leftCols(nb_) * scf_.C_beta.leftCols(nb_).transpose();
-    } else {
-        scf_.P_beta = scf_.P_alpha;
-    }
-}
 
 void OMP3::build_generalized_fock() {
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
