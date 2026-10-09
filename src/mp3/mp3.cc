@@ -1352,8 +1352,6 @@ void OMP3::build_generalized_fock() {
     auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
     auto* t2_bb_dense = t2_bb_.get_block(0,0,0,0);
 
-    // SOLUSI MATEMATIS MSHQC: Pembagian murni (karena respon 2-elektron analitik = 0)
-    // Sepenuhnya menghapus bottleneck Conjugate Gradient.
     auto solve_mini_cphf_fast = [](const Eigen::MatrixXd& Z_in, const Eigen::VectorXd& eps, int dim, int offset) -> Eigen::MatrixXd {
         if (dim == 0) return Eigen::MatrixXd::Zero(0, 0);
         Eigen::MatrixXd x = Eigen::MatrixXd::Zero(dim, dim);
@@ -1369,7 +1367,86 @@ void OMP3::build_generalized_fock() {
     };
 
     // =========================================================================
-    // 1. PEMBENTUKAN Z_MAT & CPHF FOLDING
+    // 0. PEMBENTUKAN AUGMENTED T-AMPLITUDE (T_aug = T1 + T2 + W * T1)
+    // Solusi Terpadu MSHQC: Mengekstraksi respons orde 3 dari T2
+    // =========================================================================
+    Eigen::MatrixXd T_aug_aa = Eigen::MatrixXd::Zero(na_ * va_, na_ * va_);
+    Eigen::MatrixXd T_aug_bb = Eigen::MatrixXd::Zero(nb_ * vb_, nb_ * vb_);
+    Eigen::MatrixXd T_aug_ab = Eigen::MatrixXd::Zero(na_ * va_, nb_ * vb_);
+
+    if (t_aa_dense) {
+        Eigen::MatrixXd T1_aa = Eigen::MatrixXd::Zero(na_ * va_, na_ * va_);
+        Eigen::MatrixXd T2_aa = Eigen::MatrixXd::Zero(na_ * va_, na_ * va_);
+        Eigen::MatrixXd W_aa  = Eigen::MatrixXd::Zero(na_ * va_, na_ * va_);
+        
+        #pragma omp parallel for collapse(2) schedule(static)
+        for (int i = 0; i < na_; ++i) {
+            for (int a = 0; a < va_; ++a) {
+                for (int j = 0; j < na_; ++j) {
+                    for (int b = 0; b < va_; ++b) {
+                        int idx1 = i * va_ + a;
+                        int idx2 = j * va_ + b;
+                        T1_aa(idx1, idx2) = (*t_aa_dense)(i, a, j, b);
+                        T2_aa(idx1, idx2) = L2_aa_(i, j, a, b);
+                        // Rekonstruksi W eksak secara on-the-fly via Denominator
+                        double D = ea(i) + ea(j) - ea(na_+a) - ea(na_+b);
+                        W_aa(idx1, idx2) = L2_aa_(i, j, a, b) * D;
+                    }
+                }
+            }
+        }
+        // Injeksi Respons Kuadratik (Ring & Ladder)
+        T_aug_aa = T1_aa + T2_aa + 0.25 * W_aa * T1_aa;
+    }
+
+    if (t2_bb_dense && !is_restricted && nb_ > 0 && vb_ > 0) {
+        Eigen::MatrixXd T1_bb = Eigen::MatrixXd::Zero(nb_ * vb_, nb_ * vb_);
+        Eigen::MatrixXd T2_bb = Eigen::MatrixXd::Zero(nb_ * vb_, nb_ * vb_);
+        Eigen::MatrixXd W_bb  = Eigen::MatrixXd::Zero(nb_ * vb_, nb_ * vb_);
+        
+        #pragma omp parallel for collapse(2) schedule(static)
+        for (int i = 0; i < nb_; ++i) {
+            for (int a = 0; a < vb_; ++a) {
+                for (int j = 0; j < nb_; ++j) {
+                    for (int b = 0; b < vb_; ++b) {
+                        int idx1 = i * vb_ + a;
+                        int idx2 = j * vb_ + b;
+                        T1_bb(idx1, idx2) = (*t2_bb_dense)(i, j, a, b);
+                        T2_bb(idx1, idx2) = L2_bb_(i, j, a, b);
+                        double D = eb(i) + eb(j) - eb(nb_+a) - eb(nb_+b);
+                        W_bb(idx1, idx2) = L2_bb_(i, j, a, b) * D;
+                    }
+                }
+            }
+        }
+        T_aug_bb = T1_bb + T2_bb + 0.25 * W_bb * T1_bb;
+    }
+
+    if (t2_ab_dense && !is_restricted && nb_ > 0 && vb_ > 0) {
+        Eigen::MatrixXd T1_ab = Eigen::MatrixXd::Zero(na_ * va_, nb_ * vb_);
+        Eigen::MatrixXd T2_ab = Eigen::MatrixXd::Zero(na_ * va_, nb_ * vb_);
+        Eigen::MatrixXd W_ab  = Eigen::MatrixXd::Zero(na_ * va_, nb_ * vb_);
+        
+        #pragma omp parallel for collapse(2) schedule(static)
+        for (int i = 0; i < na_; ++i) {
+            for (int a = 0; a < va_; ++a) {
+                for (int j = 0; j < nb_; ++j) {
+                    for (int b = 0; b < vb_; ++b) {
+                        int idx1 = i * va_ + a;
+                        int idx2 = j * vb_ + b;
+                        T1_ab(idx1, idx2) = (*t2_ab_dense)(i, j, a, b);
+                        T2_ab(idx1, idx2) = L2_ab_(i, j, a, b);
+                        double D = ea(i) + eb(j) - ea(na_+a) - eb(nb_+b);
+                        W_ab(idx1, idx2) = L2_ab_(i, j, a, b) * D;
+                    }
+                }
+            }
+        }
+        T_aug_ab = T1_ab + T2_ab + 1.0 * W_ab * T1_ab;
+    }
+
+    // =========================================================================
+    // 1. PEMBENTUKAN Z_MAT & CPHF FOLDING (Terpadu Exact & DF)
     // =========================================================================
     if (config_.eri_method == "exact") {
         if (is_restricted) {
@@ -1379,7 +1456,7 @@ void OMP3::build_generalized_fock() {
                 for(int j = 0; j < na_; ++j) {
                     for(int a = 0; a < va_; ++a) {
                         for(int b = 0; b < va_; ++b) {
-                            Teff(i,j,a,b) = (*t_aa_dense)(i,a,j,b) + L2_aa_(i,j,a,b);
+                            Teff(i,j,a,b) = T_aug_aa(i * va_ + a, j * va_ + b); // Injeksi T_aug ke Exact
                         }
                     }
                 }
@@ -1409,7 +1486,6 @@ void OMP3::build_generalized_fock() {
             TBLIS_VIEW_4D(t_Vooov, V_ooov, na_, na_, na_, va_);
             tblis::mult< double >(-1.0, t_Vooov, "jikc", t_Teff, "jkac", 1.0, t_Zmat, "ai");
 
-            // Menggunakan fast analitik CPHF dari MSHQC
             dx_oo_a = solve_mini_cphf_fast(Z_oo_mat, ea, na_, 0);
             dx_vv_a = solve_mini_cphf_fast(Z_vv_mat, ea, va_, na_);
 
@@ -1434,7 +1510,7 @@ void OMP3::build_generalized_fock() {
                 for(int j = 0; j < na_; ++j) {
                     for(int a = 0; a < va_; ++a) {
                         for(int b = 0; b < va_; ++b) {
-                            Teff_aa(i,j,a,b) = (*t_aa_dense)(i,a,j,b) + L2_aa_(i,j,a,b);
+                            Teff_aa(i,j,a,b) = T_aug_aa(i * va_ + a, j * va_ + b);
                         }
                     }
                 }
@@ -1445,7 +1521,7 @@ void OMP3::build_generalized_fock() {
                     for(int j = 0; j < nb_; ++j) {
                         for(int a = 0; a < vb_; ++a) {
                             for(int b = 0; b < vb_; ++b) {
-                                Teff_bb(i,j,a,b) = (*t2_bb_dense)(i,j,a,b) + L2_bb_(i,j,a,b);
+                                Teff_bb(i,j,a,b) = T_aug_bb(i * vb_ + a, j * vb_ + b);
                             }
                         }
                     }
@@ -1455,7 +1531,7 @@ void OMP3::build_generalized_fock() {
                     for(int j = 0; j < nb_; ++j) {
                         for(int a = 0; a < va_; ++a) {
                             for(int b = 0; b < vb_; ++b) {
-                                Teff_ab(i,j,a,b) = (*t2_ab_dense)(i,j,a,b) + L2_ab_(i,j,a,b);
+                                Teff_ab(i,j,a,b) = T_aug_ab(i * va_ + a, j * vb_ + b);
                             }
                         }
                     }
@@ -1592,57 +1668,15 @@ void OMP3::build_generalized_fock() {
             }
         }
 
-        Eigen::MatrixXd Teff_aa = Eigen::MatrixXd::Zero(na_ * va_, na_ * va_);
-        Eigen::MatrixXd Teff_ab = Eigen::MatrixXd::Zero(na_ * va_, nb_ * vb_);
-        Eigen::MatrixXd Teff_bb = Eigen::MatrixXd::Zero(nb_ * vb_, nb_ * vb_);
-
-        if (t_aa_dense) {
-            #pragma omp parallel for collapse(2) schedule(static)
-            for (int i = 0; i < na_; ++i) {
-                for (int a = 0; a < va_; ++a) {
-                    for (int j = 0; j < na_; ++j) {
-                        for (int b = 0; b < va_; ++b) {
-                            Teff_aa(i * va_ + a, j * va_ + b) = (*t_aa_dense)(i, a, j, b) + L2_aa_(i, j, a, b);
-                        }
-                    }
-                }
-            }
-        }
-        
-        if (t2_ab_dense && !is_restricted) {
-            #pragma omp parallel for collapse(2) schedule(static)
-            for (int i = 0; i < na_; ++i) {
-                for (int a = 0; a < va_; ++a) {
-                    for (int j = 0; j < nb_; ++j) {
-                        for (int b = 0; b < vb_; ++b) {
-                            Teff_ab(i * va_ + a, j * vb_ + b) = (*t2_ab_dense)(i, j, a, b) + L2_ab_(i, j, a, b);
-                        }
-                    }
-                }
-            }
-        }
-        
-        if (t2_bb_dense && !is_restricted) {
-            #pragma omp parallel for collapse(2) schedule(static)
-            for (int i = 0; i < nb_; ++i) {
-                for (int a = 0; a < vb_; ++a) {
-                    for (int j = 0; j < nb_; ++j) {
-                        for (int b = 0; b < vb_; ++b) {
-                            Teff_bb(i * vb_ + a, j * vb_ + b) = (*t2_bb_dense)(i, j, a, b) + L2_bb_(i, j, a, b);
-                        }
-                    }
-                }
-            }
-        }
-
-        Eigen::MatrixXd X_a = Teff_aa * B_ia_P_alpha_;
-        if (!is_restricted) X_a.noalias() += Teff_ab * B_ia_P_beta_;
+        // Injeksi T_aug secara langsung ke blok Density Fitting
+        Eigen::MatrixXd X_a = T_aug_aa * B_ia_P_alpha_;
+        if (!is_restricted) X_a.noalias() += T_aug_ab * B_ia_P_beta_;
 
         Eigen::MatrixXd Z_oo_a = Eigen::MatrixXd::Zero(na_, na_);
         Eigen::MatrixXd Z_vv_a = Eigen::MatrixXd::Zero(va_, va_);
         Eigen::MatrixXd X_b, Z_oo_b, Z_vv_b;
         if (!is_restricted && nb_ > 0 && vb_ > 0) {
-            X_b = Teff_bb * B_ia_P_beta_ + Teff_ab.transpose() * B_ia_P_alpha_;
+            X_b = T_aug_bb * B_ia_P_beta_ + T_aug_ab.transpose() * B_ia_P_alpha_;
             Z_oo_b = Eigen::MatrixXd::Zero(nb_, nb_);
             Z_vv_b = Eigen::MatrixXd::Zero(vb_, vb_);
         }
@@ -1767,7 +1801,6 @@ void OMP3::build_generalized_fock() {
         F_gen_b_ = F_gen_a_;
     }
 }
-
 void OMP3::build_hessian_diagonal(Eigen::VectorXd& diag_H, double grad_norm) {
     OMP2::build_hessian_diagonal(diag_H, grad_norm);
     int idx = 0;
