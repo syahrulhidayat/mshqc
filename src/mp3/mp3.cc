@@ -1161,9 +1161,12 @@ void OMP3::compute_mp3_correction() {
 }
 
 void OMP3::build_opdm_alpha() {
-    if (L2_aa_.size() == 0) { OMP2::build_opdm_alpha(); return; }
-    auto* t2_aa_dense = t2_aa_.get_block(0,0,0,0);
-    if(!t2_aa_dense) return;
+    if (L2_aa_.size() == 0) { 
+        OMP2::build_opdm_alpha(); 
+        return; 
+    }
+    auto* t2_aa_dense = t2_aa_.get_block(0, 0, 0, 0);
+    if (!t2_aa_dense) return;
 
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     G_oo_alpha_ = Eigen::MatrixXd::Zero(na_, na_);
@@ -1171,11 +1174,11 @@ void OMP3::build_opdm_alpha() {
     
     Eigen::Tensor<double, 4> T2_aa_ijab(na_, na_, va_, va_);
     #pragma omp parallel for collapse(4) schedule(static)
-    for(int i = 0; i < na_; ++i) {
-        for(int j = 0; j < na_; ++j) {
-            for(int a = 0; a < va_; ++a) {
-                for(int b = 0; b < va_; ++b) {
-                    T2_aa_ijab(i,j,a,b) = (*t2_aa_dense)(i,a,j,b);
+    for (int i = 0; i < na_; ++i) {
+        for (int j = 0; j < na_; ++j) {
+            for (int a = 0; a < va_; ++a) {
+                for (int b = 0; b < va_; ++b) {
+                    T2_aa_ijab(i, j, a, b) = (*t2_aa_dense)(i, a, j, b);
                 }
             }
         }
@@ -1190,8 +1193,8 @@ void OMP3::build_opdm_alpha() {
             for (int j = 0; j < na_; ++j) {
                 for (int a = 0; a < va_; ++a) {
                     for (int b = 0; b < va_; ++b) {
-                        T2_tilde(i,j,a,b) = 2.0 * T2_aa_ijab(i,j,a,b) - T2_aa_ijab(i,j,b,a);
-                        L2_tilde(i,j,a,b) = 2.0 * L2_aa_(i,j,a,b) - L2_aa_(i,j,b,a);
+                        T2_tilde(i, j, a, b) = 2.0 * T2_aa_ijab(i, j, a, b) - T2_aa_ijab(i, j, b, a);
+                        L2_tilde(i, j, a, b) = 2.0 * L2_aa_(i, j, a, b) - L2_aa_(i, j, b, a);
                     }
                 }
             }
@@ -1205,13 +1208,17 @@ void OMP3::build_opdm_alpha() {
         TBLIS_VIEW_2D(t_Goo, G_oo_alpha_.data(), na_, na_);
         TBLIS_VIEW_2D(t_Gvv, G_vv_alpha_.data(), va_, va_);
 
+        // Kontribusi Orde-2
         tblis::mult<double>(-1.0, t_T2, "ikab", t_T2t, "jkab", 0.0, t_Goo, "ij"); 
-        tblis::mult<double>(-0.5, t_T2, "ikab", t_L2t, "jkab", 1.0, t_Goo, "ij"); 
-        tblis::mult<double>(-0.5, t_L2, "ikab", t_T2t, "jkab", 1.0, t_Goo, "ij");  
+        // Kontribusi Orde-3 Suku Silang Lagrangian (Skala 1.0 penuh)
+        tblis::mult<double>(-1.0, t_T2, "ikab", t_L2t, "jkab", 1.0, t_Goo, "ij"); 
+        tblis::mult<double>(-1.0, t_L2, "ikab", t_T2t, "jkab", 1.0, t_Goo, "ij");  
 
+        // Kontribusi Orde-2
         tblis::mult<double>(1.0, t_T2, "ijac", t_T2t, "ijbc", 0.0, t_Gvv, "ab"); 
-        tblis::mult<double>(0.5, t_T2, "ijac", t_L2t, "ijbc", 1.0, t_Gvv, "ab"); 
-        tblis::mult<double>(0.5, t_L2, "ijac", t_T2t, "ijbc", 1.0, t_Gvv, "ab"); 
+        // Kontribusi Orde-3 Suku Silang Lagrangian (Skala 1.0 penuh)
+        tblis::mult<double>(1.0, t_T2, "ijac", t_L2t, "ijbc", 1.0, t_Gvv, "ab"); 
+        tblis::mult<double>(1.0, t_L2, "ijac", t_T2t, "ijbc", 1.0, t_Gvv, "ab"); 
         return;
     }
 
@@ -1220,26 +1227,30 @@ void OMP3::build_opdm_alpha() {
     TBLIS_VIEW_2D(t_Goo_a, G_oo_alpha_.data(), na_, na_);
     TBLIS_VIEW_2D(t_Gvv_a, G_vv_alpha_.data(), va_, va_);
     
-    tblis::mult<double>(-0.5,  t_T2aa, "ikab", t_T2aa, "jkab", 1.0, t_Goo_a, "ij"); 
-    tblis::mult<double>(-0.25, t_T2aa, "ikab", t_T3aa, "jkab", 1.0, t_Goo_a, "ij"); 
-    tblis::mult<double>(-0.25, t_T3aa, "ikab", t_T2aa, "jkab", 1.0, t_Goo_a, "ij"); 
+    // Alpha-Alpha Occupied
+    tblis::mult<double>(-0.5, t_T2aa, "ikab", t_T2aa, "jkab", 1.0, t_Goo_a, "ij"); 
+    tblis::mult<double>(-0.5, t_T2aa, "ikab", t_T3aa, "jkab", 1.0, t_Goo_a, "ij"); 
+    tblis::mult<double>(-0.5, t_T3aa, "ikab", t_T2aa, "jkab", 1.0, t_Goo_a, "ij"); 
 
+    // Alpha-Alpha Virtual
     tblis::mult<double>(0.5,  t_T2aa, "ijac", t_T2aa, "ijbc", 1.0, t_Gvv_a, "ab"); 
-    tblis::mult<double>(0.25, t_T2aa, "ijac", t_T3aa, "ijbc", 1.0, t_Gvv_a, "ab");  
-    tblis::mult<double>(0.25, t_T3aa, "ijac", t_T2aa, "ijbc", 1.0, t_Gvv_a, "ab");
+    tblis::mult<double>(0.5,  t_T2aa, "ijac", t_T3aa, "ijbc", 1.0, t_Gvv_a, "ab");  
+    tblis::mult<double>(0.5,  t_T3aa, "ijac", t_T2aa, "ijbc", 1.0, t_Gvv_a, "ab");
 
-    auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
+    auto* t2_ab_dense = t2_ab_.get_block(0, 0, 0, 0);
     if (nb_ > 0 && vb_ > 0 && t2_ab_dense) {
         TBLIS_VIEW_4D(t_T2ab, (*t2_ab_dense), na_, nb_, va_, vb_);
         TBLIS_VIEW_4D(t_T3ab, L2_ab_, na_, nb_, va_, vb_);
         
+        // Alpha-Beta Occupied
         tblis::mult<double>(-1.0, t_T2ab, "ikab", t_T2ab, "jkab", 1.0, t_Goo_a, "ij"); 
-        tblis::mult<double>(-0.5, t_T2ab, "ikab", t_T3ab, "jkab", 1.0, t_Goo_a, "ij"); 
-        tblis::mult<double>(-0.5, t_T3ab, "ikab", t_T2ab, "jkab", 1.0, t_Goo_a, "ij"); 
+        tblis::mult<double>(-1.0, t_T2ab, "ikab", t_T3ab, "jkab", 1.0, t_Goo_a, "ij"); 
+        tblis::mult<double>(-1.0, t_T3ab, "ikab", t_T2ab, "jkab", 1.0, t_Goo_a, "ij"); 
         
-        tblis::mult<double>(1.0, t_T2ab, "ijac", t_T2ab, "ijbc", 1.0, t_Gvv_a, "ab"); 
-        tblis::mult<double>(0.5, t_T2ab, "ijac", t_T3ab, "ijbc", 1.0, t_Gvv_a, "ab");  
-        tblis::mult<double>(0.5, t_T3ab, "ijac", t_T2ab, "ijbc", 1.0, t_Gvv_a, "ab"); 
+        // Alpha-Beta Virtual
+        tblis::mult<double>(1.0,  t_T2ab, "ijac", t_T2ab, "ijbc", 1.0, t_Gvv_a, "ab"); 
+        tblis::mult<double>(1.0,  t_T2ab, "ijac", t_T3ab, "ijbc", 1.0, t_Gvv_a, "ab");  
+        tblis::mult<double>(1.0,  t_T3ab, "ijac", t_T2ab, "ijbc", 1.0, t_Gvv_a, "ab"); 
     }
 }
 
@@ -1277,23 +1288,26 @@ void OMP3::build_opdm_beta() {
     TBLIS_VIEW_2D(t_Goo_b, G_oo_beta_.data(), nb_, nb_);
     TBLIS_VIEW_2D(t_Gvv_b, G_vv_beta_.data(), vb_, vb_);
 
-    tblis::mult<double>(-0.5,  t_T2bb, "ikab", t_T2bb, "jkab", 1.0, t_Goo_b, "ij"); 
-    tblis::mult<double>(-0.25, t_T2bb, "ikab", t_T3bb, "jkab", 1.0, t_Goo_b, "ij"); 
-    tblis::mult<double>(-0.25, t_T3bb, "ikab", t_T2bb, "jkab", 1.0, t_Goo_b, "ij"); 
+    // Beta-Beta Occupied
+    tblis::mult<double>(-0.5, t_T2bb, "ikab", t_T2bb, "jkab", 1.0, t_Goo_b, "ij"); 
+    tblis::mult<double>(-0.5, t_T2bb, "ikab", t_T3bb, "jkab", 1.0, t_Goo_b, "ij"); 
+    tblis::mult<double>(-0.5, t_T3bb, "ikab", t_T2bb, "jkab", 1.0, t_Goo_b, "ij"); 
 
+    // Beta-Beta Virtual
     tblis::mult<double>(0.5,  t_T2bb, "ijac", t_T2bb, "ijbc", 1.0, t_Gvv_b, "ab"); 
-    tblis::mult<double>(0.25, t_T2bb, "ijac", t_T3bb, "ijbc", 1.0, t_Gvv_b, "ab");  
-    tblis::mult<double>(0.25, t_T3bb, "ijac", t_T2bb, "ijbc", 1.0, t_Gvv_b, "ab"); 
+    tblis::mult<double>(0.5,  t_T2bb, "ijac", t_T3bb, "ijbc", 1.0, t_Gvv_b, "ab");  
+    tblis::mult<double>(0.5,  t_T3bb, "ijac", t_T2bb, "ijbc", 1.0, t_Gvv_b, "ab"); 
     
+    // Trace over Alpha index untuk Beta Occupied
     tblis::mult<double>(-1.0, t_T2ab, "kiab", t_T2ab, "kjab", 1.0, t_Goo_b, "ij"); 
-    tblis::mult<double>(-0.5, t_T2ab, "kiab", t_T3ab, "kjab", 1.0, t_Goo_b, "ij");  
-    tblis::mult<double>(-0.5, t_T3ab, "kiab", t_T2ab, "kjab", 1.0, t_Goo_b, "ij");  
+    tblis::mult<double>(-1.0, t_T2ab, "kiab", t_T3ab, "kjab", 1.0, t_Goo_b, "ij");  
+    tblis::mult<double>(-1.0, t_T3ab, "kiab", t_T2ab, "kjab", 1.0, t_Goo_b, "ij");  
         
-    tblis::mult<double>(1.0, t_T2ab, "ijca", t_T2ab, "ijcb", 1.0, t_Gvv_b, "ab"); 
-    tblis::mult<double>(0.5, t_T2ab, "ijca", t_T3ab, "ijcb", 1.0, t_Gvv_b, "ab");   
-    tblis::mult<double>(0.5, t_T3ab, "ijca", t_T2ab, "ijcb", 1.0, t_Gvv_b, "ab");
+    // Trace over Alpha index untuk Beta Virtual
+    tblis::mult<double>(1.0,  t_T2ab, "ijca", t_T2ab, "ijcb", 1.0, t_Gvv_b, "ab"); 
+    tblis::mult<double>(1.0,  t_T2ab, "ijca", t_T3ab, "ijcb", 1.0, t_Gvv_b, "ab");   
+    tblis::mult<double>(1.0,  t_T3ab, "ijca", t_T2ab, "ijcb", 1.0, t_Gvv_b, "ab");
 }
-
 void OMP3::build_generalized_fock() {
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     const auto& ea = scf_.orbital_energies_alpha;
@@ -1385,12 +1399,16 @@ void OMP3::build_generalized_fock() {
                 for(int j = 0; j < na_; ++j) {
                     for(int a = 0; a < va_; ++a) {
                         for(int b = 0; b < va_; ++b) {
-                            Teff(i,j,a,b) = (*t_aa_dense)(i,a,j,b) + L2_aa_(i,j,a,b);
+                            double t_dir = (*t_aa_dense)(i,a,j,b) + L2_aa_(i,j,a,b);
+                            double t_ex  = (*t_aa_dense)(i,b,j,a) + L2_aa_(i,j,b,a);
+                        
+                            Teff(i,j,a,b) = 2.0 * t_dir - t_ex;
                         }
                     }
                 }
             }
             TBLIS_VIEW_4D(t_Teff, Teff, na_, na_, va_, va_);
+  
 
             if (eri_ao_cached_.size() == 0) {
                 eri_ao_cached_ = integrals_->compute_eri();
@@ -1838,7 +1856,6 @@ void OMP3::build_hessian_diagonal(Eigen::VectorXd& diag_H, double grad_norm) {
         }
     }
 }
-
 void OMP3::debug_gradient_fd(int i_target, int a_target) {
     std::cout << "\n--- [DEBUG] Membedah Komponen Gradien OMP3 ---\n";
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
@@ -1863,8 +1880,8 @@ void OMP3::debug_gradient_fd(int i_target, int a_target) {
     build_generalized_fock();
 
     double max_grad = -1.0;
-    for(int i = 0; i < na_; ++i) {
-        for(int a = 0; a < va_; ++a) {
+    for (int i = 0; i < na_; ++i) {
+        for (int a = 0; a < va_; ++a) {
             double val = std::abs(F_gen_a_(na_ + a, i));
             if (val > max_grad) {
                 max_grad = val;
@@ -1874,12 +1891,14 @@ void OMP3::debug_gradient_fd(int i_target, int a_target) {
         }
     }
     
-    double grad_ana_tot = is_restricted ? -4.0 * F_gen_a_(na_ + a_target, i_target) : -2.0 * F_gen_a_(na_ + a_target, i_target);
+    double grad_ana_tot = is_restricted ? -4.0 * F_gen_a_(na_ + a_target, i_target) 
+                                        : -2.0 * F_gen_a_(na_ + a_target, i_target);
     
     Eigen::MatrixXd F_ao_a, F_ao_b;
     build_fock_fast(scf_.P_alpha, scf_.P_beta, F_ao_a, F_ao_b);
     Eigen::MatrixXd F_mo_a = scf_.C_alpha.transpose() * F_ao_a * scf_.C_alpha;
-    double grad_ana_hf = is_restricted ? -4.0 * F_mo_a(na_ + a_target, i_target) : -2.0 * F_mo_a(na_ + a_target, i_target);
+    double grad_ana_hf = is_restricted ? -4.0 * F_mo_a(na_ + a_target, i_target) 
+                                       : -2.0 * F_mo_a(na_ + a_target, i_target);
     double grad_ana_corr = grad_ana_tot - grad_ana_hf;
     
     double theta = 1e-5;
@@ -1894,14 +1913,23 @@ void OMP3::debug_gradient_fd(int i_target, int a_target) {
         U(na_ + a_target, i_target) = -t;
         
         C_a_current_ = C_a_orig * U;
-        if (!is_restricted) C_b_current_ = C_b_orig * U; 
-        else C_b_current_ = C_a_current_;
+        // Isolasi: jangan rotasi koefisien beta saat mengevaluasi gradien parsial alpha
+        if (is_restricted) {
+            C_b_current_ = C_a_current_;
+        } else {
+            C_b_current_ = C_b_orig;
+        }
         
         scf_.C_alpha = C_a_current_;
-        scf_.C_beta = C_b_current_;
+        scf_.C_beta  = C_b_current_;
         scf_.P_alpha = scf_.C_alpha.leftCols(na_) * scf_.C_alpha.leftCols(na_).transpose();
-        if (!is_restricted) scf_.P_beta = scf_.C_beta.leftCols(nb_) * scf_.C_beta.leftCols(nb_).transpose();
-        else scf_.P_beta = scf_.P_alpha;
+        if (!is_restricted && nb_ > 0) {
+            scf_.P_beta = scf_.C_beta.leftCols(nb_) * scf_.C_beta.leftCols(nb_).transpose();
+        } else if (is_restricted) {
+            scf_.P_beta = scf_.P_alpha;
+        } else {
+            scf_.P_beta = Eigen::MatrixXd::Zero(nbf_, nbf_);
+        }
         
         pseudocanonicalize();
         C_a_current_ = scf_.C_alpha;
@@ -1912,7 +1940,7 @@ void OMP3::debug_gradient_fd(int i_target, int a_target) {
         e_hf = 0.5 * (scf_.P_alpha.cwiseProduct(H_core_ + F_ao_a_tmp).sum() + 
                       scf_.P_beta.cwiseProduct(H_core_ + F_ao_b_tmp).sum()) 
                + mol_.nuclear_repulsion_energy();
-                       
+                        
         transform_integrals(); 
         compute_t2_amplitudes();
         compute_mp2_energy();
@@ -1928,14 +1956,14 @@ void OMP3::debug_gradient_fd(int i_target, int a_target) {
     double hf_minus, mp2_minus, mp3_minus;
     calc_energy_components(-theta, hf_minus, mp2_minus, mp3_minus);
     
-    double g_num_hf  = (hf_plus - hf_minus) / (2.0 * theta);
-    double g_num_mp2 = (mp2_plus - mp2_minus) / (2.0 * theta);
-    double g_num_mp3 = (mp3_plus - mp3_minus) / (2.0 * theta);
+    double g_num_hf   = (hf_plus - hf_minus) / (2.0 * theta);
+    double g_num_mp2  = (mp2_plus - mp2_minus) / (2.0 * theta);
+    double g_num_mp3  = (mp3_plus - mp3_minus) / (2.0 * theta);
     double g_num_corr = g_num_mp2 + g_num_mp3;
-    double g_num_tot = g_num_hf + g_num_corr;
+    double g_num_tot  = g_num_hf + g_num_corr;
 
     std::cout << std::fixed << std::setprecision(10);
-    std::cout << "Target Rotasi        : (i=" << i_target << " [Occ], a=" << a_target << " [Vir])\n";
+    std::cout << "Target Rotasi        : (i=" << i_target << " [Occ_alpha], a=" << a_target << " [Vir_alpha])\n";
     std::cout << "--- Finite Difference (NUMERIK) ---\n";
     std::cout << "Gradien HF Numerik   : " << std::scientific << g_num_hf << "\n";
     std::cout << "Gradien MP2 Numerik  : " << std::scientific << g_num_mp2 << "\n";
@@ -1951,6 +1979,8 @@ void OMP3::debug_gradient_fd(int i_target, int a_target) {
     std::cout << "Selisih Korelasi     : " << std::abs(g_num_corr - grad_ana_corr) << "\n";
     std::cout << "Selisih TOTAL        : " << std::abs(g_num_tot - grad_ana_tot) << "\n";
     std::cout << "-------------------------------------------------------------------\n";
+
+    // Pulihkan status orbital asli setelah pengujian
     scf_.C_alpha = C_a_orig;
     scf_.C_beta  = C_b_orig;
     scf_.P_alpha = P_a_orig;
