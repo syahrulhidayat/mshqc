@@ -1314,43 +1314,69 @@ void OMP3::build_generalized_fock() {
     auto* t2_ab_dense = t2_ab_.get_block(0, 0, 0, 0);
     auto* t2_bb_dense = t2_bb_.get_block(0, 0, 0, 0);
 
+    // =========================================================================
+    // 1. EVALUASI Z-VECTOR (RESPON DENSITAS 2-PARTIKEL TERELAKSASI)
+    // =========================================================================
     if (config_.eri_method == "exact") {
+        if (eri_ao_cached_.size() == 0) {
+            eri_ao_cached_ = integrals_->compute_eri();
+        }
+
         if (is_restricted) {
+            // Amplitudo T2 asli dan Spin-Adapted (2T - T^T)
+            Eigen::Tensor<double, 4> T2_aa(na_, na_, va_, va_);
+            Eigen::Tensor<double, 4> T2_tilde(na_, na_, va_, va_);
             Eigen::Tensor<double, 4> Teff(na_, na_, va_, va_);
+
             #pragma omp parallel for collapse(4) schedule(static)
             for (int i = 0; i < na_; ++i) {
                 for (int j = 0; j < na_; ++j) {
                     for (int a = 0; a < va_; ++a) {
                         for (int b = 0; b < va_; ++b) {
-                            double t_dir = (*t_aa_dense)(i, a, j, b) + L2_aa_(i, j, a, b);
-                            double t_ex  = (*t_aa_dense)(i, b, j, a) + L2_aa_(i, j, b, a);
-                            Teff(i, j, a, b) = 2.0 * t_dir - t_ex;
+                            double t2_dir = (*t_aa_dense)(i, a, j, b);
+                            double t2_ex  = (*t_aa_dense)(i, b, j, a);
+                            T2_aa(i, j, a, b)    = t2_dir;
+                            T2_tilde(i, j, a, b) = 2.0 * t2_dir - t2_ex;
+
+                            double t_eff_dir = t2_dir + L2_aa_(i, j, a, b);
+                            double t_eff_ex  = t2_ex  + L2_aa_(i, j, b, a);
+                            Teff(i, j, a, b) = 2.0 * t_eff_dir - t_eff_ex;
                         }
                     }
                 }
             }
+
+            TBLIS_VIEW_4D(t_T2, T2_aa, na_, na_, va_, va_);
+            TBLIS_VIEW_4D(t_T2t, T2_tilde, na_, na_, va_, va_);
             TBLIS_VIEW_4D(t_Teff, Teff, na_, na_, va_, va_);
             TBLIS_VIEW_2D(t_Zmat, Z_mat_a.data(), va_, na_);
 
-            if (eri_ao_cached_.size() == 0) {
-                eri_ao_cached_ = integrals_->compute_eri();
-            }
-
+            // Integral 3-virtual (ovvv) dan 3-occupied (ooov)
             auto V_ovvv_ex = ERITransformer::transform_custom(eri_ao_cached_, Cao, Cav, Cav, Cav, nbf_, na_, va_, va_, va_);
             auto V_ooov    = ERITransformer::transform_custom(eri_ao_cached_, Cao, Cao, Cao, Cav, nbf_, na_, na_, na_, va_);
             TBLIS_VIEW_4D(t_Vovvv_ex, V_ovvv_ex, na_, va_, va_, va_);
             TBLIS_VIEW_4D(t_Vooov, V_ooov, na_, na_, na_, va_);
 
-            // Evaluasi Z-vector murni (O(N^5)) persis seperti OMP2
-            tblis::mult<double>(1.0,  t_Vovvv_ex, "kcab", t_Teff, "ikbc", 0.0, t_Zmat, "ai"); 
+            // Term 1: Kontribusi oovv (identik OMP2 tapi menggunakan Teff = T2 + T3)
+            tblis::mult<double>(1.0,  t_Vovvv_ex, "jcab", t_Teff, "ijbc", 0.0, t_Zmat, "ai");
             tblis::mult<double>(-1.0, t_Vooov,    "jikc", t_Teff, "jkac", 1.0, t_Zmat, "ai");
+
+            // Term 2: Respon 2-PDM Ladder (vvvv) -> Lambda_vv = T2 * T2_tilde
+            Eigen::Tensor<double, 4> Lambda_vv(va_, va_, va_, va_);
+            TBLIS_VIEW_4D(t_Lvv, Lambda_vv, va_, va_, va_, va_);
+            tblis::mult<double>(1.0, t_T2, "ijef", t_T2t, "ijab", 0.0, t_Lvv, "efab");
+            tblis::mult<double>(1.0, t_Vovvv_ex, "iefb", t_Lvv, "efab", 1.0, t_Zmat, "ai");
+
+            // Term 3: Respon 2-PDM Ring (oooo) -> Lambda_oo = T2 * T2_tilde
+            Eigen::Tensor<double, 4> Lambda_oo(na_, na_, na_, na_);
+            TBLIS_VIEW_4D(t_Loo, Lambda_oo, na_, na_, na_, na_);
+            tblis::mult<double>(1.0, t_T2, "mnab", t_T2t, "ijab", 0.0, t_Loo, "mnij");
+            tblis::mult<double>(-1.0, t_Vooov, "mnja", t_Loo, "mnij", 1.0, t_Zmat, "ai");
+
             Z_mat_b = Z_mat_a;
 
         } else {
-            if (eri_ao_cached_.size() == 0) {
-                eri_ao_cached_ = integrals_->compute_eri();
-            }
-
+            // Unrestricted Exact (UHF)
             Eigen::Tensor<double, 4> Teff_aa(na_, na_, va_, va_);
             Eigen::Tensor<double, 4> Teff_bb(nb_, nb_, vb_, vb_);
             Eigen::Tensor<double, 4> Teff_ab(na_, nb_, va_, vb_);
@@ -1365,6 +1391,7 @@ void OMP3::build_generalized_fock() {
                     }
                 }
             }
+
             if (nb_ > 0 && vb_ > 0) {
                 #pragma omp parallel for collapse(4) schedule(static)
                 for (int i = 0; i < nb_; ++i) {
@@ -1402,7 +1429,7 @@ void OMP3::build_generalized_fock() {
             TBLIS_VIEW_4D(t_Vooov_aa, V_ooov_aa, na_, na_, na_, va_);
             TBLIS_VIEW_2D(t_Zmat_a, Z_mat_a.data(), va_, na_);
 
-            tblis::mult<double>(1.0,  t_Vovvv_aa, "kcab", t_Teff_aa, "ikbc", 0.0, t_Zmat_a, "ai"); 
+            tblis::mult<double>(1.0,  t_Vovvv_aa, "jcab", t_Teff_aa, "ijbc", 0.0, t_Zmat_a, "ai");
             tblis::mult<double>(-1.0, t_Vooov_aa, "jikc", t_Teff_aa, "jkac", 1.0, t_Zmat_a, "ai");
 
             if (nb_ > 0 && vb_ > 0) {
@@ -1421,19 +1448,19 @@ void OMP3::build_generalized_fock() {
                 TBLIS_VIEW_4D(t_Vooov_ba_ex, V_ooov_ba_ex, nb_, nb_, na_, va_);
                 TBLIS_VIEW_2D(t_Zmat_b, Z_mat_b.data(), vb_, nb_);
 
-                tblis::mult<double>(1.0,  t_Vovvv_ba,    "kcab", t_Teff_ab, "ikbc", 1.0, t_Zmat_a, "ai");
+                tblis::mult<double>(1.0,  t_Vovvv_ba,    "jcab", t_Teff_ab, "ijbc", 1.0, t_Zmat_a, "ai");
                 tblis::mult<double>(-1.0, t_Vooov_ab_ex, "jikc", t_Teff_ab, "jkac", 1.0, t_Zmat_a, "ai");
 
-                tblis::mult<double>(1.0,  t_Vovvv_bb,    "kcab", t_Teff_bb, "ikbc", 0.0, t_Zmat_b, "ai");
+                tblis::mult<double>(1.0,  t_Vovvv_bb,    "jcab", t_Teff_bb, "ijbc", 0.0, t_Zmat_b, "ai");
                 tblis::mult<double>(-1.0, t_Vooov_bb,    "jikc", t_Teff_bb, "jkac", 1.0, t_Zmat_b, "ai");
 
-                tblis::mult<double>(1.0,  t_Vovvv_ab,    "kcab", t_Teff_ab, "kicb", 1.0, t_Zmat_b, "ai"); 
+                tblis::mult<double>(1.0,  t_Vovvv_ab,    "icab", t_Teff_ab, "kicb", 1.0, t_Zmat_b, "ai");
                 tblis::mult<double>(-1.0, t_Vooov_ba_ex, "jikc", t_Teff_ab, "kjca", 1.0, t_Zmat_b, "ai");
             }
         }
 
     } else {
-        // Density Fitting / Cholesky branch (Struktur identik murni OMP2)
+        // Density Fitting / Cholesky branch
         int n_aux = scf_.L_mat.cols();
         Eigen::MatrixXd B_oo_flat_a = Eigen::MatrixXd::Zero(na_ * na_, n_aux);
         Eigen::MatrixXd B_vv_flat_a = Eigen::MatrixXd::Zero(va_ * va_, n_aux);
@@ -1478,7 +1505,7 @@ void OMP3::build_generalized_fock() {
         if (!is_restricted && nb_ > 0 && vb_ > 0) {
             Eigen::MatrixXd Teff_ab = Eigen::MatrixXd::Zero(na_ * va_, nb_ * vb_);
             Eigen::MatrixXd Teff_bb = Eigen::MatrixXd::Zero(nb_ * vb_, nb_ * vb_);
-            
+
             if (t2_ab_dense) {
                 #pragma omp parallel for collapse(2) schedule(static)
                 for (int i = 0; i < na_; ++i) {
@@ -1509,7 +1536,7 @@ void OMP3::build_generalized_fock() {
 
         Z_mat_a.setZero();
         for (int P = 0; P < n_aux; ++P) {
-            Eigen::Map<const Eigen::MatrixXd> XT_a(X_a.col(P).data(), va_, na_); 
+            Eigen::Map<const Eigen::MatrixXd> XT_a(X_a.col(P).data(), va_, na_);
             Eigen::Map<const Eigen::MatrixXd> V_a(B_vv_flat_a.col(P).data(), va_, va_);
             Eigen::Map<const Eigen::MatrixXd> O_a(B_oo_flat_a.col(P).data(), na_, na_);
             Z_mat_a.noalias() += V_a * XT_a - XT_a * O_a;
@@ -1535,7 +1562,7 @@ void OMP3::build_generalized_fock() {
 
             Z_mat_b.setZero();
             for (int P = 0; P < n_aux; ++P) {
-                Eigen::Map<const Eigen::MatrixXd> XT_b(X_b.col(P).data(), vb_, nb_); 
+                Eigen::Map<const Eigen::MatrixXd> XT_b(X_b.col(P).data(), vb_, nb_);
                 Eigen::Map<const Eigen::MatrixXd> V_b(B_vv_flat_b.col(P).data(), vb_, vb_);
                 Eigen::Map<const Eigen::MatrixXd> O_b(B_oo_flat_b.col(P).data(), nb_, nb_);
                 Z_mat_b.noalias() += V_b * XT_b - XT_b * O_b;
@@ -1543,7 +1570,9 @@ void OMP3::build_generalized_fock() {
         }
     }
 
-    // Tahap Konstruksi Fock: Bersih, persis OMP2 tanpa ada tambahan Delta_G semu
+    // =========================================================================
+    // 2. PERAKITAN 1-RDM TERELAKSASI KORELASI PENUH
+    // =========================================================================
     Eigen::MatrixXd G_full_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
     G_full_a.block(0, 0, na_, na_) = G_oo_alpha_;
     G_full_a.block(na_, na_, va_, va_) = G_vv_alpha_;
@@ -1559,6 +1588,9 @@ void OMP3::build_generalized_fock() {
         P_corr_b = P_corr_a;
     }
 
+    // =========================================================================
+    // 3. MATRIKS FOCK HARTREE-FOCK DAN RESPON KORELASI 1-PARTIKEL (G_gamma)
+    // =========================================================================
     Eigen::MatrixXd F_HF_ao_a, F_HF_ao_b;
     build_fock_fast(scf_.P_alpha, scf_.P_beta, F_HF_ao_a, F_HF_ao_b);
     Eigen::MatrixXd F_HF_mo_a = scf_.C_alpha.transpose() * F_HF_ao_a * scf_.C_alpha;
@@ -1577,17 +1609,20 @@ void OMP3::build_generalized_fock() {
     if (!is_restricted && nb_ > 0) G_gamma_mo_b = scf_.C_beta.transpose() * G_gamma_ao_b * scf_.C_beta;
     else if (is_restricted) G_gamma_mo_b = G_gamma_mo_a;
 
+    // =========================================================================
+    // 4. PENYUSUNAN GENERALIZED FOCK (F_gen = F_HF + G_gamma + L_sep + Z)
+    // =========================================================================
     F_gen_a_ = F_HF_mo_a + G_gamma_mo_a;
     if (na_ > 0 && va_ > 0) {
         Eigen::MatrixXd F_HF_vo_a = F_HF_mo_a.block(na_, 0, va_, na_);
         Eigen::MatrixXd L_sep_a = F_HF_vo_a * G_oo_alpha_ - G_vv_alpha_ * F_HF_vo_a;
-        
+
         F_gen_a_.block(na_, 0, va_, na_) += L_sep_a + Z_mat_a;
         F_gen_a_.block(0, na_, na_, va_) += (L_sep_a + Z_mat_a).transpose();
     }
 
+    F_gen_b_ = F_HF_mo_b + G_gamma_mo_b;
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
-        F_gen_b_ = F_HF_mo_b + G_gamma_mo_b;
         Eigen::MatrixXd F_HF_vo_b = F_HF_mo_b.block(nb_, 0, vb_, nb_);
         Eigen::MatrixXd L_sep_b = F_HF_vo_b * G_oo_beta_ - G_vv_beta_ * F_HF_vo_b;
 
