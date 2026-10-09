@@ -43,9 +43,9 @@ protected:
     void build_opdm_beta() override;
 
     void build_hessian_diagonal(Eigen::VectorXd& diag_H, double grad_norm) override;
-    Eigen::MatrixXd solve_cphf_pcg_ov(const Eigen::MatrixXd& Z_ov, const Eigen::VectorXd& eps, int n_occ, int n_vir, bool is_beta);
     void debug_gradient_fd(int i_target, int a_target);
-    Eigen::Tensor<double, 4> V_vvvv_, V_oooo_, V_ovov_, V_oovv_, V_vvov_, V_ooov_;
+
+    // ERI Cache
     Eigen::Tensor<double, 4> eri_ao_cached_;
 
     // Variabel Energi MP3
@@ -54,15 +54,15 @@ protected:
     double e_mp3_ab_ = 0.0;
     double e_mp3_tot_ = 0.0;
 
+    // Amplitudo Orde Lanjut
     Eigen::Tensor<double, 4> t2_3rd_aa_, t2_3rd_bb_, t2_3rd_ab_;
     Eigen::Tensor<double, 4> L2_aa_, L2_bb_, L2_ab_;
     Eigen::Tensor<double, 4> Waa_ladder_, Waa_ring_;
 
-    // Variabel 2-RDM Eksak (Tahap 1)
-    Eigen::Tensor<double, 4> Gamma_vvvv_aa_, Gamma_oooo_aa_, Gamma_ovov_aa_;
-    Eigen::Tensor<double, 4> Gamma_vvvv_bb_, Gamma_oooo_bb_, Gamma_ovov_bb_;
-    Eigen::Tensor<double, 4> Gamma_vvvv_ab_, Gamma_oooo_ab_, Gamma_ovov_ab_;
-    Eigen::Tensor<double, 4> T2_tilde_aa_, L2_tilde_aa_;
+    // 2-RDM untuk Exact OMP3 Gradient (Tahap 1 & 2)
+    Eigen::Tensor<double, 4> Gamma_vvvv_aa_, Gamma_oooo_aa_;
+    Eigen::Tensor<double, 4> Gamma_vvvv_bb_, Gamma_oooo_bb_;
+    Eigen::Tensor<double, 4> Gamma_vvvv_ab_, Gamma_oooo_ab_;
 
     void build_2rdm_omp3();
     void compute_mp3_correction();
