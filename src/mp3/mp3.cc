@@ -1205,17 +1205,13 @@ void OMP3::build_opdm_alpha() {
         TBLIS_VIEW_2D(t_Goo, G_oo_alpha_.data(), na_, na_);
         TBLIS_VIEW_2D(t_Gvv, G_vv_alpha_.data(), va_, va_);
 
-        // MP2 term
         tblis::mult<double>(-1.0, t_T2, "ikab", t_T2t, "jkab", 0.0, t_Goo, "ij"); 
-        // MP3 terms (Faktor dikali 2 menjadi 1.0)
-        tblis::mult<double>(-1.0, t_T2, "ikab", t_L2t, "jkab", 1.0, t_Goo, "ij"); 
-        tblis::mult<double>(-1.0, t_L2, "ikab", t_T2t, "jkab", 1.0, t_Goo, "ij");  
+        tblis::mult<double>(-0.5, t_T2, "ikab", t_L2t, "jkab", 1.0, t_Goo, "ij"); 
+        tblis::mult<double>(-0.5, t_L2, "ikab", t_T2t, "jkab", 1.0, t_Goo, "ij");  
 
-        // MP2 term
         tblis::mult<double>(1.0, t_T2, "ijac", t_T2t, "ijbc", 0.0, t_Gvv, "ab"); 
-        // MP3 terms (Faktor dikali 2 menjadi 1.0)
-        tblis::mult<double>(1.0, t_T2, "ijac", t_L2t, "ijbc", 1.0, t_Gvv, "ab"); 
-        tblis::mult<double>(1.0, t_L2, "ijac", t_T2t, "ijbc", 1.0, t_Gvv, "ab"); 
+        tblis::mult<double>(0.5, t_T2, "ijac", t_L2t, "ijbc", 1.0, t_Gvv, "ab"); 
+        tblis::mult<double>(0.5, t_L2, "ijac", t_T2t, "ijbc", 1.0, t_Gvv, "ab"); 
         return;
     }
 
@@ -1224,28 +1220,26 @@ void OMP3::build_opdm_alpha() {
     TBLIS_VIEW_2D(t_Goo_a, G_oo_alpha_.data(), na_, na_);
     TBLIS_VIEW_2D(t_Gvv_a, G_vv_alpha_.data(), va_, va_);
     
-    // Alpha-Alpha
-    tblis::mult<double>(-0.5, t_T2aa, "ikab", t_T2aa, "jkab", 1.0, t_Goo_a, "ij"); 
-    tblis::mult<double>(-0.5, t_T2aa, "ikab", t_T3aa, "jkab", 1.0, t_Goo_a, "ij"); 
-    tblis::mult<double>(-0.5, t_T3aa, "ikab", t_T2aa, "jkab", 1.0, t_Goo_a, "ij"); 
+    tblis::mult<double>(-0.5,  t_T2aa, "ikab", t_T2aa, "jkab", 1.0, t_Goo_a, "ij"); 
+    tblis::mult<double>(-0.25, t_T2aa, "ikab", t_T3aa, "jkab", 1.0, t_Goo_a, "ij"); 
+    tblis::mult<double>(-0.25, t_T3aa, "ikab", t_T2aa, "jkab", 1.0, t_Goo_a, "ij"); 
 
-    tblis::mult<double>(0.5, t_T2aa, "ijac", t_T2aa, "ijbc", 1.0, t_Gvv_a, "ab"); 
-    tblis::mult<double>(0.5, t_T2aa, "ijac", t_T3aa, "ijbc", 1.0, t_Gvv_a, "ab");  
-    tblis::mult<double>(0.5, t_T3aa, "ijac", t_T2aa, "ijbc", 1.0, t_Gvv_a, "ab");
+    tblis::mult<double>(0.5,  t_T2aa, "ijac", t_T2aa, "ijbc", 1.0, t_Gvv_a, "ab"); 
+    tblis::mult<double>(0.25, t_T2aa, "ijac", t_T3aa, "ijbc", 1.0, t_Gvv_a, "ab");  
+    tblis::mult<double>(0.25, t_T3aa, "ijac", t_T2aa, "ijbc", 1.0, t_Gvv_a, "ab");
 
     auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
     if (nb_ > 0 && vb_ > 0 && t2_ab_dense) {
         TBLIS_VIEW_4D(t_T2ab, (*t2_ab_dense), na_, nb_, va_, vb_);
         TBLIS_VIEW_4D(t_T3ab, L2_ab_, na_, nb_, va_, vb_);
         
-        // Alpha-Beta
         tblis::mult<double>(-1.0, t_T2ab, "ikab", t_T2ab, "jkab", 1.0, t_Goo_a, "ij"); 
-        tblis::mult<double>(-1.0, t_T2ab, "ikab", t_T3ab, "jkab", 1.0, t_Goo_a, "ij"); 
-        tblis::mult<double>(-1.0, t_T3ab, "ikab", t_T2ab, "jkab", 1.0, t_Goo_a, "ij"); 
+        tblis::mult<double>(-0.5, t_T2ab, "ikab", t_T3ab, "jkab", 1.0, t_Goo_a, "ij"); 
+        tblis::mult<double>(-0.5, t_T3ab, "ikab", t_T2ab, "jkab", 1.0, t_Goo_a, "ij"); 
         
         tblis::mult<double>(1.0, t_T2ab, "ijac", t_T2ab, "ijbc", 1.0, t_Gvv_a, "ab"); 
-        tblis::mult<double>(1.0, t_T2ab, "ijac", t_T3ab, "ijbc", 1.0, t_Gvv_a, "ab");  
-        tblis::mult<double>(1.0, t_T3ab, "ijac", t_T2ab, "ijbc", 1.0, t_Gvv_a, "ab"); 
+        tblis::mult<double>(0.5, t_T2ab, "ijac", t_T3ab, "ijbc", 1.0, t_Gvv_a, "ab");  
+        tblis::mult<double>(0.5, t_T3ab, "ijac", t_T2ab, "ijbc", 1.0, t_Gvv_a, "ab"); 
     }
 }
 
@@ -1283,79 +1277,27 @@ void OMP3::build_opdm_beta() {
     TBLIS_VIEW_2D(t_Goo_b, G_oo_beta_.data(), nb_, nb_);
     TBLIS_VIEW_2D(t_Gvv_b, G_vv_beta_.data(), vb_, vb_);
 
-    // Beta-Beta
-    tblis::mult<double>(-0.5, t_T2bb, "ikab", t_T2bb, "jkab", 1.0, t_Goo_b, "ij"); 
-    tblis::mult<double>(-0.5, t_T2bb, "ikab", t_T3bb, "jkab", 1.0, t_Goo_b, "ij"); 
-    tblis::mult<double>(-0.5, t_T3bb, "ikab", t_T2bb, "jkab", 1.0, t_Goo_b, "ij"); 
+    tblis::mult<double>(-0.5,  t_T2bb, "ikab", t_T2bb, "jkab", 1.0, t_Goo_b, "ij"); 
+    tblis::mult<double>(-0.25, t_T2bb, "ikab", t_T3bb, "jkab", 1.0, t_Goo_b, "ij"); 
+    tblis::mult<double>(-0.25, t_T3bb, "ikab", t_T2bb, "jkab", 1.0, t_Goo_b, "ij"); 
 
-    tblis::mult<double>(0.5, t_T2bb, "ijac", t_T2bb, "ijbc", 1.0, t_Gvv_b, "ab"); 
-    tblis::mult<double>(0.5, t_T2bb, "ijac", t_T3bb, "ijbc", 1.0, t_Gvv_b, "ab");  
-    tblis::mult<double>(0.5, t_T3bb, "ijac", t_T2bb, "ijbc", 1.0, t_Gvv_b, "ab"); 
+    tblis::mult<double>(0.5,  t_T2bb, "ijac", t_T2bb, "ijbc", 1.0, t_Gvv_b, "ab"); 
+    tblis::mult<double>(0.25, t_T2bb, "ijac", t_T3bb, "ijbc", 1.0, t_Gvv_b, "ab");  
+    tblis::mult<double>(0.25, t_T3bb, "ijac", t_T2bb, "ijbc", 1.0, t_Gvv_b, "ab"); 
     
-    // Alpha-Beta (trace over alpha)
     tblis::mult<double>(-1.0, t_T2ab, "kiab", t_T2ab, "kjab", 1.0, t_Goo_b, "ij"); 
-    tblis::mult<double>(-1.0, t_T2ab, "kiab", t_T3ab, "kjab", 1.0, t_Goo_b, "ij");  
-    tblis::mult<double>(-1.0, t_T3ab, "kiab", t_T2ab, "kjab", 1.0, t_Goo_b, "ij");  
+    tblis::mult<double>(-0.5, t_T2ab, "kiab", t_T3ab, "kjab", 1.0, t_Goo_b, "ij");  
+    tblis::mult<double>(-0.5, t_T3ab, "kiab", t_T2ab, "kjab", 1.0, t_Goo_b, "ij");  
         
     tblis::mult<double>(1.0, t_T2ab, "ijca", t_T2ab, "ijcb", 1.0, t_Gvv_b, "ab"); 
-    tblis::mult<double>(1.0, t_T2ab, "ijca", t_T3ab, "ijcb", 1.0, t_Gvv_b, "ab");   
-    tblis::mult<double>(1.0, t_T3ab, "ijca", t_T2ab, "ijcb", 1.0, t_Gvv_b, "ab");
-}
-Eigen::MatrixXd OMP3::solve_cphf_pcg_ov(const Eigen::MatrixXd& Z_ov, const Eigen::VectorXd& eps, int n_occ, int n_vir, bool is_beta) {
-    Eigen::MatrixXd X = Eigen::MatrixXd::Zero(n_vir, n_occ);
-    Eigen::MatrixXd R = Z_ov;
-    Eigen::MatrixXd P = R;
-    
-    double rsold = R.squaredNorm();
-    const int max_iter = 50;
-    const double tol = 1e-10;
-
-    const Eigen::MatrixXd& C_occ = is_beta ? scf_.C_beta.leftCols(n_occ) : scf_.C_alpha.leftCols(n_occ);
-    const Eigen::MatrixXd& C_vir = is_beta ? scf_.C_beta.rightCols(n_vir) : scf_.C_alpha.rightCols(n_vir);
-
-    for (int iter = 0; iter < max_iter; ++iter) {
-        Eigen::MatrixXd AP = Eigen::MatrixXd::Zero(n_vir, n_occ);
-        
-        // Evaluasi Komponen Diagonal HF (Selisih Eigenenergi)
-        for (int i = 0; i < n_occ; ++i) {
-            for (int a = 0; a < n_vir; ++a) {
-                AP(a, i) = (eps(n_occ + a) - eps(i)) * P(a, i);
-            }
-        }
-
-        // Evaluasi On-The-Fly Interaksi 2-Elektron
-        Eigen::MatrixXd P1 = C_occ * P.transpose() * C_vir.transpose();
-        P1 = (P1 + P1.transpose()).eval();
-        
-        Eigen::MatrixXd F1_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
-        Eigen::MatrixXd F1_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
-        
-        if (!is_beta) {
-            build_fock_fast(P1, Eigen::MatrixXd::Zero(nbf_, nbf_), F1_a, F1_b);
-            F1_a -= H_core_; 
-            AP += 2.0 * C_vir.transpose() * F1_a * C_occ;
-        } else {
-            build_fock_fast(Eigen::MatrixXd::Zero(nbf_, nbf_), P1, F1_a, F1_b);
-            F1_b -= H_core_;
-            AP += 2.0 * C_vir.transpose() * F1_b * C_occ;
-        }
-
-        // Update Preconditioned Conjugate Gradient
-        double alpha = rsold / P.cwiseProduct(AP).sum();
-        X += alpha * P;
-        R -= alpha * AP;
-        
-        double rsnew = R.squaredNorm();
-        if (std::sqrt(rsnew) < tol) break;
-        
-        P = R + (rsnew / rsold) * P;
-        rsold = rsnew;
-    }
-    
-    return X;
+    tblis::mult<double>(0.5, t_T2ab, "ijca", t_T3ab, "ijcb", 1.0, t_Gvv_b, "ab");   
+    tblis::mult<double>(0.5, t_T3ab, "ijca", t_T2ab, "ijcb", 1.0, t_Gvv_b, "ab");
 }
 void OMP3::build_generalized_fock() {
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
+    const auto& ea = scf_.orbital_energies_alpha;
+    const auto& eb = scf_.orbital_energies_beta;
+    double scale = is_restricted ? 0.25 : 0.5;
 
     const Eigen::MatrixXd& Cao = scf_.C_alpha.leftCols(na_);
     const Eigen::MatrixXd& Cav = scf_.C_alpha.rightCols(va_);
@@ -1363,45 +1305,70 @@ void OMP3::build_generalized_fock() {
     const Eigen::MatrixXd& Cbv = scf_.C_beta.rightCols(vb_);
 
     Eigen::MatrixXd Z_mat_a = Eigen::MatrixXd::Zero(va_, na_);
+    Eigen::MatrixXd dx_oo_a = Eigen::MatrixXd::Zero(na_, na_);
+    Eigen::MatrixXd dx_vv_a = Eigen::MatrixXd::Zero(va_, va_);
+    Eigen::MatrixXd Delta_G_ia_a = Eigen::MatrixXd::Zero(va_, na_);
     
-    Eigen::MatrixXd Z_mat_b;
+    Eigen::MatrixXd Z_mat_b, dx_oo_b, dx_vv_b, Delta_G_ia_b;
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
         Z_mat_b = Eigen::MatrixXd::Zero(vb_, nb_);
+        dx_oo_b = Eigen::MatrixXd::Zero(nb_, nb_);
+        dx_vv_b = Eigen::MatrixXd::Zero(vb_, vb_);
+        Delta_G_ia_b = Eigen::MatrixXd::Zero(vb_, nb_);
     }
 
     auto* t_aa_dense = t2_aa_.get_block(0,0,0,0);
     auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
     auto* t2_bb_dense = t2_bb_.get_block(0,0,0,0);
 
+    // SOLUSI MATEMATIS MSHQC: Pembagian murni (karena respon 2-elektron analitik = 0)
+    // Sepenuhnya menghapus bottleneck Conjugate Gradient.
+    auto solve_mini_cphf_fast = [](const Eigen::MatrixXd& Z_in, const Eigen::VectorXd& eps, int dim, int offset) -> Eigen::MatrixXd {
+        if (dim == 0) return Eigen::MatrixXd::Zero(0, 0);
+        Eigen::MatrixXd x = Eigen::MatrixXd::Zero(dim, dim);
+        for (int i = 0; i < dim; ++i) {
+            for (int j = 0; j < dim; ++j) {
+                double eps_diff = eps(offset + i) - eps(offset + j);
+                if (std::abs(eps_diff) > 1e-5) {
+                    x(i, j) = (Z_in(i, j) - Z_in(j, i)) / eps_diff;
+                }
+            }
+        }
+        return x;
+    };
+
     // =========================================================================
-    // 1. PEMBENTUKAN Z_MAT 
+    // 1. PEMBENTUKAN Z_MAT & CPHF FOLDING
     // =========================================================================
     if (config_.eri_method == "exact") {
         if (is_restricted) {
             Eigen::Tensor< double, 4 > Teff(na_, na_, va_, va_);
-            Eigen::Tensor< double, 4 > T2_tilde(na_, na_, va_, va_); // Tambahkan ini
-            
             #pragma omp parallel for collapse(4) schedule(static)
             for(int i = 0; i < na_; ++i) {
                 for(int j = 0; j < na_; ++j) {
                     for(int a = 0; a < va_; ++a) {
                         for(int b = 0; b < va_; ++b) {
                             Teff(i,j,a,b) = (*t_aa_dense)(i,a,j,b) + L2_aa_(i,j,a,b);
-                            // Bentuk T2 tilde untuk evaluasi TPDM
-                            T2_tilde(i,j,a,b) = 2.0 * (*t_aa_dense)(i,a,j,b) - (*t_aa_dense)(i,b,j,a);
                         }
                     }
                 }
             }
             TBLIS_VIEW_4D(t_Teff, Teff, na_, na_, va_, va_);
-            TBLIS_VIEW_4D(t_T2, (*t_aa_dense), na_, na_, va_, va_);
-            TBLIS_VIEW_4D(t_T2t, T2_tilde, na_, na_, va_, va_);
 
             if (eri_ao_cached_.size() == 0) {
                 eri_ao_cached_ = integrals_->compute_eri();
             }
 
+            Eigen::MatrixXd Z_oo_mat = Eigen::MatrixXd::Zero(na_, na_);
+            Eigen::MatrixXd Z_vv_mat = Eigen::MatrixXd::Zero(va_, va_);
+            TBLIS_VIEW_2D(t_Zoo, Z_oo_mat.data(), na_, na_);
+            TBLIS_VIEW_2D(t_Zvv, Z_vv_mat.data(), va_, va_);
             TBLIS_VIEW_2D(t_Zmat, Z_mat_a.data(), va_, na_);
+
+            auto* g_blk = g_aa_.get_block(0,0,0,0);
+            TBLIS_VIEW_4D(t_Vovov, (*g_blk), na_, va_, na_, va_);
+            tblis::mult< double >(1.0, t_Teff, "ikab", t_Vovov, "kbja", 0.0, t_Zoo, "ij");
+            tblis::mult< double >(-1.0, t_Teff, "ikac", t_Vovov, "kcib", 0.0, t_Zvv, "ab");
 
             auto V_ovvv_ex = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cao, Cav, Cav, Cav, nbf_, na_, va_, va_, va_);
             TBLIS_VIEW_4D(t_Vovvv_ex, V_ovvv_ex, na_, va_, va_, va_);
@@ -1411,23 +1378,16 @@ void OMP3::build_generalized_fock() {
             TBLIS_VIEW_4D(t_Vooov, V_ooov, na_, na_, na_, va_);
             tblis::mult< double >(-1.0, t_Vooov, "jikc", t_Teff, "jkac", 1.0, t_Zmat, "ai");
 
-            // =====================================================================
-            // PERBAIKAN FATAL MSHQC: Injeksi TPDM VVVV dan OOOO (Meniru Psi4)
-            // =====================================================================
-            Eigen::Tensor< double, 4 > Gamma_vvvv(va_, va_, va_, va_);
-            TBLIS_VIEW_4D(t_Gamma_vvvv, Gamma_vvvv, va_, va_, va_, va_);
-            // Gamma_abcd = sum_{ij} (2*t_ijab - t_ijba) * t_ijcd
-            tblis::mult<double>(1.0, t_T2t, "ijab", t_T2, "ijcd", 0.0, t_Gamma_vvvv, "abcd");
-            // Z_ai += sum_{bcd} Gamma_abcd * V_icbd (Kontraksi dengan V_OVVV)
-            tblis::mult<double>(1.0, t_Gamma_vvvv, "abcd", t_Vovvv_ex, "ibcd", 1.0, t_Zmat, "ai");
+            // Menggunakan fast analitik CPHF dari MSHQC
+            dx_oo_a = solve_mini_cphf_fast(Z_oo_mat, ea, na_, 0);
+            dx_vv_a = solve_mini_cphf_fast(Z_vv_mat, ea, va_, na_);
 
-            Eigen::Tensor< double, 4 > Gamma_oooo(na_, na_, na_, na_);
-            TBLIS_VIEW_4D(t_Gamma_oooo, Gamma_oooo, na_, na_, na_, na_);
-            // Gamma_ijkl = sum_{ab} (2*t_ijab - t_ijba) * t_klab
-            tblis::mult<double>(1.0, t_T2t, "ijab", t_T2, "klab", 0.0, t_Gamma_oooo, "ijkl");
-            // Z_ai -= sum_{jkl} Gamma_ijkl * V_ajkl (Kontraksi dengan V_OOOV)
-            tblis::mult<double>(-1.0, t_Gamma_oooo, "ijkl", t_Vooov, "jkla", 1.0, t_Zmat, "ai");
-            // =====================================================================
+            TBLIS_VIEW_2D(t_dG, Delta_G_ia_a.data(), va_, na_);
+            TBLIS_VIEW_2D(t_xoo, dx_oo_a.data(), na_, na_);
+            TBLIS_VIEW_2D(t_xvv, dx_vv_a.data(), va_, va_);
+
+            tblis::mult< double >(scale, t_Vooov, "jkia", t_xoo, "jk", 0.0, t_dG, "ai");
+            tblis::mult< double >(scale, t_Vovvv_ex, "iabc", t_xvv, "bc", 1.0, t_dG, "ai");
 
         } else {
             if (eri_ao_cached_.size() == 0) {
@@ -1481,43 +1441,88 @@ void OMP3::build_generalized_fock() {
 
             TBLIS_VIEW_2D(t_Zmat_a, Z_mat_a.data(), va_, na_);
             
+            auto V_ovov_aa = get_V(Cao, Cav, Cao, Cav);
             auto V_ovvv_aa = get_V(Cao, Cav, Cav, Cav);
             auto V_ooov_aa = get_V(Cao, Cao, Cao, Cav);
             
+            TBLIS_VIEW_4D(t_Vovov_aa, V_ovov_aa, na_, va_, na_, va_);
             TBLIS_VIEW_4D(t_Vovvv_aa, V_ovvv_aa, na_, va_, va_, va_);
             TBLIS_VIEW_4D(t_Vooov_aa, V_ooov_aa, na_, na_, na_, va_);
+            
+            Eigen::MatrixXd Z_oo_a = Eigen::MatrixXd::Zero(na_, na_);
+            Eigen::MatrixXd Z_vv_a = Eigen::MatrixXd::Zero(va_, va_);
+            TBLIS_VIEW_2D(t_Zoo_a, Z_oo_a.data(), na_, na_);
+            TBLIS_VIEW_2D(t_Zvv_a, Z_vv_a.data(), va_, va_);
 
+            tblis::mult< double >(1.0, t_Teff_aa, "ikab", t_Vovov_aa, "kbja", 0.0, t_Zoo_a, "ij");
+            tblis::mult< double >(-1.0, t_Teff_aa, "ikac", t_Vovov_aa, "kcib", 0.0, t_Zvv_a, "ab");
             tblis::mult< double >(1.0, t_Vovvv_aa, "kcab", t_Teff_aa, "ikbc", 0.0, t_Zmat_a, "ai"); 
             tblis::mult< double >(-1.0, t_Vooov_aa, "jikc", t_Teff_aa, "jkac", 1.0, t_Zmat_a, "ai");
 
             if (nb_ > 0 && vb_ > 0) {
+                auto V_ovov_ba = get_V(Cbo, Cbv, Cao, Cav);
                 auto V_ovvv_ba = get_V(Cbo, Cbv, Cav, Cav);
                 auto V_ooov_ab_ex = get_V(Cao, Cao, Cbo, Cbv);
 
+                TBLIS_VIEW_4D(t_Vovov_ba, V_ovov_ba, nb_, vb_, na_, va_);
                 TBLIS_VIEW_4D(t_Vovvv_ba, V_ovvv_ba, nb_, vb_, va_, va_);
                 TBLIS_VIEW_4D(t_Vooov_ab_ex, V_ooov_ab_ex, na_, na_, nb_, vb_);
 
+                tblis::mult< double >(1.0, t_Teff_ab, "ikab", t_Vovov_ba, "kbja", 1.0, t_Zoo_a, "ij");
+                tblis::mult< double >(-1.0, t_Teff_ab, "ikac", t_Vovov_ba, "kcib", 1.0, t_Zvv_a, "ab");
                 tblis::mult< double >(1.0, t_Vovvv_ba, "kcab", t_Teff_ab, "ikbc", 1.0, t_Zmat_a, "ai");
                 tblis::mult< double >(-1.0, t_Vooov_ab_ex, "jikc", t_Teff_ab, "jkac", 1.0, t_Zmat_a, "ai");
 
+                auto V_ovov_bb = get_V(Cbo, Cbv, Cbo, Cbv);
                 auto V_ovvv_bb = get_V(Cbo, Cbv, Cbv, Cbv);
                 auto V_ooov_bb = get_V(Cbo, Cbo, Cbo, Cbv);
+                auto V_ovov_ab = get_V(Cao, Cav, Cbo, Cbv);
                 auto V_ovvv_ab = get_V(Cao, Cav, Cbv, Cbv);
                 auto V_ooov_ba_ex = get_V(Cbo, Cbo, Cao, Cav);
 
+                TBLIS_VIEW_4D(t_Vovov_bb, V_ovov_bb, nb_, vb_, nb_, vb_);
                 TBLIS_VIEW_4D(t_Vovvv_bb, V_ovvv_bb, nb_, vb_, vb_, vb_);
                 TBLIS_VIEW_4D(t_Vooov_bb, V_ooov_bb, nb_, nb_, nb_, vb_);
+                TBLIS_VIEW_4D(t_Vovov_ab, V_ovov_ab, na_, va_, nb_, vb_);
                 TBLIS_VIEW_4D(t_Vovvv_ab, V_ovvv_ab, na_, va_, vb_, vb_);
                 TBLIS_VIEW_4D(t_Vooov_ba_ex, V_ooov_ba_ex, nb_, nb_, na_, va_);
 
+                Eigen::MatrixXd Z_oo_b = Eigen::MatrixXd::Zero(nb_, nb_);
+                Eigen::MatrixXd Z_vv_b = Eigen::MatrixXd::Zero(vb_, vb_);
+                TBLIS_VIEW_2D(t_Zoo_b, Z_oo_b.data(), nb_, nb_);
+                TBLIS_VIEW_2D(t_Zvv_b, Z_vv_b.data(), vb_, vb_);
                 TBLIS_VIEW_2D(t_Zmat_b, Z_mat_b.data(), vb_, nb_);
 
+                tblis::mult< double >(1.0, t_Teff_bb, "ikab", t_Vovov_bb, "kbja", 0.0, t_Zoo_b, "ij");
+                tblis::mult< double >(-1.0, t_Teff_bb, "ikac", t_Vovov_bb, "kcib", 0.0, t_Zvv_b, "ab");
                 tblis::mult< double >(1.0, t_Vovvv_bb, "kcab", t_Teff_bb, "ikbc", 0.0, t_Zmat_b, "ai");
                 tblis::mult< double >(-1.0, t_Vooov_bb, "jikc", t_Teff_bb, "jkac", 1.0, t_Zmat_b, "ai");
 
+                tblis::mult< double >(1.0, t_Teff_ab, "kiba", t_Vovov_ab, "kbja", 1.0, t_Zoo_b, "ij");
+                tblis::mult< double >(-1.0, t_Teff_ab, "kica", t_Vovov_ab, "kcib", 1.0, t_Zvv_b, "ab");
                 tblis::mult< double >(1.0, t_Vovvv_ab, "kcab", t_Teff_ab, "kicb", 1.0, t_Zmat_b, "ai"); 
                 tblis::mult< double >(-1.0, t_Vooov_ba_ex, "jikc", t_Teff_ab, "kjca", 1.0, t_Zmat_b, "ai");
+
+                dx_oo_b = solve_mini_cphf_fast(Z_oo_b, eb, nb_, 0);
+                dx_vv_b = solve_mini_cphf_fast(Z_vv_b, eb, vb_, nb_);
+
+                TBLIS_VIEW_2D(t_dG_b, Delta_G_ia_b.data(), vb_, nb_);
+                TBLIS_VIEW_2D(t_xoo_b, dx_oo_b.data(), nb_, nb_);
+                TBLIS_VIEW_2D(t_xvv_b, dx_vv_b.data(), vb_, vb_);
+
+                tblis::mult< double >(scale, t_Vooov_bb, "jkia", t_xoo_b, "jk", 0.0, t_dG_b, "ai");
+                tblis::mult< double >(scale, t_Vovvv_bb, "iabc", t_xvv_b, "bc", 1.0, t_dG_b, "ai");
             }
+
+            dx_oo_a = solve_mini_cphf_fast(Z_oo_a, ea, na_, 0);
+            dx_vv_a = solve_mini_cphf_fast(Z_vv_a, ea, va_, na_);
+
+            TBLIS_VIEW_2D(t_dG_a, Delta_G_ia_a.data(), va_, na_);
+            TBLIS_VIEW_2D(t_xoo_a, dx_oo_a.data(), na_, na_);
+            TBLIS_VIEW_2D(t_xvv_a, dx_vv_a.data(), va_, va_);
+
+            tblis::mult< double >(scale, t_Vooov_aa, "jkia", t_xoo_a, "jk", 0.0, t_dG_a, "ai");
+            tblis::mult< double >(scale, t_Vovvv_aa, "iabc", t_xvv_a, "bc", 1.0, t_dG_a, "ai");
         }
 
     } else {
@@ -1602,45 +1607,79 @@ void OMP3::build_generalized_fock() {
         Eigen::MatrixXd X_a = Teff_aa * B_ia_P_alpha_;
         if (!is_restricted) X_a.noalias() += Teff_ab * B_ia_P_beta_;
 
-        Eigen::MatrixXd X_b;
+        Eigen::MatrixXd Z_oo_a = Eigen::MatrixXd::Zero(na_, na_);
+        Eigen::MatrixXd Z_vv_a = Eigen::MatrixXd::Zero(va_, va_);
+        Eigen::MatrixXd X_b, Z_oo_b, Z_vv_b;
         if (!is_restricted && nb_ > 0 && vb_ > 0) {
             X_b = Teff_bb * B_ia_P_beta_ + Teff_ab.transpose() * B_ia_P_alpha_;
+            Z_oo_b = Eigen::MatrixXd::Zero(nb_, nb_);
+            Z_vv_b = Eigen::MatrixXd::Zero(vb_, vb_);
         }
 
         #pragma omp parallel
         {
             Eigen::MatrixXd Z_loc_a = Eigen::MatrixXd::Zero(va_, na_);
-            Eigen::MatrixXd Z_loc_b;
+            Eigen::MatrixXd Z_oo_loc_a = Eigen::MatrixXd::Zero(na_, na_);
+            Eigen::MatrixXd Z_vv_loc_a = Eigen::MatrixXd::Zero(va_, va_);
+            Eigen::MatrixXd Z_loc_b, Z_oo_loc_b, Z_vv_loc_b;
             if (!is_restricted && nb_ > 0 && vb_ > 0) {
                 Z_loc_b = Eigen::MatrixXd::Zero(vb_, nb_);
+                Z_oo_loc_b = Eigen::MatrixXd::Zero(nb_, nb_);
+                Z_vv_loc_b = Eigen::MatrixXd::Zero(vb_, vb_);
             }
 
             #pragma omp for schedule(dynamic)
             for (int P = 0; P < n_aux; ++P) {
                 Eigen::Map< const Eigen::MatrixXd > X_ai(X_a.col(P).data(), va_, na_);
+                Eigen::Map< const Eigen::MatrixXd > B_ai(B_ia_P_alpha_.col(P).data(), va_, na_);
                 Eigen::Map< const Eigen::MatrixXd > V_a(B_vv_flat_a.col(P).data(), va_, va_);
                 Eigen::Map< const Eigen::MatrixXd > O_a(B_oo_flat_a.col(P).data(), na_, na_);
                 
                 Z_loc_a.noalias() += V_a * X_ai - X_ai * O_a;
+                Z_oo_loc_a.noalias() += X_ai.transpose() * B_ai;
+                Z_vv_loc_a.noalias() -= X_ai * B_ai.transpose();
 
                 if (!is_restricted && nb_ > 0 && vb_ > 0) {
                     Eigen::Map< const Eigen::MatrixXd > X_bi(X_b.col(P).data(), vb_, nb_);
+                    Eigen::Map< const Eigen::MatrixXd > B_bi(B_ia_P_beta_.col(P).data(), vb_, nb_);
                     Eigen::Map< const Eigen::MatrixXd > V_b(B_vv_flat_b.col(P).data(), vb_, vb_);
                     Eigen::Map< const Eigen::MatrixXd > O_b(B_oo_flat_b.col(P).data(), nb_, nb_);
                     
                     Z_loc_b.noalias() += V_b * X_bi - X_bi * O_b;
+                    Z_oo_loc_b.noalias() += X_bi.transpose() * B_bi;
+                    Z_vv_loc_b.noalias() -= X_bi * B_bi.transpose();
                 }
             }
             #pragma omp critical
             { 
-                Z_mat_a += Z_loc_a; 
-                if (!is_restricted && nb_ > 0 && vb_ > 0) { Z_mat_b += Z_loc_b; }
+                Z_mat_a += Z_loc_a; Z_oo_a += Z_oo_loc_a; Z_vv_a += Z_vv_loc_a; 
+                if (!is_restricted && nb_ > 0 && vb_ > 0) { Z_mat_b += Z_loc_b; Z_oo_b += Z_oo_loc_b; Z_vv_b += Z_vv_loc_b; }
             }
         }
-    } // End of DF block
+
+        dx_oo_a = solve_mini_cphf_fast(Z_oo_a, ea, na_, 0);
+        dx_vv_a = solve_mini_cphf_fast(Z_vv_a, ea, va_, na_);
+        
+        Eigen::Map< Eigen::VectorXd > vec_x_oo_a(dx_oo_a.data(), na_ * na_);
+        Eigen::Map< Eigen::VectorXd > vec_x_vv_a(dx_vv_a.data(), va_ * va_);
+        Eigen::VectorXd V_aux_a = B_oo_flat_a.transpose() * vec_x_oo_a + B_vv_flat_a.transpose() * vec_x_vv_a;
+        Eigen::VectorXd delta_g_flat_a = scale * B_ia_P_alpha_ * V_aux_a; 
+        Delta_G_ia_a = Eigen::Map< Eigen::MatrixXd >(delta_g_flat_a.data(), va_, na_);
+
+        if (!is_restricted && nb_ > 0 && vb_ > 0) {
+            dx_oo_b = solve_mini_cphf_fast(Z_oo_b, eb, nb_, 0);
+            dx_vv_b = solve_mini_cphf_fast(Z_vv_b, eb, vb_, nb_);
+            
+            Eigen::Map< Eigen::VectorXd > vec_x_oo_b(dx_oo_b.data(), nb_ * nb_);
+            Eigen::Map< Eigen::VectorXd > vec_x_vv_b(dx_vv_b.data(), vb_ * vb_);
+            Eigen::VectorXd V_aux_b = B_oo_flat_b.transpose() * vec_x_oo_b + B_vv_flat_b.transpose() * vec_x_vv_b;
+            Eigen::VectorXd delta_g_flat_b = scale * B_ia_P_beta_ * V_aux_b;
+            Delta_G_ia_b = Eigen::Map< Eigen::MatrixXd >(delta_g_flat_b.data(), vb_, nb_);
+        }
+    }
 
     // =========================================================================
-    // 2. PEMBENTUKAN GENERALIZED FOCK 
+    // 2. PEMBENTUKAN GENERALIZED FOCK (Dengan Delta_G Penuh)
     // =========================================================================
     Eigen::MatrixXd G_full_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
     G_full_a.block(0, 0, na_, na_) = G_oo_alpha_;
@@ -1682,9 +1721,8 @@ void OMP3::build_generalized_fock() {
         Eigen::MatrixXd F_HF_vo_a = F_HF_mo_a.block(na_, 0, va_, na_);
         Eigen::MatrixXd L_sep_a = F_HF_vo_a * G_oo_alpha_ - G_vv_alpha_ * F_HF_vo_a;
         
-        // HANYA Z_mat_a. FDA approach sama seperti Psi4.
-        F_gen_a_.block(na_, 0, va_, na_) += L_sep_a + Z_mat_a; 
-        F_gen_a_.block(0, na_, na_, va_) += (L_sep_a + Z_mat_a).transpose();
+        F_gen_a_.block(na_, 0, va_, na_) += L_sep_a + Z_mat_a + Delta_G_ia_a;
+        F_gen_a_.block(0, na_, na_, va_) += (L_sep_a + Z_mat_a + Delta_G_ia_a).transpose();
     }
 
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
@@ -1692,8 +1730,8 @@ void OMP3::build_generalized_fock() {
         Eigen::MatrixXd F_HF_vo_b = F_HF_mo_b.block(nb_, 0, vb_, nb_);
         Eigen::MatrixXd L_sep_b = F_HF_vo_b * G_oo_beta_ - G_vv_beta_ * F_HF_vo_b;
 
-        F_gen_b_.block(nb_, 0, vb_, nb_) += L_sep_b + Z_mat_b;
-        F_gen_b_.block(0, nb_, nb_, vb_) += (L_sep_b + Z_mat_b).transpose();
+        F_gen_b_.block(nb_, 0, vb_, nb_) += L_sep_b + Z_mat_b + Delta_G_ia_b;
+        F_gen_b_.block(0, nb_, nb_, vb_) += (L_sep_b + Z_mat_b + Delta_G_ia_b).transpose();
     } else if (is_restricted) {
         F_gen_b_ = F_gen_a_;
     }
