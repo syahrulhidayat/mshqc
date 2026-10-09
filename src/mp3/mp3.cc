@@ -569,11 +569,41 @@ double OMP3::get_correlation_energy() const {
 }
 
 double OMP3::execute_micro_iterations() {
-    OMP2::execute_micro_iterations();
+    bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     
+    // 1. Update matriks C dan P
+    scf_.C_alpha = C_a_current_;
+    scf_.C_beta  = C_b_current_;
+    scf_.P_alpha = scf_.C_alpha.leftCols(na_) * scf_.C_alpha.leftCols(na_).transpose();
+    scf_.P_beta  = scf_.C_beta.leftCols(nb_)  * scf_.C_beta.leftCols(nb_).transpose();
+
+    // 2. Pseudocanonicalize orbital
+    pseudocanonicalize();
+
+    C_a_current_ = scf_.C_alpha;
+    C_b_current_ = scf_.C_beta;
+
+    // 3. Transformasi Integral & Hitung Amplitudo T1 (Tingkat MP2)
+    if (config_.eri_method == "cholesky") {
+        scf_.irreps_alpha.assign(nbf_, 0);
+        if (!is_restricted && nb_ > 0) {
+            scf_.irreps_beta.assign(nbf_, 0);
+        }       
+        transform_3center_mo_cholesky();
+        compute_t2_and_energy_cholesky();
+    } else if (config_.eri_method == "df") {
+        transform_3center_mo(); 
+        transform_integrals(); 
+        compute_t2_amplitudes();
+        compute_mp2_energy();
+    } else {
+        transform_integrals(); 
+        compute_t2_amplitudes();
+        compute_mp2_energy();
+    }
+    
+    // 4. Hitung koreksi energi MP3 dan amplitudo orde lanjut (T2)
     compute_mp3_correction(); 
-    
-    bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1); 
     
     L2_aa_ = t2_3rd_aa_;
 
@@ -582,6 +612,7 @@ double OMP3::execute_micro_iterations() {
         L2_ab_ = t2_3rd_ab_;
     }
     
+    // 5. Bangun matriks densitas partikel 1-RDM (OPDM) secara tunggal untuk tingkat MP3
     build_opdm_alpha();
     if (!is_restricted && nb_ > 0) {
         build_opdm_beta();
