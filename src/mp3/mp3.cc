@@ -1356,8 +1356,10 @@ void OMP3::build_2rdm_omp3() {
         TBLIS_VIEW_4D(t_Gvvvv, Gamma_vvvv_aa_, va_, va_, va_, va_);
         TBLIS_VIEW_4D(t_Goooo, Gamma_oooo_aa_, na_, na_, na_, na_);
 
+        // 2-RDM RMP3: Menggunakan T_tilde dengan prefactor 1.0
         tblis::mult<double>(1.0, t_Ttilde, "ijab", t_Taa, "ijcd", 0.0, t_Gvvvv, "abcd");
         tblis::mult<double>(1.0, t_Ttilde, "ijab", t_Taa, "klab", 0.0, t_Goooo, "ijkl");
+
     } else {
         Gamma_vvvv_aa_ = Eigen::Tensor<double, 4>(va_, va_, va_, va_);
         Gamma_oooo_aa_ = Eigen::Tensor<double, 4>(na_, na_, na_, na_);
@@ -1367,6 +1369,7 @@ void OMP3::build_2rdm_omp3() {
         TBLIS_VIEW_4D(t_Gvvvv_aa, Gamma_vvvv_aa_, va_, va_, va_, va_);
         TBLIS_VIEW_4D(t_Goooo_aa, Gamma_oooo_aa_, na_, na_, na_, na_);
 
+        // 2-RDM UMP3: Spin-orbital murni dengan prefactor 0.5
         tblis::mult<double>(0.5, t_Taa, "ijab", t_Taa, "ijcd", 0.0, t_Gvvvv_aa, "abcd");
         tblis::mult<double>(0.5, t_Taa, "ijab", t_Taa, "klab", 0.0, t_Goooo_aa, "ijkl");
 

@@ -56,12 +56,12 @@ protected:
 
     Eigen::Tensor<double, 4> t2_3rd_aa_, t2_3rd_bb_, t2_3rd_ab_;
     Eigen::Tensor<double, 4> L2_aa_, L2_bb_, L2_ab_;
-    Eigen::Tensor<double, 4> Waa_ladder_;
-    Eigen::Tensor<double, 4> Waa_ring_;
+    Eigen::Tensor<double, 4> Waa_ladder_, Waa_ring_;
 
-    // Variabel 2-RDM untuk Exact OMP3 Gradient
+    // Variabel 2-RDM Eksak (Tahap 1)
     Eigen::Tensor<double, 4> Gamma_vvvv_aa_, Gamma_oooo_aa_, Gamma_ovov_aa_;
-    Eigen::Tensor<double, 4> Gamma_vvvv_bb_, Gamma_oooo_bb_, Gamma_ovov_bb_, Gamma_ovov_ab_;
+    Eigen::Tensor<double, 4> Gamma_vvvv_bb_, Gamma_oooo_bb_, Gamma_ovov_bb_;
+    Eigen::Tensor<double, 4> Gamma_vvvv_ab_, Gamma_oooo_ab_, Gamma_ovov_ab_;
     Eigen::Tensor<double, 4> T2_tilde_aa_, L2_tilde_aa_;
 
     void build_2rdm_omp3();
