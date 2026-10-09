@@ -48,7 +48,7 @@ protected:
     Eigen::Tensor<double, 4> V_vvvv_, V_oooo_, V_ovov_, V_oovv_, V_vvov_, V_ooov_;
     Eigen::Tensor<double, 4> eri_ao_cached_;
 
-
+    // Variabel Energi MP3
     double e_mp3_aa_ = 0.0;
     double e_mp3_bb_ = 0.0;
     double e_mp3_ab_ = 0.0;
@@ -59,10 +59,12 @@ protected:
     Eigen::Tensor<double, 4> Waa_ladder_;
     Eigen::Tensor<double, 4> Waa_ring_;
 
-    Eigen::Tensor<double, 4> Gamma_vvvv_aa, Gamma_oooo_aa, Gamma_ovov_aa;
-    Eigen::Tensor<double, 4> Gamma_vvvv_bb, Gamma_oooo_bb, Gamma_ovov_bb, Gamma_ovov_ab;
-    Eigen::Tensor<double, 4> T2_tilde_aa, L2_tilde_aa;
+    // Variabel 2-RDM untuk Exact OMP3 Gradient
+    Eigen::Tensor<double, 4> Gamma_vvvv_aa_, Gamma_oooo_aa_, Gamma_ovov_aa_;
+    Eigen::Tensor<double, 4> Gamma_vvvv_bb_, Gamma_oooo_bb_, Gamma_ovov_bb_, Gamma_ovov_ab_;
+    Eigen::Tensor<double, 4> T2_tilde_aa_, L2_tilde_aa_;
 
+    void build_2rdm_omp3();
     void compute_mp3_correction();
 };
 
