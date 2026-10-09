@@ -1462,6 +1462,7 @@ void OMP3::build_generalized_fock() {
             TBLIS_VIEW_4D(t_Vovvv, V_ovvv_ex, na_, va_, va_, va_);
             TBLIS_VIEW_4D(t_Vooov, V_ooov_ex, na_, na_, na_, va_);
 
+            // Komponen Basis T_eff
             tblis::mult< double >(1.0, t_Vovvv, "kcab", t_Teff, "ikbc", 0.0, t_Zmat, "ai"); 
             tblis::mult< double >(-1.0, t_Vooov, "jikc", t_Teff, "jkac", 1.0, t_Zmat, "ai");
 
@@ -1575,9 +1576,6 @@ void OMP3::build_generalized_fock() {
                 }
             }
         }
-    } else {
-        // Fallback untuk Density Fitting / Cholesky, biarkan error CPHF jika ada, 
-        // tapi logikanya harus disamakan nanti jika DF diterapkan untuk MP3
     }
 
     // =========================================================================
