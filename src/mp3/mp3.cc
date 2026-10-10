@@ -560,37 +560,32 @@ MP3Result UMP3::compute() {
     return res;
 }
 
-
-
-// =========================================================================
-// OMP3 MP3@OMP2 OVERRIDES (Mencegah Full OMP3 Optimization untuk Setara Psi4)
-// =========================================================================
-
 double OMP3::get_correlation_energy() const {
-    // Return MP2 energy untuk optimizer agar berjalan persis di atas landscape OMP2
-    return OMP2::get_correlation_energy();
+    return e_ss_ + e_os_ + e_mp3_tot_;
 }
 
 double OMP3::execute_micro_iterations() {
-    // Memaksa eksekusi iterasi mikro OMP2 Murni (Lewati MP3 saat proses optimasi)
     OMP2::execute_micro_iterations();
-    return OMP2::get_correlation_energy();
-}
+    
+    compute_mp3_correction(); 
+    
+    bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1); 
+    
+    L2_aa_ = t2_3rd_aa_;
 
-void OMP3::build_opdm_alpha() {
-    OMP2::build_opdm_alpha();
-}
+    if (!is_restricted && nb_ > 0 && vb_ > 0) {
+        L2_bb_ = t2_3rd_bb_;
+        L2_ab_ = t2_3rd_ab_;
+    }
+    
+    build_opdm_alpha();
+    if (!is_restricted && nb_ > 0) {
+        build_opdm_beta();
+    } else if (is_restricted && nb_ > 0) {
+        G_oo_beta_ = G_oo_alpha_;
+    }
 
-void OMP3::build_opdm_beta() {
-    OMP2::build_opdm_beta();
-}
-
-void OMP3::build_generalized_fock() {
-    OMP2::build_generalized_fock();
-}
-
-void OMP3::build_hessian_diagonal(Eigen::VectorXd& diag_H, double grad_norm) {
-    OMP2::build_hessian_diagonal(diag_H, grad_norm);
+    return get_correlation_energy();
 }
 
 void OMP3::compute_mp3_correction() {
@@ -893,7 +888,7 @@ void OMP3::compute_mp3_correction() {
 
         tblis::mult< double >(1.0, t_T, "mnab", t_Voooo, "minj", 1.0, t_W, "ijab");
         tblis::mult< double >(2.0,  t_Vovov, "iakc", t_T, "kjcb", 1.0, t_W, "ijab");
-        tblis::mult< double >(-1.0, t_Voovv, "ikac", t_T, "kjcb", 1.0, t_W, "ijab"); 
+        tblis::mult< double >(-1.0, t_Voovv, "ikac", t_T, "kjcb", 1.0, t_W, "ijab"); //ikca
         tblis::mult< double >(2.0,  t_T, "ikac", t_Vovov, "kcjb", 1.0, t_W, "ijab");
         tblis::mult< double >(-1.0, t_T, "ikac", t_Voovv, "kjcb", 1.0, t_W, "ijab");
         tblis::mult< double >(-1.0, t_T, "ikca", t_Vovov, "kcjb", 1.0, t_W, "ijab"); 
@@ -1046,7 +1041,7 @@ void OMP3::compute_mp3_correction() {
             tblis::mult< double >(-0.5, t_Tbb, "mnab", t_Voooo_bb, "mjni", 1.0, t_Wbb_ladder, "ijab");
      
             tblis::mult< double >(1.0,  t_Vovov_bb, "iakc", t_Tbb, "kjcb", 1.0, t_Wbb_ring, "ijab");
-            tblis::mult< double >(-1.0, t_Voovv_bb, "ikac", t_Tbb, "kjcb", 1.0, t_Wbb_ring, "ijab");
+            tblis::mult< double >(-1.0, t_Voovv_bb, "ikca", t_Tbb, "kjcb", 1.0, t_Wbb_ring, "ijab");
 
             Eigen::Tensor< double, 4 > V_ovov_ab;
             map_4d_inplace((B_ia_P_alpha_ * B_ia_P_beta_.transpose()).eval(), V_ovov_ab, na_, va_, nb_, vb_);
@@ -1155,154 +1150,14 @@ void OMP3::compute_mp3_correction() {
     e_mp3_tot_ = e3_aa + e3_bb + e3_ab;
 }
 
-void OMP3::debug_gradient_fd(int i_target, int a_target) {
-    std::cout << "\n--- [DEBUG] Membedah Komponen Gradien OMP3 ---\n";
-    bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
-    
-    pseudocanonicalize(); 
-    C_a_current_ = scf_.C_alpha;
-    C_b_current_ = scf_.C_beta;
-    transform_integrals();
-    compute_t2_amplitudes();
-    compute_mp2_energy();
-    compute_mp3_correction();
-    
-    L2_aa_ = t2_3rd_aa_; 
-    if (!is_restricted && nb_ > 0 && vb_ > 0) {
-        L2_bb_ = t2_3rd_bb_;
-        L2_ab_ = t2_3rd_ab_;
-    }
-    
-    build_opdm_alpha();
-    if (!is_restricted && nb_ > 0) build_opdm_beta();
-    else if (is_restricted) G_oo_beta_ = G_oo_alpha_;
-    build_generalized_fock();
-
-    double max_grad = -1.0;
-    for(int i = 0; i < na_; ++i) {
-        for(int a = 0; a < va_; ++a) {
-            double val = std::abs(F_gen_a_(na_ + a, i));
-            if (val > max_grad) {
-                max_grad = val;
-                i_target = i;
-                a_target = a;
-            }
-        }
-    }
-    
-    double grad_ana_tot = is_restricted ? -4.0 * F_gen_a_(na_ + a_target, i_target) : -2.0 * F_gen_a_(na_ + a_target, i_target);
-    
-    Eigen::MatrixXd F_ao_a, F_ao_b;
-    build_fock_fast(scf_.P_alpha, scf_.P_beta, F_ao_a, F_ao_b);
-    Eigen::MatrixXd F_mo_a = scf_.C_alpha.transpose() * F_ao_a * scf_.C_alpha;
-    double grad_ana_hf = is_restricted ? -4.0 * F_mo_a(na_ + a_target, i_target) : -2.0 * F_mo_a(na_ + a_target, i_target);
-    double grad_ana_corr = grad_ana_tot - grad_ana_hf;
-    
-    double theta = 1e-5;
-    Eigen::MatrixXd C_a_orig = scf_.C_alpha;
-    Eigen::MatrixXd C_b_orig = scf_.C_beta;
-    Eigen::MatrixXd P_a_orig = scf_.P_alpha;
-    Eigen::MatrixXd P_b_orig = scf_.P_beta;
-    
-    auto calc_energy_components = [&](double t, double& e_hf, double& e_mp2, double& e_mp3) {
-        Eigen::MatrixXd U = Eigen::MatrixXd::Identity(nbf_, nbf_);
-        U(i_target, na_ + a_target) = t;
-        U(na_ + a_target, i_target) = -t;
-        
-        C_a_current_ = C_a_orig * U;
-        if (!is_restricted) C_b_current_ = C_b_orig * U; 
-        else C_b_current_ = C_a_current_;
-        
-        scf_.C_alpha = C_a_current_;
-        scf_.C_beta = C_b_current_;
-        scf_.P_alpha = scf_.C_alpha.leftCols(na_) * scf_.C_alpha.leftCols(na_).transpose();
-        if (!is_restricted) scf_.P_beta = scf_.C_beta.leftCols(nb_) * scf_.C_beta.leftCols(nb_).transpose();
-        else scf_.P_beta = scf_.P_alpha;
-        
-        pseudocanonicalize();
-        C_a_current_ = scf_.C_alpha;
-        C_b_current_ = scf_.C_beta;
-
-        Eigen::MatrixXd F_ao_a_tmp, F_ao_b_tmp;
-        build_fock_fast(scf_.P_alpha, scf_.P_beta, F_ao_a_tmp, F_ao_b_tmp);
-        e_hf = 0.5 * (scf_.P_alpha.cwiseProduct(H_core_ + F_ao_a_tmp).sum() + 
-                      scf_.P_beta.cwiseProduct(H_core_ + F_ao_b_tmp).sum()) 
-               + mol_.nuclear_repulsion_energy();
-                       
-        transform_integrals(); 
-        compute_t2_amplitudes();
-        compute_mp2_energy();
-        compute_mp3_correction();
-        
-        e_mp2 = e_ss_ + e_os_;
-        e_mp3 = e_mp3_tot_;
-    };
-
-    double hf_plus, mp2_plus, mp3_plus;
-    calc_energy_components(theta, hf_plus, mp2_plus, mp3_plus);
-    
-    double hf_minus, mp2_minus, mp3_minus;
-    calc_energy_components(-theta, hf_minus, mp2_minus, mp3_minus);
-    
-    double g_num_hf  = (hf_plus - hf_minus) / (2.0 * theta);
-    double g_num_mp2 = (mp2_plus - mp2_minus) / (2.0 * theta);
-    double g_num_mp3 = (mp3_plus - mp3_minus) / (2.0 * theta);
-    double g_num_corr = g_num_mp2 + g_num_mp3;
-    double g_num_tot = g_num_hf + g_num_corr;
-
-    std::cout << std::fixed << std::setprecision(10);
-    std::cout << "Target Rotasi        : (i=" << i_target << " [Occ], a=" << a_target << " [Vir])\n";
-    std::cout << "--- Finite Difference (NUMERIK) ---\n";
-    std::cout << "Gradien HF Numerik   : " << std::scientific << g_num_hf << "\n";
-    std::cout << "Gradien MP2 Numerik  : " << std::scientific << g_num_mp2 << "\n";
-    std::cout << "Gradien MP3 Numerik  : " << std::scientific << g_num_mp3 << "\n";
-    std::cout << "Korelasi Numerik     : " << std::scientific << g_num_corr << "\n";
-    std::cout << "TOTAL Numerik        : " << std::scientific << g_num_tot << "\n";
-    std::cout << "--- Rumus Analitik (KODE) ---\n";
-    std::cout << "Gradien HF Analitik  : " << std::scientific << grad_ana_hf << "\n";
-    std::cout << "Korelasi Analitik    : " << std::scientific << grad_ana_corr << "\n";
-    std::cout << "TOTAL Analitik       : " << std::scientific << grad_ana_tot << "\n";
-    std::cout << "--- EVALUASI SELISIH ---\n";
-    std::cout << "Selisih HF           : " << std::abs(g_num_hf - grad_ana_hf) << "\n";
-    std::cout << "Selisih Korelasi     : " << std::abs(g_num_corr - grad_ana_corr) << "\n";
-    std::cout << "Selisih TOTAL        : " << std::abs(g_num_tot - grad_ana_tot) << "\n";
-    std::cout << "-------------------------------------------------------------------\n";
-    scf_.C_alpha = C_a_orig;
-    scf_.C_beta  = C_b_orig;
-    scf_.P_alpha = P_a_orig;
-    scf_.P_beta  = P_b_orig;
-    C_a_current_ = C_a_orig;
-    C_b_current_ = C_b_orig;
-}
-
 MP3Result OMP3::compute_omp3() {
     if(omp_get_thread_num() == 0) {
         std::cout << "\n========================================================\n";
-        std::cout << "      Orbital-Optimized MP3 (Mode: MP3 @ OMP2 Psi4-Match)\n";
+        std::cout << "      Orbital-Optimized MP3 (OMP3 - Professional)\n";
         std::cout << "========================================================\n";
     }
     
-    // 1. Lakukan optimasi orbital penuh hanya pada tingkat OMP2
     MP2Result res2 = OMP2::compute();
-
-    // 2. Terapkan orbital konvergen hasil OMP2 untuk perhitungan statis MP3
-    scf_.C_alpha = res2.C_alpha;
-    scf_.C_beta  = res2.C_beta;
-    
-    pseudocanonicalize(); // Wajib dire-kanonikalisasi agar denominasi orbital valid untuk rumus MP3
-    C_a_current_ = scf_.C_alpha;
-    C_b_current_ = scf_.C_beta;
-    
-    if (config_.eri_method == "exact") {
-        eri_ao_cached_ = integrals_->compute_eri();
-    }
-
-    transform_integrals();
-    compute_t2_amplitudes();
-    compute_mp2_energy();
-    
-    // 3. Hitung MP3 Correction TEPAT SATU KALI tanpa iterasi loop CPHF makro
-    compute_mp3_correction(); 
 
     MP3Result res3;
     res3.converged = res2.converged;
