@@ -625,7 +625,7 @@ void OMP3::compute_mp3_correction() {
             TBLIS_VIEW_4D(t_W, W, na_, na_, va_, va_);
 
             eri_ao_cached_.resize(0, 0, 0, 0); 
-            const auto& eri_ao_cached_local = ints_->compute_eri();
+            const auto& eri_ao_cached_local = integrals_->compute_eri();
 
             if (Waa_ladder_.size() != va_ * va_ * va_ * va_) Waa_ladder_.resize(va_, va_, va_, va_);
             Waa_ladder_ = integrals::ERITransformer::transform_custom(eri_ao_cached_local, Cav, Cav, Cav, Cav, nbf_, va_, va_, va_, va_);
@@ -669,7 +669,7 @@ void OMP3::compute_mp3_correction() {
             return;
         } else {
             eri_ao_cached_.resize(0, 0, 0, 0); 
-            const auto& eri_ao_cached_local = ints_->compute_eri();
+            const auto& eri_ao_cached_local = integrals_->compute_eri();
 
             const Eigen::MatrixXd& Cbo = scf_.C_beta.leftCols(nb_);
             const Eigen::MatrixXd& Cbv = scf_.C_beta.rightCols(vb_);
@@ -1294,7 +1294,7 @@ MP3Result OMP3::compute_omp3() {
     C_b_current_ = scf_.C_beta;
     
     if (config_.eri_method == "exact") {
-        eri_ao_cached_ = ints_->compute_eri();
+        eri_ao_cached_ = integrals_->compute_eri();
     }
 
     transform_integrals();
