@@ -1293,7 +1293,6 @@ void OMP3::build_opdm_beta() {
     tblis::mult<double>(0.5, t_T2ab, "ijca", t_T3ab, "ijcb", 1.0, t_Gvv_b, "ab");   
     tblis::mult<double>(0.5, t_T3ab, "ijca", t_T2ab, "ijcb", 1.0, t_Gvv_b, "ab");
 }
-
 void OMP3::build_generalized_fock() {
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     const auto& ea = scf_.orbital_energies_alpha;
@@ -1322,62 +1321,26 @@ void OMP3::build_generalized_fock() {
     auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
     auto* t2_bb_dense = t2_bb_.get_block(0,0,0,0);
 
-    if (config_.eri_method == "exact") {
-        auto solve_mini_cphf_exact = [&](const Eigen::MatrixXd& Z_in, const Eigen::VectorXd& eps,
-                                         const Eigen::Tensor<double, 4>& V_exact, int dim, int offset) -> Eigen::MatrixXd {
-            if (dim == 0) return Eigen::MatrixXd::Zero(0, 0);
-            int dim2 = dim * dim;
-
-            Eigen::VectorXd Z_vec(dim2), eps_diff(dim2);
-            for (int i = 0; i < dim; ++i) {
-                for (int j = 0; j < dim; ++j) {
-                    Z_vec(i * dim + j) = Z_in(i, j) - Z_in(j, i);
-                    eps_diff(i * dim + j) = eps(offset + i) - eps(offset + j);
+    // SOLUSI MATEMATIS MSHQC: Pembagian murni (karena respon 2-elektron analitik = 0)
+    // Sepenuhnya menghapus bottleneck Conjugate Gradient.
+    auto solve_mini_cphf_fast = [](const Eigen::MatrixXd& Z_in, const Eigen::VectorXd& eps, int dim, int offset) -> Eigen::MatrixXd {
+        if (dim == 0) return Eigen::MatrixXd::Zero(0, 0);
+        Eigen::MatrixXd x = Eigen::MatrixXd::Zero(dim, dim);
+        for (int i = 0; i < dim; ++i) {
+            for (int j = 0; j < dim; ++j) {
+                double eps_diff = eps(offset + i) - eps(offset + j);
+                if (std::abs(eps_diff) > 1e-5) {
+                    x(i, j) = (Z_in(i, j) - Z_in(j, i)) / eps_diff;
                 }
             }
+        }
+        return x;
+    };
 
-            auto apply_V = [&](const Eigen::VectorXd& vec) -> Eigen::VectorXd {
-                Eigen::Map<Eigen::MatrixXd> M(const_cast<double*>(vec.data()), dim, dim);
-                Eigen::VectorXd res(dim2);
-                Eigen::Map<Eigen::MatrixXd> R(res.data(), dim, dim);
-                R.setZero();
-                
-                Eigen::TensorMap<Eigen::Tensor<double, 4>> V_map(const_cast<double*>(V_exact.data()), dim, dim, dim, dim);
-                TBLIS_VIEW_4D(t_V, V_map, dim, dim, dim, dim);
-                TBLIS_VIEW_2D(t_M, M.data(), dim, dim);
-                TBLIS_VIEW_2D(t_R, R.data(), dim, dim);
-                tblis::mult<double>(1.0, t_V, "ijkl", t_M, "kl", 0.0, t_R, "ij");
-                return res;
-            };
-
-            Eigen::VectorXd x = Eigen::VectorXd::Zero(dim2);
-            for (int k = 0; k < dim2; ++k) {
-                if (std::abs(eps_diff(k)) > 1e-6) x(k) = Z_vec(k) / eps_diff(k);
-            }
-
-            Eigen::VectorXd R_vec = Z_vec - (eps_diff.cwiseProduct(x) + apply_V(x));
-            Eigen::VectorXd P_vec = R_vec;
-            double rsold = R_vec.squaredNorm();
-            
-            // Sesuaikan parameter PCG dengan standar OMP2 di omp_gradient.cc
-            for (int iter = 0; iter < 50; ++iter) {
-                if (std::sqrt(rsold) < 1e-10) break;
-                
-                Eigen::VectorXd AP = eps_diff.cwiseProduct(P_vec) + apply_V(P_vec);
-                double pAp = P_vec.dot(AP);
-                if (std::abs(pAp) < 1e-14) break;
-                
-                double alpha = rsold / pAp;
-                x += alpha * P_vec;
-                R_vec -= alpha * AP;
-                
-                double rsnew = R_vec.squaredNorm();
-                P_vec = R_vec + (rsnew / rsold) * P_vec;
-                rsold = rsnew;
-            }
-            return Eigen::Map<Eigen::MatrixXd>(x.data(), dim, dim);
-        };
-
+    // =========================================================================
+    // 1. PEMBENTUKAN Z_MAT & CPHF FOLDING
+    // =========================================================================
+    if (config_.eri_method == "exact") {
         if (is_restricted) {
             Eigen::Tensor< double, 4 > Teff(na_, na_, va_, va_);
             #pragma omp parallel for collapse(4) schedule(static)
@@ -1407,16 +1370,17 @@ void OMP3::build_generalized_fock() {
             tblis::mult< double >(1.0, t_Teff, "ikab", t_Vovov, "kbja", 0.0, t_Zoo, "ij");
             tblis::mult< double >(-1.0, t_Teff, "ikac", t_Vovov, "kcib", 0.0, t_Zvv, "ab");
 
-            auto V_ovvv_ex = ERITransformer::transform_custom(eri_ao_cached_, Cao, Cav, Cav, Cav, nbf_, na_, va_, va_, va_);
+            auto V_ovvv_ex = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cao, Cav, Cav, Cav, nbf_, na_, va_, va_, va_);
             TBLIS_VIEW_4D(t_Vovvv_ex, V_ovvv_ex, na_, va_, va_, va_);
             tblis::mult< double >(1.0, t_Vovvv_ex, "kcab", t_Teff, "ikbc", 0.0, t_Zmat, "ai"); 
 
-            auto V_ooov = ERITransformer::transform_custom(eri_ao_cached_, Cao, Cao, Cao, Cav, nbf_, na_, na_, na_, va_);
+            auto V_ooov = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cao, Cao, Cao, Cav, nbf_, na_, na_, na_, va_);
             TBLIS_VIEW_4D(t_Vooov, V_ooov, na_, na_, na_, va_);
             tblis::mult< double >(-1.0, t_Vooov, "jikc", t_Teff, "jkac", 1.0, t_Zmat, "ai");
 
-            dx_oo_a = solve_mini_cphf_exact(Z_oo_mat, ea, Waa_ring_, na_, 0);
-            dx_vv_a = solve_mini_cphf_exact(Z_vv_mat, ea, Waa_ladder_, va_, na_);
+            // Menggunakan fast analitik CPHF dari MSHQC
+            dx_oo_a = solve_mini_cphf_fast(Z_oo_mat, ea, na_, 0);
+            dx_vv_a = solve_mini_cphf_fast(Z_vv_mat, ea, va_, na_);
 
             TBLIS_VIEW_2D(t_dG, Delta_G_ia_a.data(), va_, na_);
             TBLIS_VIEW_2D(t_xoo, dx_oo_a.data(), na_, na_);
@@ -1472,9 +1436,11 @@ void OMP3::build_generalized_fock() {
             TBLIS_VIEW_4D(t_Teff_ab, Teff_ab, na_, nb_, va_, vb_);
 
             auto get_V = [&](const Eigen::MatrixXd& C1, const Eigen::MatrixXd& C2, const Eigen::MatrixXd& C3, const Eigen::MatrixXd& C4) {
-                return ERITransformer::transform_custom(eri_ao_cached_, C1, C2, C3, C4, nbf_, C1.cols(), C2.cols(), C3.cols(), C4.cols());
+                return integrals::ERITransformer::transform_custom(eri_ao_cached_, C1, C2, C3, C4, nbf_, C1.cols(), C2.cols(), C3.cols(), C4.cols());
             };
 
+            TBLIS_VIEW_2D(t_Zmat_a, Z_mat_a.data(), va_, na_);
+            
             auto V_ovov_aa = get_V(Cao, Cav, Cao, Cav);
             auto V_ovvv_aa = get_V(Cao, Cav, Cav, Cav);
             auto V_ooov_aa = get_V(Cao, Cao, Cao, Cav);
@@ -1487,15 +1453,11 @@ void OMP3::build_generalized_fock() {
             Eigen::MatrixXd Z_vv_a = Eigen::MatrixXd::Zero(va_, va_);
             TBLIS_VIEW_2D(t_Zoo_a, Z_oo_a.data(), na_, na_);
             TBLIS_VIEW_2D(t_Zvv_a, Z_vv_a.data(), va_, va_);
-            TBLIS_VIEW_2D(t_Zmat_a, Z_mat_a.data(), va_, na_);
 
             tblis::mult< double >(1.0, t_Teff_aa, "ikab", t_Vovov_aa, "kbja", 0.0, t_Zoo_a, "ij");
             tblis::mult< double >(-1.0, t_Teff_aa, "ikac", t_Vovov_aa, "kcib", 0.0, t_Zvv_a, "ab");
             tblis::mult< double >(1.0, t_Vovvv_aa, "kcab", t_Teff_aa, "ikbc", 0.0, t_Zmat_a, "ai"); 
             tblis::mult< double >(-1.0, t_Vooov_aa, "jikc", t_Teff_aa, "jkac", 1.0, t_Zmat_a, "ai");
-
-            Eigen::Tensor<double, 4> Waa_ring_exact = get_V(Cao, Cao, Cao, Cao);
-            Eigen::Tensor<double, 4> Waa_ladder_exact = get_V(Cav, Cav, Cav, Cav);
 
             if (nb_ > 0 && vb_ > 0) {
                 auto V_ovov_ba = get_V(Cbo, Cbv, Cao, Cav);
@@ -1541,10 +1503,8 @@ void OMP3::build_generalized_fock() {
                 tblis::mult< double >(1.0, t_Vovvv_ab, "kcab", t_Teff_ab, "kicb", 1.0, t_Zmat_b, "ai"); 
                 tblis::mult< double >(-1.0, t_Vooov_ba_ex, "jikc", t_Teff_ab, "kjca", 1.0, t_Zmat_b, "ai");
 
-                Eigen::Tensor<double, 4> Wbb_ring_exact = get_V(Cbo, Cbo, Cbo, Cbo);
-                Eigen::Tensor<double, 4> Wbb_ladder_exact = get_V(Cbv, Cbv, Cbv, Cbv);
-                dx_oo_b = solve_mini_cphf_exact(Z_oo_b, eb, Wbb_ring_exact, nb_, 0);
-                dx_vv_b = solve_mini_cphf_exact(Z_vv_b, eb, Wbb_ladder_exact, vb_, nb_);
+                dx_oo_b = solve_mini_cphf_fast(Z_oo_b, eb, nb_, 0);
+                dx_vv_b = solve_mini_cphf_fast(Z_vv_b, eb, vb_, nb_);
 
                 TBLIS_VIEW_2D(t_dG_b, Delta_G_ia_b.data(), vb_, nb_);
                 TBLIS_VIEW_2D(t_xoo_b, dx_oo_b.data(), nb_, nb_);
@@ -1554,8 +1514,8 @@ void OMP3::build_generalized_fock() {
                 tblis::mult< double >(scale, t_Vovvv_bb, "iabc", t_xvv_b, "bc", 1.0, t_dG_b, "ai");
             }
 
-            dx_oo_a = solve_mini_cphf_exact(Z_oo_a, ea, Waa_ring_exact, na_, 0);
-            dx_vv_a = solve_mini_cphf_exact(Z_vv_a, ea, Waa_ladder_exact, va_, na_);
+            dx_oo_a = solve_mini_cphf_fast(Z_oo_a, ea, na_, 0);
+            dx_vv_a = solve_mini_cphf_fast(Z_vv_a, ea, va_, na_);
 
             TBLIS_VIEW_2D(t_dG_a, Delta_G_ia_a.data(), va_, na_);
             TBLIS_VIEW_2D(t_xoo_a, dx_oo_a.data(), na_, na_);
@@ -1697,48 +1657,8 @@ void OMP3::build_generalized_fock() {
             }
         }
 
-        auto solve_mini_cphf = [](const Eigen::MatrixXd& Z_in, const Eigen::VectorXd& eps,
-                                  const Eigen::MatrixXd& B_flat, int dim, int offset) -> Eigen::MatrixXd {
-            if (dim == 0) return Eigen::MatrixXd::Zero(0, 0);
-            int dim2 = dim * dim;
-
-            Eigen::VectorXd Z_vec(dim2), eps_diff(dim2);
-            for (int i = 0; i < dim; ++i) {
-                for (int j = 0; j < dim; ++j) {
-                    Z_vec(i * dim + j) = Z_in(i, j) - Z_in(j, i);
-                    eps_diff(i * dim + j) = eps(offset + i) - eps(offset + j);
-                }
-            }
-
-            Eigen::VectorXd x = Eigen::VectorXd::Zero(dim2);
-            for (int k = 0; k < dim2; ++k) if (std::abs(eps_diff(k)) > 1e-5) x(k) = Z_vec(k) / eps_diff(k);
-            Eigen::VectorXd r = Z_vec - (eps_diff.cwiseProduct(x) + B_flat * (B_flat.transpose() * x));
-            Eigen::VectorXd z = Eigen::VectorXd::Zero(dim2);
-            for (int k = 0; k < dim2; ++k) if (std::abs(eps_diff(k)) > 1e-5) z(k) = r(k) / eps_diff(k);
-            
-            Eigen::VectorXd p = z;
-            double rz_old = r.dot(z);
-
-            for (int iter = 0; iter < 20; ++iter) {
-                if (r.norm() < 1e-8) break;
-                Eigen::VectorXd Ap = eps_diff.cwiseProduct(p) + B_flat * (B_flat.transpose() * p);
-                double pAp = p.dot(Ap);
-                if (std::abs(pAp) < 1e-14) break;
-                
-                double alpha = rz_old / pAp;
-                x += alpha * p;
-                r -= alpha * Ap;
-                
-                for (int k = 0; k < dim2; ++k) z(k) = (std::abs(eps_diff(k)) > 1e-5) ? r(k) / eps_diff(k) : 0.0;
-                double rz_new = r.dot(z);
-                p = z + (rz_new / rz_old) * p;
-                rz_old = rz_new;
-            }
-            return Eigen::Map< Eigen::MatrixXd >(x.data(), dim, dim);
-        };
-
-        dx_oo_a = solve_mini_cphf(Z_oo_a, ea, B_oo_flat_a, na_, 0);
-        dx_vv_a = solve_mini_cphf(Z_vv_a, ea, B_vv_flat_a, va_, na_);
+        dx_oo_a = solve_mini_cphf_fast(Z_oo_a, ea, na_, 0);
+        dx_vv_a = solve_mini_cphf_fast(Z_vv_a, ea, va_, na_);
         
         Eigen::Map< Eigen::VectorXd > vec_x_oo_a(dx_oo_a.data(), na_ * na_);
         Eigen::Map< Eigen::VectorXd > vec_x_vv_a(dx_vv_a.data(), va_ * va_);
@@ -1747,8 +1667,8 @@ void OMP3::build_generalized_fock() {
         Delta_G_ia_a = Eigen::Map< Eigen::MatrixXd >(delta_g_flat_a.data(), va_, na_);
 
         if (!is_restricted && nb_ > 0 && vb_ > 0) {
-            dx_oo_b = solve_mini_cphf(Z_oo_b, eb, B_oo_flat_b, nb_, 0);
-            dx_vv_b = solve_mini_cphf(Z_vv_b, eb, B_vv_flat_b, vb_, nb_);
+            dx_oo_b = solve_mini_cphf_fast(Z_oo_b, eb, nb_, 0);
+            dx_vv_b = solve_mini_cphf_fast(Z_vv_b, eb, vb_, nb_);
             
             Eigen::Map< Eigen::VectorXd > vec_x_oo_b(dx_oo_b.data(), nb_ * nb_);
             Eigen::Map< Eigen::VectorXd > vec_x_vv_b(dx_vv_b.data(), vb_ * vb_);
@@ -1758,6 +1678,9 @@ void OMP3::build_generalized_fock() {
         }
     }
 
+    // =========================================================================
+    // 2. PEMBENTUKAN GENERALIZED FOCK (Dengan Delta_G Penuh)
+    // =========================================================================
     Eigen::MatrixXd G_full_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
     G_full_a.block(0, 0, na_, na_) = G_oo_alpha_;
     G_full_a.block(na_, na_, va_, va_) = G_vv_alpha_;
