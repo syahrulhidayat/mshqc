@@ -1316,7 +1316,14 @@ void OMP3::build_generalized_fock() {
         for(int j = 0; j < na_; ++j) {
             for(int a = 0; a < va_; ++a) {
                 for(int b = 0; b < va_; ++b) {
-                    Teff_aa(i,j,a,b) = (*t_aa_dense)(i,a,j,b) + L2_aa_(i,j,a,b);
+                    if (is_restricted) {
+                        // Gunakan spin-adapted tilde untuk Restricted
+                        double t_tilde = 2.0 * (*t_aa_dense)(i,a,j,b) - (*t_aa_dense)(i,b,j,a);
+                        double l_tilde = 2.0 * L2_aa_(i,j,a,b) - L2_aa_(i,j,b,a);
+                        Teff_aa(i,j,a,b) = t_tilde + l_tilde;
+                    } else {
+                        Teff_aa(i,j,a,b) = (*t_aa_dense)(i,a,j,b) + L2_aa_(i,j,a,b);
+                    }
                 }
             }
         }
@@ -1399,19 +1406,23 @@ void OMP3::build_generalized_fock() {
     // --- A. KONTRIBUSI VVVV (Virtual Ladder) ---
     Eigen::Tensor<double, 4> G_vvvv_aa(va_, va_, va_, va_); G_vvvv_aa.setZero();
     TBLIS_VIEW_4D(t_Gvvvv_aa, G_vvvv_aa, va_, va_, va_, va_);
-    tblis::mult<double>(0.25, t_T2t, "ijab", t_T2, "ijef", 0.0, t_Gvvvv_aa, "eafb");
+    
+    // Perbaikan Prefactor: 1.0 untuk Restricted, 0.25 untuk Unrestricted
+    double f_ladd = is_restricted ? 1.0 : 0.25;
+    tblis::mult<double>(f_ladd, t_T2t, "ijab", t_T2, "ijef", 0.0, t_Gvvvv_aa, "eafb");
 
-    tblis::mult<double>(1.0, t_Gvvvv_aa, "xabc", t_Vovvv_aa, "mabc", 1.0, t_Zmat_a, "xm");
-    tblis::mult<double>(1.0, t_Gvvvv_aa, "axbc", t_Vovvv_aa, "mabc", 1.0, t_Zmat_a, "xm");
-    tblis::mult<double>(1.0, t_Gvvvv_aa, "abxc", t_Vovvv_aa, "mcab", 1.0, t_Zmat_a, "xm");
-    tblis::mult<double>(1.0, t_Gvvvv_aa, "abcx", t_Vovvv_aa, "mcba", 1.0, t_Zmat_a, "xm");
+    // PERBAIKAN: Semua VVVV harus NEGATIF (-1.0)
+    tblis::mult<double>(-1.0, t_Gvvvv_aa, "xabc", t_Vovvv_aa, "mabc", 1.0, t_Zmat_a, "xm");
+    tblis::mult<double>(-1.0, t_Gvvvv_aa, "axbc", t_Vovvv_aa, "mabc", 1.0, t_Zmat_a, "xm");
+    tblis::mult<double>(-1.0, t_Gvvvv_aa, "abxc", t_Vovvv_aa, "mcab", 1.0, t_Zmat_a, "xm");
+    tblis::mult<double>(-1.0, t_Gvvvv_aa, "abcx", t_Vovvv_aa, "mcba", 1.0, t_Zmat_a, "xm");
 
     // --- B. KONTRIBUSI OOOO (Occupied Ladder) ---
     Eigen::Tensor<double, 4> G_oooo_aa(na_, na_, na_, na_); G_oooo_aa.setZero();
     TBLIS_VIEW_4D(t_Goooo_aa, G_oooo_aa, na_, na_, na_, na_);
-    tblis::mult<double>(0.25, t_T2t, "ijab", t_T2, "mnab", 0.0, t_Goooo_aa, "minj");
+    tblis::mult<double>(f_ladd, t_T2t, "ijab", t_T2, "mnab", 0.0, t_Goooo_aa, "minj");
 
-    // Perbaikan Matematis: Untuk OOOO rotasi bernilai POSITIF 
+    // PERBAIKAN: Semua OOOO harus POSITIF (1.0)
     tblis::mult<double>(1.0, t_Goooo_aa, "minj", t_Vooov_aa, "jnix", 1.0, t_Zmat_a, "xm");
     tblis::mult<double>(1.0, t_Goooo_aa, "imnj", t_Vooov_aa, "njmx", 1.0, t_Zmat_a, "xm");
     tblis::mult<double>(1.0, t_Goooo_aa, "inmj", t_Vooov_aa, "mjix", 1.0, t_Zmat_a, "xm");
@@ -1501,6 +1512,7 @@ void OMP3::build_generalized_fock() {
         tblis::mult< double >(-1.0, t_Vooov_bb_aa, "jikc", t_Teff_ab, "kjca", 1.0, t_Zmat_b, "ai");
 
         // --- A. VVVV Unrestricted ---
+        // --- A. VVVV Unrestricted ---
         Eigen::Tensor<double, 4> G_vvvv_bb(vb_, vb_, vb_, vb_); G_vvvv_bb.setZero();
         Eigen::Tensor<double, 4> G_vvvv_ab(va_, va_, vb_, vb_); G_vvvv_ab.setZero();
         TBLIS_VIEW_4D(t_T2_bb, (*t2_bb_dense), nb_, nb_, vb_, vb_);
@@ -1511,13 +1523,15 @@ void OMP3::build_generalized_fock() {
         tblis::mult<double>(0.25, t_T2_bb, "ijab", t_T2_bb, "ijef", 0.0, t_Gvvvv_bb, "eafb");
         tblis::mult<double>(1.0, t_T2_ab, "ijab", t_T2_ab, "ijef", 0.0, t_Gvvvv_ab, "eafb");
 
+        // PERBAIKAN: Semua VVVV Unrestricted harus NEGATIF (-1.0)
         tblis::mult<double>(-1.0, t_Gvvvv_ab, "xafb", t_Vovvv_ab, "mafb", 1.0, t_Zmat_a, "xm");
         tblis::mult<double>(-1.0, t_Gvvvv_ab, "exfb", t_Vovvv_ab, "mefb", 1.0, t_Zmat_a, "xm");
 
-        tblis::mult<double>(1.0, t_Gvvvv_bb, "xabc", t_Vovvv_bb, "mabc", 1.0, t_Zmat_b, "xm");
-        tblis::mult<double>(1.0, t_Gvvvv_bb, "axbc", t_Vovvv_bb, "mabc", 1.0, t_Zmat_b, "xm");
-        tblis::mult<double>(1.0, t_Gvvvv_bb, "abxc", t_Vovvv_bb, "mcab", 1.0, t_Zmat_b, "xm");
-        tblis::mult<double>(1.0, t_Gvvvv_bb, "abcx", t_Vovvv_bb, "mcba", 1.0, t_Zmat_b, "xm");
+        tblis::mult<double>(-1.0, t_Gvvvv_bb, "xabc", t_Vovvv_bb, "mabc", 1.0, t_Zmat_b, "xm");
+        tblis::mult<double>(-1.0, t_Gvvvv_bb, "axbc", t_Vovvv_bb, "mabc", 1.0, t_Zmat_b, "xm");
+        tblis::mult<double>(-1.0, t_Gvvvv_bb, "abxc", t_Vovvv_bb, "mcab", 1.0, t_Zmat_b, "xm");
+        tblis::mult<double>(-1.0, t_Gvvvv_bb, "abcx", t_Vovvv_bb, "mcba", 1.0, t_Zmat_b, "xm");
+        
         tblis::mult<double>(-1.0, t_Gvvvv_ab, "eaxb", t_Vovvv_ba, "mbea", 1.0, t_Zmat_b, "xm");
         tblis::mult<double>(-1.0, t_Gvvvv_ab, "eafx", t_Vovvv_ba, "mfea", 1.0, t_Zmat_b, "xm");
 
@@ -1530,6 +1544,7 @@ void OMP3::build_generalized_fock() {
         tblis::mult<double>(0.25, t_T2_bb, "ijab", t_T2_bb, "mnab", 0.0, t_Goooo_bb, "minj");
         tblis::mult<double>(1.0, t_T2_ab, "ijab", t_T2_ab, "mnab", 0.0, t_Goooo_ab, "minj");
 
+        // PERBAIKAN: Semua OOOO Unrestricted harus POSITIF (1.0)
         tblis::mult<double>(1.0, t_Goooo_ab, "minj", t_Vooov_bb_aa, "njix", 1.0, t_Zmat_a, "xm");
         tblis::mult<double>(1.0, t_Goooo_ab, "imnj", t_Vooov_bb_aa, "njix", 1.0, t_Zmat_a, "xm");
 
