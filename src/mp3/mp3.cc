@@ -1599,7 +1599,7 @@ void OMP3::build_generalized_fock() {
         Eigen::MatrixXd F_HF_vo_a = F_HF_mo_a.block(na_, 0, va_, na_);
         Eigen::MatrixXd L_sep_a = F_HF_vo_a * G_oo_alpha_ - G_vv_alpha_ * F_HF_vo_a;
         
-        // [PENGHAPUSAN DELTA_G] Hanya L_sep_a dan Z_mat_a, sama dengan OMP2!
+        // HANYA L_sep_a dan Z_mat_a (Sama persis seperti OMP2)
         F_gen_a_.block(na_, 0, va_, na_) += L_sep_a + Z_mat_a;
         F_gen_a_.block(0, na_, na_, va_) += (L_sep_a + Z_mat_a).transpose();
     }
@@ -1609,7 +1609,7 @@ void OMP3::build_generalized_fock() {
         Eigen::MatrixXd F_HF_vo_b = F_HF_mo_b.block(nb_, 0, vb_, nb_);
         Eigen::MatrixXd L_sep_b = F_HF_vo_b * G_oo_beta_ - G_vv_beta_ * F_HF_vo_b;
 
-        // [PENGHAPUSAN DELTA_G] Hanya L_sep_b dan Z_mat_b, sama dengan OMP2!
+        // HANYA L_sep_b dan Z_mat_b
         F_gen_b_.block(nb_, 0, vb_, nb_) += L_sep_b + Z_mat_b;
         F_gen_b_.block(0, nb_, nb_, vb_) += (L_sep_b + Z_mat_b).transpose();
     } else if (is_restricted) {
@@ -1618,7 +1618,10 @@ void OMP3::build_generalized_fock() {
 }
 
 void OMP3::build_hessian_diagonal(Eigen::VectorXd& diag_H, double grad_norm) {
+    // PSI4 BEHAVIOR: Gunakan Hessian OMP2 polos, abaikan koreksi densitas MP3
     OMP2::build_hessian_diagonal(diag_H, grad_norm);
+    
+    /* -- COMMENT OUT MSHQC HEURISTIC --
     int idx = 0;
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     double spin_factor = is_restricted ? 4.0 : 2.0;
@@ -1640,6 +1643,7 @@ void OMP3::build_hessian_diagonal(Eigen::VectorXd& diag_H, double grad_norm) {
             }
         }
     }
+    ----------------------------------- */
 }
 
 void OMP3::debug_gradient_fd(int i_target, int a_target) {
