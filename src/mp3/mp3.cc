@@ -1302,6 +1302,10 @@ void OMP3::build_opdm_beta() {
     tblis::mult<double>(0.5, t_T3ab, "ijca", t_T2ab, "ijcb", 1.0, t_Gvv_b, "ab");
 }
 void OMP3::build_generalized_fock() {
+    if (L2_aa_.size() == 0) {
+        OMP2::build_generalized_fock();
+        return;
+    }
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     const auto& ea = scf_.orbital_energies_alpha;
     const auto& eb = scf_.orbital_energies_beta;
