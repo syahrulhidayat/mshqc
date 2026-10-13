@@ -1441,7 +1441,8 @@ void OMP3::build_generalized_fock() {
             tblis::mult< double >(1.0, t_Vovvv_bb, "kcab", t_Teff_bb, "ikbc", 0.0, t_Zmat_b, "ai");
             tblis::mult< double >(-1.0, t_Vooov_bb, "jikc", t_Teff_bb, "jkac", 1.0, t_Zmat_b, "ai");
             tblis::mult< double >(1.0, t_Vovvv_ab, "kcab", t_Teff_ab, "kicb", 1.0, t_Zmat_b, "ai"); 
-            tblis::mult< double >(-1.0, t_Vooov_ba, "jikc", t_Teff_ab, "kjca", 1.0, t_Zmat_b, "ai");
+            // PERBAIKAN TYPO: Mengganti t_Vooov_ba dengan t_Vooov_bb_aa
+            tblis::mult< double >(-1.0, t_Vooov_bb_aa, "jikc", t_Teff_ab, "kjca", 1.0, t_Zmat_b, "ai");
 
             // --- A. VVVV Unrestricted ---
             Eigen::Tensor<double, 4> G_vvvv_bb(vb_, vb_, vb_, vb_); G_vvvv_bb.setZero();
@@ -1506,11 +1507,128 @@ void OMP3::build_generalized_fock() {
         }
 
     } else {
-        // [Engine Density Fitting MSHQC Anda dibiarkan persis aslinya]
-        // Jika Anda memvalidasi DF-OMP3 di lain waktu, 
-        // pastikan menyuntikkan matriks densitas G_vvvv dan G_oooo di sini juga.
-        OMP2::build_generalized_fock();
-        return;
+        // [INTEGRASI KEMBALI KODE DF MSHQC]
+        int n_aux = scf_.L_mat.cols();
+        auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
+        auto* t2_bb_dense = t2_bb_.get_block(0,0,0,0);
+        
+        Eigen::MatrixXd B_oo_flat_a = Eigen::MatrixXd::Zero(na_ * na_, n_aux);
+        Eigen::MatrixXd B_vv_flat_a = Eigen::MatrixXd::Zero(va_ * va_, n_aux);
+        Eigen::MatrixXd B_oo_flat_b = Eigen::MatrixXd::Zero(nb_ * nb_, n_aux);
+        Eigen::MatrixXd B_vv_flat_b = Eigen::MatrixXd::Zero(vb_ * vb_, n_aux);
+
+        #pragma omp parallel
+        {
+            Eigen::MatrixXd priv_oo_a = Eigen::MatrixXd::Zero(na_ * na_, n_aux);
+            Eigen::MatrixXd priv_vv_a = Eigen::MatrixXd::Zero(va_ * va_, n_aux);
+            Eigen::MatrixXd priv_oo_b = Eigen::MatrixXd::Zero(nb_ * nb_, n_aux);
+            Eigen::MatrixXd priv_vv_b = Eigen::MatrixXd::Zero(vb_ * vb_, n_aux);
+
+            #pragma omp for schedule(dynamic)
+            for (int P = 0; P < n_aux; ++P) {
+                Eigen::Map< const Eigen::MatrixXd > B_AO(scf_.L_mat.col(P).data(), nbf_, nbf_);
+                Eigen::MatrixXd MO_oo_a = Cao.transpose() * (B_AO * Cao);
+                Eigen::MatrixXd MO_vv_a = Cav.transpose() * (B_AO * Cav);
+                priv_oo_a.col(P) = Eigen::Map< Eigen::VectorXd >(MO_oo_a.data(), na_ * na_);
+                priv_vv_a.col(P) = Eigen::Map< Eigen::VectorXd >(MO_vv_a.data(), va_ * va_);
+
+                if (!is_restricted && nb_ > 0 && vb_ > 0) {
+                    Eigen::MatrixXd MO_oo_b = Cbo.transpose() * (B_AO * Cbo);
+                    Eigen::MatrixXd MO_vv_b = Cbv.transpose() * (B_AO * Cbv);
+                    priv_oo_b.col(P) = Eigen::Map< Eigen::VectorXd >(MO_oo_b.data(), nb_ * nb_);
+                    priv_vv_b.col(P) = Eigen::Map< Eigen::VectorXd >(MO_vv_b.data(), vb_ * vb_);
+                }
+            }
+            #pragma omp critical
+            {
+                B_oo_flat_a += priv_oo_a; B_vv_flat_a += priv_vv_a;
+                if (!is_restricted && nb_ > 0 && vb_ > 0) { B_oo_flat_b += priv_oo_b; B_vv_flat_b += priv_vv_b; }
+            }
+        }
+
+        Eigen::MatrixXd Teff_aa = Eigen::MatrixXd::Zero(na_ * va_, na_ * va_);
+        Eigen::MatrixXd Teff_ab = Eigen::MatrixXd::Zero(na_ * va_, nb_ * vb_);
+        Eigen::MatrixXd Teff_bb = Eigen::MatrixXd::Zero(nb_ * vb_, nb_ * vb_);
+
+        if (t_aa_dense) {
+            #pragma omp parallel for collapse(2) schedule(static)
+            for (int i = 0; i < na_; ++i) {
+                for (int a = 0; a < va_; ++a) {
+                    for (int j = 0; j < na_; ++j) {
+                        for (int b = 0; b < va_; ++b) {
+                            Teff_aa(i * va_ + a, j * va_ + b) = (*t_aa_dense)(i, a, j, b) + L2_aa_(i, j, a, b);
+                        }
+                    }
+                }
+            }
+        }
+        
+        if (t2_ab_dense && !is_restricted) {
+            #pragma omp parallel for collapse(2) schedule(static)
+            for (int i = 0; i < na_; ++i) {
+                for (int a = 0; a < va_; ++a) {
+                    for (int j = 0; j < nb_; ++j) {
+                        for (int b = 0; b < vb_; ++b) {
+                            Teff_ab(i * va_ + a, j * vb_ + b) = (*t2_ab_dense)(i, j, a, b) + L2_ab_(i, j, a, b);
+                        }
+                    }
+                }
+            }
+        }
+        
+        if (t2_bb_dense && !is_restricted) {
+            #pragma omp parallel for collapse(2) schedule(static)
+            for (int i = 0; i < nb_; ++i) {
+                for (int a = 0; a < vb_; ++a) {
+                    for (int j = 0; j < nb_; ++j) {
+                        for (int b = 0; b < vb_; ++b) {
+                            Teff_bb(i * vb_ + a, j * vb_ + b) = (*t2_bb_dense)(i, j, a, b) + L2_bb_(i, j, a, b);
+                        }
+                    }
+                }
+            }
+        }
+
+        Eigen::MatrixXd X_a = Teff_aa * B_ia_P_alpha_;
+        if (!is_restricted) X_a.noalias() += Teff_ab * B_ia_P_beta_;
+
+        Eigen::MatrixXd X_b;
+        if (!is_restricted && nb_ > 0 && vb_ > 0) {
+            X_b = Teff_bb * B_ia_P_beta_ + Teff_ab.transpose() * B_ia_P_alpha_;
+        }
+
+        #pragma omp parallel
+        {
+            Eigen::MatrixXd Z_loc_a = Eigen::MatrixXd::Zero(va_, na_);
+            Eigen::MatrixXd Z_loc_b;
+            if (!is_restricted && nb_ > 0 && vb_ > 0) {
+                Z_loc_b = Eigen::MatrixXd::Zero(vb_, nb_);
+            }
+
+            #pragma omp for schedule(dynamic)
+            for (int P = 0; P < n_aux; ++P) {
+                Eigen::Map< const Eigen::MatrixXd > X_ai(X_a.col(P).data(), va_, na_);
+                Eigen::Map< const Eigen::MatrixXd > B_ai(B_ia_P_alpha_.col(P).data(), va_, na_);
+                Eigen::Map< const Eigen::MatrixXd > V_a(B_vv_flat_a.col(P).data(), va_, va_);
+                Eigen::Map< const Eigen::MatrixXd > O_a(B_oo_flat_a.col(P).data(), na_, na_);
+                
+                Z_loc_a.noalias() += V_a * X_ai - X_ai * O_a;
+
+                if (!is_restricted && nb_ > 0 && vb_ > 0) {
+                    Eigen::Map< const Eigen::MatrixXd > X_bi(X_b.col(P).data(), vb_, nb_);
+                    Eigen::Map< const Eigen::MatrixXd > B_bi(B_ia_P_beta_.col(P).data(), vb_, nb_);
+                    Eigen::Map< const Eigen::MatrixXd > V_b(B_vv_flat_b.col(P).data(), vb_, vb_);
+                    Eigen::Map< const Eigen::MatrixXd > O_b(B_oo_flat_b.col(P).data(), nb_, nb_);
+                    
+                    Z_loc_b.noalias() += V_b * X_bi - X_bi * O_b;
+                }
+            }
+            #pragma omp critical
+            { 
+                Z_mat_a += Z_loc_a; 
+                if (!is_restricted && nb_ > 0 && vb_ > 0) { Z_mat_b += Z_loc_b; }
+            }
+        }
     }
 
     // =========================================================================
