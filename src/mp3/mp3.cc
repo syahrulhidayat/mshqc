@@ -1883,6 +1883,9 @@ void OMP3::debug_gradient_fd(int i_target, int a_target) {
 }
 
 MP3Result OMP3::compute_omp3() {
+    // [PERBAIKAN CRUCIAL]: Deklarasi t_start ditambahkan di baris paling atas
+    auto t_start = std::chrono::high_resolution_clock::now();
+
     if(omp_get_thread_num() == 0) {
         std::cout << "\n========================================================\n";
         std::cout << "      Orbital-Optimized MP3 (OMP3 - Professional)\n";
@@ -2045,6 +2048,7 @@ MP3Result OMP3::compute_omp3() {
         std::cout << "  E_MP3        : " << std::fixed << std::setprecision(8) << res3.e_mp3 << " Ha\n";
         std::cout << "  (T1 Singles) : " << std::setprecision(8) << e3_singles << " Ha\n";
         std::cout << "  Total Energy : " << res3.e_total << " Ha\n";
+        // Waktu komputasi sekarang akan valid karena t_start sudah terdeklarasi
         std::cout << "  Time         : " << std::chrono::duration< double >(t_end - t_start).count() << " s\n";
     }
     return res3;
