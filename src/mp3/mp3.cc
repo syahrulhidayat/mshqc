@@ -1317,7 +1317,6 @@ void OMP3::build_generalized_fock() {
             for(int a = 0; a < va_; ++a) {
                 for(int b = 0; b < va_; ++b) {
                     if (is_restricted) {
-                        // Gunakan spin-adapted tilde untuk Restricted
                         double t_tilde = 2.0 * (*t_aa_dense)(i,a,j,b) - (*t_aa_dense)(i,b,j,a);
                         double l_tilde = 2.0 * L2_aa_(i,j,a,b) - L2_aa_(i,j,b,a);
                         Teff_aa(i,j,a,b) = t_tilde + l_tilde;
@@ -1407,22 +1406,22 @@ void OMP3::build_generalized_fock() {
     Eigen::Tensor<double, 4> G_vvvv_aa(va_, va_, va_, va_); G_vvvv_aa.setZero();
     TBLIS_VIEW_4D(t_Gvvvv_aa, G_vvvv_aa, va_, va_, va_, va_);
     
-    // Prefactor: 1.0 (Restricted) vs 0.25 (Unrestricted)
+    // Perbaikan Prefactor
     double f_ladd = is_restricted ? 1.0 : 0.25;
     tblis::mult<double>(f_ladd, t_T2t, "ijab", t_T2, "ijef", 0.0, t_Gvvvv_aa, "eafb");
 
-    // VVVV harus NEGATIF (-1.0). Ini urutan indeks yang BENAR SECARA MATEMATIS!
-    tblis::mult<double>(-1.0, t_Gvvvv_aa, "xafb", t_Vovvv_aa, "mafb", 1.0, t_Zmat_a, "xm"); 
-    tblis::mult<double>(-1.0, t_Gvvvv_aa, "exfb", t_Vovvv_aa, "mefb", 1.0, t_Zmat_a, "xm"); 
-    tblis::mult<double>(-1.0, t_Gvvvv_aa, "eaxb", t_Vovvv_aa, "mbea", 1.0, t_Zmat_a, "xm"); 
-    tblis::mult<double>(-1.0, t_Gvvvv_aa, "eafx", t_Vovvv_aa, "mfea", 1.0, t_Zmat_a, "xm"); 
+    // Perbaikan Tanda: VVVV selalu NEGATIF (-1.0)
+    tblis::mult<double>(-1.0, t_Gvvvv_aa, "xafb", t_Vovvv_aa, "mafb", 1.0, t_Zmat_a, "xm");
+    tblis::mult<double>(-1.0, t_Gvvvv_aa, "exfb", t_Vovvv_aa, "mefb", 1.0, t_Zmat_a, "xm");
+    tblis::mult<double>(-1.0, t_Gvvvv_aa, "eaxb", t_Vovvv_aa, "mbea", 1.0, t_Zmat_a, "xm");
+    tblis::mult<double>(-1.0, t_Gvvvv_aa, "eafx", t_Vovvv_aa, "mfae", 1.0, t_Zmat_a, "xm");
 
     // --- B. KONTRIBUSI OOOO (Occupied Ladder) ---
     Eigen::Tensor<double, 4> G_oooo_aa(na_, na_, na_, na_); G_oooo_aa.setZero();
     TBLIS_VIEW_4D(t_Goooo_aa, G_oooo_aa, na_, na_, na_, na_);
     tblis::mult<double>(f_ladd, t_T2t, "ijab", t_T2, "mnab", 0.0, t_Goooo_aa, "minj");
 
-    // OOOO harus POSITIF (+1.0). Ini urutan indeks yang BENAR SECARA MATEMATIS!
+    // Perbaikan Tanda: OOOO selalu POSITIF (1.0)
     tblis::mult<double>(1.0, t_Goooo_aa, "minj", t_Vooov_aa, "njix", 1.0, t_Zmat_a, "xm");
     tblis::mult<double>(1.0, t_Goooo_aa, "imnj", t_Vooov_aa, "njix", 1.0, t_Zmat_a, "xm");
     tblis::mult<double>(1.0, t_Goooo_aa, "inmj", t_Vooov_aa, "injx", 1.0, t_Zmat_a, "xm");
@@ -1447,17 +1446,15 @@ void OMP3::build_generalized_fock() {
         tblis::mult<double>(-1.0, t_T2, "mkce", t_T2t, "miae", 1.0, t_Goovv_aa, "ikac");
     }
 
-    // Eksekusi TBLIS OVOV
-    tblis::mult<double>( 1.0, t_Govov_aa, "makc", t_Vovvv_aa, "xakc", 1.0, t_Zmat_a, "xm");
+    tblis::mult<double>(1.0, t_Govov_aa, "makc", t_Vovvv_aa, "kcxa", 1.0, t_Zmat_a, "xm");
     tblis::mult<double>(-1.0, t_Govov_aa, "ixkc", t_Vooov_aa, "imkc", 1.0, t_Zmat_a, "xm");
-    tblis::mult<double>( 1.0, t_Govov_aa, "iamc", t_Vovvv_aa, "iaxc", 1.0, t_Zmat_a, "xm");
-    tblis::mult<double>(-1.0, t_Govov_aa, "iakx", t_Vooov_aa, "iakm", 1.0, t_Zmat_a, "xm");
+    tblis::mult<double>(1.0, t_Govov_aa, "iamc", t_Vovvv_aa, "iaxc", 1.0, t_Zmat_a, "xm");
+    tblis::mult<double>(-1.0, t_Govov_aa, "iakx", t_Vooov_aa, "kmia", 1.0, t_Zmat_a, "xm"); // Typo diperbaiki
 
-    // Eksekusi TBLIS OOVV
-    tblis::mult<double>( 1.0, t_Goovv_aa, "mkac", t_Vovvv_aa, "xkac", 1.0, t_Zmat_a, "xm");
-    tblis::mult<double>( 1.0, t_Goovv_aa, "imac", t_Vovvv_aa, "ixac", 1.0, t_Zmat_a, "xm");
+    tblis::mult<double>(1.0, t_Goovv_aa, "mkac", t_Vovvv_aa, "kxca", 1.0, t_Zmat_a, "xm");
+    tblis::mult<double>(1.0, t_Goovv_aa, "imac", t_Vovvv_aa, "ixac", 1.0, t_Zmat_a, "xm");
     tblis::mult<double>(-1.0, t_Goovv_aa, "ikxc", t_Vooov_aa, "ikmc", 1.0, t_Zmat_a, "xm");
-    tblis::mult<double>(-1.0, t_Goovv_aa, "ikax", t_Vooov_aa, "ikam", 1.0, t_Zmat_a, "xm");
+    tblis::mult<double>(-1.0, t_Goovv_aa, "ikax", t_Vooov_aa, "ikma", 1.0, t_Zmat_a, "xm"); // Typo diperbaiki
 
     // =========================================================================
     // 3. UNRESTRICTED EXTENSION (BB & AB COMPONENTS)
@@ -1524,7 +1521,7 @@ void OMP3::build_generalized_fock() {
         tblis::mult<double>(0.25, t_T2_bb, "ijab", t_T2_bb, "ijef", 0.0, t_Gvvvv_bb, "eafb");
         tblis::mult<double>(1.0, t_T2_ab, "ijab", t_T2_ab, "ijef", 0.0, t_Gvvvv_ab, "eafb");
 
-        // VVVV: SEMUA NEGATIF (-1.0)
+        // VVVV Unrestricted: SEMUA NEGATIF (-1.0)
         tblis::mult<double>(-1.0, t_Gvvvv_ab, "xafb", t_Vovvv_ab, "mafb", 1.0, t_Zmat_a, "xm");
         tblis::mult<double>(-1.0, t_Gvvvv_ab, "exfb", t_Vovvv_ab, "mefb", 1.0, t_Zmat_a, "xm");
 
@@ -1545,15 +1542,14 @@ void OMP3::build_generalized_fock() {
         tblis::mult<double>(0.25, t_T2_bb, "ijab", t_T2_bb, "mnab", 0.0, t_Goooo_bb, "minj");
         tblis::mult<double>(1.0, t_T2_ab, "ijab", t_T2_ab, "mnab", 0.0, t_Goooo_ab, "minj");
 
-        // OOOO: SEMUA POSITIF (1.0)
+        // OOOO Unrestricted: SEMUA POSITIF (1.0)
         tblis::mult<double>(1.0, t_Goooo_ab, "minj", t_Vooov_bb_aa, "njix", 1.0, t_Zmat_a, "xm");
-        tblis::mult<double>(1.0, t_Goooo_ab, "imnj", t_Vooov_bb_aa, "njix", 1.0, t_Zmat_a, "xm");
-
-        tblis::mult<double>(1.0, t_Goooo_ab, "ijmn", t_Vooov_aa_bb, "injx", 1.0, t_Zmat_b, "xm");
-        tblis::mult<double>(1.0, t_Goooo_ab, "ijnm", t_Vooov_aa_bb, "injx", 1.0, t_Zmat_b, "xm");
+        tblis::mult<double>(1.0, t_Goooo_ab, "imnj", t_Vooov_bb_aa, "njix", 1.0, t_Zmat_a, "xm"); // Gunakan "njix", bukan "njmx" dari AI halu
+        tblis::mult<double>(1.0, t_Goooo_ab, "ijmn", t_Vooov_aa_bb, "ijnx", 1.0, t_Zmat_b, "xm");
+        tblis::mult<double>(1.0, t_Goooo_ab, "ijnm", t_Vooov_aa_bb, "ijnx", 1.0, t_Zmat_b, "xm");
 
         tblis::mult<double>(1.0, t_Goooo_bb, "minj", t_Vooov_bb, "njix", 1.0, t_Zmat_b, "xm");
-        tblis::mult<double>(1.0, t_Goooo_bb, "imnj", t_Vooov_bb, "njix", 1.0, t_Zmat_b, "xm");
+        tblis::mult<double>(1.0, t_Goooo_bb, "imnj", t_Vooov_bb, "njix", 1.0, t_Zmat_b, "xm"); 
         tblis::mult<double>(1.0, t_Goooo_bb, "inmj", t_Vooov_bb, "injx", 1.0, t_Zmat_b, "xm");
         tblis::mult<double>(1.0, t_Goooo_bb, "injm", t_Vooov_bb, "injx", 1.0, t_Zmat_b, "xm");
 
