@@ -1360,17 +1360,20 @@ void OMP3::build_generalized_fock() {
             TBLIS_VIEW_4D(t_Vovvv, V_ovvv, na_, va_, va_, va_);
             TBLIS_VIEW_4D(t_Vooov, V_ooov, na_, na_, na_, va_);
 
+            // Tahap 2A: Z-Vector Standar
             tblis::mult< double >(1.0, t_Vovvv, "kcab", t_Tefft, "ikbc", 0.0, t_Zmat, "ai"); 
             tblis::mult< double >(-1.0, t_Vooov, "jikc", t_Tefft, "jkac", 1.0, t_Zmat, "ai");
 
+            // Tahap 2B: Kontraksi TPDM Eksak (Sudah Benar!)
             tblis::mult< double >(-1.0, t_Gamma_VVVV, "abcd", t_Vovvv, "icbd", 1.0, t_Zmat, "ai");
-            tblis::mult< double >(1.0, t_Gamma_OOOO, "ijkl", t_Vooov, "klja", 1.0, t_Zmat, "ai");
-            tblis::mult< double >(1.0, t_Gamma_OVOV, "ibjc", t_Vovvv, "jcab", 1.0, t_Zmat, "ai");
-            tblis::mult< double >(1.0, t_Gamma_OVOV, "jbic", t_Vovvv, "jbac", 1.0, t_Zmat, "ai");
+            tblis::mult< double >(1.0,  t_Gamma_OOOO, "ijkl", t_Vooov, "klja", 1.0, t_Zmat, "ai");
+            tblis::mult< double >(1.0,  t_Gamma_OVOV, "ibjc", t_Vovvv, "jcab", 1.0, t_Zmat, "ai");
+            tblis::mult< double >(1.0,  t_Gamma_OVOV, "jbic", t_Vovvv, "jbac", 1.0, t_Zmat, "ai");
             tblis::mult< double >(-1.0, t_Gamma_OVOV, "jakb", t_Vooov, "ijkb", 1.0, t_Zmat, "ai");
             tblis::mult< double >(-1.0, t_Gamma_OVOV, "jakc", t_Vooov, "ikjc", 1.0, t_Zmat, "ai");
-
-        } else {
+        }
+    } else {
+        // ... (Biarkan modul Density Fitting MSHQC Anda tetap seperti aslinya)
             if (eri_ao_cached_.size() == 0) eri_ao_cached_ = integrals_->compute_eri();
 
             Eigen::Tensor< double, 4 > Teff_aa(na_, na_, va_, va_);
@@ -1430,9 +1433,10 @@ void OMP3::build_generalized_fock() {
                 TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
                 TBLIS_VIEW_4D(t_Teff_ab, Teff_ab, na_, nb_, va_, vb_);
                 
-                tblis::mult<double>(0.5, t_Tab, "ijab", t_Teff_ab, "ijcb", 1.0, t_G_VVVV_aa, "ac"); 
-                tblis::mult<double>(0.5, t_Tab, "ijab", t_Teff_ab, "kjab", 1.0, t_G_OOOO_aa, "ik");
-                tblis::mult<double>(-0.5, t_Tab, "ikac", t_Teff_ab, "jkbc", 1.0, t_G_OVOV_aa, "iajb");
+                // HAPUS BARIS-BARIS INI:
+                tblis::mult<double>(0.5, t_Tab, "ijab", t_Teff_ab, "ijad", 1.0, t_G_VVVV_bb, "bd"); 
+                tblis::mult<double>(0.5, t_Tab, "ijab", t_Teff_ab, "ilab", 1.0, t_G_OOOO_bb, "jl");
+                tblis::mult<double>(-0.5, t_Tab, "kiac", t_Teff_ab, "kjbc", 1.0, t_G_OVOV_bb, "iajb");
             }
 
             auto get_V = [&](const Eigen::MatrixXd& C1, const Eigen::MatrixXd& C2, const Eigen::MatrixXd& C3, const Eigen::MatrixXd& C4) {
