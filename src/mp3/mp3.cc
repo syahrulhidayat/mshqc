@@ -1360,20 +1360,17 @@ void OMP3::build_generalized_fock() {
             TBLIS_VIEW_4D(t_Vovvv, V_ovvv, na_, va_, va_, va_);
             TBLIS_VIEW_4D(t_Vooov, V_ooov, na_, na_, na_, va_);
 
-            // Tahap 2A: Z-Vector Standar
             tblis::mult< double >(1.0, t_Vovvv, "kcab", t_Tefft, "ikbc", 0.0, t_Zmat, "ai"); 
             tblis::mult< double >(-1.0, t_Vooov, "jikc", t_Tefft, "jkac", 1.0, t_Zmat, "ai");
 
-            // Tahap 2B: Kontraksi TPDM Eksak (Sudah Benar!)
             tblis::mult< double >(-1.0, t_Gamma_VVVV, "abcd", t_Vovvv, "icbd", 1.0, t_Zmat, "ai");
-            tblis::mult< double >(1.0,  t_Gamma_OOOO, "ijkl", t_Vooov, "klja", 1.0, t_Zmat, "ai");
-            tblis::mult< double >(1.0,  t_Gamma_OVOV, "ibjc", t_Vovvv, "jcab", 1.0, t_Zmat, "ai");
-            tblis::mult< double >(1.0,  t_Gamma_OVOV, "jbic", t_Vovvv, "jbac", 1.0, t_Zmat, "ai");
+            tblis::mult< double >(1.0, t_Gamma_OOOO, "ijkl", t_Vooov, "klja", 1.0, t_Zmat, "ai");
+            tblis::mult< double >(1.0, t_Gamma_OVOV, "ibjc", t_Vovvv, "jcab", 1.0, t_Zmat, "ai");
+            tblis::mult< double >(1.0, t_Gamma_OVOV, "jbic", t_Vovvv, "jbac", 1.0, t_Zmat, "ai");
             tblis::mult< double >(-1.0, t_Gamma_OVOV, "jakb", t_Vooov, "ijkb", 1.0, t_Zmat, "ai");
             tblis::mult< double >(-1.0, t_Gamma_OVOV, "jakc", t_Vooov, "ikjc", 1.0, t_Zmat, "ai");
-        }
-    } else {
-        // ... (Biarkan modul Density Fitting MSHQC Anda tetap seperti aslinya
+
+        } else {
             if (eri_ao_cached_.size() == 0) eri_ao_cached_ = integrals_->compute_eri();
 
             Eigen::Tensor< double, 4 > Teff_aa(na_, na_, va_, va_);
@@ -1429,13 +1426,6 @@ void OMP3::build_generalized_fock() {
             tblis::mult<double>(0.25, t_Taa, "ijab", t_Teff_aa, "klab", 0.0, t_G_OOOO_aa, "ijkl");
             tblis::mult<double>(-0.5, t_Taa, "ikac", t_Teff_aa, "jkbc", 0.0, t_G_OVOV_aa, "iajb");
 
-            if (nb_ > 0 && vb_ > 0) {
-                TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
-                TBLIS_VIEW_4D(t_Teff_ab, Teff_ab, na_, nb_, va_, vb_);
-                
-                
-            }
-
             auto get_V = [&](const Eigen::MatrixXd& C1, const Eigen::MatrixXd& C2, const Eigen::MatrixXd& C3, const Eigen::MatrixXd& C4) {
                 return integrals::ERITransformer::transform_custom(eri_ao_cached_, C1, C2, C3, C4, nbf_, C1.cols(), C2.cols(), C3.cols(), C4.cols());
             };
@@ -1481,8 +1471,6 @@ void OMP3::build_generalized_fock() {
                 tblis::mult<double>(0.25, t_Tbb, "ijab", t_Teff_bb, "ijcd", 0.0, t_G_VVVV_bb, "abcd");
                 tblis::mult<double>(0.25, t_Tbb, "ijab", t_Teff_bb, "klab", 0.0, t_G_OOOO_bb, "ijkl");
                 tblis::mult<double>(-0.5, t_Tbb, "ikac", t_Teff_bb, "jkbc", 0.0, t_G_OVOV_bb, "iajb");
-
-                
 
                 auto V_ovvv_bb = get_V(Cbo, Cbv, Cbv, Cbv);
                 auto V_ooov_bb = get_V(Cbo, Cbo, Cbo, Cbv);
@@ -1693,30 +1681,6 @@ void OMP3::build_generalized_fock() {
 void OMP3::build_hessian_diagonal(Eigen::VectorXd& diag_H, double grad_norm) {
     // PSI4 BEHAVIOR: Gunakan Hessian OMP2 polos, abaikan koreksi densitas MP3
     OMP2::build_hessian_diagonal(diag_H, grad_norm);
-    
-    /* -- COMMENT OUT MSHQC HEURISTIC --
-    int idx = 0;
-    bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
-    double spin_factor = is_restricted ? 4.0 : 2.0;
-
-    for (int i = 0; i < na_; ++i) {
-        for (int a = 0; a < va_; ++a) {
-            double delta_density = std::abs(G_vv_alpha_(a, a)) + std::abs(G_oo_alpha_(i, i));
-            diag_H(idx) += spin_factor * 1.5 * delta_density; 
-            idx++;
-        }
-    }
-
-    if (!is_restricted && nb_ > 0) {
-        for (int i = 0; i < nb_; ++i) {
-            for (int a = 0; a < vb_; ++a) {
-                double delta_density = std::abs(G_vv_beta_(a, a)) + std::abs(G_oo_beta_(i, i));
-                diag_H(idx) += 2.0 * 1.5 * delta_density;
-                idx++;
-            }
-        }
-    }
-    ----------------------------------- */
 }
 
 void OMP3::debug_gradient_fd(int i_target, int a_target) {
