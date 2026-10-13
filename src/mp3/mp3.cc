@@ -1392,6 +1392,9 @@ void OMP3::build_generalized_fock() {
                 eri_ao_cached_ = integrals_->compute_eri();
             }
 
+            // =========================================================================
+            // TAHAP 1: MEMBANGUN TEFF UNRESTRICTED (T + L) 
+            // =========================================================================
             Eigen::Tensor< double, 4 > Teff_aa(na_, na_, va_, va_);
             Eigen::Tensor< double, 4 > Teff_bb(nb_, nb_, vb_, vb_);
             Eigen::Tensor< double, 4 > Teff_ab(na_, nb_, va_, vb_);
@@ -1429,10 +1432,41 @@ void OMP3::build_generalized_fock() {
                 }
             }
 
+            TBLIS_VIEW_4D(t_Taa, (*t_aa_dense), na_, na_, va_, va_);
+            TBLIS_VIEW_4D(t_Tbb, (*t2_bb_dense), nb_, nb_, vb_, vb_);
+            TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
+
             TBLIS_VIEW_4D(t_Teff_aa, Teff_aa, na_, na_, va_, va_);
             TBLIS_VIEW_4D(t_Teff_bb, Teff_bb, nb_, nb_, vb_, vb_);
             TBLIS_VIEW_4D(t_Teff_ab, Teff_ab, na_, nb_, va_, vb_);
 
+            // =========================================================================
+            // TAHAP 2: MEMBANGUN TPDM UNRESTRICTED 
+            // =========================================================================
+            Eigen::Tensor<double, 4> Gamma_VVVV_aa(va_, va_, va_, va_); Gamma_VVVV_aa.setZero();
+            Eigen::Tensor<double, 4> Gamma_OOOO_aa(na_, na_, na_, na_); Gamma_OOOO_aa.setZero();
+            Eigen::Tensor<double, 4> Gamma_OVOV_aa(na_, va_, na_, va_); Gamma_OVOV_aa.setZero();
+
+            TBLIS_VIEW_4D(t_G_VVVV_aa, Gamma_VVVV_aa, va_, va_, va_, va_);
+            TBLIS_VIEW_4D(t_G_OOOO_aa, Gamma_OOOO_aa, na_, na_, na_, na_);
+            TBLIS_VIEW_4D(t_G_OVOV_aa, Gamma_OVOV_aa, na_, va_, na_, va_);
+
+            // TPDM Alpha-Alpha (Faktor 0.25 untuk Teff dan T antisimetrik)
+            tblis::mult<double>(0.25, t_Taa, "ijab", t_Teff_aa, "ijcd", 0.0, t_G_VVVV_aa, "abcd");
+            tblis::mult<double>(0.25, t_Taa, "ijab", t_Teff_aa, "klab", 0.0, t_G_OOOO_aa, "ijkl");
+            tblis::mult<double>(-0.5, t_Taa, "ikac", t_Teff_aa, "jkbc", 0.0, t_G_OVOV_aa, "iajb");
+
+            // TPDM Alpha-Beta (Interaksi Silang)
+            if (nb_ > 0 && vb_ > 0) {
+                // TPDM untuk Z-Vector Alpha yang berasal dari T_ab
+                tblis::mult<double>(0.5, t_Tab, "ijab", t_Teff_ab, "ijcb", 1.0, t_G_VVVV_aa, "ac"); // Akan di-trace nanti
+                tblis::mult<double>(0.5, t_Tab, "ijab", t_Teff_ab, "kjab", 1.0, t_G_OOOO_aa, "ik");
+                tblis::mult<double>(-0.5, t_Tab, "ikac", t_Teff_ab, "jkbc", 1.0, t_G_OVOV_aa, "iajb");
+            }
+
+            // =========================================================================
+            // TAHAP 3: KONTRAKSI TPDM KE Z-VECTOR 
+            // =========================================================================
             auto get_V = [&](const Eigen::MatrixXd& C1, const Eigen::MatrixXd& C2, const Eigen::MatrixXd& C3, const Eigen::MatrixXd& C4) {
                 return integrals::ERITransformer::transform_custom(eri_ao_cached_, C1, C2, C3, C4, nbf_, C1.cols(), C2.cols(), C3.cols(), C4.cols());
             };
@@ -1441,40 +1475,74 @@ void OMP3::build_generalized_fock() {
             
             auto V_ovvv_aa = get_V(Cao, Cav, Cav, Cav);
             auto V_ooov_aa = get_V(Cao, Cao, Cao, Cav);
-            
             TBLIS_VIEW_4D(t_Vovvv_aa, V_ovvv_aa, na_, va_, va_, va_);
             TBLIS_VIEW_4D(t_Vooov_aa, V_ooov_aa, na_, na_, na_, va_);
             
+            // Kontraksi Dasar OMP2
             tblis::mult< double >(1.0, t_Vovvv_aa, "kcab", t_Teff_aa, "ikbc", 0.0, t_Zmat_a, "ai"); 
             tblis::mult< double >(-1.0, t_Vooov_aa, "jikc", t_Teff_aa, "jkac", 1.0, t_Zmat_a, "ai");
 
+            // Kontraksi TPDM Alpha-Alpha ke Z-Vector Alpha
+            tblis::mult< double >(-1.0, t_G_VVVV_aa, "abcd", t_Vovvv_aa, "icbd", 1.0, t_Zmat_a, "ai");
+            tblis::mult< double >(1.0,  t_G_OOOO_aa, "ijkl", t_Vooov_aa, "klja", 1.0, t_Zmat_a, "ai");
+            tblis::mult< double >(1.0,  t_G_OVOV_aa, "ibjc", t_Vovvv_aa, "jcab", 1.0, t_Zmat_a, "ai");
+            tblis::mult< double >(1.0,  t_G_OVOV_aa, "jbic", t_Vovvv_aa, "jbac", 1.0, t_Zmat_a, "ai");
+            tblis::mult< double >(-1.0, t_G_OVOV_aa, "jakb", t_Vooov_aa, "ijkb", 1.0, t_Zmat_a, "ai");
+            tblis::mult< double >(-1.0, t_G_OVOV_aa, "jakc", t_Vooov_aa, "ikjc", 1.0, t_Zmat_a, "ai");
+
+            // --- BETA SPIN ---
             if (nb_ > 0 && vb_ > 0) {
+                // Kontraksi Lintas Spin (Interaksi OMP2 dasar)
                 auto V_ovvv_ba = get_V(Cbo, Cbv, Cav, Cav);
                 auto V_ooov_ab_ex = get_V(Cao, Cao, Cbo, Cbv);
-
                 TBLIS_VIEW_4D(t_Vovvv_ba, V_ovvv_ba, nb_, vb_, va_, va_);
                 TBLIS_VIEW_4D(t_Vooov_ab_ex, V_ooov_ab_ex, na_, na_, nb_, vb_);
 
                 tblis::mult< double >(1.0, t_Vovvv_ba, "kcab", t_Teff_ab, "ikbc", 1.0, t_Zmat_a, "ai");
                 tblis::mult< double >(-1.0, t_Vooov_ab_ex, "jikc", t_Teff_ab, "jkac", 1.0, t_Zmat_a, "ai");
 
+                // Merakit TPDM Beta
+                Eigen::Tensor<double, 4> Gamma_VVVV_bb(vb_, vb_, vb_, vb_); Gamma_VVVV_bb.setZero();
+                Eigen::Tensor<double, 4> Gamma_OOOO_bb(nb_, nb_, nb_, nb_); Gamma_OOOO_bb.setZero();
+                Eigen::Tensor<double, 4> Gamma_OVOV_bb(nb_, vb_, nb_, vb_); Gamma_OVOV_bb.setZero();
+                
+                TBLIS_VIEW_4D(t_G_VVVV_bb, Gamma_VVVV_bb, vb_, vb_, vb_, vb_);
+                TBLIS_VIEW_4D(t_G_OOOO_bb, Gamma_OOOO_bb, nb_, nb_, nb_, nb_);
+                TBLIS_VIEW_4D(t_G_OVOV_bb, Gamma_OVOV_bb, nb_, vb_, nb_, vb_);
+
+                tblis::mult<double>(0.25, t_Tbb, "ijab", t_Teff_bb, "ijcd", 0.0, t_G_VVVV_bb, "abcd");
+                tblis::mult<double>(0.25, t_Tbb, "ijab", t_Teff_bb, "klab", 0.0, t_G_OOOO_bb, "ijkl");
+                tblis::mult<double>(-0.5, t_Tbb, "ikac", t_Teff_bb, "jkbc", 0.0, t_G_OVOV_bb, "iajb");
+
+                // Silang Beta
+                tblis::mult<double>(0.5, t_Tab, "ijab", t_Teff_ab, "ijad", 1.0, t_G_VVVV_bb, "bd"); 
+                tblis::mult<double>(0.5, t_Tab, "ijab", t_Teff_ab, "ilab", 1.0, t_G_OOOO_bb, "jl");
+                tblis::mult<double>(-0.5, t_Tab, "kiac", t_Teff_ab, "kjbc", 1.0, t_G_OVOV_bb, "iajb");
+
                 auto V_ovvv_bb = get_V(Cbo, Cbv, Cbv, Cbv);
                 auto V_ooov_bb = get_V(Cbo, Cbo, Cbo, Cbv);
-                auto V_ovvv_ab = get_V(Cao, Cav, Cbv, Cbv);
-                auto V_ooov_ba_ex = get_V(Cbo, Cbo, Cao, Cav);
-
                 TBLIS_VIEW_4D(t_Vovvv_bb, V_ovvv_bb, nb_, vb_, vb_, vb_);
                 TBLIS_VIEW_4D(t_Vooov_bb, V_ooov_bb, nb_, nb_, nb_, vb_);
-                TBLIS_VIEW_4D(t_Vovvv_ab, V_ovvv_ab, na_, va_, vb_, vb_);
-                TBLIS_VIEW_4D(t_Vooov_ba_ex, V_ooov_ba_ex, nb_, nb_, na_, va_);
-
                 TBLIS_VIEW_2D(t_Zmat_b, Z_mat_b.data(), vb_, nb_);
 
                 tblis::mult< double >(1.0, t_Vovvv_bb, "kcab", t_Teff_bb, "ikbc", 0.0, t_Zmat_b, "ai");
                 tblis::mult< double >(-1.0, t_Vooov_bb, "jikc", t_Teff_bb, "jkac", 1.0, t_Zmat_b, "ai");
 
+                auto V_ovvv_ab = get_V(Cao, Cav, Cbv, Cbv);
+                auto V_ooov_ba_ex = get_V(Cbo, Cbo, Cao, Cav);
+                TBLIS_VIEW_4D(t_Vovvv_ab, V_ovvv_ab, na_, va_, vb_, vb_);
+                TBLIS_VIEW_4D(t_Vooov_ba_ex, V_ooov_ba_ex, nb_, nb_, na_, va_);
+
                 tblis::mult< double >(1.0, t_Vovvv_ab, "kcab", t_Teff_ab, "kicb", 1.0, t_Zmat_b, "ai"); 
                 tblis::mult< double >(-1.0, t_Vooov_ba_ex, "jikc", t_Teff_ab, "kjca", 1.0, t_Zmat_b, "ai");
+
+                // Kontraksi TPDM Beta ke Z-Vector Beta
+                tblis::mult< double >(-1.0, t_G_VVVV_bb, "abcd", t_Vovvv_bb, "icbd", 1.0, t_Zmat_b, "ai");
+                tblis::mult< double >(1.0,  t_G_OOOO_bb, "ijkl", t_Vooov_bb, "klja", 1.0, t_Zmat_b, "ai");
+                tblis::mult< double >(1.0,  t_G_OVOV_bb, "ibjc", t_Vovvv_bb, "jcab", 1.0, t_Zmat_b, "ai");
+                tblis::mult< double >(1.0,  t_G_OVOV_bb, "jbic", t_Vovvv_bb, "jbac", 1.0, t_Zmat_b, "ai");
+                tblis::mult< double >(-1.0, t_G_OVOV_bb, "jakb", t_Vooov_bb, "ijkb", 1.0, t_Zmat_b, "ai");
+                tblis::mult< double >(-1.0, t_G_OVOV_bb, "jakc", t_Vooov_bb, "ikjc", 1.0, t_Zmat_b, "ai");
             }
         }
 
