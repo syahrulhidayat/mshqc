@@ -1376,11 +1376,28 @@ void OMP3::build_generalized_fock() {
             tblis::mult< double >(1.0, t_Vovvv, "kcab", t_Tefft, "ikbc", 0.0, t_Zmat, "ai"); 
             tblis::mult< double >(-1.0, t_Vooov, "jikc", t_Tefft, "jkac", 1.0, t_Zmat, "ai");
 
+            // =========================================================================
             // 2B. Kontraksi Tambahan dari TPDM (Inilah yang melengkapi turunan analitik Psi4!)
-            tblis::mult< double >(1.0, t_Gamma_VVVV, "abcd", t_Vovvv, "icdb", 1.0, t_Zmat, "ai");
-            tblis::mult< double >(-1.0, t_Gamma_OOOO, "ijkl", t_Vooov, "jkal", 1.0, t_Zmat, "ai");
-            tblis::mult< double >(1.0, t_Gamma_OVOV, "ibjc", t_Vovvv, "jabc", 1.0, t_Zmat, "ai");
-            tblis::mult< double >(-1.0, t_Gamma_OVOV, "jakc", t_Vooov, "ijkc", 1.0, t_Zmat, "ai");
+            // =========================================================================
+            
+            // VVVV: Z_ai += - sum_{bcd} Gamma_{abcd} (ic|bd)
+            tblis::mult< double >(-1.0, t_Gamma_VVVV, "abcd", t_Vovvv, "icbd", 1.0, t_Zmat, "ai");
+
+            // OOOO: Z_ai += + sum_{jkl} Gamma_{ijkl} (aj|kl) 
+            // Integral (aj|kl) setara dengan (kl|ja), jadi kita akses dimensi V_ooov(k,l,j,a)
+            tblis::mult< double >(1.0, t_Gamma_OOOO, "ijkl", t_Vooov, "klja", 1.0, t_Zmat, "ai");
+
+            // OVOV Positif 1: Z_ai += + sum_{jbc} Gamma_{ibjc} (ab|jc) -> V_ovvv(j,c,a,b)
+            tblis::mult< double >(1.0, t_Gamma_OVOV, "ibjc", t_Vovvv, "jcab", 1.0, t_Zmat, "ai");
+
+            // OVOV Positif 2: Z_ai += + sum_{jbc} Gamma_{jbic} (jb|ac) -> V_ovvv(j,b,a,c)
+            tblis::mult< double >(1.0, t_Gamma_OVOV, "jbic", t_Vovvv, "jbac", 1.0, t_Zmat, "ai");
+
+            // OVOV Negatif 1: Z_ai += - sum_{jkb} Gamma_{jakb} (ij|kb) -> V_ooov(i,j,k,b)
+            tblis::mult< double >(-1.0, t_Gamma_OVOV, "jakb", t_Vooov, "ijkb", 1.0, t_Zmat, "ai");
+
+            // OVOV Negatif 2: Z_ai += - sum_{jkc} Gamma_{jakc} (ik|jc) -> V_ooov(i,k,j,c)
+            tblis::mult< double >(-1.0, t_Gamma_OVOV, "jakc", t_Vooov, "ikjc", 1.0, t_Zmat, "ai");
 
         } else {
             if (eri_ao_cached_.size() == 0) {
