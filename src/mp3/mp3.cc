@@ -667,7 +667,51 @@ void OMP3::compute_mp3_correction() {
                     }
                 }
             }
-            e_mp3_tot_ = e3_aa;
+            // =================================================================
+            // [NON-BRILLOUIN SINGLES CORRECTION] - MENGADOPSI PSI4
+            // =================================================================
+            Eigen::MatrixXd F_ao_tmp_a, F_ao_tmp_b;
+            build_fock_fast(scf_.P_alpha, scf_.P_beta, F_ao_tmp_a, F_ao_tmp_b);
+            Eigen::MatrixXd F_mo_a = scf_.C_alpha.transpose() * F_ao_tmp_a * scf_.C_alpha;
+            Eigen::MatrixXd F_ia = F_mo_a.block(na_, 0, va_, na_); // Off-diagonal Fock
+
+            Eigen::MatrixXd Z_mat_a = Eigen::MatrixXd::Zero(va_, na_);
+            TBLIS_VIEW_2D(t_Zmat_a, Z_mat_a.data(), va_, na_);
+
+            // Re-pack T2 tilde khusus untuk Restricted
+            Eigen::Tensor<double, 4> T2_tilde(na_, na_, va_, va_);
+            #pragma omp parallel for collapse(4) schedule(static)
+            for (int i = 0; i < na_; ++i) {
+                for (int j = 0; j < na_; ++j) {
+                    for (int a = 0; a < va_; ++a) {
+                        for (int b = 0; b < va_; ++b) {
+                            T2_tilde(i,j,a,b) = 2.0 * T2_aa_ijab(i,j,a,b) - T2_aa_ijab(i,j,b,a);
+                        }
+                    }
+                }
+            }
+            TBLIS_VIEW_4D(t_T2t, T2_tilde, na_, na_, va_, va_);
+            
+            // Hitung Z_ai dari kontraksi V dan T2
+            auto V_ovvv_ex = integrals::ERITransformer::transform_custom(eri_ao_cached_local, Cao, Cav, Cav, Cav, nbf_, na_, va_, va_, va_);
+            auto V_ooov_ex = integrals::ERITransformer::transform_custom(eri_ao_cached_local, Cao, Cao, Cao, Cav, nbf_, na_, na_, na_, va_);
+            TBLIS_VIEW_4D(t_Vovvv_ex, V_ovvv_ex, na_, va_, va_, va_);
+            TBLIS_VIEW_4D(t_Vooov_ex, V_ooov_ex, na_, na_, na_, va_);
+
+            tblis::mult< double >(1.0, t_Vovvv_ex, "kcab", t_T2t, "ikbc", 0.0, t_Zmat_a, "ai"); 
+            tblis::mult< double >(-1.0, t_Vooov_ex, "jikc", t_T2t, "jkac", 1.0, t_Zmat_a, "ai");
+
+            // Evaluasi Energi Singles
+            double e3_singles = 0.0;
+            for (int i = 0; i < na_; ++i) {
+                for (int a = 0; a < va_; ++a) {
+                    double D = ea(i) - ea(na_ + a);
+                    double t1_ia = Z_mat_a(a, i) / D;
+                    e3_singles += 2.0 * t1_ia * F_ia(a, i); // Faktor 2.0 untuk Singlet
+                }
+            }
+
+            e_mp3_tot_ = e3_aa + e3_singles; 
             return;
         } else {
             eri_ao_cached_.resize(0, 0, 0, 0); 
@@ -836,7 +880,76 @@ void OMP3::compute_mp3_correction() {
                 }
             }
             
-            e_mp3_tot_ = e3_aa + e3_bb + e3_ab;
+            // =================================================================
+            // [NON-BRILLOUIN SINGLES CORRECTION] - MENGADOPSI PSI4
+            // =================================================================
+            Eigen::MatrixXd F_ao_tmp_a, F_ao_tmp_b;
+            build_fock_fast(scf_.P_alpha, scf_.P_beta, F_ao_tmp_a, F_ao_tmp_b);
+            Eigen::MatrixXd F_mo_a = scf_.C_alpha.transpose() * F_ao_tmp_a * scf_.C_alpha;
+            Eigen::MatrixXd F_mo_b = scf_.C_beta.transpose() * F_ao_tmp_b * scf_.C_beta;
+            
+            Eigen::MatrixXd F_ia_a = F_mo_a.block(na_, 0, va_, na_);
+            Eigen::MatrixXd F_ia_b = F_mo_b.block(nb_, 0, vb_, nb_);
+
+            Eigen::MatrixXd Z_mat_a = Eigen::MatrixXd::Zero(va_, na_);
+            Eigen::MatrixXd Z_mat_b = Eigen::MatrixXd::Zero(vb_, nb_);
+            TBLIS_VIEW_2D(t_Zmat_a, Z_mat_a.data(), va_, na_);
+            TBLIS_VIEW_2D(t_Zmat_b, Z_mat_b.data(), vb_, nb_);
+
+            auto V_ovvv_aa = get_V_exact(Cao, Cav, Cav, Cav);
+            auto V_ooov_aa = get_V_exact(Cao, Cao, Cao, Cav);
+            TBLIS_VIEW_4D(t_Vovvv_aa, V_ovvv_aa, na_, va_, va_, va_);
+            TBLIS_VIEW_4D(t_Vooov_aa, V_ooov_aa, na_, na_, na_, va_);
+
+            tblis::mult< double >(1.0, t_Vovvv_aa, "kcab", t_Taa, "ikbc", 0.0, t_Zmat_a, "ai"); 
+            tblis::mult< double >(-1.0, t_Vooov_aa, "jikc", t_Taa, "jkac", 1.0, t_Zmat_a, "ai");
+
+            if (nb_ > 0 && vb_ > 0) {
+                auto V_ovvv_ba = get_V_exact(Cbo, Cbv, Cav, Cav);
+                auto V_ooov_ab_ex = get_V_exact(Cao, Cao, Cbo, Cbv);
+                auto V_ovvv_bb = get_V_exact(Cbo, Cbv, Cbv, Cbv);
+                auto V_ooov_bb = get_V_exact(Cbo, Cbo, Cbo, Cbv);
+                auto V_ovvv_ab = get_V_exact(Cao, Cav, Cbv, Cbv);
+                auto V_ooov_ba_ex = get_V_exact(Cbo, Cbo, Cao, Cav);
+
+                TBLIS_VIEW_4D(t_Vovvv_ba, V_ovvv_ba, nb_, vb_, va_, va_);
+                TBLIS_VIEW_4D(t_Vooov_ab_ex, V_ooov_ab_ex, na_, na_, nb_, vb_);
+                TBLIS_VIEW_4D(t_Vovvv_bb, V_ovvv_bb, nb_, vb_, vb_, vb_);
+                TBLIS_VIEW_4D(t_Vooov_bb, V_ooov_bb, nb_, nb_, nb_, vb_);
+                TBLIS_VIEW_4D(t_Vovvv_ab, V_ovvv_ab, na_, va_, vb_, vb_);
+                TBLIS_VIEW_4D(t_Vooov_ba_ex, V_ooov_ba_ex, nb_, nb_, na_, va_);
+
+                tblis::mult< double >(1.0, t_Vovvv_ba, "kcab", t_Tab, "ikbc", 1.0, t_Zmat_a, "ai");
+                tblis::mult< double >(-1.0, t_Vooov_ab_ex, "jikc", t_Tab, "jkac", 1.0, t_Zmat_a, "ai");
+
+                tblis::mult< double >(1.0, t_Vovvv_bb, "kcab", t_Tbb, "ikbc", 0.0, t_Zmat_b, "ai");
+                tblis::mult< double >(-1.0, t_Vooov_bb, "jikc", t_Tbb, "jkac", 1.0, t_Zmat_b, "ai");
+
+                tblis::mult< double >(1.0, t_Vovvv_ab, "kcab", t_Tab, "kicb", 1.0, t_Zmat_b, "ai"); 
+                tblis::mult< double >(-1.0, t_Vooov_ba_ex, "jikc", t_Tab, "kjca", 1.0, t_Zmat_b, "ai");
+            }
+
+            double e3_singles_a = 0.0;
+            double e3_singles_b = 0.0;
+
+            for (int i = 0; i < na_; ++i) {
+                for (int a = 0; a < va_; ++a) {
+                    double D = ea(i) - ea(na_ + a);
+                    double t1_ia = Z_mat_a(a, i) / D;
+                    e3_singles_a += t1_ia * F_ia_a(a, i);
+                }
+            }
+            if (nb_ > 0 && vb_ > 0) {
+                for (int i = 0; i < nb_; ++i) {
+                    for (int a = 0; a < vb_; ++a) {
+                        double D = eb(i) - eb(nb_ + a);
+                        double t1_ia = Z_mat_b(a, i) / D;
+                        e3_singles_b += t1_ia * F_ia_b(a, i);
+                    }
+                }
+            }
+
+            e_mp3_tot_ = e3_aa + e3_bb + e3_ab + e3_singles_a + e3_singles_b;
             return;
         }
     }
