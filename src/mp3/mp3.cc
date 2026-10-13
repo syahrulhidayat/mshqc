@@ -569,12 +569,9 @@ double OMP3::get_correlation_energy() const {
 }
 
 double OMP3::execute_micro_iterations() {
-    // [VERSI PSI4 FALLBACK MODE]
-    // Hanya eksekusi iterasi level OMP2. 
     OMP2::execute_micro_iterations();
-
-    /* --- COMMENT OUT KODE OMP3 ASLI AGAR TIDAK MASUK KE ITERASI SCF ---
-    compute_mp3_correction();
+    
+    compute_mp3_correction(); 
     
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1); 
     
@@ -591,13 +588,8 @@ double OMP3::execute_micro_iterations() {
     } else if (is_restricted && nb_ > 0) {
         G_oo_beta_ = G_oo_alpha_;
     }
-    ------------------------------------------------------------------- */
 
-    // Karena L2_aa_.size() == 0, rutin build_opdm_alpha() MSHQC akan otomatis
-    // melakukan fallback aman ke OMP2::build_opdm_alpha() berkat desain kode Anda.
-    
-    // Kembalikan murni energi MP2 (tanpa MP3) sebagai target minimisasi
-    return e_ss_ + e_os_;
+    return get_correlation_energy();
 }
 
 void OMP3::compute_mp3_correction() {
@@ -1302,10 +1294,6 @@ void OMP3::build_opdm_beta() {
     tblis::mult<double>(0.5, t_T3ab, "ijca", t_T2ab, "ijcb", 1.0, t_Gvv_b, "ab");
 }
 void OMP3::build_generalized_fock() {
-    if (L2_aa_.size() == 0) {
-        OMP2::build_generalized_fock();
-        return;
-    }
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     const auto& ea = scf_.orbital_energies_alpha;
     const auto& eb = scf_.orbital_energies_beta;
@@ -1897,33 +1885,16 @@ void OMP3::debug_gradient_fd(int i_target, int a_target) {
 MP3Result OMP3::compute_omp3() {
     if(omp_get_thread_num() == 0) {
         std::cout << "\n========================================================\n";
-        std::cout << "      Orbital-Optimized MP3 (Mode Psi4 Fallback)\n";
+        std::cout << "      Orbital-Optimized MP3 (OMP3 - Professional)\n";
         std::cout << "========================================================\n";
     }
     
-    // 1. Jalankan Trust-Region SOSCF murni di level OMP2 hingga konvergen
     MP2Result res2 = OMP2::compute();
-
-    // 2. [PERBAIKAN KRUSIAL] Persiapkan state final (Post-SCF Canonicalization)
-    // Ini mengalokasikan ulang memori integral, orbital, dan T2 final agar 
-    // tidak memicu Segfault saat dibaca oleh OpenMP di rutinitas MP3.
-    pseudocanonicalize();
-    
-    // Perbarui variabel orbital current agar sinkron dengan SCF
-    C_a_current_ = scf_.C_alpha; 
-    if (nb_ > 0) C_b_current_ = scf_.C_beta;
-    
-    transform_integrals();    // Re-build integral MO final (g_aa_, dll)
-    compute_t2_amplitudes();  // Re-build amplitudo T2 final
-    compute_mp2_energy();     // Update nilai energi e_ss_ dan e_os_ final
-
-    // 3. Sekarang aman untuk menghitung koreksi energi MP3 statis
-    compute_mp3_correction();
 
     MP3Result res3;
     res3.converged = res2.converged;
     res3.iterations = res2.iterations;
-    res3.e_hf = scf_.energy_total; 
+    res3.e_hf = res2.energy_scf;
     res3.e_mp2 = e_ss_ + e_os_; 
     res3.e_mp3 = e_mp3_tot_;
     res3.e_corr_total = res3.e_mp2 + res3.e_mp3;
