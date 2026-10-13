@@ -1373,7 +1373,7 @@ void OMP3::build_generalized_fock() {
             tblis::mult< double >(-1.0, t_Gamma_OVOV, "jakc", t_Vooov, "ikjc", 1.0, t_Zmat, "ai");
         }
     } else {
-        // ... (Biarkan modul Density Fitting MSHQC Anda tetap seperti aslinya)
+        // ... (Biarkan modul Density Fitting MSHQC Anda tetap seperti aslinya
             if (eri_ao_cached_.size() == 0) eri_ao_cached_ = integrals_->compute_eri();
 
             Eigen::Tensor< double, 4 > Teff_aa(na_, na_, va_, va_);
