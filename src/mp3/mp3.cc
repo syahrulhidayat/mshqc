@@ -1311,37 +1311,76 @@ void OMP3::build_generalized_fock() {
     auto* t2_ab_dense = t2_ab_.get_block(0,0,0,0);
     auto* t2_bb_dense = t2_bb_.get_block(0,0,0,0);
 
-    // =========================================================================
-    // 1. PEMBENTUKAN Z_MAT (Identik dengan Psi4, tanpa CPHF OO/VV redundan)
-    // =========================================================================
+  
     if (config_.eri_method == "exact") {
         if (is_restricted) {
-            Eigen::Tensor< double, 4 > Teff(na_, na_, va_, va_);
+            Eigen::Tensor<double, 4> Teff_tilde(na_, na_, va_, va_);
+            Eigen::Tensor<double, 4> T2_tilde(na_, na_, va_, va_);
+            Eigen::Tensor<double, 4> T2_aa_ijab(na_, na_, va_, va_);
+            
             #pragma omp parallel for collapse(4) schedule(static)
             for(int i = 0; i < na_; ++i) {
                 for(int j = 0; j < na_; ++j) {
                     for(int a = 0; a < va_; ++a) {
                         for(int b = 0; b < va_; ++b) {
-                            Teff(i,j,a,b) = (*t_aa_dense)(i,a,j,b) + L2_aa_(i,j,a,b);
+                            double t2 = (*t_aa_dense)(i,a,j,b);
+                            double t2_ex = (*t_aa_dense)(i,b,j,a);
+                            double l2 = L2_aa_(i,j,a,b);
+                            double l2_ex = L2_aa_(i,j,b,a);
+                            
+                            T2_aa_ijab(i,j,a,b) = t2;
+                            T2_tilde(i,j,a,b) = 2.0 * t2 - t2_ex;
+                            
+                            // [PERBAIKAN BUG]: Teff sekarang diadaptasi spin (2T - T^T)
+                            Teff_tilde(i,j,a,b) = 2.0 * (t2 + l2) - (t2_ex + l2_ex);
                         }
                     }
                 }
             }
-            TBLIS_VIEW_4D(t_Teff, Teff, na_, na_, va_, va_);
 
-            if (eri_ao_cached_.size() == 0) {
-                eri_ao_cached_ = integrals_->compute_eri();
-            }
+            // =========================================================================
+            // TAHAP 1: MEMBANGUN MATRIKS DENSITAS 2-PARTIKEL (TPDM) O(N^6)
+            // =========================================================================
+            Eigen::Tensor<double, 4> Gamma_VVVV(va_, va_, va_, va_); Gamma_VVVV.setZero();
+            Eigen::Tensor<double, 4> Gamma_OOOO(na_, na_, na_, na_); Gamma_OOOO.setZero();
+            Eigen::Tensor<double, 4> Gamma_OVOV(na_, va_, na_, va_); Gamma_OVOV.setZero();
+
+            TBLIS_VIEW_4D(t_T2, T2_aa_ijab, na_, na_, va_, va_);
+            TBLIS_VIEW_4D(t_T2t, T2_tilde, na_, na_, va_, va_);
+            TBLIS_VIEW_4D(t_Tefft, Teff_tilde, na_, na_, va_, va_);
+
+            TBLIS_VIEW_4D(t_Gamma_VVVV, Gamma_VVVV, va_, va_, va_, va_);
+            TBLIS_VIEW_4D(t_Gamma_OOOO, Gamma_OOOO, na_, na_, na_, na_);
+            TBLIS_VIEW_4D(t_Gamma_OVOV, Gamma_OVOV, na_, va_, na_, va_);
+
+            // Γ_{ab}^{cd} = 0.5 * sum_{ij} T_{ij}^{ab} * T_tilde_{ij}^{cd}
+            tblis::mult<double>(0.5, t_T2, "ijab", t_T2t, "ijcd", 0.0, t_Gamma_VVVV, "abcd");
+            // Γ_{ij}^{kl} = 0.5 * sum_{ab} T_{ij}^{ab} * T_tilde_{kl}^{ab}
+            tblis::mult<double>(0.5, t_T2, "ijab", t_T2t, "klab", 0.0, t_Gamma_OOOO, "ijkl");
+            // Γ_{ia}^{jb} = - sum_{kc} T_{ik}^{ac} * T_tilde_{jk}^{bc}
+            tblis::mult<double>(-1.0, t_T2, "ikac", t_T2t, "jkbc", 0.0, t_Gamma_OVOV, "iajb");
+
+            // =========================================================================
+            // TAHAP 2: KONTRAKSI TPDM DENGAN INTEGRAL (Z-VECTOR PENUH)
+            // =========================================================================
+            if (eri_ao_cached_.size() == 0) eri_ao_cached_ = integrals_->compute_eri();
 
             TBLIS_VIEW_2D(t_Zmat, Z_mat_a.data(), va_, na_);
-
-            auto V_ovvv_ex = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cao, Cav, Cav, Cav, nbf_, na_, va_, va_, va_);
-            TBLIS_VIEW_4D(t_Vovvv_ex, V_ovvv_ex, na_, va_, va_, va_);
-            tblis::mult< double >(1.0, t_Vovvv_ex, "kcab", t_Teff, "ikbc", 0.0, t_Zmat, "ai"); 
-
+            
+            auto V_ovvv = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cao, Cav, Cav, Cav, nbf_, na_, va_, va_, va_);
             auto V_ooov = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cao, Cao, Cao, Cav, nbf_, na_, na_, na_, va_);
+            TBLIS_VIEW_4D(t_Vovvv, V_ovvv, na_, va_, va_, va_);
             TBLIS_VIEW_4D(t_Vooov, V_ooov, na_, na_, na_, va_);
-            tblis::mult< double >(-1.0, t_Vooov, "jikc", t_Teff, "jkac", 1.0, t_Zmat, "ai");
+
+            // 2A. Kontraksi Z-Vector OMP2 + MP3 Dasar (Menggunakan Teff_tilde yang sudah benar)
+            tblis::mult< double >(1.0, t_Vovvv, "kcab", t_Tefft, "ikbc", 0.0, t_Zmat, "ai"); 
+            tblis::mult< double >(-1.0, t_Vooov, "jikc", t_Tefft, "jkac", 1.0, t_Zmat, "ai");
+
+            // 2B. Kontraksi Tambahan dari TPDM (Inilah yang melengkapi turunan analitik Psi4!)
+            tblis::mult< double >(1.0, t_Gamma_VVVV, "abcd", t_Vovvv, "icdb", 1.0, t_Zmat, "ai");
+            tblis::mult< double >(-1.0, t_Gamma_OOOO, "ijkl", t_Vooov, "jkal", 1.0, t_Zmat, "ai");
+            tblis::mult< double >(1.0, t_Gamma_OVOV, "ibjc", t_Vovvv, "jabc", 1.0, t_Zmat, "ai");
+            tblis::mult< double >(-1.0, t_Gamma_OVOV, "jakc", t_Vooov, "ijkc", 1.0, t_Zmat, "ai");
 
         } else {
             if (eri_ao_cached_.size() == 0) {
