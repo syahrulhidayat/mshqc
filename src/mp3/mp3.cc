@@ -1358,10 +1358,7 @@ void OMP3::build_generalized_fock() {
     };
 
     Eigen::Tensor<double, 4> V_ovvv_aa, V_ooov_aa;
-    
-    // PERBAIKAN ERROR SCOPE: Deklarasikan matriks B alpha di sini
-    // agar hidup sampai bagian unrestricted di bawah
-    Eigen::MatrixXd B_ij_a, B_ab_a;
+    Eigen::MatrixXd B_ij_a, B_ab_a; // Deklarasi di luar blok agar aman secara scope (Tidak double-free)
 
     if (config_.eri_method == "exact") {
         if (eri_ao_cached_.size() == 0) eri_ao_cached_ = integrals_->compute_eri();
@@ -1415,10 +1412,11 @@ void OMP3::build_generalized_fock() {
     TBLIS_VIEW_4D(t_Goooo_aa, G_oooo_aa, na_, na_, na_, na_);
     tblis::mult<double>(0.25, t_T2t, "ijab", t_T2, "mnab", 0.0, t_Goooo_aa, "minj");
 
-    tblis::mult<double>(-1.0, t_Goooo_aa, "xinj", t_Vooov_aa, "jnix", 1.0, t_Zmat_a, "xm");
-    tblis::mult<double>(-1.0, t_Goooo_aa, "mxnj", t_Vooov_aa, "njmx", 1.0, t_Zmat_a, "xm");
-    tblis::mult<double>(-1.0, t_Goooo_aa, "mixj", t_Vooov_aa, "mijx", 1.0, t_Zmat_a, "xm");
-    tblis::mult<double>(-1.0, t_Goooo_aa, "minx", t_Vooov_aa, "minx", 1.0, t_Zmat_a, "xm");
+    // Perbaikan SegFault: Mencegah 'x' menempati indeks occupied ('na_')
+    tblis::mult<double>(-1.0, t_Goooo_aa, "minj", t_Vooov_aa, "jnix", 1.0, t_Zmat_a, "xm");
+    tblis::mult<double>(-1.0, t_Goooo_aa, "imnj", t_Vooov_aa, "njmx", 1.0, t_Zmat_a, "xm");
+    tblis::mult<double>(-1.0, t_Goooo_aa, "inmj", t_Vooov_aa, "mjix", 1.0, t_Zmat_a, "xm");
+    tblis::mult<double>(-1.0, t_Goooo_aa, "injm", t_Vooov_aa, "jimx", 1.0, t_Zmat_a, "xm");
 
     // --- C. KONTRIBUSI RING (OVOV & OOVV) ---
     Eigen::Tensor<double, 4> G_ovov_aa(na_, va_, na_, va_); G_ovov_aa.setZero();
@@ -1483,7 +1481,6 @@ void OMP3::build_generalized_fock() {
             Eigen::MatrixXd B_ij_b = build_B_mat(Cbo, Cbo, nb_, nb_);
             Eigen::MatrixXd B_ab_b = build_B_mat(Cbv, Cbv, vb_, vb_);
             
-            // Sekarang perkalian dengan B_ab_a & B_ij_a valid karena sudah dideklarasikan di awal
             map_4d_inplace((B_ia_P_beta_ * B_ab_b.transpose()).eval(), V_ovvv_bb, nb_, vb_, vb_, vb_);
             map_4d_inplace((B_ij_b * B_ia_P_beta_.transpose()).eval(), V_ooov_bb, nb_, nb_, nb_, vb_);
             map_4d_inplace((B_ia_P_alpha_ * B_ab_b.transpose()).eval(), V_ovvv_ab, na_, va_, vb_, vb_);
@@ -1502,6 +1499,8 @@ void OMP3::build_generalized_fock() {
         tblis::mult< double >(1.0, t_Vovvv_bb, "kcab", t_Teff_bb, "ikbc", 0.0, t_Zmat_b, "ai");
         tblis::mult< double >(-1.0, t_Vooov_bb, "jikc", t_Teff_bb, "jkac", 1.0, t_Zmat_b, "ai");
         tblis::mult< double >(1.0, t_Vovvv_ab, "kcab", t_Teff_ab, "kicb", 1.0, t_Zmat_b, "ai"); 
+        
+        // Memperbaiki Typo yang menyebabkan failed build
         tblis::mult< double >(-1.0, t_Vooov_bb_aa, "jikc", t_Teff_ab, "kjca", 1.0, t_Zmat_b, "ai");
 
         // --- A. VVVV Unrestricted ---
@@ -1522,7 +1521,7 @@ void OMP3::build_generalized_fock() {
         tblis::mult<double>(1.0, t_Gvvvv_bb, "axbc", t_Vovvv_bb, "mabc", 1.0, t_Zmat_b, "xm");
         tblis::mult<double>(1.0, t_Gvvvv_bb, "abxc", t_Vovvv_bb, "mcab", 1.0, t_Zmat_b, "xm");
         tblis::mult<double>(1.0, t_Gvvvv_bb, "abcx", t_Vovvv_bb, "mcba", 1.0, t_Zmat_b, "xm");
-        tblis::mult<double>(-1.0, t_Gvvvv_ab, "eaxb", t_Vovvv_ba, "mxea", 1.0, t_Zmat_b, "xm");
+        tblis::mult<double>(-1.0, t_Gvvvv_ab, "eaxb", t_Vovvv_ba, "mbea", 1.0, t_Zmat_b, "xm");
         tblis::mult<double>(-1.0, t_Gvvvv_ab, "eafx", t_Vovvv_ba, "mfea", 1.0, t_Zmat_b, "xm");
 
         // --- B. OOOO Unrestricted ---
@@ -1534,15 +1533,17 @@ void OMP3::build_generalized_fock() {
         tblis::mult<double>(0.25, t_T2_bb, "ijab", t_T2_bb, "mnab", 0.0, t_Goooo_bb, "minj");
         tblis::mult<double>(1.0, t_T2_ab, "ijab", t_T2_ab, "mnab", 0.0, t_Goooo_ab, "minj");
 
-        tblis::mult<double>(-1.0, t_Goooo_ab, "xinj", t_Vooov_bb_aa, "njix", 1.0, t_Zmat_a, "xm");
-        tblis::mult<double>(-1.0, t_Goooo_ab, "mxnj", t_Vooov_bb_aa, "njmx", 1.0, t_Zmat_a, "xm");
+        // Perbaikan SegFault: Mencegah 'x' menempati indeks occupied ('nb_')
+        tblis::mult<double>(-1.0, t_Goooo_ab, "minj", t_Vooov_bb_aa, "njix", 1.0, t_Zmat_a, "xm");
+        tblis::mult<double>(-1.0, t_Goooo_ab, "imnj", t_Vooov_bb_aa, "njix", 1.0, t_Zmat_a, "xm");
 
-        tblis::mult<double>(-1.0, t_Goooo_bb, "xinj", t_Vooov_bb, "jnix", 1.0, t_Zmat_b, "xm");
-        tblis::mult<double>(-1.0, t_Goooo_bb, "mxnj", t_Vooov_bb, "njmx", 1.0, t_Zmat_b, "xm");
-        tblis::mult<double>(-1.0, t_Goooo_bb, "mixj", t_Vooov_bb, "mijx", 1.0, t_Zmat_b, "xm");
-        tblis::mult<double>(-1.0, t_Goooo_bb, "minx", t_Vooov_bb, "minx", 1.0, t_Zmat_b, "xm");
-        tblis::mult<double>(-1.0, t_Goooo_ab, "mixj", t_Vooov_aa_bb, "mijx", 1.0, t_Zmat_b, "xm");
-        tblis::mult<double>(-1.0, t_Goooo_ab, "minx", t_Vooov_aa_bb, "minx", 1.0, t_Zmat_b, "xm");
+        tblis::mult<double>(-1.0, t_Goooo_ab, "ijmn", t_Vooov_aa_bb, "ijnx", 1.0, t_Zmat_b, "xm");
+        tblis::mult<double>(-1.0, t_Goooo_ab, "ijnm", t_Vooov_aa_bb, "ijnx", 1.0, t_Zmat_b, "xm");
+
+        tblis::mult<double>(-1.0, t_Goooo_bb, "minj", t_Vooov_bb, "jnix", 1.0, t_Zmat_b, "xm");
+        tblis::mult<double>(-1.0, t_Goooo_bb, "imnj", t_Vooov_bb, "njmx", 1.0, t_Zmat_b, "xm");
+        tblis::mult<double>(-1.0, t_Goooo_bb, "inmj", t_Vooov_bb, "mjix", 1.0, t_Zmat_b, "xm");
+        tblis::mult<double>(-1.0, t_Goooo_bb, "injm", t_Vooov_bb, "jimx", 1.0, t_Zmat_b, "xm");
 
         // --- C. RING Unrestricted (BB) ---
         Eigen::Tensor<double, 4> G_ovov_bb(nb_, vb_, nb_, vb_); G_ovov_bb.setZero();
