@@ -1407,26 +1407,26 @@ void OMP3::build_generalized_fock() {
     Eigen::Tensor<double, 4> G_vvvv_aa(va_, va_, va_, va_); G_vvvv_aa.setZero();
     TBLIS_VIEW_4D(t_Gvvvv_aa, G_vvvv_aa, va_, va_, va_, va_);
     
-    // Perbaikan Prefactor: 1.0 untuk Restricted, 0.25 untuk Unrestricted
+    // Prefactor: 1.0 (Restricted) vs 0.25 (Unrestricted)
     double f_ladd = is_restricted ? 1.0 : 0.25;
     tblis::mult<double>(f_ladd, t_T2t, "ijab", t_T2, "ijef", 0.0, t_Gvvvv_aa, "eafb");
 
-    // PERBAIKAN: Semua VVVV harus NEGATIF (-1.0)
-    tblis::mult<double>(-1.0, t_Gvvvv_aa, "xabc", t_Vovvv_aa, "mabc", 1.0, t_Zmat_a, "xm");
-    tblis::mult<double>(-1.0, t_Gvvvv_aa, "axbc", t_Vovvv_aa, "mabc", 1.0, t_Zmat_a, "xm");
-    tblis::mult<double>(-1.0, t_Gvvvv_aa, "abxc", t_Vovvv_aa, "mcab", 1.0, t_Zmat_a, "xm");
-    tblis::mult<double>(-1.0, t_Gvvvv_aa, "abcx", t_Vovvv_aa, "mcba", 1.0, t_Zmat_a, "xm");
+    // VVVV harus NEGATIF (-1.0). Ini urutan indeks yang BENAR SECARA MATEMATIS!
+    tblis::mult<double>(-1.0, t_Gvvvv_aa, "xafb", t_Vovvv_aa, "mafb", 1.0, t_Zmat_a, "xm"); 
+    tblis::mult<double>(-1.0, t_Gvvvv_aa, "exfb", t_Vovvv_aa, "mefb", 1.0, t_Zmat_a, "xm"); 
+    tblis::mult<double>(-1.0, t_Gvvvv_aa, "eaxb", t_Vovvv_aa, "mbea", 1.0, t_Zmat_a, "xm"); 
+    tblis::mult<double>(-1.0, t_Gvvvv_aa, "eafx", t_Vovvv_aa, "mfea", 1.0, t_Zmat_a, "xm"); 
 
     // --- B. KONTRIBUSI OOOO (Occupied Ladder) ---
     Eigen::Tensor<double, 4> G_oooo_aa(na_, na_, na_, na_); G_oooo_aa.setZero();
     TBLIS_VIEW_4D(t_Goooo_aa, G_oooo_aa, na_, na_, na_, na_);
     tblis::mult<double>(f_ladd, t_T2t, "ijab", t_T2, "mnab", 0.0, t_Goooo_aa, "minj");
 
-    // PERBAIKAN: Semua OOOO harus POSITIF (1.0)
-    tblis::mult<double>(1.0, t_Goooo_aa, "minj", t_Vooov_aa, "jnix", 1.0, t_Zmat_a, "xm");
-    tblis::mult<double>(1.0, t_Goooo_aa, "imnj", t_Vooov_aa, "njmx", 1.0, t_Zmat_a, "xm");
-    tblis::mult<double>(1.0, t_Goooo_aa, "inmj", t_Vooov_aa, "mjix", 1.0, t_Zmat_a, "xm");
-    tblis::mult<double>(1.0, t_Goooo_aa, "injm", t_Vooov_aa, "jimx", 1.0, t_Zmat_a, "xm");
+    // OOOO harus POSITIF (+1.0). Ini urutan indeks yang BENAR SECARA MATEMATIS!
+    tblis::mult<double>(1.0, t_Goooo_aa, "minj", t_Vooov_aa, "njix", 1.0, t_Zmat_a, "xm");
+    tblis::mult<double>(1.0, t_Goooo_aa, "imnj", t_Vooov_aa, "njix", 1.0, t_Zmat_a, "xm");
+    tblis::mult<double>(1.0, t_Goooo_aa, "inmj", t_Vooov_aa, "injx", 1.0, t_Zmat_a, "xm");
+    tblis::mult<double>(1.0, t_Goooo_aa, "injm", t_Vooov_aa, "injx", 1.0, t_Zmat_a, "xm");
 
     // --- C. KONTRIBUSI RING (OVOV & OOVV) ---
     Eigen::Tensor<double, 4> G_ovov_aa(na_, va_, na_, va_); G_ovov_aa.setZero();
@@ -1447,15 +1447,17 @@ void OMP3::build_generalized_fock() {
         tblis::mult<double>(-1.0, t_T2, "mkce", t_T2t, "miae", 1.0, t_Goovv_aa, "ikac");
     }
 
-    tblis::mult<double>(1.0, t_Govov_aa, "makc", t_Vovvv_aa, "kcxa", 1.0, t_Zmat_a, "xm");
+    // Eksekusi TBLIS OVOV
+    tblis::mult<double>( 1.0, t_Govov_aa, "makc", t_Vovvv_aa, "xakc", 1.0, t_Zmat_a, "xm");
     tblis::mult<double>(-1.0, t_Govov_aa, "ixkc", t_Vooov_aa, "imkc", 1.0, t_Zmat_a, "xm");
-    tblis::mult<double>(1.0, t_Govov_aa, "iamc", t_Vovvv_aa, "iaxc", 1.0, t_Zmat_a, "xm");
-    tblis::mult<double>(-1.0, t_Govov_aa, "iakx", t_Vooov_aa, "kmia", 1.0, t_Zmat_a, "xm");
+    tblis::mult<double>( 1.0, t_Govov_aa, "iamc", t_Vovvv_aa, "iaxc", 1.0, t_Zmat_a, "xm");
+    tblis::mult<double>(-1.0, t_Govov_aa, "iakx", t_Vooov_aa, "iakm", 1.0, t_Zmat_a, "xm");
 
-    tblis::mult<double>(1.0, t_Goovv_aa, "mkac", t_Vovvv_aa, "kxca", 1.0, t_Zmat_a, "xm");
-    tblis::mult<double>(1.0, t_Goovv_aa, "imac", t_Vovvv_aa, "ixac", 1.0, t_Zmat_a, "xm");
+    // Eksekusi TBLIS OOVV
+    tblis::mult<double>( 1.0, t_Goovv_aa, "mkac", t_Vovvv_aa, "xkac", 1.0, t_Zmat_a, "xm");
+    tblis::mult<double>( 1.0, t_Goovv_aa, "imac", t_Vovvv_aa, "ixac", 1.0, t_Zmat_a, "xm");
     tblis::mult<double>(-1.0, t_Goovv_aa, "ikxc", t_Vooov_aa, "ikmc", 1.0, t_Zmat_a, "xm");
-    tblis::mult<double>(-1.0, t_Goovv_aa, "ikax", t_Vooov_aa, "kima", 1.0, t_Zmat_a, "xm");
+    tblis::mult<double>(-1.0, t_Goovv_aa, "ikax", t_Vooov_aa, "ikam", 1.0, t_Zmat_a, "xm");
 
     // =========================================================================
     // 3. UNRESTRICTED EXTENSION (BB & AB COMPONENTS)
@@ -1512,7 +1514,6 @@ void OMP3::build_generalized_fock() {
         tblis::mult< double >(-1.0, t_Vooov_bb_aa, "jikc", t_Teff_ab, "kjca", 1.0, t_Zmat_b, "ai");
 
         // --- A. VVVV Unrestricted ---
-        // --- A. VVVV Unrestricted ---
         Eigen::Tensor<double, 4> G_vvvv_bb(vb_, vb_, vb_, vb_); G_vvvv_bb.setZero();
         Eigen::Tensor<double, 4> G_vvvv_ab(va_, va_, vb_, vb_); G_vvvv_ab.setZero();
         TBLIS_VIEW_4D(t_T2_bb, (*t2_bb_dense), nb_, nb_, vb_, vb_);
@@ -1523,7 +1524,7 @@ void OMP3::build_generalized_fock() {
         tblis::mult<double>(0.25, t_T2_bb, "ijab", t_T2_bb, "ijef", 0.0, t_Gvvvv_bb, "eafb");
         tblis::mult<double>(1.0, t_T2_ab, "ijab", t_T2_ab, "ijef", 0.0, t_Gvvvv_ab, "eafb");
 
-        // PERBAIKAN: Semua VVVV Unrestricted harus NEGATIF (-1.0)
+        // VVVV: SEMUA NEGATIF (-1.0)
         tblis::mult<double>(-1.0, t_Gvvvv_ab, "xafb", t_Vovvv_ab, "mafb", 1.0, t_Zmat_a, "xm");
         tblis::mult<double>(-1.0, t_Gvvvv_ab, "exfb", t_Vovvv_ab, "mefb", 1.0, t_Zmat_a, "xm");
 
@@ -1544,17 +1545,17 @@ void OMP3::build_generalized_fock() {
         tblis::mult<double>(0.25, t_T2_bb, "ijab", t_T2_bb, "mnab", 0.0, t_Goooo_bb, "minj");
         tblis::mult<double>(1.0, t_T2_ab, "ijab", t_T2_ab, "mnab", 0.0, t_Goooo_ab, "minj");
 
-        // PERBAIKAN: Semua OOOO Unrestricted harus POSITIF (1.0)
+        // OOOO: SEMUA POSITIF (1.0)
         tblis::mult<double>(1.0, t_Goooo_ab, "minj", t_Vooov_bb_aa, "njix", 1.0, t_Zmat_a, "xm");
         tblis::mult<double>(1.0, t_Goooo_ab, "imnj", t_Vooov_bb_aa, "njix", 1.0, t_Zmat_a, "xm");
 
-        tblis::mult<double>(1.0, t_Goooo_ab, "ijmn", t_Vooov_aa_bb, "ijnx", 1.0, t_Zmat_b, "xm");
-        tblis::mult<double>(1.0, t_Goooo_ab, "ijnm", t_Vooov_aa_bb, "ijnx", 1.0, t_Zmat_b, "xm");
+        tblis::mult<double>(1.0, t_Goooo_ab, "ijmn", t_Vooov_aa_bb, "injx", 1.0, t_Zmat_b, "xm");
+        tblis::mult<double>(1.0, t_Goooo_ab, "ijnm", t_Vooov_aa_bb, "injx", 1.0, t_Zmat_b, "xm");
 
-        tblis::mult<double>(1.0, t_Goooo_bb, "minj", t_Vooov_bb, "jnix", 1.0, t_Zmat_b, "xm");
-        tblis::mult<double>(1.0, t_Goooo_bb, "imnj", t_Vooov_bb, "njmx", 1.0, t_Zmat_b, "xm");
-        tblis::mult<double>(1.0, t_Goooo_bb, "inmj", t_Vooov_bb, "mjix", 1.0, t_Zmat_b, "xm");
-        tblis::mult<double>(1.0, t_Goooo_bb, "injm", t_Vooov_bb, "jimx", 1.0, t_Zmat_b, "xm");
+        tblis::mult<double>(1.0, t_Goooo_bb, "minj", t_Vooov_bb, "njix", 1.0, t_Zmat_b, "xm");
+        tblis::mult<double>(1.0, t_Goooo_bb, "imnj", t_Vooov_bb, "njix", 1.0, t_Zmat_b, "xm");
+        tblis::mult<double>(1.0, t_Goooo_bb, "inmj", t_Vooov_bb, "injx", 1.0, t_Zmat_b, "xm");
+        tblis::mult<double>(1.0, t_Goooo_bb, "injm", t_Vooov_bb, "injx", 1.0, t_Zmat_b, "xm");
 
         // --- C. RING Unrestricted (BB) ---
         Eigen::Tensor<double, 4> G_ovov_bb(nb_, vb_, nb_, vb_); G_ovov_bb.setZero();
