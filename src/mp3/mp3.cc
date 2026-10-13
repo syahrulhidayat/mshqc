@@ -1358,14 +1358,18 @@ void OMP3::build_generalized_fock() {
     };
 
     Eigen::Tensor<double, 4> V_ovvv_aa, V_ooov_aa;
+    
+    // PERBAIKAN ERROR SCOPE: Deklarasikan matriks B alpha di sini
+    // agar hidup sampai bagian unrestricted di bawah
+    Eigen::MatrixXd B_ij_a, B_ab_a;
 
     if (config_.eri_method == "exact") {
         if (eri_ao_cached_.size() == 0) eri_ao_cached_ = integrals_->compute_eri();
         V_ovvv_aa = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cao, Cav, Cav, Cav, nbf_, na_, va_, va_, va_);
         V_ooov_aa = integrals::ERITransformer::transform_custom(eri_ao_cached_, Cao, Cao, Cao, Cav, nbf_, na_, na_, na_, va_);
     } else {
-        Eigen::MatrixXd B_ij_a = build_B_mat(Cao, Cao, na_, na_);
-        Eigen::MatrixXd B_ab_a = build_B_mat(Cav, Cav, va_, va_);
+        B_ij_a = build_B_mat(Cao, Cao, na_, na_);
+        B_ab_a = build_B_mat(Cav, Cav, va_, va_);
         map_4d_inplace((B_ia_P_alpha_ * B_ab_a.transpose()).eval(), V_ovvv_aa, na_, va_, va_, va_);
         map_4d_inplace((B_ij_a * B_ia_P_alpha_.transpose()).eval(), V_ooov_aa, na_, na_, na_, va_);
     }
@@ -1479,6 +1483,7 @@ void OMP3::build_generalized_fock() {
             Eigen::MatrixXd B_ij_b = build_B_mat(Cbo, Cbo, nb_, nb_);
             Eigen::MatrixXd B_ab_b = build_B_mat(Cbv, Cbv, vb_, vb_);
             
+            // Sekarang perkalian dengan B_ab_a & B_ij_a valid karena sudah dideklarasikan di awal
             map_4d_inplace((B_ia_P_beta_ * B_ab_b.transpose()).eval(), V_ovvv_bb, nb_, vb_, vb_, vb_);
             map_4d_inplace((B_ij_b * B_ia_P_beta_.transpose()).eval(), V_ooov_bb, nb_, nb_, nb_, vb_);
             map_4d_inplace((B_ia_P_alpha_ * B_ab_b.transpose()).eval(), V_ovvv_ab, na_, va_, vb_, vb_);
