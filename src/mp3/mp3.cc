@@ -1433,10 +1433,7 @@ void OMP3::build_generalized_fock() {
                 TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
                 TBLIS_VIEW_4D(t_Teff_ab, Teff_ab, na_, nb_, va_, vb_);
                 
-                // HAPUS BARIS-BARIS INI:
-                tblis::mult<double>(0.5, t_Tab, "ijab", t_Teff_ab, "ijad", 1.0, t_G_VVVV_bb, "bd"); 
-                tblis::mult<double>(0.5, t_Tab, "ijab", t_Teff_ab, "ilab", 1.0, t_G_OOOO_bb, "jl");
-                tblis::mult<double>(-0.5, t_Tab, "kiac", t_Teff_ab, "kjbc", 1.0, t_G_OVOV_bb, "iajb");
+                
             }
 
             auto get_V = [&](const Eigen::MatrixXd& C1, const Eigen::MatrixXd& C2, const Eigen::MatrixXd& C3, const Eigen::MatrixXd& C4) {
@@ -1485,9 +1482,7 @@ void OMP3::build_generalized_fock() {
                 tblis::mult<double>(0.25, t_Tbb, "ijab", t_Teff_bb, "klab", 0.0, t_G_OOOO_bb, "ijkl");
                 tblis::mult<double>(-0.5, t_Tbb, "ikac", t_Teff_bb, "jkbc", 0.0, t_G_OVOV_bb, "iajb");
 
-                tblis::mult<double>(0.5, t_Tab, "ijab", t_Teff_ab, "ijad", 1.0, t_G_VVVV_bb, "bd"); 
-                tblis::mult<double>(0.5, t_Tab, "ijab", t_Teff_ab, "ilab", 1.0, t_G_OOOO_bb, "jl");
-                tblis::mult<double>(-0.5, t_Tab, "kiac", t_Teff_ab, "kjbc", 1.0, t_G_OVOV_bb, "iajb");
+                
 
                 auto V_ovvv_bb = get_V(Cbo, Cbv, Cbv, Cbv);
                 auto V_ooov_bb = get_V(Cbo, Cbo, Cbo, Cbv);
