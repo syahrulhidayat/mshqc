@@ -1312,15 +1312,26 @@ void OMP3::build_generalized_fock() {
     auto* t2_bb_dense = t2_bb_.get_block(0,0,0,0);
 
   
-    if (config_.eri_method == "exact") {
-        if (is_restricted) {
-            Eigen::Tensor< double, 4 > Teff(na_, na_, va_, va_);
+    if (is_restricted) {
+            Eigen::Tensor<double, 4> Teff_tilde(na_, na_, va_, va_);
+            Eigen::Tensor<double, 4> T2_tilde(na_, na_, va_, va_);
+            Eigen::Tensor<double, 4> T2_aa_ijab(na_, na_, va_, va_);
+            
             #pragma omp parallel for collapse(4) schedule(static)
             for(int i = 0; i < na_; ++i) {
                 for(int j = 0; j < na_; ++j) {
                     for(int a = 0; a < va_; ++a) {
                         for(int b = 0; b < va_; ++b) {
-                            Teff(i,j,a,b) = (*t_aa_dense)(i,a,j,b) + L2_aa_(i,j,a,b);
+                            double t2 = (*t_aa_dense)(i,a,j,b);
+                            double t2_ex = (*t_aa_dense)(i,b,j,a);
+                            double l2 = L2_aa_(i,j,a,b);
+                            double l2_ex = L2_aa_(i,j,b,a);
+                            
+                            T2_aa_ijab(i,j,a,b) = t2;
+                            T2_tilde(i,j,a,b) = 2.0 * t2 - t2_ex;
+                            
+                            // [PERBAIKAN BUG]: Teff sekarang diadaptasi spin (2T - T^T)
+                            Teff_tilde(i,j,a,b) = 2.0 * (t2 + l2) - (t2_ex + l2_ex);
                         }
                     }
                 }
