@@ -109,7 +109,7 @@ namespace foundation {
 void RMP2::transform_integrals() {
     if (config_.eri_method == "exact") {
         if (config_.print_level > 0) std::cout << "  [RMP2] Transformasi Exact OOVV (O(N^5))...\n";
-        const auto eri_ao = integrals_->compute_eri();
+        const auto& eri_ao = integrals_->compute_eri();
         const Eigen::MatrixXd& C_occ = scf_.C_alpha.leftCols(nocc_a_);
         const Eigen::MatrixXd& C_virt = scf_.C_alpha.rightCols(nvir_a_);
         auto eri_chemist = integrals::ERITransformer::transform_custom(
@@ -214,7 +214,7 @@ void UMP2::transform_integrals() {
 double UMP2::compute_ss_alpha() {
     bool is_exact = (config_.eri_method == "exact");
     if (is_exact) {
-        const auto eri_ao = integrals_->compute_eri();
+        const auto& eri_ao = integrals_->compute_eri();
         const Eigen::MatrixXd& Ca_occ = scf_.C_alpha.leftCols(nocc_a_);
         const Eigen::MatrixXd& Ca_vir = scf_.C_alpha.rightCols(nvir_a_);
         auto eri_chem = integrals::ERITransformer::transform_custom(
@@ -272,7 +272,7 @@ double UMP2::compute_ss_beta() {
     if (nocc_b_ == 0 || nvir_b_ == 0) return 0.0;
     bool is_exact = (config_.eri_method == "exact");
     if (is_exact) {
-        const auto eri_ao = integrals_->compute_eri();
+        const auto& eri_ao = integrals_->compute_eri();
         const Eigen::MatrixXd& Cb_occ = scf_.C_beta.leftCols(nocc_b_);
         const Eigen::MatrixXd& Cb_vir = scf_.C_beta.rightCols(nvir_b_);
         auto eri_chem = integrals::ERITransformer::transform_custom(
@@ -329,7 +329,7 @@ double UMP2::compute_os() {
     if (nocc_a_ == 0 || nvir_a_ == 0 || nocc_b_ == 0 || nvir_b_ == 0) return 0.0;
     bool is_exact = (config_.eri_method == "exact");
     if (is_exact) {
-        const auto eri_ao = integrals_->compute_eri();
+        const auto& eri_ao = integrals_->compute_eri();
         const Eigen::MatrixXd& Ca_occ = scf_.C_alpha.leftCols(nocc_a_);
         const Eigen::MatrixXd& Ca_vir = scf_.C_alpha.rightCols(nvir_a_);
         const Eigen::MatrixXd& Cb_occ = scf_.C_beta.leftCols(nocc_b_);

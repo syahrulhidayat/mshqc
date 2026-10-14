@@ -627,13 +627,50 @@ void OMP3::compute_mp3_correction() {
             TBLIS_VIEW_4D(t_T, T2_aa_ijab, na_, na_, va_, va_);
             TBLIS_VIEW_4D(t_W, W, na_, na_, va_, va_);
 
-            eri_ao_cached_.resize(0, 0, 0, 0); // Hapus cache dummy yang bocor
-            const auto& eri_ao_cached_local = integrals_->compute_eri();
+          
+            if (eri_ao_cached_.size() == 0) {
+                eri_ao_cached_ = integrals_->compute_eri();
+            }
+            const auto& eri_ao_cached_local = eri_ao_cached_;
 
-            if (Waa_ladder_.size() != va_ * va_ * va_ * va_) Waa_ladder_.resize(va_, va_, va_, va_);
-            Waa_ladder_ = integrals::ERITransformer::transform_custom(eri_ao_cached_local, Cav, Cav, Cav, Cav, nbf_, va_, va_, va_, va_);
-            TBLIS_VIEW_4D(t_Vvvvv, Waa_ladder_, va_, va_, va_, va_);
-            tblis::mult< double >(1.0, t_T, "ijef", t_Vvvvv, "eafb", 1.0, t_W, "ijab");
+            Eigen::Tensor<double, 4> T_ao(na_, na_, nbf_, nbf_);
+            Eigen::Tensor<double, 4> W_ao(na_, na_, nbf_, nbf_);
+            #pragma omp parallel for collapse(2) schedule(static)
+            for (int i = 0; i < na_; ++i) {
+                for (int j = 0; j < na_; ++j) {
+                    Eigen::MatrixXd Tij_vv(va_, va_);
+                    for (int e = 0; e < va_; ++e)
+                        for (int f = 0; f < va_; ++f)
+                            Tij_vv(e, f) = T2_aa_ijab(i, j, e, f);
+                    Eigen::MatrixXd Tij_ao = Cav * Tij_vv * Cav.transpose();
+                    for (int mu = 0; mu < nbf_; ++mu)
+                        for (int lam = 0; lam < nbf_; ++lam)
+                            T_ao(i, j, mu, lam) = Tij_ao(mu, lam);
+                }
+            }
+            W_ao.setZero();
+            TBLIS_VIEW_4D(t_Tao, T_ao, na_, na_, nbf_, nbf_);
+            TBLIS_VIEW_4D(t_Wao, W_ao, na_, na_, nbf_, nbf_);
+            tblis::varray_view<double> t_eri_ao(
+                {(len_type)nbf_, (len_type)nbf_, (len_type)nbf_, (len_type)nbf_},
+                const_cast<double*>(eri_ao_cached_local.data()),
+                {1, (stride_type)nbf_, (stride_type)(nbf_*nbf_), (stride_type)(nbf_*nbf_*nbf_)}
+            );
+            tblis::mult<double>(1.0, t_Tao, "ijpr", t_eri_ao, "pqrs", 0.0, t_Wao, "ijqs");
+
+            #pragma omp parallel for collapse(2) schedule(static)
+            for (int i = 0; i < na_; ++i) {
+                for (int j = 0; j < na_; ++j) {
+                    Eigen::MatrixXd Wij_ao(nbf_, nbf_);
+                    for (int nu = 0; nu < nbf_; ++nu)
+                        for (int sig = 0; sig < nbf_; ++sig)
+                            Wij_ao(nu, sig) = W_ao(i, j, nu, sig);
+                    Eigen::MatrixXd Wij_vv = Cav.transpose() * Wij_ao * Cav;
+                    for (int a = 0; a < va_; ++a)
+                        for (int b = 0; b < va_; ++b)
+                            W(i, j, a, b) += Wij_vv(a, b);
+                }
+            }
             
             if (Waa_ring_.size() != na_ * na_ * na_ * na_) Waa_ring_.resize(na_, na_, na_, na_);
             Waa_ring_ = integrals::ERITransformer::transform_custom(eri_ao_cached_local, Cao, Cao, Cao, Cao, nbf_, na_, na_, na_, na_);
@@ -1405,13 +1442,14 @@ void OMP3::build_generalized_fock() {
     TBLIS_VIEW_4D(t_T2, T2_aa, na_, na_, va_, va_);
     TBLIS_VIEW_4D(t_T2t, T2_tilde_aa, na_, na_, va_, va_);
 
-    // --- A. KONTRIBUSI VVVV (Virtual Ladder) - 4x Lebih Cepat! ---
-    Eigen::Tensor<double, 4> G_vvvv_aa(va_, va_, va_, va_); G_vvvv_aa.setZero();
-    TBLIS_VIEW_4D(t_Gvvvv_aa, G_vvvv_aa, va_, va_, va_, va_);
-    
+    // --- A. KONTRIBUSI VVVV (Virtual Ladder) - Faktorisasi O(O^3 V^3) Tanpa Tensor G_vvvv! ---
     double f_ladd = is_restricted ? 0.25 : 0.125;
-    tblis::mult<double>(f_ladd, t_T2t, "ijab", t_T2, "ijef", 0.0, t_Gvvvv_aa, "eafb");
-    tblis::mult<double>(-4.0, t_Gvvvv_aa, "xafb", t_Vovvv_aa, "mafb", 1.0, t_Zmat_a, "xm");
+    Eigen::Tensor<double, 4> Y_ooov_aa(na_, na_, na_, va_); Y_ooov_aa.setZero();
+    TBLIS_VIEW_4D(t_Yooov_aa, Y_ooov_aa, na_, na_, na_, va_);
+
+    // Y(i,j,m,f) = sum_{a,b} T2_tilde(i,j,a,b) * V_ovvv(m,a,f,b)
+    tblis::mult<double>(1.0, t_T2t, "ijab", t_Vovvv_aa, "mafb", 0.0, t_Yooov_aa, "ijmf");
+    tblis::mult<double>(-4.0 * f_ladd, t_T2, "ijxf", t_Yooov_aa, "ijmf", 1.0, t_Zmat_a, "xm");
 
     // --- B. KONTRIBUSI OOOO (Occupied Ladder) 
     Eigen::Tensor<double, 4> G_oooo_aa(na_, na_, na_, na_); G_oooo_aa.setZero();
