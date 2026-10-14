@@ -72,15 +72,15 @@ BaseSCF::BaseSCF(const Molecule& mol, const BasisSet& basis,
         combined_basis.append(aux_basis);
         auto df_integrals = std::make_shared<IntegralEngine>(mol_, combined_basis);
         auto df_engine = std::make_shared<integrals::DensityFittingERI>(basis_, aux_basis, df_integrals, config_.df_threshold);
-        df_engine->compute();
         
-        if (config_.scf_type == "incore") {
-            int n_aux = aux_basis.n_basis_functions();
-            this->L_mat_.resize(nbasis_ * nbasis_, n_aux);
-            utils::HDF5TensorIO io("df_tensor.h5", utils::HDF5TensorIO::Mode::READ_ONLY);
-            io.read_slice_4d("df_tensor", {0, 0, 0, 0}, {(long)n_aux, (long)nbasis_, (long)nbasis_, 1}, this->L_mat_.data());
+        bool use_disk = (config_.scf_type != "incore");
+        df_engine->compute(use_disk); // Hanya tulis HDF5 jika BUKAN incore!
+        
+        if (!use_disk) {
+            // Langsung salin dari RAM tanpa menyentuh SSD/HDF5 sama sekali!
+            this->L_mat_ = df_engine->get_B_mat();
         } else {
-            this->L_mat_.resize(0, aux_basis.n_basis_functions()); 
+            this->L_mat_.resize(0, df_engine->get_B_mat().cols()); 
         }
     }
 }

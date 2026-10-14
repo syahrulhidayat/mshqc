@@ -46,32 +46,38 @@ void OMP2::build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_
         Eigen::VectorXd J_flat = L_flat_J * X_J;                 
         Eigen::Map<Eigen::MatrixXd> J_mat(J_flat.data(), nbf_, nbf_);
 
+        bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
         Eigen::MatrixXd Ka_mat = Eigen::MatrixXd::Zero(nbf_, nbf_);
         Eigen::MatrixXd Kb_mat = Eigen::MatrixXd::Zero(nbf_, nbf_);
 
-        
+        #pragma omp parallel
+        {
             Eigen::MatrixXd Ka_priv = Eigen::MatrixXd::Zero(nbf_, nbf_);
             Eigen::MatrixXd Kb_priv = Eigen::MatrixXd::Zero(nbf_, nbf_);
             Eigen::MatrixXd Ta_buf(nbf_, nbf_), Tb_buf(nbf_, nbf_);
 
-            
+            #pragma omp for schedule(static) nowait
             for (int K = 0; K < n_chol; ++K) {
                 Eigen::Map<const Eigen::MatrixXd> L_K(scf_.L_mat.col(K).data(), nbf_, nbf_);
 
                 Ta_buf.noalias() = L_K * P_a;
                 Ka_priv.noalias() += Ta_buf * L_K;
 
-                if (nb_ > 0) {
+                if (!is_restricted && nb_ > 0) {
                     Tb_buf.noalias() = L_K * P_b;
                     Kb_priv.noalias() += Tb_buf * L_K;
                 }
             }
-         
-            { Ka_mat += Ka_priv; if (nb_ > 0) Kb_mat += Kb_priv; }
-        
+            #pragma omp critical
+            {
+                Ka_mat += Ka_priv;
+                if (!is_restricted && nb_ > 0) Kb_mat += Kb_priv;
+            }
+        }
 
         F_a = H_core_ + J_mat - Ka_mat;
-        if (nb_ > 0) F_b = H_core_ + J_mat - Kb_mat;
+        if (is_restricted) F_b = F_a;
+        else if (nb_ > 0) F_b = H_core_ + J_mat - Kb_mat;
         else F_b = F_a;
 
         return;
@@ -245,7 +251,8 @@ void OMP2::build_generalized_fock() {
         Z_mat_b.setZero();
         if (is_restricted) {
             if (config_.print_level > 0) std::cout << "  [DEBUG] Memulai evaluasi Z-Vector RMP2 Exact (Analitik Spasial)..." << std::endl;
-            const auto& eri_ao = integrals_->compute_eri();
+            if (eri_ao_cached_.size() == 0) eri_ao_cached_ = integrals_->compute_eri();
+const auto& eri_ao = eri_ao_cached_;
             const Eigen::MatrixXd& Ca_o = scf_.C_alpha.leftCols(na_);
             const Eigen::MatrixXd& Ca_v = scf_.C_alpha.rightCols(va_);
             
@@ -281,7 +288,8 @@ void OMP2::build_generalized_fock() {
 
             if (config_.print_level > 0) std::cout << "  [DEBUG] Memulai evaluasi Z-Vector O(N^5) MO-Driven UMP2 (TBLIS)..." << std::endl;
 
-            const auto& eri_ao = integrals_->compute_eri();
+            if (eri_ao_cached_.size() == 0) eri_ao_cached_ = integrals_->compute_eri();
+const auto& eri_ao = eri_ao_cached_;
             const Eigen::MatrixXd& Ca_o = scf_.C_alpha.leftCols(na_);
             const Eigen::MatrixXd& Ca_v = scf_.C_alpha.rightCols(va_);
 

@@ -269,6 +269,7 @@ double UMP2::compute_ss_alpha() {
 }
 
 double UMP2::compute_ss_beta() {
+    if (nocc_b_ == 0 || nvir_b_ == 0) return 0.0;
     bool is_exact = (config_.eri_method == "exact");
     if (is_exact) {
         const auto eri_ao = integrals_->compute_eri();
@@ -287,7 +288,11 @@ double UMP2::compute_ss_beta() {
     const auto& ev = scf_.orbital_energies_beta.tail(nvir_b_);
     double e_sum = 0.0;
 
-    #pragma omp parallel for collapse(3) reduction(+:e_sum) schedule(dynamic)
+    // GIANT DGEMM: Hitung seluruh integral (ia|jb)_beta sekaligus dengan BLAS-3
+    Eigen::MatrixXd G_bb;
+    if (!is_exact) G_bb = B_ia_P_beta_ * B_ia_P_beta_.transpose();
+
+    #pragma omp parallel for collapse(3) reduction(+:e_sum) schedule(static)
     for(int b = 0; b < nvir_b_; ++b) {
         for(int a = 0; a < nvir_b_; ++a) {
             for(int j = 0; j < nocc_b_; ++j) {
@@ -304,12 +309,8 @@ double UMP2::compute_ss_beta() {
                         val_iajb = eri_bbbb_(i, j, a, b);
                         val_ibja = eri_bbbb_(i, j, b, a);
                     } else {
-                        int idx_ia = i * nvir_b_ + a;
-                        int idx_jb = j * nvir_b_ + b;
-                        int idx_ib = i * nvir_b_ + b;
-                        int idx_ja = j * nvir_b_ + a;
-                        val_iajb = B_ia_P_beta_.row(idx_ia).dot(B_ia_P_beta_.row(idx_jb));
-                        val_ibja = B_ia_P_beta_.row(idx_ib).dot(B_ia_P_beta_.row(idx_ja));
+                        val_iajb = G_bb(i * nvir_b_ + a, j * nvir_b_ + b);
+                        val_ibja = G_bb(i * nvir_b_ + b, j * nvir_b_ + a);
                     }
 
                     double val_num = val_iajb - val_ibja;
@@ -325,6 +326,7 @@ double UMP2::compute_ss_beta() {
 }
 
 double UMP2::compute_os() {
+    if (nocc_a_ == 0 || nvir_a_ == 0 || nocc_b_ == 0 || nvir_b_ == 0) return 0.0;
     bool is_exact = (config_.eri_method == "exact");
     if (is_exact) {
         const auto eri_ao = integrals_->compute_eri();
@@ -347,7 +349,11 @@ double UMP2::compute_os() {
     const auto& evb = scf_.orbital_energies_beta.tail(nvir_b_);
     double e_sum = 0.0;
 
-    #pragma omp parallel for collapse(3) reduction(+:e_sum) schedule(dynamic)
+    // GIANT DGEMM: Hitung seluruh integral (ia|jb)_alpha_beta sekaligus dengan BLAS-3
+    Eigen::MatrixXd G_ab;
+    if (!is_exact) G_ab = B_ia_P_alpha_ * B_ia_P_beta_.transpose();
+
+    #pragma omp parallel for collapse(3) reduction(+:e_sum) schedule(static)
     for(int b = 0; b < nvir_b_; ++b) {
         for(int a = 0; a < nvir_a_; ++a) {
             for(int j = 0; j < nocc_b_; ++j) {
@@ -359,14 +365,8 @@ double UMP2::compute_os() {
                     double den = den_partial + eoa(i);
                     if (std::abs(den) < 1e-12) { t2_ab_(i, j, a, b) = 0.0; continue; }
 
-                    double val_num = 0.0;
-                    if (is_exact) {
-                        val_num = eri_aabb_(i, j, a, b);
-                    } else {
-                        int idx_ia = i * nvir_a_ + a;
-                        int idx_jb = j * nvir_b_ + b;
-                        val_num = B_ia_P_alpha_.row(idx_ia).dot(B_ia_P_beta_.row(idx_jb));
-                    }
+                    double val_num = is_exact ? eri_aabb_(i, j, a, b) 
+                                              : G_ab(i * nvir_a_ + a, j * nvir_b_ + b);
 
                     double val_t = val_num / den;
                     t2_ab_(i, j, a, b) = val_t;
@@ -543,8 +543,11 @@ void OMP2::init_fast_integrals() {
     J_ptr_.push_back(0);
     K_ptr_.push_back(0);
 
-    auto ERI = integrals_->compute_eri(); 
-    const double sparse_threshold = 0;
+    if (eri_ao_cached_.size() == 0) {
+        eri_ao_cached_ = integrals_->compute_eri();
+    }
+    const auto& ERI = eri_ao_cached_;
+    const double sparse_threshold = 1e-12;
 
     int nshells = basis_.n_shells();
     std::vector<int> shell_starts(nshells), shell_sizes(nshells);
@@ -611,7 +614,10 @@ void OMP2::transform_integrals() {
         scf_.irreps_beta.assign(nbf_, 0);
     }
     if (config_.eri_method == "exact") {
-        const auto& eri_ao = integrals_->compute_eri();
+        if (eri_ao_cached_.size() == 0) {
+            eri_ao_cached_ = integrals_->compute_eri();
+        }
+        const auto& eri_ao = eri_ao_cached_;
         const Eigen::MatrixXd& Ca_o = scf_.C_alpha.leftCols(na_);
         const Eigen::MatrixXd& Ca_v = scf_.C_alpha.rightCols(va_);
 

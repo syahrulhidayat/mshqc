@@ -36,7 +36,7 @@ public:
     
     void compute();
 
-    
+    void compute(bool save_hdf5 = false);
     const Eigen::MatrixXd& get_B_mat() const { return B_mat_; }
 
 private:

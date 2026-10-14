@@ -45,8 +45,6 @@ protected:
     void build_hessian_diagonal(Eigen::VectorXd& diag_H, double grad_norm) override;
     void debug_gradient_fd(int i_target, int a_target);
 
-    // ERI Cache
-    Eigen::Tensor<double, 4> eri_ao_cached_;
 
     // Variabel Energi MP3
     double e_mp3_aa_ = 0.0;

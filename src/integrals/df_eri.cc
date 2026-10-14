@@ -98,9 +98,9 @@ CholeskyResult compute_pivoted_cholesky(Eigen::MatrixXd& J, double tol = 1e-10) 
     L.conservativeResize(n, rank);
     return {L, p, rank};
 }
-void DensityFittingERI::compute() {
+void DensityFittingERI::compute(bool save_hdf5) {
     std::cout << "  Starting Density Fitting (RI) Decomposition (Ultra HPC)...\n";
-    std::cout << "  Primary Basis: " << n_primary_ << " BF\n";
+    std::cout << "  Primary Basis: " <<void DensityFittingERI::comput n_primary_ << " BF\n";
     std::cout << "  Auxiliary Basis: " << n_aux_ << " BF\n";
 
     int n_shells_prim = primary_basis_->n_shells();
@@ -223,25 +223,25 @@ void DensityFittingERI::compute() {
     // =====================================================================
     // 5. IN-PLACE TRIANGULAR SOLVE & I/O
     // =====================================================================
-    std::cout << "  In-Place Triangular Solve (cblas_dtrsm)...\n";
     auto V_rank = B_mat_.leftCols(n_aux_rank);
     L_tri.solveInPlace(V_rank.transpose());
 
-    std::cout << "  Writing Density Fitting Tensor to HDF5 (Out-of-Core)...\n";
-    utils::HDF5TensorIO io("df_tensor.h5", utils::HDF5TensorIO::Mode::WRITE_TRUNCATE);
-    
-    std::array<long, 4> dims = {(long)n_aux_rank, (long)n_primary_, (long)n_primary_, 1};
-    std::array<long, 4> chunks = {1, (long)n_primary_, (long)n_primary_, 1};
-    io.create_dataset_4d("df_tensor", dims, chunks);
+    if (save_hdf5) {
+        std::cout << "  Writing Density Fitting Tensor to HDF5 (Out-of-Core)...\n";
+        utils::HDF5TensorIO io("df_tensor.h5", utils::HDF5TensorIO::Mode::WRITE_TRUNCATE);
+        
+        std::array<long, 4> dims = {(long)n_aux_rank, (long)n_primary_, (long)n_primary_, 1};
+        std::array<long, 4> chunks = {1, (long)n_primary_, (long)n_primary_, 1};
+        io.create_dataset_4d("df_tensor", dims, chunks);
 
-    for (int P = 0; P < n_aux_rank; ++P) {
-        std::array<long, 4> offset = {P, 0, 0, 0};
-        io.write_slice_4d("df_tensor", offset, chunks, V_rank.col(P).data());
+        for (int P = 0; P < n_aux_rank; ++P) {
+            std::array<long, 4> offset = {P, 0, 0, 0};
+            io.write_slice_4d("df_tensor", offset, chunks, V_rank.col(P).data());
+        }
     }
 
     B_mat_ = V_rank; 
     is_computed_ = true;
-    std::cout << "  Density Fitting Decomposition Complete.\n";
 }
 
 } 
