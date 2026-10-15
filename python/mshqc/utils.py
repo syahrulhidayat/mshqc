@@ -14,413 +14,154 @@
 
 """
 Utility Functions for MSHQC
-File: /home/syahrul/mshqc/python/mshqc/utils.py
+File: python/mshqc/utils.py
 """
 
 import time
-import os
+from typing import List, Optional, Dict, Any, Union, Tuple
+import mshqc
+from .calculators import MSHQCCalculator, build_molecule
+from .session import MSHQCSession
 
 
-def quick_calculation(element, basis="cc-pVTZ", method="ump3",
-                     charge=0, multiplicity=None, basis_dir=None, n_cas_states=3):
+def _parse_method_and_eri(method: str, default_eri: str = "exact") -> Tuple[str, str]:
+    """Deteksi awalan df-/cholesky- pada nama metode (misal 'df-omp3' atau 'chomp2')."""
+    m = method.lower().strip()
+    if m.startswith("df-") or m.startswith("df_"):
+        return m[3:], "df"
+    if m.startswith("ch-") or m.startswith("ch_"):
+        return m[3:], "cholesky"
+    if m.startswith("cholesky-") or m.startswith("cholesky_"):
+        return m[9:], "cholesky"
+    if m in ("chomp2", "chomp3"):
+        return m[2:], "cholesky"
+    return m, default_eri
+
+
+def quick_calculation(element_or_mol: Union[str, int, List[Tuple], mshqc.Molecule],
+                      basis: str = "cc-pVTZ",
+                      method: str = "omp2",
+                      eri_method: str = "exact",
+                      aux_basis: Optional[str] = None,
+                      charge: int = 0,
+                      multiplicity: Optional[int] = None,
+                      units: str = "bohr",
+                      threshold: float = 1e-9,
+                      basis_dir: Optional[str] = None,
+                      print_level: int = 0) -> Any:
     """
-    Quick single-atom calculation
-    
-    Args:
-        element: str or int, element symbol or atomic number
-        basis: str, basis set name
-        method: str, calculation method
-        charge: int, molecular charge
-        multiplicity: int, spin multiplicity
-        basis_dir: str, optional basis directory path
-    
-    Returns:
-        Result object
-    
-    Example:
-        >>> from mshqc.utils import quick_calculation
-        >>> result = quick_calculation("Li", "cc-pVTZ", "ump3")
+    Perhitungan cepat untuk atom tunggal maupun molekul.
+
+    Contoh:
+        >>> res = quick_calculation("Ne", basis="cc-pVTZ", method="df-omp3")
+        >>> print(res.energy_total)
     """
+    clean_method, resolved_eri = _parse_method_and_eri(method, default_eri=eri_method)
 
-    
-
-    import mshqc
-    from .calculators import MSHQCCalculator, MCSCFCalculator
-    
-    
-
-    if basis_dir is None:
-        if 'MSHQC_DATA_DIR' in os.environ:
-            basis_dir = os.path.join(os.environ['MSHQC_DATA_DIR'], 'basis')
-        else:
-            basis_dir = "data/basis"
-    
-    mol = mshqc.Molecule()
-    
-    if isinstance(element, str):
-        
-
-        symbol_to_z = {
-            'H': 1, 'He': 2,
-            'Li': 3, 'Be': 4, 'B': 5, 'C': 6, 'N': 7, 'O': 8, 'F': 9, 'Ne': 10,
-            'Na': 11, 'Mg': 12, 'Al': 13, 'Si': 14, 'P': 15, 'S': 16, 'Cl': 17, 'Ar': 18,
-            'K': 19, 'Ca': 20, 'Sc': 21, 'Ti': 22, 'V': 23, 'Cr': 24, 'Mn': 25, 'Fe': 26, 'Co': 27, 'Ni': 28, 'Cu': 29, 'Zn': 30, 'Ga': 31, 'Ge': 32, 'As': 33, 'Se': 34, 'Br': 35, 'Kr': 36,
-            'Rb': 37, 'Sr': 38, 'Y': 39, 'Zr': 40, 'Nb': 41, 'Mo': 42, 'Tc': 43, 'Ru': 44, 'Rh': 45, 'Pd': 46, 'Ag': 47, 'Cd': 48, 'In': 49, 'Sn': 50, 'Sb': 51, 'Te': 52, 'I': 53, 'Xe': 54,
-            'Cs': 55, 'Ba': 56, 'La': 57, 'Ce': 58, 'Pr': 59, 'Nd': 60, 'Pm': 61, 'Sm': 62, 'Eu': 63, 'Gd': 64, 'Tb': 65, 'Dy': 66, 'Ho': 67, 'Er': 68, 'Tm': 69, 'Yb': 70, 'Lu': 71,
-            'Hf': 72, 'Ta': 73, 'W': 74, 'Re': 75, 'Os': 76, 'Ir': 77, 'Pt': 78, 'Au': 79, 'Hg': 80, 'Tl': 81, 'Pb': 82, 'Bi': 83, 'Po': 84, 'At': 85, 'Rn': 86,
-            'Fr': 87, 'Ra': 88, 'Ac': 89, 'Th': 90, 'Pa': 91, 'U': 92, 'Np': 93, 'Pu': 94, 'Am': 95, 'Cm': 96, 'Bk': 97, 'Cf': 98, 'Es': 99, 'Fm': 100, 'Md': 101, 'No': 102, 'Lr': 103,
-            'Rf': 104, 'Db': 105, 'Sg': 106, 'Bh': 107, 'Hs': 108, 'Mt': 109, 'Ds': 110, 'Rg': 111, 'Cn': 112, 'Nh': 113, 'Fl': 114, 'Mc': 115, 'Lv': 116, 'Ts': 117, 'Og': 118
-        }
-        
-        
-
-        if element not in symbol_to_z:
-            raise ValueError(f"Unknown element symbol: {element}")
-        z = symbol_to_z[element]
-        mol.add_atom(z, 0.0, 0.0, 0.0)
+    if isinstance(element_or_mol, int) or (
+        isinstance(element_or_mol, str) and len(element_or_mol.split()) == 1
+    ):
+        mol_input = [(element_or_mol, 0.0, 0.0, 0.0)]
     else:
-        mol.add_atom(element, 0.0, 0.0, 0.0)
-    
-    mol.set_charge(charge)
-    
-    if multiplicity is None:
-        n_elec = mol.n_electrons()
-        multiplicity = 2 if n_elec % 2 == 1 else 1
-    
-    mol.set_multiplicity(multiplicity)
-    
-    calc = MSHQCCalculator(mol, basis, basis_dir=basis_dir)
-    
-    method = method.lower()
-    
-    
+        mol_input = element_or_mol
 
-    
+    mol = build_molecule(mol_input, charge=charge, multiplicity=multiplicity, units=units)
+    mult = mol.multiplicity()
 
-    
-
-    if method in ["chomp2", "cholesky_omp2", "chomp3", "cholesky_omp3"]:
-        
-
-        target_method = "omp3" if "3" in method else "omp2"
-        print(f"\n--- Running Quick Cholesky-{target_method.upper()} for {element} ---")
-        
-        
-
-        threshold = 1e-6
-        print("1. Decomposing Integrals...")
-        
-
-        chol = mshqc.CholeskyERI(threshold)
-        eri = calc.integrals.compute_eri()
-        chol.decompose(eri)
-        
-        
-
-        print("2. Running Reference SCF (Vector Reuse)...")
-        
-        
-
-        n_total = mol.n_electrons()
-        na = (n_total + multiplicity - 1) // 2
-        nb = n_total - na
-        
-        if multiplicity == 1:
-        
-            print("   > Using Cholesky-ROHF (Closed Shell)")
-            rohf_conf = mshqc.CholeskyROHFConfig()
-            rohf_conf.cholesky_threshold = threshold
-            rohf_conf.print_level = 0 
-
-            
-            c_scf = mshqc.CholeskyROHF(mol, calc.basis, calc.integrals, 
-                                       na, nb, rohf_conf, chol)
-        else:
-            
-
-            print("   > Using Cholesky-UHF (Open Shell)")
-            uhf_conf = mshqc.CholeskyUHFConfig()
-            uhf_conf.cholesky_threshold = threshold
-            uhf_conf.print_level = 0 
-
-            
-            c_scf = mshqc.CholeskyUHF(mol, calc.basis, calc.integrals, 
-                                      na, nb, uhf_conf)
-            c_scf.set_cholesky_vectors(chol.get_L_vectors())
-
-        scf_res = c_scf.compute()
-        print(f"   SCF Done. E = {scf_res.energy_total:.8f} Ha")
-
-        
-
-        print("3. Running Orbital Optimization (OMP2)...")
-        
-
-        omp2_res = calc.run_cholesky_omp2(
-            scf_res, 
-            existing_cholesky=chol  
-
-        )
-        
-        
-
-        if target_method == "omp3":
-            print("4. Running Orbital Optimization (OMP3)...")
-            omp3_res = calc.run_cholesky_omp3(
-                omp2_res, 
-                existing_cholesky=chol 
-
-            )
-            return omp3_res
-            
-        return omp2_res
-
-    
-
-    scf_res = None
-    if multiplicity == 1 and method not in ["uhf", "ump2", "ump3"]:
-        scf_res = calc.run_rhf()
+    if clean_method in ("uhf", "ump2", "ump3"):
+        reference = "uhf"
+    elif clean_method == "rohf":
+        reference = "rohf"
+    elif clean_method in ("rhf", "rmp2", "rmp3"):
+        reference = "rhf"
     else:
-        scf_res = calc.run_uhf()
-        
-    if method in ["scf", "rhf", "uhf"]:
+        reference = "rhf" if mult == 1 else "uhf"
+
+    calc = MSHQCCalculator(
+        molecule=mol,
+        basis_name=basis,
+        eri_method=resolved_eri,
+        aux_basis_name=aux_basis,
+        charge=charge,
+        multiplicity=mult,
+        units=units,
+        reference=reference,
+        threshold=threshold,
+        print_level=print_level,
+        basis_dir=basis_dir,
+    )
+
+    scf_res = calc.run_scf()
+    if clean_method in ("scf", "hf", "rhf", "uhf", "rohf"):
         return scf_res
+    if clean_method in ("mp2", "rmp2", "ump2"):
+        return calc.run_mp2(scf_res)
+    if clean_method in ("mp3", "rmp3", "ump3"):
+        return calc.run_mp3(scf_res)
+    if clean_method == "omp2":
+        return calc.run_omp2(scf_res)
+    if clean_method == "omp3":
+        return calc.run_omp3(scf_res)
 
-    
-
-    if "mp2" in method:
-        if "omp" in method: 
-
-            return calc.run_omp2(scf_res)
-        elif multiplicity == 1 and "u" not in method: 
-
-            return calc.run_rmp2(scf_res)
-        else: 
-
-            return calc.run_ump2(scf_res)
-            
-    if "mp3" in method:
-        
-
-        if "omp" in method: 
-
-            mp2_res = calc.run_omp2(scf_res)
-            return calc.run_omp3(mp2_res)
-        elif multiplicity == 1 and "u" not in method: 
-
-            rmp2_res = calc.run_rmp2(scf_res)
-            return calc.run_rmp3(scf_res, rmp2_res)
-        else: 
-
-            ump2_res = calc.run_ump2(scf_res)
-            return calc.run_ump3(scf_res, ump2_res)
-        
-    if method in ["ch-rmp2", "cholesky_rmp2"]:
-        
-
-        if multiplicity != 1:
-             raise ValueError("Cholesky-RMP2 requires closed-shell singlet (multiplicity=1)")
-        
-        print(f"\n--- Running Quick Cholesky-RMP2 for {element} ---")
-        
-        
-
-        print("1. Decomposing Integrals...")
-        chol = mshqc.CholeskyERI(1e-6)
-        eri = calc.integrals.compute_eri()
-        chol.decompose(eri)
-        
-        
-
-        print("2. Running Cholesky-RHF...")
-        rhf_conf = mshqc.CholeskyRHFConfig()
-        rhf_conf.print_level = 0
-        rhf_solver = mshqc.CholeskyRHF(mol, calc.basis, calc.integrals, rhf_conf, chol)
-        rhf_res = rhf_solver.compute()
-        print(f"   RHF Done. E = {rhf_res.energy_total:.8f} Ha")
-        
-        
-
-        print("3. Running Cholesky-RMP2...")
-        return calc.run_cholesky_rmp2(rhf_res, existing_cholesky=chol)
-    
-    
+    raise ValueError(f"Metode tidak dikenali: {method}")
 
 
-    if method in ["ch-rmp3", "cholesky_rmp3"]:
-        
+def benchmark_basis_sets(element_or_mol: Union[str, int, List[Tuple], mshqc.Molecule],
+                         basis_list: List[str],
+                         method: str = "omp2",
+                         eri_method: str = "exact",
+                         charge: int = 0,
+                         multiplicity: Optional[int] = None) -> Dict[str, Any]:
+    """Benchmark satu metode pada berbagai basis set."""
+    results: Dict[str, Any] = {}
 
-        if multiplicity != 1:
-             raise ValueError("Cholesky-RMP3 requires closed-shell singlet (multiplicity=1)")
-        
-        print(f"\n--- Running Quick Cholesky-RMP3 for {element} ---")
-        
-        
-
-        print("1. Decomposing Integrals...")
-        chol = mshqc.CholeskyERI(1e-6)
-        eri = calc.integrals.compute_eri()
-        chol.decompose(eri)
-        
-        
-
-        print("2. Running Cholesky-RHF...")
-        rhf_conf = mshqc.CholeskyRHFConfig()
-        rhf_conf.print_level = 0
-        rhf_solver = mshqc.CholeskyRHF(mol, calc.basis, calc.integrals, rhf_conf, chol)
-        rhf_res = rhf_solver.compute()
-        print(f"   RHF Done. E = {rhf_res.energy_total:.8f} Ha")
-        
-        
-
-        print("3. Running Cholesky-RMP2...")
-        rmp2_conf = mshqc.CholeskyRMP2Config()
-        rmp2_solver = mshqc.CholeskyRMP2(mol, calc.basis, calc.integrals, rhf_res, rmp2_conf, chol)
-        crmp2_res = rmp2_solver.compute()
-        print(f"   RMP2 Done. E_Corr = {crmp2_res.e_corr:.8f} Ha")
-
-        
-
-        print("4. Running Cholesky-RMP3...")
-        
-
-        rmp3_res = calc.run_cholesky_rmp3(rhf_res, crmp2_res)
-        
-        return rmp3_res
-
-
-    if method in ["canonical_caspt3", "ref_caspt3"]:
-        print(f"\n--- Running Reference Canonical SA-CASPT3 for {element} ---")
-        
-        
-
-        n_elec = mol.n_electrons()
-        n_valence = n_elec - 2 
-        n_act_orb = 4 
-        n_act_elec = n_valence
-        
-        if n_elec <= 2: n_act_orb = 1; n_act_elec = n_elec
-            
-        print(f"  > Auto-Active Space: CAS({n_act_elec}e, {n_act_orb}o)")
-        
-        
-
-        mcscf_calc = MCSCFCalculator(mol, basis, basis_dir=basis_dir)
-        
-        res = mcscf_calc.run_canonical_sa_caspt3_pipeline(
-            n_states=n_cas_states, 
-            n_active_elec=n_act_elec, 
-            n_active_orb=n_act_orb
-        )
-        return res
-    
-
-    raise ValueError(f"Unknown method: {method}")
-    
-
-    
-    
-def benchmark_basis_sets(element, basis_list, method="ump3"):
-    """
-    Benchmark multiple basis sets for single element
-    
-    Args:
-        element: str or int
-        basis_list: list of basis set names
-        method: calculation method
-    
-    Returns:
-        dict with results for each basis
-    
-    Example:
-        >>> from mshqc.utils import benchmark_basis_sets
-        >>> results = benchmark_basis_sets("Li",
-        ...     ["cc-pVDZ", "cc-pVTZ", "cc-pVQZ"], "ump3")
-    """
-    results = {}
-    
-    print("="*70)
-    print(f"BASIS SET BENCHMARK: {element} ({method.upper()})")
-    print("="*70)
-    
     for basis in basis_list:
-        print(f"\nRunning {basis}...")
-        t0 = time.time()
-        
+        t0 = time.perf_counter()
         try:
-            result = quick_calculation(element, basis, method)
-            elapsed = time.time() - t0
-            
+            res = quick_calculation(
+                element_or_mol,
+                basis=basis,
+                method=method,
+                eri_method=eri_method,
+                charge=charge,
+                multiplicity=multiplicity,
+            )
+            elapsed = time.perf_counter() - t0
+            energy = getattr(res, "energy_total", getattr(res, "e_total", None))
             results[basis] = {
-                'result': result,
-                'time': elapsed,
-                'success': True
+                "result": res,
+                "energy": energy,
+                "time": elapsed,
+                "success": True,
             }
-            
-       
-
-            if hasattr(result, 'e_total'):
-                energy = getattr(result, 'e_total')
-            elif hasattr(result, 'energy_total'):
-                energy = getattr(result, 'energy_total')
-            else:
-                energy = getattr(result, 'energy')
-            
-            results[basis]['energy'] = energy
-            
-            print(f"  Success: E = {energy:.10f} Ha ({elapsed:.2f}s)")
-            
         except Exception as e:
-            print(f"  Failed: {str(e)}")
             results[basis] = {
-                'success': False,
-                'error': str(e)
+                "success": False,
+                "error": str(e),
             }
-    
-    
 
-    print("\n" + "="*70)
-    print("SUMMARY")
-    print("="*70)
-    print(f"{'Basis':<20} {'Energy (Ha)':<20} {'Time (s)':<15}")
-    print("-"*70)
-    
-    for basis in basis_list:
-        if results[basis]['success']:
-            print(f"{basis:<20} {results[basis]['energy']:<20.10f} "
-                  f"{results[basis]['time']:<15.2f}")
-        else:
-            print(f"{basis:<20} {'FAILED':<20} {'-':<15}")
-    
-    print("="*70)
-    
     return results
 
 
-def compare_methods(molecule, basis, methods=None):
-    """
-    Compare multiple methods on same system
-    
-    Args:
-        molecule: Molecule object
-        basis: str, basis set name
-        methods: list of method names
-    
-    Returns:
-        dict with comparison
-    
-    Example:
-        >>> import mshqc
-        >>> mol = mshqc.Molecule()
-        >>> mol.add_atom(3, 0, 0, 0)
-        >>> from mshqc.utils import compare_methods
-        >>> compare_methods(mol, "cc-pVTZ", ["uhf", "ump2", "ump3"])
-    """
+def compare_methods(molecule: Union[mshqc.Molecule, str, List[Tuple]],
+                    basis: str = "cc-pVTZ",
+                    methods: Optional[List[str]] = None,
+                    eri_method: str = "exact",
+                    aux_basis: Optional[str] = None,
+                    charge: int = 0,
+                    multiplicity: Optional[int] = None,
+                    units: str = "bohr") -> Dict[str, Any]:
+    """Bandingkan beberapa metode pada molekul dan basis set yang sama."""
     if methods is None:
-        methods = ["uhf", "ump2", "ump3"]
-    
-    from .session import MSHQCSession
-    session = MSHQCSession(molecule, basis)
-    results = session.run_complete_analysis(methods)
-    
-    return results
+        methods = ["scf", "mp2", "omp2", "omp3"]
+
+    session = MSHQCSession(
+        molecule=molecule,
+        basis_name=basis,
+        eri_method=eri_method,
+        aux_basis_name=aux_basis,
+        charge=charge,
+        multiplicity=multiplicity,
+        units=units,
+    )
+    return session.run_complete_analysis(methods)
