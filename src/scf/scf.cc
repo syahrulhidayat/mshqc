@@ -128,13 +128,22 @@ Eigen::MatrixXd BaseSCF::precompute_shell_schwarz() {
     int nshells = basis_.n_shells();
     Eigen::MatrixXd Q = Eigen::MatrixXd::Zero(nshells, nshells);
     
-    for (int M = 0; M < nshells; ++M) {
-        for (int N = 0; N <= M; ++N) {
-            auto shell_ints = integrals_->compute_shell_block(M, N, M, N);
-            if (shell_ints.empty()) continue;
-            double max_val = 0.0;
-            for (double val : shell_ints) if (std::abs(val) > max_val) max_val = std::abs(val);
-            Q(M, N) = std::sqrt(max_val); Q(N, M) = Q(M, N);
+    #pragma omp parallel
+    {
+        std::vector<double> buf(10000);
+        #pragma omp for schedule(dynamic, 1) nowait
+        for (int M = 0; M < nshells; ++M) {
+            for (int N = 0; N <= M; ++N) {
+                if (!integrals_->compute_shell_block_raw(M, N, M, N, buf.data())) continue;
+                int sz = shell_sizes_[M] * shell_sizes_[N] * shell_sizes_[M] * shell_sizes_[N];
+                double max_val = 0.0;
+                for (int i = 0; i < sz; ++i) {
+                    if (std::abs(buf[i]) > max_val) max_val = std::abs(buf[i]);
+                }
+                double s_val = std::sqrt(max_val);
+                Q(M, N) = s_val;
+                Q(N, M) = s_val;
+            }
         }
     }
     return Q;
@@ -150,62 +159,42 @@ void BaseSCF::init_integrals_incore() {
 
     if (pl_ && pl_->get_unique_quartets().empty()) pl_->build();
 
-    // 1. Hitung total memori yang dibutuhkan agar alokasi Vektor efisien (mencegah realokasi lambat)
+    // 1. Kumpulkan metadata kuartet signifikan & hitung prefix-sum offset secara deterministik
     size_t total_ints = 0;
-    auto count_quartet = [&](int M, int N, int P, int Q) {
+    auto register_quartet = [&](int M, int N, int P, int Q, double weight) {
         if (schwarz_(M, N) * schwarz_(P, Q) < shell_cutoff) return;
-        total_ints += shell_sizes_[M] * shell_sizes_[N] * shell_sizes_[P] * shell_sizes_[Q];
+        size_t q_size = static_cast<size_t>(shell_sizes_[M]) * shell_sizes_[N] * shell_sizes_[P] * shell_sizes_[Q];
+        CachedQuartet cq;
+        cq.M = M; cq.N = N; cq.P = P; cq.Q = Q;
+        cq.weight = weight;
+        cq.data_offset = total_ints;
+        incore_quartets_.push_back(cq);
+        total_ints += q_size;
     };
 
     if (pl_) {
-        for (const auto& [M, N, P, Q, w] : pl_->get_unique_quartets()) count_quartet(M, N, P, Q);
+        for (const auto& [M, N, P, Q, w] : pl_->get_unique_quartets()) register_quartet(M, N, P, Q, w);
     } else {
         int nshells = basis_.n_shells();
         for (int M = 0; M < nshells; ++M) {
             for (int N = 0; N <= M; ++N) {
                 for (int P = 0; P <= M; ++P) {
                     int Q_max = (M == P) ? N : P;
-                    for (int Q = 0; Q <= Q_max; ++Q) count_quartet(M, N, P, Q);
+                    for (int Q = 0; Q <= Q_max; ++Q) register_quartet(M, N, P, Q, 1.0);
                 }
             }
         }
     }
 
-    incore_eri_pool_.reserve(total_ints);
-    incore_quartets_.reserve(total_ints / 16); // Perkiraan rata-rata ukuran blok
+    // 2. Alokasi tunggal (Zero Reallocation) & Evaluasi ERI Paralel Tanpa Lock
+    incore_eri_pool_.resize(total_ints, 0.0);
 
-    // 2. Ekstraksi dan Penyimpanan Blok ERI
-    auto process_quartet = [&](int M, int N, int P, int Q, double weight) {
-        if (schwarz_(M, N) * schwarz_(P, Q) < shell_cutoff) return;
-        
-        // Ambil blok utuh dari libcint
-        auto buf = integrals_->compute_shell_block(M, N, P, Q);
-        if (buf.empty()) return;
-
-        // Simpan metadata
-        CachedQuartet cq;
-        cq.M = M; cq.N = N; cq.P = P; cq.Q = Q;
-        cq.weight = weight;
-        cq.data_offset = incore_eri_pool_.size();
-        
-        incore_quartets_.push_back(cq);
-        
-        // Gabungkan nilai blok ke pool memori utama
-        incore_eri_pool_.insert(incore_eri_pool_.end(), buf.begin(), buf.end());
-    };
-
-    if (pl_) {
-        for (const auto& [M, N, P, Q, w] : pl_->get_unique_quartets()) process_quartet(M, N, P, Q, w);
-    } else {
-        int nshells = basis_.n_shells();
-        for (int M = 0; M < nshells; ++M) {
-            for (int N = 0; N <= M; ++N) {
-                for (int P = 0; P <= M; ++P) {
-                    int Q_max = (M == P) ? N : P;
-                    for (int Q = 0; Q <= Q_max; ++Q) process_quartet(M, N, P, Q, 1.0);
-                }
-            }
-        }
+    #pragma omp parallel for schedule(dynamic, 16)
+    for (size_t i = 0; i < incore_quartets_.size(); ++i) {
+        const auto& cq = incore_quartets_[i];
+        integrals_->compute_shell_block_raw(
+            cq.M, cq.N, cq.P, cq.Q, &incore_eri_pool_[cq.data_offset]
+        );
     }
 
     if (config_.print_level > 0) {
