@@ -707,8 +707,7 @@ void OMP2::transform_integrals() {
     }
 }
 void OMP2::pseudocanonicalize() {
-    Eigen::MatrixXd F_ao_a, F_ao_b;
-    build_fock_fast(scf_.P_alpha, scf_.P_beta, F_ao_a, F_ao_b);
+    build_fock_fast(scf_.P_alpha, scf_.P_beta, scf_.F_alpha, scf_.F_beta);
     
     auto diag_block = [&](const Eigen::MatrixXd& F_ao, Eigen::MatrixXd& C, Eigen::VectorXd& eps, int nocc, int nvir) {
         Eigen::MatrixXd C_occ = C.leftCols(nocc);
@@ -728,11 +727,11 @@ void OMP2::pseudocanonicalize() {
         eps.tail(nvir) = es_v.eigenvalues();
     };
 
-    diag_block(F_ao_a, scf_.C_alpha, scf_.orbital_energies_alpha, na_, va_);
+    diag_block(scf_.F_alpha, scf_.C_alpha, scf_.orbital_energies_alpha, na_, va_);
     scf_.P_alpha.noalias() = scf_.C_alpha.leftCols(na_) * scf_.C_alpha.leftCols(na_).transpose();
 
     if (nb_ > 0 && vb_ > 0) {
-        diag_block(F_ao_b, scf_.C_beta, scf_.orbital_energies_beta, nb_, vb_);
+        diag_block(scf_.F_beta, scf_.C_beta, scf_.orbital_energies_beta, nb_, vb_);
         scf_.P_beta.noalias() = scf_.C_beta.leftCols(nb_) * scf_.C_beta.leftCols(nb_).transpose();
     }
 }
@@ -976,8 +975,8 @@ MP2Result OMP2::compute() {
         scf_.C_beta  = C_b_current_;
 
         execute_micro_iterations();
-        Eigen::MatrixXd F_ao_a, F_ao_b;
-        build_fock_fast(scf_.P_alpha, scf_.P_beta, F_ao_a, F_ao_b);
+        const Eigen::MatrixXd& F_ao_a = scf_.F_alpha;
+        const Eigen::MatrixXd& F_ao_b = scf_.F_beta;
 
         double e_scf = 0.5 * (scf_.P_alpha.cwiseProduct(H_core_ + F_ao_a).sum() + 
                               scf_.P_beta.cwiseProduct(H_core_ + F_ao_b).sum()) 

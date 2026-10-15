@@ -363,8 +363,8 @@ void OMP2::build_generalized_fock() {
     // =========================================================================
     // TAHAP 3: KALKULASI FOCK DAN PENYUSUNAN FOCK UMUM (GENERALIZED FOCK)
     // =========================================================================
-    Eigen::MatrixXd F_HF_ao_a, F_HF_ao_b;
-    build_fock_fast(scf_.P_alpha, scf_.P_beta, F_HF_ao_a, F_HF_ao_b);
+    const Eigen::MatrixXd& F_HF_ao_a = scf_.F_alpha;
+    const Eigen::MatrixXd& F_HF_ao_b = scf_.F_beta;
     Eigen::MatrixXd F_HF_mo_a = scf_.C_alpha.transpose() * F_HF_ao_a * scf_.C_alpha;
 
     Eigen::MatrixXd F_HF_mo_b = Eigen::MatrixXd::Zero(nbf_, nbf_);

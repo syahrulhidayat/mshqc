@@ -569,19 +569,39 @@ double OMP3::get_correlation_energy() const {
 }
 
 double OMP3::execute_micro_iterations() {
-    OMP2::execute_micro_iterations();
-    
+    bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
+    scf_.C_alpha = C_a_current_;
+    scf_.C_beta  = C_b_current_;
+    scf_.P_alpha.noalias() = scf_.C_alpha.leftCols(na_) * scf_.C_alpha.leftCols(na_).transpose();
+    scf_.P_beta.noalias()  = scf_.C_beta.leftCols(nb_)  * scf_.C_beta.leftCols(nb_).transpose();
+
+    pseudocanonicalize();
+
+    C_a_current_ = scf_.C_alpha;
+    C_b_current_ = scf_.C_beta;
+
+    if (config_.eri_method == "cholesky" || config_.eri_method == "df") {
+        scf_.irreps_alpha.assign(nbf_, 0);
+        if (!is_restricted && nb_ > 0) {
+            scf_.irreps_beta.assign(nbf_, 0);
+        }
+        transform_3center_mo_cholesky();
+        compute_t2_and_energy_cholesky();
+    } else {
+        transform_integrals();
+        compute_t2_amplitudes();
+        compute_mp2_energy();
+    }
+
     compute_mp3_correction(); 
     
-    bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1); 
-    
     L2_aa_ = t2_3rd_aa_;
-
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
         L2_bb_ = t2_3rd_bb_;
         L2_ab_ = t2_3rd_ab_;
     }
     
+    // Hanya dieksekusi 1x per iterasi makro setelah L2_aa_, L2_bb_, L2_ab_ diperbarui
     build_opdm_alpha();
     if (!is_restricted && nb_ > 0) {
         build_opdm_beta();
@@ -1652,8 +1672,8 @@ void OMP3::build_generalized_fock() {
         P_corr_b = scf_.C_beta * G_full_b * scf_.C_beta.transpose();
     }
 
-    Eigen::MatrixXd F_HF_ao_a, F_HF_ao_b;
-    build_fock_fast(scf_.P_alpha, scf_.P_beta, F_HF_ao_a, F_HF_ao_b);
+    const Eigen::MatrixXd& F_HF_ao_a = scf_.F_alpha;
+    const Eigen::MatrixXd& F_HF_ao_b = scf_.F_beta;
     Eigen::MatrixXd F_HF_mo_a = scf_.C_alpha.transpose() * F_HF_ao_a * scf_.C_alpha;
 
     Eigen::MatrixXd F_HF_mo_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
