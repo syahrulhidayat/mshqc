@@ -54,8 +54,6 @@
 #include "mshqc/mp3/mp3.h"
 #include "mshqc/mp3/omp3.h"
 
-#include "mshqc/gradient/gradient.h"
-#include "mshqc/gradient/optimizer.h"
 
 
 #include "mshqc/integrals/cholesky_eri.h"
@@ -504,24 +502,8 @@ NB_MODULE(_mshqc, m) {
              nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
              nb::arg("config"), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
         .def("compute", &OMP3::compute_omp3, nb::call_guard<nb::gil_scoped_release>(), "Run Orbital-Optimized MP3");
-    
-    
-    nb::class_<gradient::GradientResult>(m, "GradientResult")
-        .def(nb::init<>())
-        .def_rw("energy", &gradient::GradientResult::energy)
-        .def_rw("gradient", &gradient::GradientResult::gradient);
 
-    nb::class_<gradient::OptConfig>(m, "OptConfig")
-        .def(nb::init<>())
-        .def_rw("max_iterations", &gradient::OptConfig::max_iterations);
-
-    nb::class_<gradient::OptResult>(m, "OptResult")
-        .def(nb::init<>())
-        .def_rw("converged", &gradient::OptResult::converged)
-        .def_rw("n_iterations", &gradient::OptResult::n_iterations)
-        .def_rw("final_energy", &gradient::OptResult::final_energy);
-    
-    m.def("bohr_to_angstrom", [](double bohr) { return bohr * 0.529177210903; }, "Convert Bohr to Angstrom");
+m.def("bohr_to_angstrom", [](double bohr) { return bohr * 0.529177210903; }, "Convert Bohr to Angstrom");
     m.def("angstrom_to_bohr", [](double angstrom) { return angstrom / 0.529177210903; }, "Convert Angstrom to Bohr");
     m.def("hartree_to_ev", [](double hartree) { return hartree * 27.211386245988; }, "Convert Hartree to eV");
     m.def("hartree_to_kcal", [](double hartree) { return hartree * 627.5094740631; }, "Convert Hartree to kcal/mol");

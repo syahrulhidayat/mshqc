@@ -59,7 +59,6 @@ __all__ = [
     "DIIS", "SCFConfig", "SCFResult", "RHF", "UHF", "ROHF",
     "MP2Config", "MP2Result", "RMP2", "UMP2", "OMP2",
     "MP3Result", "RMP3", "UMP3", "OMP3",
-    "GradientResult", "OptConfig", "OptResult",
     "bohr_to_angstrom", "angstrom_to_bohr", "hartree_to_ev", "hartree_to_kcal",
     "MSHQCCalculator", "MSHQCSession", "build_molecule", "run",
     "quick_calculation", "benchmark_basis_sets", "compare_methods",
