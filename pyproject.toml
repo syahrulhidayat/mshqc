@@ -43,9 +43,7 @@ dev = [
 
 [project.urls]
 Homepage = "https://github.com/syahrulhidayat/mshqc"
-
-"Bug Tracker" = "[https://github.com/syahrulhidayat/mshqc/issues](https://github.com/syahrulhidayat/mshqc/issues)"
-
+"Bug Tracker" = "https://github.com/syahrulhidayat/mshqc/issues"
 [tool.setuptools]
 package-dir = {"" = "python"}
 packages = ["mshqc"]
