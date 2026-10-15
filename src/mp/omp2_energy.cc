@@ -51,19 +51,18 @@ void OMP2::compute_t2_amplitudes() {
 
                             if (t_blk) {              
                                 t_blk->setZero(); 
+                                #pragma omp parallel for collapse(2) schedule(static)
                                 for (int di = 0; di < o1.size; ++di) {
-                                    int i_glb = o1.offset + di;
-                                    if (i_glb < nf) continue; 
                                     for (int dj = 0; dj < o2.size; ++dj) {
+                                        int i_glb = o1.offset + di;
                                         int j_glb = o2.offset + dj;
-                                        if (j_glb < nf) continue; 
+                                        if (i_glb < nf || j_glb < nf) continue; 
 
                                         double e_ij = scf_.orbital_energies_alpha(i_glb) + scf_.orbital_energies_alpha(j_glb);
                                         for (int da = 0; da < v1.size; ++da) {
                                             double den_a = e_ij - scf_.orbital_energies_alpha(na_ + v1.offset + da);
                                             for (int db = 0; db < v2.size; ++db) {
                                                 double den = den_a - scf_.orbital_energies_alpha(na_ + v2.offset + db);
-                                                
                                                 double val = (*g_blk)(di, da, dj, db);
                                                 if (!is_restricted) val -= (*g_blk_ex)(di, db, dj, da);
                                                 double reg_den = (std::abs(den) > 1e-12) ? (1.0 / den) : 0.0;
@@ -156,10 +155,10 @@ double OMP2::compute_mp2_energy() {
                                          g_blk_ex->dimension(3) == (Eigen::Index)v1.size);
 
                         if (t_blk && g_blk && ex_valid) {
+                            #pragma omp parallel for collapse(2) reduction(+:E_corr) schedule(static)
                             for (int di = 0; di < o1.size; ++di) {
-                                if (o1.offset+di < nf) continue;
                                 for (int dj = 0; dj < o2.size; ++dj) {
-                                    if (o2.offset+dj < nf) continue;
+                                    if (o1.offset+di < nf || o2.offset+dj < nf) continue;
                                     for (int da = 0; da < v1.size; ++da) {
                                         for (int db = 0; db < v2.size; ++db) {
                                             double g_dir = (*g_blk)(di, da, dj, db);
@@ -248,15 +247,24 @@ void OMP2::compute_t2_and_energy_cholesky() {
     int nf = n_frozen_;
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     
+    auto parallel_gemm_abt = [](const Eigen::MatrixXd& A, const Eigen::MatrixXd& B) {
+        Eigen::MatrixXd C(A.rows(), B.rows());
+        const int m = A.rows();
+        constexpr int tile = 64;
+        #pragma omp parallel for schedule(dynamic)
+        for (int i = 0; i < m; i += tile) {
+            int rows = std::min(tile, m - i);
+            C.middleRows(i, rows).noalias() = A.middleRows(i, rows) * B.transpose();
+        }
+        return C;
+    };
+
     t2_aa_.allocate_block(0, 0, 0, 0, na_, va_, na_, va_);
     auto* t_aa_blk = t2_aa_.get_block(0, 0, 0, 0);
 
     if (t_aa_blk) {
         t_aa_blk->setZero();
-        
-        // GIANT DGEMM: Hitung semua kombinasi (ia|jb) dalam satu instruksi BLAS-3
-        // Ini memindahkan beban dari loop CPU ke hardware akselerator matriks
-        Eigen::MatrixXd G_aa = B_ia_P_alpha_ * B_ia_P_alpha_.transpose();
+        Eigen::MatrixXd G_aa = parallel_gemm_abt(B_ia_P_alpha_, B_ia_P_alpha_);
         
         const double* eps_a = scf_.orbital_energies_alpha.data();
         

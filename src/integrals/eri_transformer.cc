@@ -532,11 +532,16 @@ Eigen::Tensor<double, 4> ERITransformer::transform_ovvv(
     return result;
 }
 
+// File: src/integrals/eri_transformer.cc
 Eigen::Tensor<double, 4> ERITransformer::transform_custom(
     const Eigen::Tensor<double, 4>& eri_ao,
     const Eigen::MatrixXd& C1, const Eigen::MatrixXd& C2, 
     const Eigen::MatrixXd& C3, const Eigen::MatrixXd& C4, 
-    int nbf, int n1, int n2, int n3, int n4) {
+    int nbf, int n1, int n2, int n3, int n4) 
+{
+    if (n1 == n3 && n2 == n4 && n1 < n2 && C1.data() == C3.data() && C2.data() == C4.data()) {
+        return optimal_oovv_kernel(eri_ao, C1, C2, nbf, n1, n2);
+    }
     return smart_transform_kernel(eri_ao, C1, C2, C3, C4, nbf, n1, n2, n3, n4);
 }
 

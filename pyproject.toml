@@ -11,10 +11,10 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "mshqc"
 version = "1.0.3"
-description = "Multi-State High-Quality Calculations: Modern C++20 Quantum Chemistry Architecture"
+description = "mshqc: A C++20 Quantum Chemistry Engine for Orbital-Optimized Correlation Methods"
 readme = "README.md"
 requires-python = ">=3.10"
-license = "MIT"
+license = "Apache-2.0"
 license-files = ["LICENSE*"]
 authors = [
     {name = "Muhamad Syahrul Hidayat"}
@@ -42,8 +42,8 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/syahrulhidayat/mshqc"
-"Bug Tracker" = "https://github.com/syahrulhidayat/mshqc/issues"
+Homepage = "[https://github.com/syahrulhidayat/mshqc](https://github.com/syahrulhidayat/mshqc)"
+"Bug Tracker" = "[https://github.com/syahrulhidayat/mshqc/issues](https://github.com/syahrulhidayat/mshqc/issues)"
 
 [tool.setuptools]
 package-dir = {"" = "python"}

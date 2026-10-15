@@ -48,32 +48,52 @@ void OMP2::build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_
         Eigen::Map<Eigen::MatrixXd> J_mat(J_flat.data(), nbf_, nbf_);
 
         bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
-        Eigen::MatrixXd Ka_mat = Eigen::MatrixXd::Zero(nbf_, nbf_);
-        Eigen::MatrixXd Kb_mat = Eigen::MatrixXd::Zero(nbf_, nbf_);
+        bool is_idempotent_pa = (&P_a == &scf_.P_alpha);
+
+        int max_threads = omp_get_max_threads();
+        std::vector<Eigen::MatrixXd> Ka_tls(max_threads, Eigen::MatrixXd::Zero(nbf_, nbf_));
+        std::vector<Eigen::MatrixXd> Kb_tls(is_restricted ? 0 : max_threads, Eigen::MatrixXd::Zero(nbf_, nbf_));
+
+        const Eigen::MatrixXd& Ca_o = scf_.C_alpha.leftCols(na_);
+        const Eigen::MatrixXd& Cb_o = scf_.C_beta.leftCols(nb_);
 
         #pragma omp parallel
         {
-            Eigen::MatrixXd Ka_priv = Eigen::MatrixXd::Zero(nbf_, nbf_);
-            Eigen::MatrixXd Kb_priv = Eigen::MatrixXd::Zero(nbf_, nbf_);
-            Eigen::MatrixXd Ta_buf(nbf_, nbf_), Tb_buf(nbf_, nbf_);
+            int tid = omp_get_thread_num();
+            Eigen::MatrixXd& Ka_priv = Ka_tls[tid];
+            Eigen::MatrixXd Ta_buf(nbf_, is_idempotent_pa ? na_ : nbf_);
+            Eigen::MatrixXd Tb_buf(nbf_, is_idempotent_pa ? nb_ : nbf_);
 
             #pragma omp for schedule(static) nowait
             for (int K = 0; K < n_chol; ++K) {
                 Eigen::Map<const Eigen::MatrixXd> L_K(scf_.L_mat.col(K).data(), nbf_, nbf_);
 
-                Ta_buf.noalias() = L_K * P_a;
-                Ka_priv.noalias() += Ta_buf * L_K;
+                if (is_idempotent_pa) {
+                    // Low-rank O(O * Nbf^2) saat dipanggil dari pseudocanonicalize()
+                    Ta_buf.noalias() = L_K * Ca_o;
+                    Ka_priv.noalias() += Ta_buf * Ta_buf.transpose();
 
-                if (!is_restricted && nb_ > 0) {
-                    Tb_buf.noalias() = L_K * P_b;
-                    Kb_priv.noalias() += Tb_buf * L_K;
+                    if (!is_restricted && nb_ > 0) {
+                        Tb_buf.noalias() = L_K * Cb_o;
+                        Kb_tls[tid].noalias() += Tb_buf * Tb_buf.transpose();
+                    }
+                } else {
+                    Ta_buf.noalias() = L_K * P_a;
+                    Ka_priv.noalias() += Ta_buf * L_K;
+
+                    if (!is_restricted && nb_ > 0) {
+                        Tb_buf.noalias() = L_K * P_b;
+                        Kb_tls[tid].noalias() += Tb_buf * L_K;
+                    }
                 }
             }
-            #pragma omp critical
-            {
-                Ka_mat += Ka_priv;
-                if (!is_restricted && nb_ > 0) Kb_mat += Kb_priv;
-            }
+        }
+
+        Eigen::MatrixXd Ka_mat = Eigen::MatrixXd::Zero(nbf_, nbf_);
+        Eigen::MatrixXd Kb_mat = Eigen::MatrixXd::Zero(nbf_, nbf_);
+        for (int t = 0; t < max_threads; ++t) {
+            Ka_mat += Ka_tls[t];
+            if (!is_restricted && nb_ > 0) Kb_mat += Kb_tls[t];
         }
 
         F_a = H_core_ + J_mat - Ka_mat;

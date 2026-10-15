@@ -558,52 +558,62 @@ void OMP2::init_fast_integrals() {
         offset += shell_sizes[i];
     }
 
-    std::vector<std::pair<int, int>> shell_pairs;
-
-    for(int i=0; i<nshells; ++i) {
-        for(int j=0; j<=i; ++j) {
-            shell_pairs.push_back({i, j});
+    for (int sh_i = 0; sh_i < nshells; ++sh_i) {
+        int istart = shell_starts[sh_i]; int isize = shell_sizes[sh_i];
+        for (int sh_j = 0; sh_j <= sh_i; ++sh_j) {
+            int jstart = shell_starts[sh_j]; int jsize = shell_sizes[sh_j];
+            for (int i = 0; i < isize; ++i) {
+                for (int j = 0; j < jsize; ++j) {
+                    int mu = istart + i;
+                    int nu = jstart + j;
+                    if (sh_i == sh_j && nu > mu) continue;
+                    row_map_.push_back({mu, nu});
+                }
+            }
         }
     }
 
-    for (const auto& pair_ij : shell_pairs) {
-        int sh_i = pair_ij.first; int sh_j = pair_ij.second;
-        int istart = shell_starts[sh_i]; int isize = shell_sizes[sh_i];
-        int jstart = shell_starts[sh_j]; int jsize = shell_sizes[sh_j];
+    int n_rows = static_cast<int>(row_map_.size());
+    std::vector<std::vector<double>> J_val_rows(n_rows), K_val_rows(n_rows);
+    std::vector<std::vector<int>>    J_ind_rows(n_rows), K_ind_rows(n_rows);
 
-        for (int i = 0; i < isize; ++i) {
-            for (int j = 0; j < jsize; ++j) {
-                int mu = istart + i;
-                int nu = jstart + j;
+    #pragma omp parallel for schedule(dynamic, 16)
+    for (int r = 0; r < n_rows; ++r) {
+        int mu = row_map_[r].first;
+        int nu = row_map_[r].second;
+        double max_val_row = 0.0;
 
-                if (sh_i == sh_j && nu > mu) continue;
+        auto& jv = J_val_rows[r]; auto& ji = J_ind_rows[r];
+        auto& kv = K_val_rows[r]; auto& ki = K_ind_rows[r];
 
-                row_map_.push_back({mu, nu});
-                double max_val_row = 0.0;
-
-                for (int sig = 0; sig < nbf_; ++sig) {
-                    for (int lam = 0; lam < nbf_; ++lam) {
-                        int density_idx = lam + sig * nbf_; 
-                        double vJ = ERI(mu, nu, lam, sig);
-                        if (std::abs(vJ) > sparse_threshold) {
-                            J_val_.push_back(vJ);
-                            J_ind_.push_back(density_idx);
-                            max_val_row = std::max(max_val_row, std::abs(vJ));
-                        }
-                        double vK = ERI(mu, lam, nu, sig);
-                        if (std::abs(vK) > sparse_threshold) {
-                            K_val_.push_back(vK);
-                            K_ind_.push_back(density_idx);
-                        }
-                    }
+        for (int sig = 0; sig < nbf_; ++sig) {
+            for (int lam = 0; lam < nbf_; ++lam) {
+                int density_idx = lam + sig * nbf_;
+                double vJ = ERI(mu, nu, lam, sig);
+                if (std::abs(vJ) > sparse_threshold) {
+                    jv.push_back(vJ);
+                    ji.push_back(density_idx);
+                    max_val_row = std::max(max_val_row, std::abs(vJ));
                 }
-                J_ptr_.push_back(J_val_.size());
-                K_ptr_.push_back(K_val_.size());
-
-                schwarz_(mu, nu) = std::sqrt(max_val_row);
-                schwarz_(nu, mu) = std::sqrt(max_val_row);
+                double vK = ERI(mu, lam, nu, sig);
+                if (std::abs(vK) > sparse_threshold) {
+                    kv.push_back(vK);
+                    ki.push_back(density_idx);
+                }
             }
         }
+        double s_val = std::sqrt(max_val_row);
+        schwarz_(mu, nu) = s_val;
+        schwarz_(nu, mu) = s_val;
+    }
+
+    for (int r = 0; r < n_rows; ++r) {
+        J_val_.insert(J_val_.end(), J_val_rows[r].begin(), J_val_rows[r].end());
+        J_ind_.insert(J_ind_.end(), J_ind_rows[r].begin(), J_ind_rows[r].end());
+        K_val_.insert(K_val_.end(), K_val_rows[r].begin(), K_val_rows[r].end());
+        K_ind_.insert(K_ind_.end(), K_ind_rows[r].begin(), K_ind_rows[r].end());
+        J_ptr_.push_back(J_val_.size());
+        K_ptr_.push_back(K_val_.size());
     }
 }
 
