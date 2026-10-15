@@ -42,7 +42,8 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "[https://github.com/syahrulhidayat/mshqc](https://github.com/syahrulhidayat/mshqc)"
+Homepage = "https://github.com/syahrulhidayat/mshqc"
+
 "Bug Tracker" = "[https://github.com/syahrulhidayat/mshqc/issues](https://github.com/syahrulhidayat/mshqc/issues)"
 
 [tool.setuptools]
