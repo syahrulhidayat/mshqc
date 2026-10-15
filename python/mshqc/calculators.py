@@ -14,827 +14,236 @@
 
 
 
-import numpy as np
-import time
+# File: python/mshqc/calculators.py
 import os
-from typing import Dict, Optional
-
-
-
+import time
+from typing import List, Optional, Tuple, Union, Dict, Any
 import mshqc
 
+_SYMBOL_TO_Z = {
+    'H': 1, 'He': 2, 'Li': 3, 'Be': 4, 'B': 5, 'C': 6, 'N': 7, 'O': 8, 'F': 9, 'Ne': 10,
+    'Na': 11, 'Mg': 12, 'Al': 13, 'Si': 14, 'P': 15, 'S': 16, 'Cl': 17, 'Ar': 18,
+    'K': 19, 'Ca': 20, 'Sc': 21, 'Ti': 22, 'V': 23, 'Cr': 24, 'Mn': 25, 'Fe': 26,
+    'Co': 27, 'Ni': 28, 'Cu': 29, 'Zn': 30, 'Ga': 31, 'Ge': 32, 'As': 33, 'Se': 34,
+    'Br': 35, 'Kr': 36, 'Rb': 37, 'Sr': 38, 'Y': 39, 'Zr': 40, 'Nb': 41, 'Mo': 42,
+    'Tc': 43, 'Ru': 44, 'Rh': 45, 'Pd': 46, 'Ag': 47, 'Cd': 48, 'In': 49, 'Sn': 50,
+    'Sb': 51, 'Te': 52, 'I': 53, 'Xe': 54
+}
+
+def build_molecule(atoms: Union[mshqc.Molecule, str, List[Tuple]],
+                   charge: int = 0,
+                   multiplicity: Optional[int] = None,
+                   units: str = "bohr") -> mshqc.Molecule:
+    """Bangun objek mshqc.Molecule dari list tuple [(Z/sym, x, y, z)] atau string XYZ."""
+    if isinstance(atoms, mshqc.Molecule):
+        return atoms
+
+    scale = mshqc.angstrom_to_bohr(1.0) if units.lower().startswith("ang") else 1.0
+    mol = mshqc.Molecule()
+
+    if isinstance(atoms, str):
+        for line in atoms.strip().splitlines():
+            parts = line.split()
+            if len(parts) == 4:
+                sym, x, y, z = parts[0], float(parts[1]), float(parts[2]), float(parts[3])
+                z_num = _SYMBOL_TO_Z[sym.capitalize()] if not sym.isdigit() else int(sym)
+                mol.add_atom(z_num, x * scale, y * scale, z * scale)
+    else:
+        for item in atoms:
+            sym, x, y, z = item[0], float(item[1]), float(item[2]), float(item[3])
+            z_num = _SYMBOL_TO_Z[sym.capitalize()] if isinstance(sym, str) else int(sym)
+            mol.add_atom(z_num, x * scale, y * scale, z * scale)
+
+    mol.set_charge(charge)
+    n_elec = int(mol.total_nuclear_charge()) - charge
+    if multiplicity is None:
+        multiplicity = 2 if (n_elec % 2 == 1) else 1
+    mol.set_multiplicity(multiplicity)
+    return mol
+
+
 class MSHQCCalculator:
-    """High-level interface untuk SCF dan MP calculations"""
-    
-    def __init__(self, molecule, basis_name: str, basis_dir: Optional[str] = None):
-        """
-        Initialize calculator
-        """
-        self.molecule = molecule
+    """High-level Pythonic interface untuk Unified Engine MSHQC (RHF/UHF/ROHF, MP2/MP3, OMP2/OMP3)."""
+
+    def __init__(self,
+                 molecule: Union[mshqc.Molecule, str, List[Tuple]],
+                 basis_name: str = "cc-pVTZ",
+                 eri_method: str = "exact",
+                 aux_basis_name: Optional[str] = None,
+                 charge: int = 0,
+                 multiplicity: Optional[int] = None,
+                 units: str = "bohr",
+                 reference: Optional[str] = None,
+                 threshold: float = 1e-9,
+                 scf_type: str = "incore",
+                 print_level: int = 0,
+                 basis_dir: Optional[str] = None):
+
+        raw_mol = build_molecule(molecule, charge=charge, multiplicity=multiplicity, units=units)
+        self.pg = mshqc.PointGroup(raw_mol)
+        self.pg.detect()
+        self.molecule = self.pg.get_aligned_molecule()
+
         self.basis_name = basis_name
-        
-        
+        self.eri_method = eri_method.lower()
+        self.aux_basis_name = aux_basis_name or f"{basis_name}-RI"
+        self.threshold = threshold
+        self.scf_type = scf_type
+        self.print_level = print_level
 
-        target_dir = basis_dir
-        if target_dir is None:
-            if 'MSHQC_DATA_DIR' in os.environ:
-                target_dir = os.path.join(os.environ['MSHQC_DATA_DIR'], 'basis')
-            else:
-                target_dir = "data/basis"
-        
-        self.basis_dir = target_dir
-        
-        
+        if basis_dir is None:
+            basis_dir = os.environ.get("MSHQC_BASIS_PATH", "data/basis")
+        self.basis_dir = basis_dir
 
-        self.basis = mshqc.BasisSet(basis_name, molecule, target_dir)
-        self.integrals = mshqc.IntegralEngine(molecule, self.basis)
-        self.n_basis = self.basis.n_basis_functions()
-        
-    
+        self.basis = mshqc.BasisSet(basis_name, self.molecule, self.basis_dir)
+        self.integrals = mshqc.IntegralEngine(self.molecule, self.basis)
+        self.pl = mshqc.PetiteList(self.basis, self.pg)
+        self.pl.build()
 
+        n_elec = int(self.molecule.total_nuclear_charge()) - self.molecule.charge()
+        mult = self.molecule.multiplicity()
+        self.n_alpha = (n_elec + mult - 1) // 2
+        self.n_beta = n_elec - self.n_alpha
 
-    def run_uhf(self, n_alpha=None, n_beta=None, config=None):
-        """Run UHF calculation"""
-        if n_alpha is None:
-            n_alpha = (self.molecule.n_electrons() + 
-                      self.molecule.multiplicity() - 1) // 2
-        if n_beta is None:
-            n_beta = self.molecule.n_electrons() - n_alpha
-        if config is None:
-            config = mshqc.SCFConfig()
-            
-        print(f"  Running UHF ({self.n_basis} basis functions)...")
-        t0 = time.time()
-        uhf = mshqc.UHF(self.molecule, self.basis, self.integrals,
-                       n_alpha, n_beta, config)
-        res = uhf.compute()
-        print(f"  Done ({time.time() - t0:.2f}s). E: {res.energy_total:.8f} Ha")
-        return res
-    
-    def run_rhf(self, config=None):
-        """Run RHF calculation (Closed Shell)"""
-        if config is None:
-            config = mshqc.SCFConfig()
-            
-        print(f"  Running RHF ({self.n_basis} basis functions)...")
-        t0 = time.time()
-        rhf = mshqc.RHF(self.molecule, self.basis, self.integrals, config)
-        res = rhf.compute()
-        print(f"  Done ({time.time() - t0:.2f}s). E: {res.energy_total:.8f} Ha")
-        return res
-    
-    
-
-
-    def run_ump2(self, scf_result):
-        """Run UMP2 calculation"""
-        print("  Running UMP2...")
-        t0 = time.time()
-        ump2 = mshqc.UMP2(scf_result, self.basis, self.integrals)
-        res = ump2.compute()
-        print(f"  Done ({time.time() - t0:.2f}s). E_Corr: {res.e_corr_total:.8f}")
-        return res
-    
-    def run_ump3(self, scf_result, ump2_result):
-        """Run UMP3 calculation"""
-        print("  Running UMP3...")
-        t0 = time.time()
-        ump3 = mshqc.UMP3(scf_result, ump2_result, 
-                         self.basis, self.integrals)
-        res = ump3.compute()
-        print(f"  Done ({time.time() - t0:.2f}s). E_MP3: {res.e_mp3_corr:.8f}")
-        return res
-    def run_cholesky_ump2(self, uhf_result, threshold=1e-6):
-        """Run Fast Cholesky-UMP2"""
-        print(f"  Running Cholesky-UMP2 (Threshold={threshold})...")
-        t0 = time.time()
-        
-        
-
-        config = mshqc.CholeskyUMP2Config()
-        config.cholesky_threshold = threshold
-        config.print_level = 1
-        
-        
-
-        
-
-        print("    > Decomposing Integrals...")
-        chol = mshqc.CholeskyERI(threshold)
-        eri = self.integrals.compute_eri()
-        chol.decompose(eri)
-        
-        
-
-        
-
-        ump2 = mshqc.CholeskyUMP2(uhf_result, self.basis, self.integrals, config, chol)
-        res = ump2.compute()
-        
-        print(f"  Done ({time.time() - t0:.2f}s). E_Corr: {res.e_corr_total:.8f}")
-        return res
-    
-
-
-    def run_rmp2(self, rhf_result):
-        """Run RMP2 calculation (Closed Shell)"""
-        print("  Running RMP2...")
-        t0 = time.time()
-        rmp2 = mshqc.RMP2(rhf_result, self.basis, self.integrals)
-        res = rmp2.compute()
-        print(f"  Done ({time.time() - t0:.2f}s). E_Corr: {res.e_corr:.8f}")
-        return res
-    
-    def run_rmp3(self, rhf_result, rmp2_result):
-        """Run RMP3 calculation (Closed Shell)"""
-        print("  Running RMP3...")
-        t0 = time.time()
-        rmp3 = mshqc.RMP3(rhf_result, rmp2_result, 
-                         self.basis, self.integrals)
-        res = rmp3.compute()
-        print(f"  Done ({time.time() - t0:.2f}s). E_MP3: {res.e_mp3:.8f}")
-        return res
-
-    
-
-
-    def run_omp2(self, scf_result, max_iter=50):
-        """Run Orbital-Optimized MP2"""
-        print("  Running OMP2 (Orbital Optimized)...")
-        t0 = time.time()
-        omp2 = mshqc.OMP2(self.molecule, self.basis, self.integrals, scf_result)
-        omp2.set_max_iterations(max_iter)
-        res = omp2.compute()
-        print(f"  Done ({time.time() - t0:.2f}s). E_OMP2: {res.energy_total:.8f}")
-        return res
-    
-    def run_omp3(self, omp2_result, max_iter=50):
-        """Run Orbital-Optimized MP3"""
-        print("  Running OMP3 (Orbital Optimized)...")
-        t0 = time.time()
-        omp3 = mshqc.OMP3(self.molecule, self.basis, self.integrals, omp2_result)
-        omp3.set_max_iterations(max_iter)
-        res = omp3.compute()
-        print(f"  Done ({time.time() - t0:.2f}s). E_OMP3: {res.energy_total:.8f}")
-        return res
-    
-    
-
-
-    def run_cholesky_pipeline(self, n_alpha=None, n_beta=None, threshold=1e-6):
-        """Run complete Cholesky pipeline"""
-        results = {}
-        
-        print("Step 1: Cholesky Decomposition...")
-        t0 = time.time()
-        chol = mshqc.CholeskyERI(threshold)
-        eri_tensor = self.integrals.compute_eri()
-        chol.decompose(eri_tensor)
-        results['cholesky_time'] = time.time() - t0
-        results['n_cholesky_vectors'] = chol.n_vectors()
-        
-        if n_alpha is None:
-            n_alpha = (self.molecule.n_electrons() + 
-                      self.molecule.multiplicity() - 1) // 2
-        if n_beta is None:
-            n_beta = self.molecule.n_electrons() - n_alpha
-            
-        print("Step 2: Cholesky UHF...")
-        t0 = time.time()
-        uhf_config = mshqc.CholeskyUHFConfig()
-        uhf_config.cholesky_threshold = threshold
-        uhf_config.print_level = 0
-        
-        uhf = mshqc.CholeskyUHF(self.molecule, self.basis, self.integrals,
-                               n_alpha, n_beta, uhf_config)
-        uhf.set_cholesky_vectors(chol.get_L_vectors())
-        uhf_result = uhf.compute()
-        results['uhf_time'] = time.time() - t0
-        results['uhf_result'] = uhf_result
-        
-        return results
-    
-
-    def run_cholesky_rohf(self, n_alpha=None, n_beta=None, config=None, existing_cholesky=None):
-        """
-        Run Cholesky-ROHF calculation
-        
-        Args:
-            n_alpha (int): Jumlah elektron alpha (opsional, auto-detect dari molekul)
-            n_beta (int): Jumlah elektron beta (opsional)
-            config (CholeskyROHFConfig): Konfigurasi SCF
-            existing_cholesky (CholeskyERI): Objek Cholesky dari perhitungan sebelumnya (untuk reuse)
-        """
-        
-
-        n_total = self.molecule.n_electrons()
-        
-        
-
-        if n_alpha is None:
-            mult = self.molecule.multiplicity()
-            n_alpha = (n_total + mult - 1) // 2
-            
-        
-
-        
-
-        if n_beta is None:
-            n_beta = n_total - n_alpha
-            
-        
-
-        if config is None:
-            config = mshqc.CholeskyROHFConfig()
-            
-        print(f"\nRunning Cholesky-ROHF (Na={n_alpha}, Nb={n_beta})...")
-        t0 = time.time()
-        
-        
-
-        if existing_cholesky:
-            
-
-            scf = mshqc.CholeskyROHF(
-                self.molecule, self.basis, self.integrals,
-                n_alpha, n_beta, config, existing_cholesky
-            )
+        if reference is None:
+            self.reference = "rhf" if mult == 1 else "uhf"
         else:
-            
+            self.reference = reference.lower()
 
-            scf = mshqc.CholeskyROHF(
-                self.molecule, self.basis, self.integrals,
-                n_alpha, n_beta, config
-            )
-            
-        
+        self.scf_res = None
+        self.mp2_res = None
 
-        result = scf.compute()
-        print(f"Done in {time.time()-t0:.2f}s. E = {result.energy_total:.8f} Ha")
-        return result
-    
-
-    
-
-
-    def run_cholesky_rhf(self, config=None, existing_cholesky=None):
-        """
-        Run Cholesky-RHF calculation (Closed-Shell)
-        
-        Args:
-            config (CholeskyRHFConfig): Konfigurasi SCF
-            existing_cholesky (CholeskyERI): Objek Cholesky untuk reuse vectors
-        """
-        if config is None:
-            config = mshqc.CholeskyRHFConfig()
-            
-        print(f"\nRunning Cholesky-RHF...")
-        t0 = time.time()
-        
-        if existing_cholesky:
-            
-
-            scf = mshqc.CholeskyRHF(
-                self.molecule, self.basis, self.integrals,
-                config, existing_cholesky
-            )
+    def _make_scf_config(self) -> mshqc.SCFConfig:
+        conf = mshqc.SCFConfig()
+        conf.scf_type = self.scf_type
+        conf.energy_threshold = self.threshold
+        conf.density_threshold = self.threshold
+        conf.print_level = self.print_level
+        conf.eri_method = self.eri_method
+        if self.eri_method == "df":
+            conf.use_df = True
+            conf.aux_basis_name = self.aux_basis_name
+            conf.df_threshold = self.threshold
         else:
-            
+            conf.use_df = False
+            conf.cholesky_threshold = self.threshold
+        return conf
 
-            scf = mshqc.CholeskyRHF(
-                self.molecule, self.basis, self.integrals,
-                config
-            )
-            
-        result = scf.compute()
-        print(f"Done in {time.time()-t0:.2f}s. E = {result.energy_total:.8f} Ha")
-        return result
-    
-    def run_cholesky_omp2(self, scf_result, config=None, existing_cholesky=None):
-        """
-        Run Cholesky Orbital-Optimized MP2 (OMP2)
-        
-        Args:
-            scf_result: Hasil SCF (UHF/ROHF) sebagai tebakan awal orbital
-            config: Konfigurasi CholeskyOMP2Config
-            existing_cholesky: Objek CholeskyERI (untuk reuse vektor)
-        """
-        if config is None:
-            config = mshqc.CholeskyOMP2Config()
-            
-        print(f"\nRunning Cholesky-OMP2...")
-        t0 = time.time()
-        
-        if existing_cholesky:
-            
-
-            omp2 = mshqc.CholeskyOMP2(
-                self.molecule, self.basis, self.integrals,
-                scf_result, config, existing_cholesky
-            )
+    def _make_mp2_config(self, opt_method: str = "soscf", grad_thresh: float = 1e-5, max_iter: int = 50) -> mshqc.MP2Config:
+        conf = mshqc.MP2Config()
+        conf.scf_type = self.scf_type
+        conf.energy_threshold = self.threshold
+        conf.gradient_threshold = grad_thresh
+        conf.max_iterations = max_iter
+        conf.opt_method = opt_method
+        conf.print_level = self.print_level
+        conf.eri_method = self.eri_method
+        if self.eri_method == "df":
+            conf.use_df = True
+            conf.aux_basis_name = self.aux_basis_name
+            conf.df_threshold = self.threshold
         else:
-            
+            conf.use_df = False
+            conf.cholesky_threshold = self.threshold
+        return conf
 
-            omp2 = mshqc.CholeskyOMP2(
-                self.molecule, self.basis, self.integrals,
-                scf_result, config
-            )
-            
-        result = omp2.compute()
-        print(f"Done in {time.time()-t0:.2f}s.")
-        print(f"  => E(SCF) : {result.energy_scf:.8f} Ha")
-        print(f"  => E(OMP2): {result.energy_total:.8f} Ha")
-        return result
-    
-
-
-    def run_cholesky_omp3(self, omp2_result, config=None, existing_cholesky=None):
-        """
-        Run Cholesky Orbital-Optimized MP3 (OMP3)
-        
-        Args:
-            omp2_result: Hasil OMP2Result (sebagai tebakan awal)
-            config: Konfigurasi CholeskyOMP3Config
-            existing_cholesky: Objek CholeskyERI (WAJIB ADA untuk OMP3 ini)
-        """
-        if config is None:
-            config = mshqc.CholeskyOMP3Config()
-            
-        if existing_cholesky is None:
-            raise ValueError("Cholesky-OMP3 requires existing Cholesky vectors used in previous steps.")
-
-        print(f"\nRunning Cholesky-OMP3...")
-        t0 = time.time()
-        
-        omp3 = mshqc.CholeskyOMP3(
-            self.molecule, self.basis, self.integrals,
-            omp2_result, config, existing_cholesky
-        )
-            
-        result = omp3.compute()
-        print(f"Done in {time.time()-t0:.2f}s.")
-        print(f"  => E(Total): {result.energy_total:.8f} Ha")
-        return result
-
-
-
-
-
-
-    def run_cholesky_rmp2(self, rhf_result, config=None, existing_cholesky=None):
-        """
-        Run Cholesky-Restricted MP2 (RMP2)
-        
-        Args:
-            rhf_result: Hasil RHF (SCFResult)
-            config: Konfigurasi CholeskyRMP2Config
-            existing_cholesky: Objek CholeskyERI (untuk reuse vektor)
-        """
-        if config is None:
-            config = mshqc.CholeskyRMP2Config()
-            
-        print(f"\nRunning Cholesky-RMP2...")
-        t0 = time.time()
-        
-        if existing_cholesky:
-            
-
-            mp2 = mshqc.CholeskyRMP2(
-                self.molecule, self.basis, self.integrals,
-                rhf_result, config, existing_cholesky
-            )
+    def run_scf(self, ref: Optional[str] = None) -> mshqc.SCFResult:
+        ref_mode = (ref or self.reference).lower()
+        conf = self._make_scf_config()
+        if ref_mode == "rhf":
+            solver = mshqc.RHF(self.molecule, self.basis, self.integrals, self.pg, self.pl, conf)
+        elif ref_mode == "rohf":
+            solver = mshqc.ROHF(self.molecule, self.basis, self.integrals, self.pg, self.pl, self.n_alpha, self.n_beta, conf)
         else:
-            
+            solver = mshqc.UHF(self.molecule, self.basis, self.integrals, self.pg, self.pl, self.n_alpha, self.n_beta, conf)
+        self.scf_res = solver.compute()
+        return self.scf_res
 
-            mp2 = mshqc.CholeskyRMP2(
-                self.molecule, self.basis, self.integrals,
-                rhf_result, config
-            )
-            
-        result = mp2.compute()
-        print(f"Done in {time.time()-t0:.2f}s.")
-        print(f"  => E(Corr): {result.e_corr:.8f} Ha")
-        print(f"  => E(Total): {result.e_total:.8f} Ha")
-        return result
-    
-    
-
-
-    def run_cholesky_rmp3(self, rhf_result, crmp2_result):
-        """
-        Run Cholesky-Restricted MP3 (RMP3)
-        
-        Args:
-            rhf_result: Hasil RHF (SCFResult)
-            crmp2_result: Hasil CholeskyRMP2Result (WAJIB dari run_cholesky_rmp2)
-                          Ini membawa vektor Cholesky yang akan direuse.
-        """
-        print(f"\nRunning Cholesky-RMP3 (Reuse Vectors)...")
-        t0 = time.time()
-        
-        
-
-        rmp3 = mshqc.CholeskyRMP3(rhf_result, crmp2_result, self.basis)
-            
-        result = rmp3.compute()
-        print(f"Done in {time.time()-t0:.2f}s.")
-        print(f"  => E(MP3 Corr): {result.e_mp3:.8f} Ha")
-        print(f"  => E(Total)   : {result.e_total:.8f} Ha")
-        return result
-
-class MCSCFCalculator:
-    """High-level interface untuk MCSCF calculations"""
-
-    
-    def __init__(self, molecule, basis_name: str, basis_dir: Optional[str] = None):
-        """Initialize MCSCF calculator"""
-        self.molecule = molecule
-        
-        
-
-        target_dir = basis_dir
-        if target_dir is None:
-            if 'MSHQC_DATA_DIR' in os.environ:
-                target_dir = os.path.join(os.environ['MSHQC_DATA_DIR'], 'basis')
-            else:
-                target_dir = "data/basis"
-        
-        
-
-        self.basis = mshqc.BasisSet(basis_name, molecule, target_dir)
-        self.integrals = mshqc.IntegralEngine(molecule, self.basis)
-        self.n_basis = self.basis.n_basis_functions()
-
-    
-
-    
-    def run_canonical_sa_casscf(self, n_states, n_active_elec, n_active_orb, 
-                                scf_guess=None, weights=None):
-        """
-        Run Standard (Canonical) SA-CASSCF using Full ERI.
-        Best for benchmarking or when Cholesky is problematic.
-        """
-        print(f"\nRunning Canonical SA-CASSCF ({n_states} states)...")
-        
-        
-
-        active_space = mshqc.ActiveSpace.CAS(
-            n_active_elec, n_active_orb,
-            self.n_basis, self.molecule.n_electrons()
-        )
-        
-        
-
-        config = mshqc.SACASConfig()
-        if weights:
-            config.weights = weights
-            config.n_states = len(weights)
+    def run_mp2(self, scf_res: Optional[mshqc.SCFResult] = None) -> mshqc.MP2Result:
+        if scf_res is None:
+            scf_res = self.scf_res or self.run_scf()
+        conf = self._make_mp2_config()
+        if self.reference == "rhf":
+            solver = mshqc.RMP2(self.molecule, self.basis, self.integrals, scf_res, conf, self.pg, self.pl)
         else:
-            config.set_equal_weights(n_states)
-            
-        config.print_level = 1
-        
-        
+            solver = mshqc.UMP2(self.molecule, self.basis, self.integrals, scf_res, conf, self.pg, self.pl)
+        self.mp2_res = solver.compute()
+        return self.mp2_res
 
-        solver = mshqc.CanonicalSACASSCF(
-            self.molecule, self.basis, self.integrals,
-            active_space, config
-        )
-        
-        
-
-        if scf_guess is None:
-            print("  > Generating UHF Guess...")
-            calc_scf = MSHQCCalculator(self.molecule, self.basis.name())
-            scf_guess = calc_scf.run_uhf()
-            
-        
-
-        t0 = time.time()
-        res = solver.compute(scf_guess)
-        print(f"  Done ({time.time()-t0:.2f}s). E_avg: {res.e_avg:.8f} Ha")
-        
-        return res
-
-    def run_uno_analysis(self, uhf_result, threshold=0.02, method="canonical"):
-        """
-        Run UNO Analysis to determine Active Space.
-        
-        Args:
-            uhf_result: Hasil perhitungan UHF
-            threshold: Batas okupansi (default 0.02)
-            method: 'canonical' (Robust/Recommended) atau 'cholesky' (Fast/Approx)
-        """
-        print(f"\nRunning UNO Analysis (Method: {method.title()})...")
-        t0 = time.time()
-        
-        if method.lower() == "canonical":
-            
-
-            uno_gen = mshqc.CanonicalUNO(uhf_result, self.integrals, self.n_basis)
+    def run_mp3(self, scf_res: Optional[mshqc.SCFResult] = None, mp2_res: Optional[mshqc.MP2Result] = None) -> mshqc.MP3Result:
+        if scf_res is None:
+            scf_res = self.scf_res or self.run_scf()
+        if mp2_res is None:
+            mp2_res = self.mp2_res or self.run_mp2(scf_res)
+        conf = self._make_mp2_config()
+        if self.reference == "rhf":
+            solver = mshqc.RMP3(scf_res, mp2_res, conf, self.integrals)
         else:
-            
+            solver = mshqc.UMP3(scf_res, mp2_res, conf, self.integrals)
+        return solver.compute()
 
-            uno_gen = mshqc.CholeskyUNO(uhf_result, self.integrals, self.n_basis)
-            
-        res = uno_gen.compute()
-        print(f"  Done ({time.time() - t0:.2f}s). Entropy: {res.entropy:.6f}")
-        
-        
+    def run_omp2(self, scf_res: Optional[mshqc.SCFResult] = None, opt_method: str = "soscf", grad_thresh: float = 1e-5, max_iter: int = 50) -> mshqc.MP2Result:
+        if scf_res is None:
+            scf_res = self.scf_res or self.run_scf()
+        conf = self._make_mp2_config(opt_method=opt_method, grad_thresh=grad_thresh, max_iter=max_iter)
+        solver = mshqc.OMP2(self.molecule, self.basis, self.integrals, scf_res, conf, self.pg, self.pl)
+        return solver.compute()
 
-        uno_gen.print_report(threshold)
-        
-        return res
-        
-    def run_casscf(self, n_active_elec: int, n_active_orb: int,
-                   scf_guess=None):
-        """Run standard CASSCF"""
-        active_space = mshqc.ActiveSpace.CAS(
-            n_active_elec, n_active_orb,
-            self.n_basis, self.molecule.n_electrons()
-        )
-        
-        casscf = mshqc.CASSCF(self.molecule, self.basis,
-                             self.integrals, active_space)
-        
+    def run_omp3(self, scf_res: Optional[mshqc.SCFResult] = None, opt_method: str = "soscf", grad_thresh: float = 1e-5, max_iter: int = 50) -> mshqc.MP3Result:
+        if scf_res is None:
+            scf_res = self.scf_res or self.run_scf()
+        conf = self._make_mp2_config(opt_method=opt_method, grad_thresh=grad_thresh, max_iter=max_iter)
+        solver = mshqc.OMP3(self.molecule, self.basis, self.integrals, scf_res, conf, self.pg, self.pl)
+        return solver.compute()
 
-        casscf.set_max_iterations(50)
-        
-        if scf_guess is not None:
-            return casscf.compute(scf_guess)
+
+def run(molecule: Union[mshqc.Molecule, str, List[Tuple]],
+        method: Union[str, List[str]] = "omp2",
+        basis: str = "cc-pVTZ",
+        eri_method: str = "df",
+        aux_basis: Optional[str] = None,
+        charge: int = 0,
+        multiplicity: Optional[int] = None,
+        units: str = "bohr",
+        reference: Optional[str] = None,
+        threshold: float = 1e-9,
+        grad_thresh: float = 1e-5,
+        opt_method: str = "soscf",
+        print_level: int = 0) -> Union[Any, Dict[str, Any]]:
+    """
+    Fungsi satu baris (one-liner) untuk menjalankan satu atau beberapa metode sekaligus.
+    Contoh:
+        res = mshqc.run("O 0 0 0.1173\\nH 0 0.7572 -0.4692\\nH 0 -0.7572 -0.4692",
+                        method=["scf", "mp2", "omp2", "omp3"],
+                        basis="cc-pVTZ", eri_method="df", units="angstrom")
+    """
+    calc = MSHQCCalculator(
+        molecule=molecule, basis_name=basis, eri_method=eri_method,
+        aux_basis_name=aux_basis, charge=charge, multiplicity=multiplicity,
+        units=units, reference=reference, threshold=threshold, print_level=print_level
+    )
+
+    methods = [method] if isinstance(method, str) else list(method)
+    results: Dict[str, Any] = {}
+
+    for m in methods:
+        m_low = m.lower()
+        t0 = time.perf_counter()
+        if m_low in ("scf", "hf", "rhf", "uhf", "rohf"):
+            res = calc.run_scf(ref=m_low if m_low in ("rhf", "uhf", "rohf") else None)
+        elif m_low in ("mp2", "rmp2", "ump2"):
+            res = calc.run_mp2()
+        elif m_low in ("mp3", "rmp3", "ump3"):
+            res = calc.run_mp3()
+        elif m_low == "omp2":
+            res = calc.run_omp2(opt_method=opt_method, grad_thresh=grad_thresh)
+        elif m_low == "omp3":
+            res = calc.run_omp3(opt_method=opt_method, grad_thresh=grad_thresh)
         else:
-            calc = MSHQCCalculator(self.molecule, self.basis.name())
-            uhf_result = calc.run_uhf()
-            return casscf.compute(uhf_result)
+            raise ValueError(f"Metode tidak dikenali: {m}")
+        elapsed = time.perf_counter() - t0
+        results[m] = {"result": res, "energy": getattr(res, "energy_total", getattr(res, "e_total", None)), "time": elapsed}
 
-    def run_standard_caspt2(self, casscf_result):
-        """Run Standard CASPT2 (Non-Cholesky)"""
-        print("  Running Standard CASPT2...")
-        t0 = time.time()
-        
-
-        caspt2 = mshqc.CASPT2(self.molecule, self.basis, self.integrals, casscf_result)
-        res = caspt2.compute()
-        print(f"  Done ({time.time() - t0:.2f}s). E_Total: {res.e_total:.8f}")
-        return res
-
-    
-
-    
-    def run_canonical_sa_caspt2_pipeline(self, n_states, n_active_elec, n_active_orb, shift=0.2):
-        """
-        Run Full Canonical Pipeline: UHF -> UNO -> Canonical SA-CASSCF -> Canonical SA-CASPT2.
-        Reference calculation (expensive but exact within basis).
-        """
-        import time
-        results = {}
-        print("="*70)
-        print(f"CANONICAL SA-CASPT2 PIPELINE (Reference)")
-        print("="*70)
-
-        
-
-        print("\n[1/4] UHF & UNO Guess...")
-        scf_calc = MSHQCCalculator(self.molecule, self.basis.name())
-        scf_res = scf_calc.run_uhf()
-        uno_gen = mshqc.CanonicalUNO(scf_res, self.integrals, self.n_basis)
-        uno_res = uno_gen.compute()
-        
-        
-
-        print(f"\n[2/4] Canonical SA-CASSCF ({n_states} States)...")
-        active_space = mshqc.ActiveSpace.CAS(
-            n_active_elec, n_active_orb, self.n_basis, self.molecule.n_electrons()
-        )
-        
-        sa_config = mshqc.SACASConfig()
-        sa_config.set_equal_weights(n_states)
-        sa_config.max_iter = 100
-        sa_config.print_level = 1
-        
-        
-
-        sa_solver = mshqc.CanonicalSACASSCF(
-            self.molecule, self.basis, self.integrals,
-            active_space, sa_config
-        )
-        sa_res = sa_solver.compute(uno_res.C_uno)
-        results['sacas_result'] = sa_res
-        
-        
-
-        print(f"\n[3/4] Canonical SA-CASPT2 (Shift={shift})...")
-        t0 = time.time()
-        pt2_config = mshqc.CASPT2Config()
-        pt2_config.shift = shift
-        
-        pt2_solver = mshqc.CanonicalSACASPT2(
-            sa_res, self.integrals, self.basis,
-            active_space, pt2_config
-        )
-        pt2_res = pt2_solver.compute()
-        print(f"  Done ({time.time()-t0:.2f}s).")
-        
-        results['pt2_result'] = pt2_res
-        
-        
-
-        print("\n" + "-"*50)
-        print("Final Canonical Energies (Hartree)")
-        print("-" * 50)
-        for i in range(n_states):
-            
-
-            
-
-            print(f"State {i}: {pt2_res.e_total[i]:.8f}")
-            
-        return results
-    
-    def run_sa_caspt3_pipeline(self, n_frozen: int, n_active_orb: int,
-                               n_states: int, threshold=1e-8, shift=0.0):
-        """Run complete SA-CASPT3 pipeline"""
-        results = {}
-        
-        print("="*70)
-        print(f"SA-CASPT3 Pipeline: {n_states} states")
-        print("="*70)
-        
-        
-
-        print("\n[1/6] Cholesky Decomposition...")
-        t0 = time.time()
-        chol = mshqc.CholeskyERI(threshold)
-        eri_tensor = self.integrals.compute_eri()
-        chol.decompose(eri_tensor)
-        L_vectors = chol.get_L_vectors()
-        results['t_chol'] = time.time() - t0
-        
-        
-
-        print("[2/6] Cholesky UHF...")
-        t0 = time.time()
-        n_alpha = (self.molecule.n_electrons() + 
-                  self.molecule.multiplicity() - 1) // 2
-        n_beta = self.molecule.n_electrons() - n_alpha
-        
-        uhf_config = mshqc.CholeskyUHFConfig()
-        uhf_config.cholesky_threshold = threshold
-        uhf_config.print_level = 0
-        
-        uhf = mshqc.CholeskyUHF(self.molecule, self.basis, self.integrals,
-                               n_alpha, n_beta, uhf_config)
-        uhf.set_cholesky_vectors(L_vectors)
-        uhf_result = uhf.compute()
-        results['t_uhf'] = time.time() - t0
-        
-        
-
-        print("[3/6] UNO Generation...")
-        t0 = time.time()
-        uno_gen = mshqc.CholeskyUNO(uhf_result, self.integrals, self.n_basis)
-        uno_result = uno_gen.compute()
-        results['t_uno'] = time.time() - t0
-        
-        
-
-        print(f"[4/6] SA-CASSCF ({n_states} states)...")
-        t0 = time.time()
-        active_space = mshqc.ActiveSpace.CAS_Frozen(
-            n_frozen, n_active_orb, self.n_basis,
-            self.molecule.n_electrons()
-        )
-        
-        sa_config = mshqc.SACASConfig()
-        sa_config.set_equal_weights(n_states)
-        sa_config.max_iter = 100
-        
-        sa_casscf = mshqc.CholeskySACASSCF(
-            self.molecule, self.basis, self.integrals,
-            active_space, sa_config, L_vectors
-        )
-        sa_result = sa_casscf.compute(uno_result.C_uno)
-        results['t_casscf'] = time.time() - t0
-        
-        
-
-        print("[5/6] SA-CASPT2...")
-        t0 = time.time()
-        pt2_config = mshqc.CASPT2Config()
-        pt2_config.shift = shift
-        
-        pt2_solver = mshqc.CholeskySACASPT2(
-            sa_result, L_vectors, self.n_basis,
-            active_space, pt2_config
-        )
-        pt2_result = pt2_solver.compute()
-        results['t_pt2'] = time.time() - t0
-        
-        
-
-        print("[6/6] SA-CASPT3...")
-        t0 = time.time()
-        pt3_config = mshqc.CASPT3Config()
-        pt3_config.shift = shift
-        
-        pt3_solver = mshqc.CholeskySACASPT3(
-            sa_result, L_vectors, self.n_basis,
-            active_space, pt3_config
-        )
-        pt3_result = pt3_solver.compute()
-        results['t_pt3'] = time.time() - t0
-        
-        
-
-        results['final_energies'] = []
-        
-        for i in range(n_states):
-            
-
-            e_pt2_val = pt2_result.e_pt2[i]
-            e_pt3_val = pt3_result.e_pt3[i]
-            
-            e_total = sa_result.state_energies[i] + e_pt2_val + e_pt3_val
-            results['final_energies'].append(e_total)
-        
-        return results
-    
-
-
-    def run_canonical_sa_caspt3_pipeline(self, n_states, n_active_elec, n_active_orb, shift=0.25):
-        """
-        Run Full Canonical Pipeline up to PT3 (Exact Reference).
-        Order: UHF -> UNO -> Canonical CASSCF -> Canonical PT2 -> Canonical PT3.
-        """
-        import time
-        results = {}
-        print("="*70)
-        print(f"CANONICAL SA-CASPT3 PIPELINE (Reference)")
-        print("="*70)
-
-        
-
-        print("\n[1/4] UHF & UNO Guess...")
-        
-
-        scf_calc = MSHQCCalculator(self.molecule, self.basis.name())
-        scf_res = scf_calc.run_uhf()
-        
-        uno_gen = mshqc.CanonicalUNO(scf_res, self.integrals, self.n_basis)
-        uno_res = uno_gen.compute()
-
-        
-
-        print(f"\n[2/4] Canonical SA-CASSCF ({n_states} States)...")
-        active_space = mshqc.ActiveSpace.CAS(
-            n_active_elec, n_active_orb, self.n_basis, self.molecule.n_electrons()
-        )
-        sa_config = mshqc.SACASConfig()
-        sa_config.set_equal_weights(n_states)
-        sa_config.max_iter = 100
-        sa_config.print_level = 1
-        
-        sa_solver = mshqc.CanonicalSACASSCF(
-            self.molecule, self.basis, self.integrals,
-            active_space, sa_config
-        )
-        sa_res = sa_solver.compute(uno_res.C_uno)
-        results['sacas_result'] = sa_res
-
-        
-
-        print(f"\n[3/4] Canonical SA-CASPT2 (Shift={shift})...")
-        pt2_config = mshqc.CASPT2Config()
-        pt2_config.shift = shift
-        
-        pt2_solver = mshqc.CanonicalSACASPT2(
-            sa_res, self.integrals, self.basis, active_space, pt2_config
-        )
-        pt2_res = pt2_solver.compute()
-        results['pt2_result'] = pt2_res
-
-        
-
-        print(f"\n[4/4] Canonical SA-CASPT3 (Shift={shift})...")
-        pt3_config = mshqc.CASPT3Config()
-        pt3_config.shift = shift
-        
-        pt3_solver = mshqc.CanonicalSACASPT3(
-            sa_res, self.integrals, self.basis, active_space, pt3_config
-        )
-        pt3_res = pt3_solver.compute()
-        results['pt3_result'] = pt3_res
-
-        
-
-        print("\n" + "-"*60)
-        print("Final Canonical Energies (Hartree)")
-        print("-" * 60)
-        for i in range(n_states):
-            e_cas = sa_res.state_energies[i]
-            e_pt2 = pt2_res.e_pt2[i]
-            e_pt3 = pt3_res.e_pt3[i]
-            e_total = e_cas + e_pt2 + e_pt3
-            print(f"State {i}: CAS={e_cas:.5f} + PT2={e_pt2:.5f} + PT3={e_pt3:.5f} = {e_total:.8f}")
-            
-        return results
+    if isinstance(method, str):
+        return results[method]["result"]
+    return results
