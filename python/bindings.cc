@@ -480,6 +480,10 @@ NB_MODULE(_mshqc, m) {
         .def_rw("e3_ab", &MP3Result::e3_ab)
         .def_rw("e_corr_total", &MP3Result::e_corr_total)
         .def_rw("e_total", &MP3Result::e_total)
+        .def_prop_ro("energy_total", [](const MP3Result& r) { return r.e_total; })
+        .def_prop_ro("energy_scf", [](const MP3Result& r) { return r.e_hf; })
+        .def_prop_ro("energy_mp2_corr", [](const MP3Result& r) { return r.e_mp2; })
+        .def_prop_ro("energy_mp3_corr", [](const MP3Result& r) { return r.e_mp3; })
         .def_rw("converged", &MP3Result::converged)
         .def_rw("iterations", &MP3Result::iterations);
 

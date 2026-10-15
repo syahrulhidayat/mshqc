@@ -12,10 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-High-Level Calculator Interfaces for MSHQC
-File: /home/syahrul/mshqc/python/mshqc/calculators.py
-"""
+
 
 import numpy as np
 import time
