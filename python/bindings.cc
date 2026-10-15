@@ -23,7 +23,9 @@
 #include <omp.h>
 #include <cstdlib>
 #include <algorithm>
+#include <cctype>
 #include <iostream>
+#include <unordered_map>
 
 #if defined(_WIN32)
     #include <windows.h>
@@ -37,7 +39,6 @@
     #include <unordered_set>
 #endif
 
-
 #include "mshqc/core/molecule.h"
 #include "mshqc/basis.h"
 #include "mshqc/ints/integrals.h"
@@ -49,12 +50,9 @@
 #include "mshqc/integrals/screening.h"
 #include "mshqc/core/fock_builder.h"
 
-
 #include "mshqc/mp2/mp2.h"
 #include "mshqc/mp3/mp3.h"
 #include "mshqc/mp3/omp3.h"
-
-
 
 #include "mshqc/integrals/cholesky_eri.h"
 #include "mshqc/integrals/eri_transformer.h"
@@ -63,9 +61,6 @@ namespace nb = nanobind;
 using namespace mshqc;
 using namespace mshqc::integrals;
 
-
-
-
 namespace mshqc_auto_tune {
 
     void set_env_if_empty(const char* name, const char* value) {
@@ -73,7 +68,7 @@ namespace mshqc_auto_tune {
         #if defined(_WIN32)
             _putenv_s(name, value);
         #else
-            setenv(name, value, 0); 
+            setenv(name, value, 0);
         #endif
         }
     }
@@ -105,7 +100,7 @@ namespace mshqc_auto_tune {
                     unique_cores.insert(current_phys_id + "_" + current_core_id);
                 }
             }
-            if (!unique_cores.empty()) return unique_cores.size();
+            if (!unique_cores.empty()) return static_cast<int>(unique_cores.size());
         }
         return std::max(1, static_cast<int>(std::thread::hardware_concurrency()) / 2);
     #else
@@ -118,28 +113,91 @@ namespace mshqc_auto_tune {
         if (const char* env_omp = std::getenv("OMP_NUM_THREADS")) {
             num_threads = std::atoi(env_omp);
         }
-        
+
         omp_set_dynamic(0);
         omp_set_num_threads(num_threads);
-        
+
         std::string threads_str = std::to_string(num_threads);
         set_env_if_empty("TBLIS_NUM_THREADS", threads_str.c_str());
         set_env_if_empty("OMP_WAIT_POLICY", "PASSIVE");
         set_env_if_empty("GOMP_SPINCOUNT", "0");
-        
+
         set_env_if_empty("OPENBLAS_NUM_THREADS", "1");
         set_env_if_empty("MKL_NUM_THREADS", "1");
         set_env_if_empty("VECLIB_MAXIMUM_THREADS", "1");
         set_env_if_empty("NUMEXPR_NUM_THREADS", "1");
-        set_env_if_empty("OMP_MAX_ACTIVE_LEVELS", "1"); 
+        set_env_if_empty("OMP_MAX_ACTIVE_LEVELS", "1");
+    }
+
+    int symbol_to_z(const std::string& sym) {
+        static const std::unordered_map<std::string, int> table = {
+            {"H",1},{"He",2},{"Li",3},{"Be",4},{"B",5},{"C",6},{"N",7},{"O",8},{"F",9},{"Ne",10},
+            {"Na",11},{"Mg",12},{"Al",13},{"Si",14},{"P",15},{"S",16},{"Cl",17},{"Ar",18},
+            {"K",19},{"Ca",20},{"Sc",21},{"Ti",22},{"V",23},{"Cr",24},{"Mn",25},{"Fe",26},
+            {"Co",27},{"Ni",28},{"Cu",29},{"Zn",30},{"Ga",31},{"Ge",32},{"As",33},{"Se",34},
+            {"Br",35},{"Kr",36},{"Rb",37},{"Sr",38},{"Y",39},{"Zr",40},{"Nb",41},{"Mo",42},
+            {"Tc",43},{"Ru",44},{"Rh",45},{"Pd",46},{"Ag",47},{"Cd",48},{"In",49},{"Sn",50},
+            {"Sb",51},{"Te",52},{"I",53},{"Xe",54}
+        };
+        if (sym.empty()) throw std::invalid_argument("Empty atom symbol");
+        std::string key = sym;
+        key[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(key[0])));
+        for (size_t i = 1; i < key.size(); ++i) {
+            key[i] = static_cast<char>(std::tolower(static_cast<unsigned char>(key[i])));
+        }
+        auto it = table.find(key);
+        if (it == table.end()) throw std::invalid_argument("Unknown element symbol: " + sym);
+        return it->second;
+    }
+
+    double unit_scale(const std::string& units) {
+        if (!units.empty() && (units[0] == 'a' || units[0] == 'A')) {
+            return 1.0 / 0.529177210903;
+        }
+        return 1.0;
+    }
+
+    SCFConfig normalize_scf_config(const SCFConfig& conf, const BasisSet& basis) {
+        SCFConfig c = conf;
+        std::string m = c.eri_method;
+        std::transform(m.begin(), m.end(), m.begin(), [](unsigned char ch){ return std::tolower(ch); });
+        c.eri_method = m;
+        if (c.eri_method == "df") {
+            c.use_df = true;
+        }
+        if (c.use_df && (c.aux_basis_name.empty() || c.aux_basis_name == "cc-pVDZ-JKFIT")) {
+            if (!basis.name().empty() && basis.name() != "cc-pVDZ") {
+                c.aux_basis_name = basis.name() + "-RI";
+            } else if (c.aux_basis_name.empty()) {
+                c.aux_basis_name = "cc-pVTZ-RI";
+            }
+        }
+        return c;
+    }
+
+    MP2Config normalize_mp2_config(const MP2Config& conf, const BasisSet& basis, const SCFResult& scf_guess) {
+        MP2Config c = conf;
+        std::string m = c.eri_method;
+        std::transform(m.begin(), m.end(), m.begin(), [](unsigned char ch){ return std::tolower(ch); });
+        c.eri_method = m;
+        if (c.eri_method == "df") {
+            c.use_df = true;
+        }
+        if (c.use_df && c.aux_basis_name.empty()) {
+            c.aux_basis_name = basis.name().empty() ? "cc-pVTZ-RI" : (basis.name() + "-RI");
+        }
+        if (c.gradient_threshold <= 0.0) {
+            c.gradient_threshold = 1e-5;
+        }
+        return c;
     }
 }
 
 NB_MODULE(_mshqc, m) {
-    
+
     mshqc_auto_tune::initialize_hpc_environment();
 
-    m.doc() = "MSHQC: Modern Quantum Chemistry Library";
+    m.doc() = "MSHQC: Modern C++20 Quantum Chemistry Library";
 
     using ERITensor = Eigen::Tensor<double, 4, 0, long>;
 
@@ -150,16 +208,13 @@ NB_MODULE(_mshqc, m) {
             return std::make_tuple(t.dimension(0), t.dimension(1), t.dimension(2), t.dimension(3));
         })
         .def("__repr__", [](const ERITensor& t) {
-            return "<mshqc.ERITensor shape=(" + 
+            return "<mshqc.ERITensor shape=(" +
                    std::to_string(t.dimension(0)) + ", " +
                    std::to_string(t.dimension(1)) + ", " +
                    std::to_string(t.dimension(2)) + ", " +
                    std::to_string(t.dimension(3)) + ")>";
         });
 
-    
-    
-    
     nb::class_<Atom>(m, "Atom")
         .def(nb::init<int, double, double, double>(),
              nb::arg("atomic_number"), nb::arg("x"), nb::arg("y"), nb::arg("z"))
@@ -170,10 +225,16 @@ NB_MODULE(_mshqc, m) {
         .def("position", &Atom::position);
 
     nb::class_<Molecule>(m, "Molecule")
-        .def(nb::init<>())
-        .def(nb::init<int, int>(), nb::arg("charge"), nb::arg("multiplicity"))
-        .def("add_atom", nb::overload_cast<int, double, double, double>(&Molecule::add_atom),
-             nb::arg("Z"), nb::arg("x"), nb::arg("y"), nb::arg("z"))
+        .def(nb::init<int, int>(), nb::arg("charge") = 0, nb::arg("multiplicity") = 1)
+        .def("add_atom", [](Molecule& mol, int Z, double x, double y, double z, const std::string& units) {
+            double s = mshqc_auto_tune::unit_scale(units);
+            mol.add_atom(Z, x * s, y * s, z * s);
+        }, nb::arg("Z"), nb::arg("x"), nb::arg("y"), nb::arg("z"), nb::arg("units") = "bohr")
+        .def("add_atom", [](Molecule& mol, const std::string& symbol, double x, double y, double z, const std::string& units) {
+            double s = mshqc_auto_tune::unit_scale(units);
+            int Z = mshqc_auto_tune::symbol_to_z(symbol);
+            mol.add_atom(Z, x * s, y * s, z * s);
+        }, nb::arg("symbol"), nb::arg("x"), nb::arg("y"), nb::arg("z"), nb::arg("units") = "bohr")
         .def("add_atom", nb::overload_cast<const Atom&>(&Molecule::add_atom), nb::arg("atom"))
         .def("n_atoms", &Molecule::n_atoms)
         .def("atom", &Molecule::atom, nb::arg("i"))
@@ -214,6 +275,7 @@ NB_MODULE(_mshqc, m) {
         .def("add_shell", &BasisSet::add_shell, nb::arg("shell"))
         .def("n_shells", &BasisSet::n_shells)
         .def("n_basis_functions", &BasisSet::n_basis_functions)
+        .def("n_basis", &BasisSet::n_basis_functions)
         .def("shell", &BasisSet::shell, nb::arg("i"))
         .def("name", &BasisSet::name);
 
@@ -237,9 +299,16 @@ NB_MODULE(_mshqc, m) {
         .def(nb::init<double>(), nb::arg("threshold") = 1e-9)
         .def(nb::init<const BasisSet&, std::shared_ptr<IntegralEngine>>(),
              nb::arg("basis"), nb::arg("integrals"))
+        .def("__init__", [](CholeskyERI *chol, const Molecule& mol, const BasisSet& basis, double threshold) {
+            auto ints = std::make_shared<IntegralEngine>(mol, basis);
+            new (chol) CholeskyERI(basis, ints);
+            chol->set_threshold(threshold);
+            chol->compute();
+        }, nb::arg("mol"), nb::arg("basis"), nb::arg("threshold") = 1e-9)
         .def("set_threshold", &integrals::CholeskyERI::set_threshold)
         .def("set_print_level", &integrals::CholeskyERI::set_print_level)
         .def("n_vectors", &integrals::CholeskyERI::n_vectors)
+        .def("n_cholesky_vectors", &integrals::CholeskyERI::n_vectors)
         .def("threshold", &integrals::CholeskyERI::threshold)
         .def("compute", &integrals::CholeskyERI::compute, nb::call_guard<nb::gil_scoped_release>())
         .def("decompose", &integrals::CholeskyERI::decompose, nb::call_guard<nb::gil_scoped_release>())
@@ -264,14 +333,13 @@ NB_MODULE(_mshqc, m) {
         .def_rw("name", &SymmetryOperation::name);
 
     nb::class_<PointGroup>(m, "PointGroup")
-        .def(nb::init<const Molecule&, double>(), "Initialize and auto-detect symmetry", 
-            nb::arg("mol"), nb::arg("tolerance") = 1e-6)
+        .def(nb::init<const Molecule&, double>(), "Initialize and auto-detect symmetry",
+             nb::arg("mol"), nb::arg("tolerance") = 1e-6)
         .def("detect", &PointGroup::detect)
         .def("get_symbol", &PointGroup::get_symbol)
         .def("get_order", &PointGroup::get_order)
         .def("get_aligned_molecule", &PointGroup::get_aligned_molecule)
         .def("get_operations", &PointGroup::get_operations, nb::rv_policy::reference_internal);
-
 
     nb::class_<UniqueShellPair>(m, "UniqueShellPair")
         .def_rw("p", &UniqueShellPair::p)
@@ -287,9 +355,6 @@ NB_MODULE(_mshqc, m) {
         .def(nb::init<const BasisSet&, const PointGroup&, const PetiteList&>())
         .def("symmetrize", &BasisSymmetrizer::symmetrize);
 
-    
-    
-    
     nb::class_<DIIS>(m, "DIIS")
         .def(nb::init<int>(), nb::arg("max_vectors") = 8)
         .def("clear", &DIIS::clear)
@@ -300,9 +365,9 @@ NB_MODULE(_mshqc, m) {
         .def_rw("sh_a", &mshqc::integrals::ShellPair::sh_a)
         .def_rw("sh_b", &mshqc::integrals::ShellPair::sh_b)
         .def_rw("max_val", &mshqc::integrals::ShellPair::max_val)
-        .def_prop_rw("center", 
-            [](const mshqc::integrals::ShellPair& sp) { 
-                return std::make_tuple(sp.center(0), sp.center(1), sp.center(2)); 
+        .def_prop_rw("center",
+            [](const mshqc::integrals::ShellPair& sp) {
+                return std::make_tuple(sp.center(0), sp.center(1), sp.center(2));
             },
             [](mshqc::integrals::ShellPair& sp, const std::tuple<double,double,double>& t) {
                 sp.center = Eigen::Vector3d(std::get<0>(t), std::get<1>(t), std::get<2>(t));
@@ -315,15 +380,34 @@ NB_MODULE(_mshqc, m) {
         .def("compute", &mshqc::integrals::Screening::compute, nb::call_guard<nb::gil_scoped_release>(), nb::arg("integrals"))
         .def("print_stats", &mshqc::integrals::Screening::print_stats, nb::arg("threshold"))
         .def("get_significant_pairs", &mshqc::integrals::Screening::get_significant_pairs, nb::arg("threshold"))
-        .def("is_significant", 
+        .def("is_significant",
              static_cast<bool (mshqc::integrals::Screening::*)(int, int, int, int, double) const>(&mshqc::integrals::Screening::is_significant),
              nb::arg("sh_a"), nb::arg("sh_b"), nb::arg("sh_c"), nb::arg("sh_d"), nb::arg("threshold"))
         .def("get_schwarz_val", &mshqc::integrals::Screening::get_schwarz_val)
         .def("max_schwarz", &mshqc::integrals::Screening::max_schwarz);
 
     nb::class_<SCFConfig>(m, "SCFConfig")
-        .def(nb::init<>())
-        .def_rw("scf_type", &SCFConfig::scf_type) 
+        .def("__init__", [](SCFConfig *c, const std::string& eri_method, double threshold,
+                            const std::string& aux_basis_name, const std::string& scf_type,
+                            int print_level, int max_iterations) {
+            new (c) SCFConfig();
+            c->eri_method = eri_method;
+            c->scf_type = scf_type;
+            c->energy_threshold = threshold;
+            c->density_threshold = threshold;
+            c->cholesky_threshold = threshold;
+            c->df_threshold = threshold;
+            c->print_level = print_level;
+            c->max_iterations = max_iterations;
+            c->aux_basis_name = aux_basis_name;
+            c->use_df = (eri_method == "df" || eri_method == "DF");
+        }, nb::arg("eri_method") = "exact",
+           nb::arg("threshold") = 1e-9,
+           nb::arg("aux_basis_name") = "",
+           nb::arg("scf_type") = "incore",
+           nb::arg("print_level") = 0,
+           nb::arg("max_iterations") = 100)
+        .def_rw("scf_type", &SCFConfig::scf_type)
         .def_rw("eri_method", &SCFConfig::eri_method)
         .def_rw("cholesky_threshold", &SCFConfig::cholesky_threshold)
         .def_rw("df_threshold", &SCFConfig::df_threshold)
@@ -341,6 +425,7 @@ NB_MODULE(_mshqc, m) {
         .def_rw("energy_electronic", &SCFResult::energy_electronic)
         .def_rw("energy_nuclear", &SCFResult::energy_nuclear)
         .def_rw("energy_total", &SCFResult::energy_total)
+        .def_prop_ro("e_total", [](const SCFResult& r) { return r.energy_total; })
         .def_rw("orbital_energies_alpha", &SCFResult::orbital_energies_alpha)
         .def_rw("orbital_energies_beta", &SCFResult::orbital_energies_beta)
         .def_rw("C_alpha", &SCFResult::C_alpha)
@@ -353,67 +438,119 @@ NB_MODULE(_mshqc, m) {
         .def_rw("converged", &SCFResult::converged)
         .def_rw("n_occ_alpha", &SCFResult::n_occ_alpha)
         .def_rw("n_occ_beta", &SCFResult::n_occ_beta);
-   
-    
+
     nb::class_<UHF>(m, "UHF")
-        .def("__init__", [](UHF *t, const Molecule& mol, const BasisSet& basis, 
-                            IntegralEngine* integrals, PointGroup* pg, PetiteList* pl, 
+        .def("__init__", [](UHF *t, const Molecule& mol, const BasisSet& basis,
+                            IntegralEngine* integrals, PointGroup* pg, PetiteList* pl,
                             int na, int nb, const SCFConfig& conf) {
             auto sp_int = std::shared_ptr<IntegralEngine>(integrals, [](IntegralEngine*){});
             auto sp_pg = pg ? std::shared_ptr<PointGroup>(pg, [](PointGroup*){}) : nullptr;
             auto sp_pl = pl ? std::shared_ptr<PetiteList>(pl, [](PetiteList*){}) : nullptr;
-            new (t) UHF(mol, basis, sp_int, sp_pg, sp_pl, na, nb, conf);
+            new (t) UHF(mol, basis, sp_int, sp_pg, sp_pl, na, nb, mshqc_auto_tune::normalize_scf_config(conf, basis));
         }, nb::arg("molecule"), nb::arg("basis"), nb::arg("integrals"),
-           nb::arg("pg"), nb::arg("pl"), nb::arg("n_alpha"), nb::arg("n_beta"), 
+           nb::arg("pg"), nb::arg("pl"), nb::arg("n_alpha"), nb::arg("n_beta"),
            nb::arg("config") = SCFConfig())
-        .def("__init__", [](UHF *t, const Molecule& mol, const BasisSet& basis, 
+        .def("__init__", [](UHF *t, const Molecule& mol, const BasisSet& basis,
                             IntegralEngine* integrals, int na, int nb, const SCFConfig& conf) {
             auto sp_int = std::shared_ptr<IntegralEngine>(integrals, [](IntegralEngine*){});
-            new (t) UHF(mol, basis, sp_int, nullptr, nullptr, na, nb, conf);
+            new (t) UHF(mol, basis, sp_int, nullptr, nullptr, na, nb, mshqc_auto_tune::normalize_scf_config(conf, basis));
         }, nb::arg("molecule"), nb::arg("basis"), nb::arg("integrals"),
            nb::arg("n_alpha"), nb::arg("n_beta"), nb::arg("config") = SCFConfig())
+        .def("__init__", [](UHF *t, const Molecule& mol, const BasisSet& basis,
+                            IntegralEngine* integrals, const SCFConfig& conf,
+                            PointGroup* pg, PetiteList* pl) {
+            int n_elec = mol.n_electrons();
+            int mult = mol.multiplicity();
+            int na = (n_elec + mult - 1) / 2;
+            int nb = n_elec - na;
+            auto sp_int = std::shared_ptr<IntegralEngine>(integrals, [](IntegralEngine*){});
+            auto sp_pg = pg ? std::shared_ptr<PointGroup>(pg, [](PointGroup*){}) : nullptr;
+            auto sp_pl = pl ? std::shared_ptr<PetiteList>(pl, [](PetiteList*){}) : nullptr;
+            new (t) UHF(mol, basis, sp_int, sp_pg, sp_pl, na, nb, mshqc_auto_tune::normalize_scf_config(conf, basis));
+        }, nb::arg("molecule"), nb::arg("basis"), nb::arg("integrals"),
+           nb::arg("config") = SCFConfig(), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
         .def("compute", &UHF::compute, nb::call_guard<nb::gil_scoped_release>())
         .def("energy", &UHF::energy);
 
     nb::class_<RHF>(m, "RHF")
-        .def("__init__", [](RHF *t, const Molecule& mol, const BasisSet& basis, 
+        .def("__init__", [](RHF *t, const Molecule& mol, const BasisSet& basis,
                             IntegralEngine* integrals, PointGroup* pg, PetiteList* pl,
                             const SCFConfig& conf) {
             auto sp_int = std::shared_ptr<IntegralEngine>(integrals, [](IntegralEngine*){});
             auto sp_pg = pg ? std::shared_ptr<PointGroup>(pg, [](PointGroup*){}) : nullptr;
             auto sp_pl = pl ? std::shared_ptr<PetiteList>(pl, [](PetiteList*){}) : nullptr;
-            new (t) RHF(mol, basis, sp_int, sp_pg, sp_pl, conf);
+            new (t) RHF(mol, basis, sp_int, sp_pg, sp_pl, mshqc_auto_tune::normalize_scf_config(conf, basis));
         }, nb::arg("molecule"), nb::arg("basis"), nb::arg("integrals"),
            nb::arg("pg"), nb::arg("pl"), nb::arg("config") = SCFConfig())
-        .def("__init__", [](RHF *t, const Molecule& mol, const BasisSet& basis, 
-                            IntegralEngine* integrals, const SCFConfig& conf) {
+        .def("__init__", [](RHF *t, const Molecule& mol, const BasisSet& basis,
+                            IntegralEngine* integrals, const SCFConfig& conf,
+                            PointGroup* pg, PetiteList* pl) {
             auto sp_int = std::shared_ptr<IntegralEngine>(integrals, [](IntegralEngine*){});
-            new (t) RHF(mol, basis, sp_int, nullptr, nullptr, conf);
-        }, nb::arg("molecule"), nb::arg("basis"), nb::arg("integrals"), nb::arg("config") = SCFConfig())
+            auto sp_pg = pg ? std::shared_ptr<PointGroup>(pg, [](PointGroup*){}) : nullptr;
+            auto sp_pl = pl ? std::shared_ptr<PetiteList>(pl, [](PetiteList*){}) : nullptr;
+            new (t) RHF(mol, basis, sp_int, sp_pg, sp_pl, mshqc_auto_tune::normalize_scf_config(conf, basis));
+        }, nb::arg("molecule"), nb::arg("basis"), nb::arg("integrals"),
+           nb::arg("config") = SCFConfig(), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
         .def("compute", &RHF::compute, nb::call_guard<nb::gil_scoped_release>())
         .def("energy", &RHF::energy);
 
     nb::class_<ROHF>(m, "ROHF")
-        .def("__init__", [](ROHF *t, const Molecule& mol, const BasisSet& basis, 
-                            IntegralEngine* integrals, PointGroup* pg, PetiteList* pl, 
+        .def("__init__", [](ROHF *t, const Molecule& mol, const BasisSet& basis,
+                            IntegralEngine* integrals, PointGroup* pg, PetiteList* pl,
                             int na, int nb, const SCFConfig& conf) {
             auto sp_int = std::shared_ptr<IntegralEngine>(integrals, [](IntegralEngine*){});
             auto sp_pg = pg ? std::shared_ptr<PointGroup>(pg, [](PointGroup*){}) : nullptr;
             auto sp_pl = pl ? std::shared_ptr<PetiteList>(pl, [](PetiteList*){}) : nullptr;
-            new (t) ROHF(mol, basis, sp_int, sp_pg, sp_pl, na, nb, conf);
-        }, nb::arg("molecule"), nb::arg("basis"), nb::arg("integrals"), 
+            new (t) ROHF(mol, basis, sp_int, sp_pg, sp_pl, na, nb, mshqc_auto_tune::normalize_scf_config(conf, basis));
+        }, nb::arg("molecule"), nb::arg("basis"), nb::arg("integrals"),
            nb::arg("pg"), nb::arg("pl"), nb::arg("n_alpha"), nb::arg("n_beta"), nb::arg("config") = SCFConfig())
-        .def("__init__", [](ROHF *t, const Molecule& mol, const BasisSet& basis, 
+        .def("__init__", [](ROHF *t, const Molecule& mol, const BasisSet& basis,
                             IntegralEngine* integrals, int na, int nb, const SCFConfig& conf) {
             auto sp_int = std::shared_ptr<IntegralEngine>(integrals, [](IntegralEngine*){});
-            new (t) ROHF(mol, basis, sp_int, nullptr, nullptr, na, nb, conf);
-        }, nb::arg("molecule"), nb::arg("basis"), nb::arg("integrals"), 
+            new (t) ROHF(mol, basis, sp_int, nullptr, nullptr, na, nb, mshqc_auto_tune::normalize_scf_config(conf, basis));
+        }, nb::arg("molecule"), nb::arg("basis"), nb::arg("integrals"),
            nb::arg("n_alpha"), nb::arg("n_beta"), nb::arg("config") = SCFConfig())
+        .def("__init__", [](ROHF *t, const Molecule& mol, const BasisSet& basis,
+                            IntegralEngine* integrals, const SCFConfig& conf,
+                            PointGroup* pg, PetiteList* pl) {
+            int n_elec = mol.n_electrons();
+            int mult = mol.multiplicity();
+            int na = (n_elec + mult - 1) / 2;
+            int nb = n_elec - na;
+            auto sp_int = std::shared_ptr<IntegralEngine>(integrals, [](IntegralEngine*){});
+            auto sp_pg = pg ? std::shared_ptr<PointGroup>(pg, [](PointGroup*){}) : nullptr;
+            auto sp_pl = pl ? std::shared_ptr<PetiteList>(pl, [](PetiteList*){}) : nullptr;
+            new (t) ROHF(mol, basis, sp_int, sp_pg, sp_pl, na, nb, mshqc_auto_tune::normalize_scf_config(conf, basis));
+        }, nb::arg("molecule"), nb::arg("basis"), nb::arg("integrals"),
+           nb::arg("config") = SCFConfig(), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
         .def("compute", &ROHF::compute, nb::call_guard<nb::gil_scoped_release>())
         .def("energy", &ROHF::energy);
 
     nb::class_<MP2Config>(m, "MP2Config")
-        .def(nb::init<>())
+        .def("__init__", [](MP2Config *c, const std::string& eri_method, double threshold,
+                            double gradient_threshold, const std::string& opt_method,
+                            const std::string& aux_basis_name, const std::string& scf_type,
+                            int print_level, int max_iterations) {
+            new (c) MP2Config();
+            c->eri_method = eri_method;
+            c->scf_type = scf_type;
+            c->energy_threshold = threshold;
+            c->cholesky_threshold = threshold;
+            c->df_threshold = threshold;
+            c->gradient_threshold = gradient_threshold;
+            c->opt_method = opt_method;
+            c->aux_basis_name = aux_basis_name;
+            c->print_level = print_level;
+            c->max_iterations = max_iterations;
+            c->use_df = (eri_method == "df" || eri_method == "DF");
+        }, nb::arg("eri_method") = "exact",
+           nb::arg("threshold") = 1e-9,
+           nb::arg("gradient_threshold") = 1e-5,
+           nb::arg("opt_method") = "soscf",
+           nb::arg("aux_basis_name") = "",
+           nb::arg("scf_type") = "incore",
+           nb::arg("print_level") = 0,
+           nb::arg("max_iterations") = 50)
         .def_rw("scf_type", &MP2Config::scf_type)
         .def_rw("eri_method", &MP2Config::eri_method)
         .def_rw("use_df", &MP2Config::use_df)
@@ -422,10 +559,10 @@ NB_MODULE(_mshqc, m) {
         .def_rw("cholesky_threshold", &MP2Config::cholesky_threshold)
         .def_rw("max_iterations", &MP2Config::max_iterations)
         .def_rw("energy_threshold", &MP2Config::energy_threshold)
-        .def_rw("gradient_threshold", &MP2Config::gradient_threshold) 
+        .def_rw("gradient_threshold", &MP2Config::gradient_threshold)
         .def_rw("print_level", &MP2Config::print_level)
         .def_rw("opt_method", &MP2Config::opt_method);
-        
+
     nb::class_<MP2Result>(m, "MP2Result")
         .def(nb::init<>())
         .def_rw("energy_scf", &MP2Result::energy_scf)
@@ -433,6 +570,8 @@ NB_MODULE(_mshqc, m) {
         .def_rw("energy_mp2_os", &MP2Result::energy_mp2_os)
         .def_rw("energy_mp2_corr", &MP2Result::energy_mp2_corr)
         .def_rw("energy_total", &MP2Result::energy_total)
+        .def_prop_ro("e_total", [](const MP2Result& r) { return r.energy_total; })
+        .def_prop_ro("e_corr_total", [](const MP2Result& r) { return r.energy_mp2_corr; })
         .def_rw("converged", &MP2Result::converged)
         .def_rw("iterations", &MP2Result::iterations)
         .def_rw("n_occ_alpha", &MP2Result::n_occ_alpha)
@@ -444,30 +583,39 @@ NB_MODULE(_mshqc, m) {
         .def_rw("orbital_energies_alpha", &MP2Result::orbital_energies_alpha)
         .def_rw("orbital_energies_beta", &MP2Result::orbital_energies_beta);
 
-    nb::class_< foundation::RMP2 >(m, "RMP2")
-        .def(nb::init< const Molecule&, const BasisSet&, std::shared_ptr< IntegralEngine >, 
-                      const SCFResult&, const MP2Config&, std::shared_ptr< PointGroup >, std::shared_ptr< PetiteList > >(),
-             nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
-             nb::arg("config"), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
-        .def("compute", &foundation::RMP2::compute, nb::call_guard< nb::gil_scoped_release >())
+    nb::class_<foundation::RMP2>(m, "RMP2")
+        .def("__init__", [](foundation::RMP2 *t, const Molecule& mol, const BasisSet& basis,
+                            std::shared_ptr<IntegralEngine> integrals, const SCFResult& scf_guess,
+                            const MP2Config& config, std::shared_ptr<PointGroup> pg, std::shared_ptr<PetiteList> pl) {
+            new (t) foundation::RMP2(mol, basis, integrals, scf_guess,
+                                     mshqc_auto_tune::normalize_mp2_config(config, basis, scf_guess), pg, pl);
+        }, nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
+           nb::arg("config") = MP2Config(), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
+        .def("compute", &foundation::RMP2::compute, nb::call_guard<nb::gil_scoped_release>())
         .def("set_frozen_core", &mshqc::BaseMP2::set_frozen_core, nb::arg("n_frozen"));
 
-    nb::class_< mshqc::UMP2 >(m, "UMP2")
-        .def(nb::init< const Molecule&, const BasisSet&, std::shared_ptr< IntegralEngine >, 
-                      const SCFResult&, const MP2Config&, std::shared_ptr< PointGroup >, std::shared_ptr< PetiteList > >(),
-             nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
-             nb::arg("config"), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
-        .def("compute", &mshqc::UMP2::compute, nb::call_guard< nb::gil_scoped_release >())
+    nb::class_<mshqc::UMP2>(m, "UMP2")
+        .def("__init__", [](mshqc::UMP2 *t, const Molecule& mol, const BasisSet& basis,
+                            std::shared_ptr<IntegralEngine> integrals, const SCFResult& scf_guess,
+                            const MP2Config& config, std::shared_ptr<PointGroup> pg, std::shared_ptr<PetiteList> pl) {
+            new (t) mshqc::UMP2(mol, basis, integrals, scf_guess,
+                                mshqc_auto_tune::normalize_mp2_config(config, basis, scf_guess), pg, pl);
+        }, nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
+           nb::arg("config") = MP2Config(), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
+        .def("compute", &mshqc::UMP2::compute, nb::call_guard<nb::gil_scoped_release>())
         .def("set_frozen_core", &mshqc::BaseMP2::set_frozen_core, nb::arg("n_frozen"));
 
-    nb::class_< OMP2 >(m, "OMP2")
-        .def(nb::init< const Molecule&, const BasisSet&, std::shared_ptr< IntegralEngine >, 
-                      const SCFResult&, const MP2Config&, std::shared_ptr< PointGroup >, std::shared_ptr< PetiteList > >(), 
-             nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
-             nb::arg("config"), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
-        .def("compute", &OMP2::compute, nb::call_guard< nb::gil_scoped_release >(), "Run OMP2 optimization")
+    nb::class_<OMP2>(m, "OMP2")
+        .def("__init__", [](OMP2 *t, const Molecule& mol, const BasisSet& basis,
+                            std::shared_ptr<IntegralEngine> integrals, const SCFResult& scf_guess,
+                            const MP2Config& config, std::shared_ptr<PointGroup> pg, std::shared_ptr<PetiteList> pl) {
+            new (t) OMP2(mol, basis, integrals, scf_guess,
+                         mshqc_auto_tune::normalize_mp2_config(config, basis, scf_guess), pg, pl);
+        }, nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
+           nb::arg("config") = MP2Config(), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
+        .def("compute", &OMP2::compute, nb::call_guard<nb::gil_scoped_release>(), "Run OMP2 optimization")
         .def("set_frozen_core", &mshqc::BaseMP2::set_frozen_core, nb::arg("n_frozen"));
-  
+
     nb::class_<MP3Result>(m, "MP3Result")
         .def(nb::init<>())
         .def_rw("e_hf", &MP3Result::e_hf)
@@ -488,22 +636,42 @@ NB_MODULE(_mshqc, m) {
     nb::class_<RMP3>(m, "RMP3")
         .def(nb::init<const SCFResult&, const MP2Result&, const MP2Config&, std::shared_ptr<IntegralEngine>>(),
              nb::arg("scf_guess"), nb::arg("mp2_guess"), nb::arg("config"), nb::arg("integrals"))
+        .def("__init__", [](RMP3 *t, const Molecule& mol, const BasisSet& basis,
+                            std::shared_ptr<IntegralEngine> integrals, const SCFResult& scf_guess,
+                            const MP2Config& config, std::shared_ptr<PointGroup> pg, std::shared_ptr<PetiteList> pl) {
+            auto norm_conf = mshqc_auto_tune::normalize_mp2_config(config, basis, scf_guess);
+            foundation::RMP2 rmp2_solver(mol, basis, integrals, scf_guess, norm_conf, pg, pl);
+            MP2Result mp2_res = rmp2_solver.compute();
+            new (t) RMP3(scf_guess, mp2_res, norm_conf, integrals);
+        }, nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
+           nb::arg("config") = MP2Config(), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
         .def("compute", &RMP3::compute, nb::call_guard<nb::gil_scoped_release>());
 
     nb::class_<UMP3>(m, "UMP3")
         .def(nb::init<const SCFResult&, const MP2Result&, const MP2Config&, std::shared_ptr<IntegralEngine>>(),
              nb::arg("scf_guess"), nb::arg("mp2_guess"), nb::arg("config"), nb::arg("integrals"))
+        .def("__init__", [](UMP3 *t, const Molecule& mol, const BasisSet& basis,
+                            std::shared_ptr<IntegralEngine> integrals, const SCFResult& scf_guess,
+                            const MP2Config& config, std::shared_ptr<PointGroup> pg, std::shared_ptr<PetiteList> pl) {
+            auto norm_conf = mshqc_auto_tune::normalize_mp2_config(config, basis, scf_guess);
+            mshqc::UMP2 ump2_solver(mol, basis, integrals, scf_guess, norm_conf, pg, pl);
+            MP2Result mp2_res = ump2_solver.compute();
+            new (t) UMP3(scf_guess, mp2_res, norm_conf, integrals);
+        }, nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
+           nb::arg("config") = MP2Config(), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
         .def("compute", &UMP3::compute, nb::call_guard<nb::gil_scoped_release>());
 
-
     nb::class_<OMP3>(m, "OMP3")
-        .def(nb::init<const Molecule&, const BasisSet&, std::shared_ptr<IntegralEngine>, 
-                      const SCFResult&, const MP2Config&, std::shared_ptr<PointGroup>, std::shared_ptr<PetiteList>>(), 
-             nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
-             nb::arg("config"), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
+        .def("__init__", [](OMP3 *t, const Molecule& mol, const BasisSet& basis,
+                            std::shared_ptr<IntegralEngine> integrals, const SCFResult& scf_guess,
+                            const MP2Config& config, std::shared_ptr<PointGroup> pg, std::shared_ptr<PetiteList> pl) {
+            new (t) OMP3(mol, basis, integrals, scf_guess,
+                         mshqc_auto_tune::normalize_mp2_config(config, basis, scf_guess), pg, pl);
+        }, nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
+           nb::arg("config") = MP2Config(), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
         .def("compute", &OMP3::compute_omp3, nb::call_guard<nb::gil_scoped_release>(), "Run Orbital-Optimized MP3");
 
-m.def("bohr_to_angstrom", [](double bohr) { return bohr * 0.529177210903; }, "Convert Bohr to Angstrom");
+    m.def("bohr_to_angstrom", [](double bohr) { return bohr * 0.529177210903; }, "Convert Bohr to Angstrom");
     m.def("angstrom_to_bohr", [](double angstrom) { return angstrom / 0.529177210903; }, "Convert Angstrom to Bohr");
     m.def("hartree_to_ev", [](double hartree) { return hartree * 27.211386245988; }, "Convert Hartree to eV");
     m.def("hartree_to_kcal", [](double hartree) { return hartree * 627.5094740631; }, "Convert Hartree to kcal/mol");
