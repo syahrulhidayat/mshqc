@@ -25,17 +25,21 @@
 namespace mshqc {
 namespace gradient {
 
+// ============================================================================
+// Matrix-Free Trust-Region Steihaug-Toint TCG untuk Rotasi Orbital (OMP2/OMP3)
+// ============================================================================
+
 struct TrustRegionConfig {
-    int max_micro_iter = 30;
-    double micro_thresh = 1e-4;
+    int max_micro_iter = 30;      // Maksimal iterasi TCG
+    double micro_thresh = 1e-4;   // Toleransi residual
     int print_level = 0;
     double precond_shift = 1e-4;
 };
 
 struct TrustRegionResult {
-    Eigen::VectorXd step;
-    double predicted_energy_change;
-    bool hit_boundary;
+    Eigen::VectorXd step;               // Vektor langkah rotasi (kappa)
+    double predicted_energy_change;     // Prediksi dE dari model kuadratik
+    bool hit_boundary;                  // True jika langkah menabrak batas Trust Region
 };
 
 class TrustRegionSOSCF {

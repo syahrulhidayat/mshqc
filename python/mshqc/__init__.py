@@ -33,7 +33,6 @@ def _configure_environment():
     if "NUMEXPR_NUM_THREADS" not in os.environ:
         os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
-    # Resolusi otomatis direktori basis set untuk instalasi PyPI/Colab maupun repo lokal
     if "MSHQC_BASIS_PATH" not in os.environ:
         pkg_basis = os.path.join(os.path.dirname(__file__), "basis")
         repo_basis = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "data", "basis"))

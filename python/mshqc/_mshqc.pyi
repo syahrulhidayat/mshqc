@@ -1,18 +1,24 @@
-
+# Copyright 2026 Muhamad Syahrul Hidayat
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 
 import numpy as np
-from typing import List, Optional, Tuple, overload, Any, Union
-
-
-
-
-
-
-
+from typing import List, Optional, Tuple, overload
 
 class ERITensor:
     def size(self) -> int: ...
     def dimension(self, index: int) -> int: ...
+    def shape(self) -> Tuple[int, int, int, int]: ...
 
 class Atom:
     atomic_number: int
@@ -23,46 +29,24 @@ class Atom:
     def position(self) -> List[float]: ...
 
 class Molecule:
-    
-
+    def __init__(self, charge: int = 0, multiplicity: int = 1) -> None: ...
     @overload
-    def __init__(self) -> None: ...
+    def add_atom(self, Z: int, x: float, y: float, z: float, units: str = "bohr") -> None: ...
     @overload
-    def __init__(self, charge: int, multiplicity: int) -> None: ...
-    
-    def __init__(self, *args, **kwargs) -> None: ... 
-
-    
-    @overload
-    def add_atom(self, Z: int, x: float, y: float, z: float) -> None: ...
+    def add_atom(self, symbol: str, x: float, y: float, z: float, units: str = "bohr") -> None: ...
     @overload
     def add_atom(self, atom: Atom) -> None: ...
-    
     def n_atoms(self) -> int: ...
     def atom(self, i: int) -> Atom: ...
-    def total_nuclear_charge(self) -> float: ...
+    def atoms(self) -> List[Atom]: ...
+    def total_nuclear_charge(self) -> int: ...
     def n_electrons(self) -> int: ...
     def charge(self) -> int: ...
     def set_charge(self, q: int) -> None: ...
     def multiplicity(self) -> int: ...
     def set_multiplicity(self, m: int) -> None: ...
     def nuclear_repulsion_energy(self) -> float: ...
-    def atoms(self) -> List[Atom]: ...
 
-class BasisSet:
-    @overload
-    def __init__(self) -> None: ...
-    @overload
-    def __init__(self, basis_name: str, mol: Molecule, basis_dir: str = "data/basis") -> None: ...
-    
-    def __init__(self, *args, **kwargs) -> None: ...
-    
-    def n_basis_functions(self) -> int: ...
-    def name(self) -> str: ...
-    def read_gbs(self, basis_file: str, mol: Molecule) -> None: ...
-    def add_shell(self, shell: Shell) -> None: ...
-    def n_shells(self) -> int: ...
-    def shell(self, i: int) -> Shell: ...
 class AngularMomentum:
     S: int
     P: int
@@ -85,69 +69,146 @@ class Shell:
     @property
     def primitives(self) -> List[GaussianPrimitive]: ...
 
-class CholeskyDecompositionResult:
-    n_vectors: int
-    n_basis: int
-    threshold: float
-    compression_ratio: float
-    converged: bool
+class BasisSet:
+    @overload
+    def __init__(self) -> None: ...
+    @overload
+    def __init__(self, basis_name: str, mol: Molecule, basis_dir: str = "data/basis") -> None: ...
+    def read_gbs(self, basis_file: str, mol: Molecule) -> None: ...
+    def add_shell(self, shell: Shell) -> None: ...
+    def n_shells(self) -> int: ...
+    def n_basis_functions(self) -> int: ...
+    def n_basis(self) -> int: ...
+    def shell(self, i: int) -> Shell: ...
+    def name(self) -> str: ...
 
 class IntegralEngine:
     def __init__(self, mol: Molecule, basis: BasisSet) -> None: ...
-    def compute_eri(self) -> ERITensor: ...
     def compute_overlap(self) -> np.ndarray: ...
     def compute_kinetic(self) -> np.ndarray: ...
     def compute_nuclear(self) -> np.ndarray: ...
+    def compute_eri(self) -> ERITensor: ...
     def compute_eri_diagonal(self) -> np.ndarray: ...
     def compute_eri_column(self, pivot_index: int) -> np.ndarray: ...
-    def compute_all_integrals(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]: ...
-    
-class CholeskyERI:
-    def __init__(self, threshold: float = 1e-6) -> None: ...
-    def decompose(self, eri_tensor: ERITensor) -> None: ...
-    def get_L_vectors(self) -> List[np.ndarray]: ...
-    def reconstruct(self) -> ERITensor: ...
+
+class CholeskyDecompositionResult:
+    @property
     def n_vectors(self) -> int: ...
+    @property
+    def n_basis(self) -> int: ...
+    @property
     def threshold(self) -> float: ...
+    @property
+    def compression_ratio(self) -> float: ...
+    @property
+    def converged(self) -> bool: ...
 
+class CholeskyERI:
+    @overload
+    def __init__(self, threshold: float = 1e-9) -> None: ...
+    @overload
+    def __init__(self, basis: BasisSet, integrals: IntegralEngine) -> None: ...
+    @overload
+    def __init__(self, mol: Molecule, basis: BasisSet, threshold: float = 1e-9) -> None: ...
+    def set_threshold(self, threshold: float) -> None: ...
+    def set_print_level(self, level: int) -> None: ...
+    def n_vectors(self) -> int: ...
+    def n_cholesky_vectors(self) -> int: ...
+    def threshold(self) -> float: ...
+    def compute(self) -> CholeskyDecompositionResult: ...
+    def decompose(self, eri: ERITensor) -> CholeskyDecompositionResult: ...
+    def get_L_mat(self) -> np.ndarray: ...
+    def reconstruct(self) -> np.ndarray: ...
+    def reconstruct_full(self) -> ERITensor: ...
+    def is_decomposed(self) -> bool: ...
+    def decomposed(self) -> bool: ...
 
+class SymOpType:
+    Identity: int
+    Rotation: int
+    Reflection: int
+    Inversion: int
+    ImproperRotation: int
 
+class SymmetryOperation:
+    type: SymOpType
+    order: int
+    matrix: np.ndarray
+    name: str
 
+class PointGroup:
+    def __init__(self, mol: Molecule, tolerance: float = 1e-6) -> None: ...
+    def detect(self) -> None: ...
+    def get_symbol(self) -> str: ...
+    def get_order(self) -> int: ...
+    def get_aligned_molecule(self) -> Molecule: ...
+    def get_operations(self) -> List[SymmetryOperation]: ...
 
+class UniqueShellPair:
+    p: int
+    q: int
+    weight: float
 
+class PetiteList:
+    def __init__(self, basis: BasisSet, pg: PointGroup) -> None: ...
+    def build(self) -> None: ...
+    def get_unique_pairs(self) -> List[UniqueShellPair]: ...
 
+class BasisSymmetrizer:
+    def __init__(self, basis: BasisSet, pg: PointGroup, pl: PetiteList) -> None: ...
+    def symmetrize(self, S: np.ndarray) -> np.ndarray: ...
 
-class CholeskyUHFConfig:
-    cholesky_threshold: float
-    print_level: int
-    max_iterations: int        
-    energy_threshold: float     
-    def __init__(self) -> None: ...
+class DIIS:
+    def __init__(self, max_vectors: int = 8) -> None: ...
+    def clear(self) -> None: ...
+    def add_iteration(self, F: np.ndarray, err: np.ndarray, P: np.ndarray) -> None: ...
+    def extrapolate(self) -> np.ndarray: ...
 
-class CholeskyUHF:
-    def __init__(self, molecule: Molecule, basis: BasisSet, 
-                 integrals: IntegralEngine, n_alpha: int, n_beta: int,
-                 config: CholeskyUHFConfig = ...) -> None: ...
-    def set_cholesky_vectors(self, vectors: List[np.ndarray]) -> None: ...
-    def compute(self) -> SCFResult: ...
+class ShellPair:
+    sh_a: int
+    sh_b: int
+    max_val: float
+    center: Tuple[float, float, float]
+
+class Screening:
+    def __init__(self, basis: BasisSet) -> None: ...
+    def reset(self) -> None: ...
+    def compute(self, integrals: IntegralEngine) -> None: ...
+    def print_stats(self, threshold: float) -> None: ...
+    def get_significant_pairs(self, threshold: float) -> List[ShellPair]: ...
+    def is_significant(self, sh_a: int, sh_b: int, sh_c: int, sh_d: int, threshold: float) -> bool: ...
+    def get_schwarz_val(self, sh_a: int, sh_b: int) -> float: ...
+    def max_schwarz(self) -> float: ...
+
 class SCFConfig:
+    scf_type: str
+    eri_method: str
+    cholesky_threshold: float
+    df_threshold: float
     max_iterations: int
     energy_threshold: float
     density_threshold: float
     diis_threshold: float
     diis_max_vectors: int
     print_level: int
-    level_shift: float
-    def __init__(self) -> None: ...
-    def set_convergence(self, energy: float, density: float) -> None: ...
-
-
+    use_df: bool
+    aux_basis_name: str
+    def __init__(
+        self,
+        eri_method: str = "exact",
+        threshold: float = 1e-9,
+        aux_basis_name: str = "",
+        scf_type: str = "incore",
+        print_level: int = 0,
+        max_iterations: int = 100,
+    ) -> None: ...
 
 class SCFResult:
     energy_electronic: float
     energy_nuclear: float
     energy_total: float
-    e_total: float
+    @property
+    def e_total(self) -> float: ...
     orbital_energies_alpha: np.ndarray
     orbital_energies_beta: np.ndarray
     C_alpha: np.ndarray
@@ -158,556 +219,271 @@ class SCFResult:
     F_beta: np.ndarray
     iterations: int
     converged: bool
-    gradient_norm: float
     n_occ_alpha: int
     n_occ_beta: int
-    def __float__(self) -> float: ...
     def __init__(self) -> None: ...
-
-class UHF:
-    def __init__(self, molecule: Molecule, basis: BasisSet, 
-                 integrals: IntegralEngine, n_alpha: int, n_beta: int, 
-                 config: SCFConfig = ...) -> None: ...
-    def compute(self) -> SCFResult: ...
 
 class RHF:
-    def __init__(self, molecule: Molecule, basis: BasisSet, 
-                 integrals: IntegralEngine, config: SCFConfig = ...) -> None: ...
-    def compute(self) -> SCFResult: ...
-
-class ROHF:
-    def __init__(self, molecule: Molecule, basis: BasisSet, 
-                 n_alpha: int, n_beta: int, config: SCFConfig = ...) -> None: ...
-    def run(self) -> SCFResult: ...
-
-
-
-
-
-class CholeskyROHFConfig(SCFConfig):
-    cholesky_threshold: float
-    screen_exchange: bool
-    def __init__(self) -> None: ...
-
-class CholeskyROHF:
-    
-
     @overload
-    def __init__(self, molecule: Molecule, basis: BasisSet, 
-                 integrals: IntegralEngine, n_alpha: int, n_beta: int,
-                 config: CholeskyROHFConfig = ...) -> None: ...
-    
-    
-
+    def __init__(
+        self,
+        molecule: Molecule,
+        basis: BasisSet,
+        integrals: IntegralEngine,
+        pg: Optional[PointGroup],
+        pl: Optional[PetiteList],
+        config: SCFConfig = ...,
+    ) -> None: ...
     @overload
-    def __init__(self, molecule: Molecule, basis: BasisSet, 
-                 integrals: IntegralEngine, n_alpha: int, n_beta: int,
-                 config: CholeskyROHFConfig, 
-                 existing_cholesky: CholeskyERI) -> None: ...
-
-    def compute(self) -> SCFResult: ...
-
-class CholeskyRHFConfig(SCFConfig):
-    cholesky_threshold: float
-    screen_exchange: bool
-    def __init__(self) -> None: ...
-
-class CholeskyRHF:
-    
-
-    @overload
-    def __init__(self, molecule: Molecule, basis: BasisSet, 
-                 integrals: IntegralEngine,
-                 config: CholeskyRHFConfig = ...) -> None: ...
-    
-    
-
-    @overload
-    def __init__(self, molecule: Molecule, basis: BasisSet, 
-                 integrals: IntegralEngine,
-                 config: CholeskyRHFConfig, 
-                 existing_cholesky: CholeskyERI) -> None: ...
-
+    def __init__(
+        self,
+        molecule: Molecule,
+        basis: BasisSet,
+        integrals: IntegralEngine,
+        config: SCFConfig = ...,
+        pg: Optional[PointGroup] = None,
+        pl: Optional[PetiteList] = None,
+    ) -> None: ...
     def compute(self) -> SCFResult: ...
     def energy(self) -> float: ...
 
+class UHF:
+    @overload
+    def __init__(
+        self,
+        molecule: Molecule,
+        basis: BasisSet,
+        integrals: IntegralEngine,
+        pg: Optional[PointGroup],
+        pl: Optional[PetiteList],
+        n_alpha: int,
+        n_beta: int,
+        config: SCFConfig = ...,
+    ) -> None: ...
+    @overload
+    def __init__(
+        self,
+        molecule: Molecule,
+        basis: BasisSet,
+        integrals: IntegralEngine,
+        n_alpha: int,
+        n_beta: int,
+        config: SCFConfig = ...,
+    ) -> None: ...
+    @overload
+    def __init__(
+        self,
+        molecule: Molecule,
+        basis: BasisSet,
+        integrals: IntegralEngine,
+        config: SCFConfig = ...,
+        pg: Optional[PointGroup] = None,
+        pl: Optional[PetiteList] = None,
+    ) -> None: ...
+    def compute(self) -> SCFResult: ...
+    def energy(self) -> float: ...
 
+class ROHF:
+    @overload
+    def __init__(
+        self,
+        molecule: Molecule,
+        basis: BasisSet,
+        integrals: IntegralEngine,
+        pg: Optional[PointGroup],
+        pl: Optional[PetiteList],
+        n_alpha: int,
+        n_beta: int,
+        config: SCFConfig = ...,
+    ) -> None: ...
+    @overload
+    def __init__(
+        self,
+        molecule: Molecule,
+        basis: BasisSet,
+        integrals: IntegralEngine,
+        n_alpha: int,
+        n_beta: int,
+        config: SCFConfig = ...,
+    ) -> None: ...
+    @overload
+    def __init__(
+        self,
+        molecule: Molecule,
+        basis: BasisSet,
+        integrals: IntegralEngine,
+        config: SCFConfig = ...,
+        pg: Optional[PointGroup] = None,
+        pl: Optional[PetiteList] = None,
+    ) -> None: ...
+    def compute(self) -> SCFResult: ...
+    def energy(self) -> float: ...
 
-class CholeskyOMP2Config:
+class MP2Config:
+    scf_type: str
+    eri_method: str
+    use_df: bool
+    aux_basis_name: str
+    df_threshold: float
+    cholesky_threshold: float
     max_iterations: int
     energy_threshold: float
     gradient_threshold: float
-    cholesky_threshold: float
     print_level: int
-    def __init__(self) -> None: ...
+    opt_method: str
+    def __init__(
+        self,
+        eri_method: str = "exact",
+        threshold: float = 1e-9,
+        gradient_threshold: float = 1e-5,
+        opt_method: str = "soscf",
+        aux_basis_name: str = "",
+        scf_type: str = "incore",
+        print_level: int = 0,
+        max_iterations: int = 50,
+    ) -> None: ...
 
-class CholeskyOMP2:
-    
-
-    @overload
-    def __init__(self, molecule: Molecule, basis: BasisSet, 
-                 integrals: IntegralEngine, scf_guess: SCFResult,
-                 config: CholeskyOMP2Config = ...) -> None: ...
-    
-    
-
-    @overload
-    def __init__(self, molecule: Molecule, basis: BasisSet, 
-                 integrals: IntegralEngine, scf_guess: SCFResult,
-                 config: CholeskyOMP2Config, 
-                 existing_cholesky: CholeskyERI) -> None: ...
-
-    def compute(self) -> OMP2Result: ...
-
-
-
-class CholeskyOMP3Config:
-    max_iterations: int
-    energy_threshold: float
-    gradient_threshold: float
-    cholesky_threshold: float
-    print_level: int
-    def __init__(self) -> None: ...
-
-class CholeskyOMP3Result:
+class MP2Result:
     energy_scf: float
+    energy_mp2_ss: float
+    energy_mp2_os: float
     energy_mp2_corr: float
-    energy_mp3_corr: float
     energy_total: float
+    @property
+    def e_total(self) -> float: ...
+    @property
+    def e_corr_total(self) -> float: ...
     converged: bool
     iterations: int
+    n_occ_alpha: int
+    n_occ_beta: int
+    n_virt_alpha: int
+    n_virt_beta: int
     C_alpha: np.ndarray
     C_beta: np.ndarray
     orbital_energies_alpha: np.ndarray
     orbital_energies_beta: np.ndarray
     def __init__(self) -> None: ...
 
-class CholeskyOMP3:
-    def __init__(self, mol: Molecule, basis: BasisSet, 
-                 integrals: IntegralEngine, 
-                 omp2_guess: OMP2Result, 
-                 config: CholeskyOMP3Config,
-                 cholesky_vectors: CholeskyERI) -> None: ...
-    def compute(self) -> CholeskyOMP3Result: ...
-
-
-
-
-class CholeskyRMP2Config:
-    cholesky_threshold: float
-    print_level: int
-    def __init__(self) -> None: ...
-
-
-
-class CholeskyRMP2Result:
-    e_rhf: float
-    e_corr: float
-    e_total: float
-    n_chol_vectors: int
-    def __init__(self) -> None: ...
-
-class CholeskyRMP2:
-    
-
-    @overload
-    def __init__(self, molecule: Molecule, basis: BasisSet, 
-                 integrals: IntegralEngine, rhf_result: SCFResult,
-                 config: CholeskyRMP2Config = ...) -> None: ...
-    
-    
-
-    @overload
-    def __init__(self, molecule: Molecule, basis: BasisSet, 
-                 integrals: IntegralEngine, rhf_result: SCFResult,
-                 config: CholeskyRMP2Config, 
-                 existing_cholesky: CholeskyERI) -> None: ...
-    
-    def __init__(self, *args, **kwargs) -> None: ...
-
-    
-
-    
-
-    def compute(self) -> CholeskyRMP2Result: ... 
-
-
-
-class CholeskyRMP3:
-    def __init__(self, rhf_result: SCFResult, 
-                 crmp2_result: CholeskyRMP2Result, 
-                 basis: BasisSet) -> None: ...
-    def compute(self) -> RMP3Result: ...
-
-
-
-
-
-
-
-
-
-
-class ActiveSpace:
-    def __init__(self) -> None: ...
-    
-    
-
-    @staticmethod
-    def CAS_Frozen(n_frozen: int, n_active_orb: int, n_basis: int, n_electrons: int) -> ActiveSpace: ...
-    
-    @staticmethod
-    def CAS(n_elec: int, n_orb: int, n_total_orb: int, n_total_elec: int) -> ActiveSpace: ...
-    def n_inactive(self) -> int: ...
-    def n_active(self) -> int: ...
-    def n_virtual(self) -> int: ...
-    def n_elec_active(self) -> int: ...
-
-class UNOResult:
-    C_uno: np.ndarray
-    def __init__(self) -> None: ...
-    occupations: np.ndarray
-    entropy: float
-    active_indices: List[int]
-    suggested_n_active: int
-    suggested_n_electrons: int
-
-class CholeskyUNO:
-    def __init__(self, uhf_res: SCFResult, integrals: IntegralEngine, n_basis: int) -> None: ...
-    def compute(self) -> UNOResult: ...
-    def print_report(self, threshold: float = 0.02) -> None: ...
-    def save_orbitals(self, filename: str) -> None: ...
-
-
-class CanonicalUNO:
-    def __init__(self, uhf_res: SCFResult, integrals: IntegralEngine, n_basis: int) -> None: ...
-    def compute(self) -> UNOResult: ...
-    def print_report(self, threshold: float = 0.02) -> None: ...
-    def save_orbitals(self, filename: str) -> None: ...
-
-class SACASConfig:
-    n_states: int
-    max_iter: int
-    cholesky_thresh: float
-    weights: List[float]        
-    e_thresh: float              
-    grad_thresh: float           
-    print_level: int             
-    rotation_damping: float      
-    shift: float                 
-    def __init__(self) -> None: ...
-    def set_equal_weights(self, n_states: int) -> None: ...
-
-class SACASResult:
-    state_energies: List[float]
-    def __init__(self) -> None: ...
-    e_avg: float
-    C_mo: np.ndarray
-    orbital_energies: np.ndarray
-    converged: bool
-
-class CholeskySACASSCF:
-    @overload
-    def __init__(self, mol: Molecule, basis: BasisSet, integrals: IntegralEngine, 
-                 active_space: ActiveSpace, config: SACASConfig) -> None: ...
-    @overload
-    def __init__(self, mol: Molecule, basis: BasisSet, integrals: IntegralEngine, 
-                 active_space: ActiveSpace, config: SACASConfig, 
-                 L_vectors: List[np.ndarray]) -> None: ...
-                 
-    def __init__(self, *args, **kwargs) -> None: ...
-                 
-    def compute(self, initial_guess: np.ndarray) -> SACASResult: ...
-
-
-
-
-
-class CanonicalSACASSCF:
-    def __init__(self, mol: Molecule, basis: BasisSet, integrals: IntegralEngine, 
-                 active_space: ActiveSpace, config: SACASConfig) -> None: ...
-    
-    @overload
-    def compute(self, initial_guess: SCFResult) -> SACASResult: ...
-    
-    @overload
-    def compute(self, initial_orbitals: np.ndarray) -> SACASResult: ...
-
-
-
-class CanonicalSACASPT2:
-    def __init__(self, sacas_result: SACASResult, 
-                 integrals: IntegralEngine, 
-                 basis: BasisSet,
-                 active_space: ActiveSpace, 
-                 config: CASPT2Config) -> None: ...
-    
-    def compute(self) -> CASPT2Result: ...
-
-
-class CASResult:
-    e_casscf: float
-    e_nuclear: float
-    n_iterations: int
-    converged: bool
-    C_mo: np.ndarray
-    orbital_energies: np.ndarray
-    ci_coeffs: np.ndarray
-    determinants: List[Any]
-    n_determinants: int
-    active_space: ActiveSpace
-    def __init__(self) -> None: ...
-
-class CASSCF:
-    def __init__(self, mol: Molecule, basis: BasisSet, integrals: IntegralEngine, active_space: ActiveSpace) -> None: ...
-    
-    
-
-    def compute(self, initial_guess: Union[SCFResult, np.ndarray]) -> CASResult: ...
-    
-    
-
-    def set_max_iterations(self, n: int) -> None: ...
-    def set_energy_threshold(self, t: float) -> None: ...
-    def set_gradient_threshold(self, t: float) -> None: ...
-    def set_ci_solver(self, solver_type: str) -> None: ...
-
-class CASPT2Result1:
-    e_casscf: float
-    e_pt2: float
-    e_total: float
-    converged: bool
-    status_message: str
-    def __init__(self) -> None: ...
-
-class CASPT2:
-    def __init__(self, mol: Molecule, basis: BasisSet, integrals: IntegralEngine, casscf_result: CASResult) -> None: ...
-    def compute(self) -> CASPT2Result1: ...
-
-class CholeskyCASSCF:
-    @overload
-    def __init__(self, mol: Molecule, basis: BasisSet, integrals: IntegralEngine, active_space: ActiveSpace) -> None: ...
-    @overload
-    def __init__(self, mol: Molecule, basis: BasisSet, integrals: IntegralEngine, active_space: ActiveSpace, vectors: List[np.ndarray]) -> None: ...
-    def compute(self) -> CASResult: ...
-
-
-
-
-
-
-
-
-class CASPT2Config:
-    shift: float
-    print_level: int
-    def __init__(self) -> None: ...
-    export_amplitudes: bool
-
-class CASPT2Result:
-    e_pt2: List[float]
-    def __init__(self) -> None: ...
-    e_total: List[float]
-
-
-
-
-class CholeskySACASPT2:
-    def __init__(self, result: SACASResult, L_vectors: List[np.ndarray], n_basis: int, active_space: ActiveSpace, config: CASPT2Config) -> None: ...
-    
-    
-
-    def compute(self) -> CASPT2Result: ...
-
-class CASPT3Config:
-    shift: float
-    print_level: int
-    zero_thresh: float
-    def __init__(self) -> None: ...
-
-class CASPT3Result:
-    e_pt3: List[float]
-    def __init__(self) -> None: ...
-    e_cas: float
-    e_pt2: float
-    e_total: float
-
-class CholeskySACASPT3:
-    def __init__(self, sacas_res: SACASResult, L_vectors: List[np.ndarray], 
-                 n_basis: int, active_space: ActiveSpace, config: CASPT3Config) -> None: ...
-    def compute(self) -> CASPT3Result: ...
-
-
-
-class CanonicalSACASPT3:
-    def __init__(self, sacas_result: SACASResult, 
-                 integrals: IntegralEngine, 
-                 basis: BasisSet,
-                 active_space: ActiveSpace, 
-                 config: CASPT3Config) -> None: ...
-    
-    def compute(self) -> CASPT3Result: ...
-
+class RMP2:
+    def __init__(
+        self,
+        mol: Molecule,
+        basis: BasisSet,
+        integrals: IntegralEngine,
+        scf_guess: SCFResult,
+        config: MP2Config = ...,
+        pg: Optional[PointGroup] = None,
+        pl: Optional[PetiteList] = None,
+    ) -> None: ...
+    def compute(self) -> MP2Result: ...
+    def set_frozen_core(self, n_frozen: int) -> None: ...
+
+class UMP2:
+    def __init__(
+        self,
+        mol: Molecule,
+        basis: BasisSet,
+        integrals: IntegralEngine,
+        scf_guess: SCFResult,
+        config: MP2Config = ...,
+        pg: Optional[PointGroup] = None,
+        pl: Optional[PetiteList] = None,
+    ) -> None: ...
+    def compute(self) -> MP2Result: ...
+    def set_frozen_core(self, n_frozen: int) -> None: ...
 
 class OMP2:
-    def __init__(self, mol: Molecule, basis: BasisSet, integrals: IntegralEngine, scf_guess: SCFResult) -> None: ...
-    def compute(self) -> OMP2Result: ...
-    def set_max_iterations(self, n: int) -> None: ...
-    def set_convergence_threshold(self, t: float) -> None: ...
-    def set_gradient_threshold(self, t: float) -> None: ...
+    def __init__(
+        self,
+        mol: Molecule,
+        basis: BasisSet,
+        integrals: IntegralEngine,
+        scf_guess: SCFResult,
+        config: MP2Config = ...,
+        pg: Optional[PointGroup] = None,
+        pl: Optional[PetiteList] = None,
+    ) -> None: ...
+    def compute(self) -> MP2Result: ...
+    def set_frozen_core(self, n_frozen: int) -> None: ...
 
-class OMP2Result:
-    energy_scf: float
-    energy_mp2_ss: float
-    energy_mp2_os: float
-    energy_mp2_corr: float
-    energy_total: float
-    converged: bool          
-    iterations: int
-    n_occ_alpha: int
-    n_occ_beta: int
-    n_virt_alpha: int
-    n_virt_beta: int
-    def __init__(self) -> None: ...
-
-class OMP3Result:
-    energy_total: float
-    energy_mp3_corr: float
-    def __init__(self) -> None: ...
-
-class OMP3:
-    def __init__(self, mol: Molecule, basis: BasisSet, integrals: IntegralEngine, omp2_res: OMP2Result) -> None: ...
-    def compute(self) -> OMP3Result: ...
-    def set_max_iterations(self, n: int) -> None: ...
-    def set_convergence_threshold(self, t: float) -> None: ...
-
-class UMP2Result:
-    e_corr_ss_aa: float
-    e_corr_ss_bb: float
-    e_corr_os: float
-    e_corr_total: float
-    e_total: float
-    def __init__(self) -> None: ...
-
-class UMP3Result:
-    e_uhf: float
+class MP3Result:
+    e_hf: float
     e_mp2: float
-    e_mp3_corr: float
-    e_corr_total: float
-    e_total: float
+    e_mp3: float
     e3_aa: float
     e3_bb: float
     e3_ab: float
-    def __init__(self) -> None: ...
-
-class UMP2:
-    def __init__(self, uhf_result: SCFResult, basis: BasisSet, integrals: IntegralEngine) -> None: ...
-    def compute(self) -> UMP2Result: ...
-
-class UMP3:
-    def __init__(self, uhf_result: SCFResult, ump2_result: UMP2Result, basis: BasisSet, integrals: IntegralEngine) -> None: ...
-    def compute(self) -> UMP3Result: ...
-
-
-
-
-class CholeskyUMP2Config:
-    cholesky_threshold: float
-    use_on_the_fly: bool
-    validate_energy: bool
-    print_level: int
-    def __init__(self) -> None: ...
-
-class CholeskyUMP2Result:
-    e_corr_ss_aa: float
-    e_corr_ss_bb: float
-    e_corr_os: float
     e_corr_total: float
     e_total: float
-    n_cholesky_vectors: int
-    compression_ratio: float
-    memory_mb: float
-    time_cholesky_s: float
-    time_transform_s: float
-    time_energy_s: float
-
-class CholeskyUMP2:
-    def __init__(self, scf_res: SCFResult, basis: BasisSet, integrals: IntegralEngine, 
-                 config: CholeskyUMP2Config, chol_eri: CholeskyERI) -> None: ...
-    def compute(self) -> CholeskyUMP2Result: ...
-    def compute_t2_amplitudes(self) -> None: ...
-    def get_cholesky(self) -> CholeskyERI: ...
-
-class CholeskyUMP3Config:
-    cholesky_threshold: float
-    use_ump2_result: bool
-    store_intermediates: bool
-    print_level: int
+    @property
+    def energy_total(self) -> float: ...
+    @property
+    def energy_scf(self) -> float: ...
+    @property
+    def energy_mp2_corr(self) -> float: ...
+    @property
+    def energy_mp3_corr(self) -> float: ...
+    converged: bool
+    iterations: int
     def __init__(self) -> None: ...
-
-class CholeskyUMP3Result:
-    e_mp2_total: float
-    e_mp3_ss_aa: float
-    e_mp3_ss_bb: float
-    e_mp3_os: float
-    e_mp3_total: float
-    e_corr_total: float
-    e_total: float
-    n_cholesky_vectors: int
-    time_mp3_s: float
-
-class CholeskyUMP3:
-    @overload
-    def __init__(self, scf_res: SCFResult, basis: BasisSet, integrals: IntegralEngine, config: CholeskyUMP3Config) -> None: ...
-    @overload
-    def __init__(self, ump2_solver: CholeskyUMP2, config: CholeskyUMP3Config) -> None: ...
-    def compute(self) -> CholeskyUMP3Result: ...
-    def initialize_cholesky(self) -> None: ...
-    def transform_cholesky_vectors(self) -> None: ...
-    
-
-
-
-class RMP2Result:
-    e_corr: float
-    e_rhf: float
-    e_total: float
-    def __init__(self) -> None: ...
-
-class RMP3Result:
-    e_mp2: float
-    e_mp3: float
-    e_total: float
-    def __init__(self) -> None: ...
-
-class RMP2:
-    def __init__(self, rhf_result: SCFResult, basis: BasisSet, integrals: IntegralEngine) -> None: ...
-    def compute(self) -> RMP2Result: ...
 
 class RMP3:
-    def __init__(self, rhf_result: SCFResult, rmp2_result: RMP2Result, basis: BasisSet, integrals: IntegralEngine) -> None: ...
-    def compute(self) -> RMP3Result: ...
+    @overload
+    def __init__(
+        self,
+        scf_guess: SCFResult,
+        mp2_guess: MP2Result,
+        config: MP2Config,
+        integrals: IntegralEngine,
+    ) -> None: ...
+    @overload
+    def __init__(
+        self,
+        mol: Molecule,
+        basis: BasisSet,
+        integrals: IntegralEngine,
+        scf_guess: SCFResult,
+        config: MP2Config = ...,
+        pg: Optional[PointGroup] = None,
+        pl: Optional[PetiteList] = None,
+    ) -> None: ...
+    def compute(self) -> MP3Result: ...
 
-    
+class UMP3:
+    @overload
+    def __init__(
+        self,
+        scf_guess: SCFResult,
+        mp2_guess: MP2Result,
+        config: MP2Config,
+        integrals: IntegralEngine,
+    ) -> None: ...
+    @overload
+    def __init__(
+        self,
+        mol: Molecule,
+        basis: BasisSet,
+        integrals: IntegralEngine,
+        scf_guess: SCFResult,
+        config: MP2Config = ...,
+        pg: Optional[PointGroup] = None,
+        pl: Optional[PetiteList] = None,
+    ) -> None: ...
+    def compute(self) -> MP3Result: ...
 
-
-class GradientResult:
-    energy: float
-    gradient: np.ndarray
-    def __init__(self) -> None: ...
-
-class OptConfig:
-    max_iterations: int
-    def __init__(self) -> None: ...
-
-class OptResult:
-    converged: bool
-    n_iterations: int
-    final_energy: float
-    def __init__(self) -> None: ...
-
-
-
+class OMP3:
+    def __init__(
+        self,
+        mol: Molecule,
+        basis: BasisSet,
+        integrals: IntegralEngine,
+        scf_guess: SCFResult,
+        config: MP2Config = ...,
+        pg: Optional[PointGroup] = None,
+        pl: Optional[PetiteList] = None,
+    ) -> None: ...
+    def compute(self) -> MP3Result: ...
 
 def bohr_to_angstrom(bohr: float) -> float: ...
 def angstrom_to_bohr(angstrom: float) -> float: ...
