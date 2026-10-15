@@ -21,10 +21,12 @@ import subprocess
 from setuptools import setup, Extension
 from setuptools.command.build_ext import build_ext
 
+
 class CMakeExtension(Extension):
     def __init__(self, name: str, sourcedir: str = ""):
         super().__init__(name, sources=[])
         self.sourcedir = os.path.abspath(sourcedir)
+
 
 class CMakeBuild(build_ext):
     def run(self) -> None:
@@ -38,7 +40,7 @@ class CMakeBuild(build_ext):
 
     def build_extension(self, ext: CMakeExtension) -> None:
         extdir = os.path.abspath(os.path.dirname(self.get_ext_fullpath(ext.name)))
-        
+
         # Resolusi hierarki direktori modul mshqc
         if not extdir.endswith("mshqc"):
             extdir = os.path.join(extdir, "mshqc")
@@ -77,8 +79,7 @@ class CMakeBuild(build_ext):
         subprocess.check_call(["cmake", ext.sourcedir] + cmake_args, cwd=self.build_temp, env=env)
         subprocess.check_call(["cmake", "--build", "."] + build_args, cwd=self.build_temp)
 
-        # Pemindahan artifak biner menggunakan copy2 untuk mempertahankan file timestamp dan metadata
-        # Mencegah invalidasi cache yang prematur saat re-packaging
+        # Pemindahan artifak biner (.so) menggunakan copy2
         for filepath in glob.glob(os.path.join(self.build_temp, "**/*.so"), recursive=True):
             shutil.copy2(filepath, extdir)
 
@@ -86,7 +87,21 @@ class CMakeBuild(build_ext):
             if "_mshqc" in os.path.basename(filepath):
                 shutil.copy2(filepath, extdir)
 
-# Eliminasi definisi redundan: name, version, author, dll. harus berada di pyproject.toml
+        # Bundling file basis set (.gbs) ke dalam paket mshqc/basis untuk PyPI Wheel & Editable Install
+        src_basis_dir = os.path.join(ext.sourcedir, "data", "basis")
+        if os.path.isdir(src_basis_dir):
+            pkg_src_basis_dir = os.path.join(ext.sourcedir, "python", "mshqc", "basis")
+            dst_wheel_basis_dir = os.path.join(extdir, "basis")
+
+            os.makedirs(pkg_src_basis_dir, exist_ok=True)
+            os.makedirs(dst_wheel_basis_dir, exist_ok=True)
+
+            for gbs_file in glob.glob(os.path.join(src_basis_dir, "*.gbs")):
+                shutil.copy2(gbs_file, pkg_src_basis_dir)
+                if os.path.abspath(pkg_src_basis_dir) != os.path.abspath(dst_wheel_basis_dir):
+                    shutil.copy2(gbs_file, dst_wheel_basis_dir)
+
+
 setup(
     ext_modules=[CMakeExtension("mshqc._mshqc")],
     cmdclass={"build_ext": CMakeBuild},
