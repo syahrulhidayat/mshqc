@@ -333,6 +333,15 @@ std::vector<double> IntegralEngine::compute_shell_block(int sh_a, int sh_b, int 
     return t_buffer;
 }
 
+int IntegralEngine::compute_shell_block_raw(int sh_a, int sh_b, int sh_c, int sh_d, double* buf_out) const {
+    int shls[4] = {sh_a, sh_b, sh_c, sh_d};
+    CINTOpt* tmp_opt = static_cast<CINTOpt*>(opt_);
+    return cint2e_sph(buf_out, shls,
+                      const_cast<int*>(atm_.data()), mol_.n_atoms(),
+                      const_cast<int*>(bas_.data()), basis_.n_shells(),
+                      const_cast<double*>(env_.data()), tmp_opt);
+}
+
 const double* IntegralEngine::compute_shell_block_ptr(int sh_a, int sh_b, int sh_c, int sh_d, size_t& size_out) {
     const auto& buf = compute_shell_block(sh_a, sh_b, sh_c, sh_d);
     size_out = buf.size();

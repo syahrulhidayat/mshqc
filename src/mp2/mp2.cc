@@ -827,21 +827,15 @@ double OMP2::execute_micro_iterations() {
     C_a_current_ = scf_.C_alpha;
     C_b_current_ = scf_.C_beta;
 
-    if (config_.eri_method == "cholesky") {
+    if (config_.eri_method == "cholesky" || config_.eri_method == "df") {
         scf_.irreps_alpha.assign(nbf_, 0);
         if (!is_restricted && nb_ > 0) {
             scf_.irreps_beta.assign(nbf_, 0);
         }       
         
-        // Rute HPC khusus Cholesky: langsung hitung energi tanpa alokasi tensor raksasa
+     
         transform_3center_mo_cholesky();
         compute_t2_and_energy_cholesky();
-        
-    } else if (config_.eri_method == "df") {
-        transform_3center_mo(); 
-        transform_integrals(); 
-        compute_t2_amplitudes();
-        compute_mp2_energy();
         
     } else {
         transform_integrals(); 

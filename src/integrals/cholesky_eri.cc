@@ -276,17 +276,20 @@ void CholeskyERI::decompose_direct() {
         
         Eigen::VectorXd col_buf = Eigen::VectorXd::Zero(npair);
         double pivot_schwarz = shell_max[sp * nshells + sq];
-        
+        int dimP = basis.shell(sp).n_functions();
+        int dimQ = basis.shell(sq).n_functions();
+
         #pragma omp parallel
         {
-            Eigen::VectorXd local_col_buf = Eigen::VectorXd::Zero(npair);
-            
-            #pragma omp for schedule(dynamic, 16) // AGGRESSIVE CHUNKING
+            // Buffer dialokasikan 1x per thread di luar loop valid_pairs
+            std::vector<double> thread_buf(10000);
+
+            #pragma omp for schedule(dynamic, 16) nowait
             for (size_t v = 0; v < valid_pairs.size(); ++v) {
                 int s1 = valid_pairs[v].first;
                 int s2 = valid_pairs[v].second;
 
-                if (shell_max[s1 * nshells + s2] * pivot_schwarz < threshold_) continue; // FIX SCREENING LOGIC
+                if (shell_max[s1 * nshells + s2] * pivot_schwarz < threshold_) continue;
 
                 int pair_s = s1 * (s1 + 1) / 2 + s2;
                 bool swap_pairs = (pair_s < pair_pq);
@@ -294,35 +297,26 @@ void CholeskyERI::decompose_direct() {
                 int u1 = swap_pairs ? sp : s1; int u2 = swap_pairs ? sq : s2;
                 int u3 = swap_pairs ? s1 : sp; int u4 = swap_pairs ? s2 : sq;
 
-                const auto& buf = integrals_ptr_->compute_shell_block(u1, u2, u3, u4);
-                if (buf.empty()) continue;
+                if (!integrals_ptr_->compute_shell_block_raw(u1, u2, u3, u4, thread_buf.data())) continue;
 
-                int dim1 = basis.shell(s1).n_functions(); int dim2 = basis.shell(s2).n_functions();
-                int dimP = basis.shell(sp).n_functions(); int dimQ = basis.shell(sq).n_functions();
-                int st1 = shell_starts[s1]; int st2 = shell_starts[s2];
+                int dim1 = basis.shell(s1).n_functions();
+                int dim2 = basis.shell(s2).n_functions();
+                int st1 = shell_starts[s1];
+                int st2 = shell_starts[s2];
 
                 for (int i = 0; i < dim1; ++i) {
+                    int global_i = st1 + i;
                     for (int j = 0; j < dim2; ++j) {
-                        size_t idx_buf;
-                        if (!swap_pairs) {
-                            idx_buf = i + dim1 * (j + dim2 * (rel_p + dimP * rel_q));
-                        } else {
-                            idx_buf = rel_p + dimP * (rel_q + dimQ * (i + dim1 * j));
-                        }
+                        int global_j = st2 + j;
+                        size_t idx_buf = (!swap_pairs)
+                            ? (i + dim1 * (j + dim2 * (rel_p + dimP * rel_q)))
+                            : (rel_p + dimP * (rel_q + dimQ * (i + dim1 * j)));
 
-                        if (idx_buf >= buf.size()) continue;
-                        double val = buf[idx_buf];
-
-                        int global_i = st1 + i; int global_j = st2 + j;
-                        local_col_buf(global_i * n_basis_ + global_j) = val;
-                        if (global_i != global_j) local_col_buf(global_j * n_basis_ + global_i) = val;
+                        double val = thread_buf[idx_buf];
+                        col_buf(global_i * n_basis_ + global_j) = val;
+                        if (global_i != global_j) col_buf(global_j * n_basis_ + global_i) = val;
                     }
                 }
-            }
-
-            #pragma omp critical
-            {
-                col_buf += local_col_buf;
             }
         } 
         
