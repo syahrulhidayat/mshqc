@@ -56,9 +56,10 @@ public:
     
 
     std::vector<double> compute_2c2e_block(int sh_P, int sh_Q);
-    
+    int compute_2c2e_block_raw(int sh_P, int sh_Q, double* buf_out) const;
 
     std::vector<double> compute_3c2e_block(int sh_i, int sh_j, int sh_P);
+    int compute_3c2e_block_raw(int sh_i, int sh_j, int sh_P, double* buf_out) const;
 
     
 

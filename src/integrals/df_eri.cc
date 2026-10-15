@@ -81,19 +81,19 @@ CholeskyResult compute_pivoted_cholesky(Eigen::MatrixXd& J, double tol = 1e-10) 
         L(i, i) = std::sqrt(diag(i));
         double L_ii_inv = 1.0 / L(i, i);
         
-       
-        for (int j = i + 1; j < n; ++j) {
-            double sum = 0.0;
-        
-            for (int k = 0; k < i; ++k) {
-                sum += L(j, k) * L(i, k);
+        int rem = n - i - 1;
+        if (rem > 0) {
+            if (i > 0) {
+                L.col(i).tail(rem).noalias() = J.col(i).tail(rem)
+                    - L.bottomLeftCorner(rem, i) * L.row(i).head(i).transpose();
+            } else {
+                L.col(i).tail(rem) = J.col(i).tail(rem);
             }
-            L(j, i) = (J(j, i) - sum) * L_ii_inv;
-            diag(j) -= L(j, i) * L(j, i); 
+            L.col(i).tail(rem) *= L_ii_inv;
+            diag.tail(rem).array() -= L.col(i).tail(rem).array().square();
         }
         rank++;
     }
-    
 
     L.conservativeResize(n, rank);
     return {L, p, rank};
@@ -130,29 +130,32 @@ void DensityFittingERI::compute(bool save_hdf5) {
     std::cout << "  Evaluating 2-Center Metric Matrix...\n";
     Eigen::MatrixXd J_metric = Eigen::MatrixXd::Zero(n_aux_, n_aux_);
 
-    #pragma omp parallel for schedule(dynamic, 1)
-    for (int R = 0; R < n_shells_aux; ++R) {
-        int abs_R = n_shells_prim + R; 
-        int dim_R = aux_sizes[R];
-        int bf_R_start = aux_starts[R];
+    #pragma omp parallel
+    {
+        std::vector<double> buffer(10000);
+        #pragma omp for schedule(dynamic, 1) nowait
+        for (int R = 0; R < n_shells_aux; ++R) {
+            int abs_R = n_shells_prim + R; 
+            int dim_R = aux_sizes[R];
+            int bf_R_start = aux_starts[R];
 
-        for (int S = 0; S <= R; ++S) {
-            int abs_S = n_shells_prim + S;
-            int dim_S = aux_sizes[S];
-            int bf_S_start = aux_starts[S];
+            for (int S = 0; S <= R; ++S) {
+                int abs_S = n_shells_prim + S;
+                int dim_S = aux_sizes[S];
+                int bf_S_start = aux_starts[S];
 
-            auto buffer = integrals_->compute_2c2e_block(abs_R, abs_S); 
-            if (buffer.empty()) continue;
+                if (!integrals_->compute_2c2e_block_raw(abs_R, abs_S, buffer.data())) continue;
 
-            for (int s = 0; s < dim_S; ++s) {
-                int idx_S = bf_S_start + s;
-                int buffer_offset = dim_R * s;
-                for (int r = 0; r < dim_R; ++r) {
-                    int idx_R = bf_R_start + r;
-                    double val = buffer[r + buffer_offset];
-                    
-                    J_metric(idx_R, idx_S) = val;
-                    if (idx_R != idx_S) J_metric(idx_S, idx_R) = val;
+                for (int s = 0; s < dim_S; ++s) {
+                    int idx_S = bf_S_start + s;
+                    int buffer_offset = dim_R * s;
+                    for (int r = 0; r < dim_R; ++r) {
+                        int idx_R = bf_R_start + r;
+                        double val = buffer[r + buffer_offset];
+                        
+                        J_metric(idx_R, idx_S) = val;
+                        if (idx_R != idx_S) J_metric(idx_S, idx_R) = val;
+                    }
                 }
             }
         }
@@ -180,39 +183,42 @@ void DensityFittingERI::compute(bool save_hdf5) {
     // =====================================================================
     // 4. EVALUASI INTEGRAL 3-PUSAT & ON-THE-FLY PIVOTING
     // =====================================================================
-    #pragma omp parallel for schedule(dynamic, 1)
-    for (int i = 0; i < n_shells_prim; ++i) {
-        int bf_i_start = prim_starts[i];
-        int dim_i = prim_sizes[i];
+    #pragma omp parallel
+    {
+        std::vector<double> buffer(10000);
+        #pragma omp for schedule(dynamic, 1) nowait
+        for (int i = 0; i < n_shells_prim; ++i) {
+            int bf_i_start = prim_starts[i];
+            int dim_i = prim_sizes[i];
 
-        for (int j = 0; j <= i; ++j) {
-            int bf_j_start = prim_starts[j];
-            int dim_j = prim_sizes[j];
+            for (int j = 0; j <= i; ++j) {
+                int bf_j_start = prim_starts[j];
+                int dim_j = prim_sizes[j];
 
-            for (int R = 0; R < n_shells_aux; ++R) {
-                int abs_R = n_shells_prim + R; 
-                int dim_R = aux_sizes[R];
-                int aux_start = aux_starts[R];
+                for (int R = 0; R < n_shells_aux; ++R) {
+                    int abs_R = n_shells_prim + R; 
+                    int dim_R = aux_sizes[R];
+                    int aux_start = aux_starts[R];
 
-                auto buffer = integrals_->compute_3c2e_block(i, j, abs_R);
-                if (buffer.empty()) continue;
+                    if (!integrals_->compute_3c2e_block_raw(i, j, abs_R, buffer.data())) continue;
 
-                for (int r = 0; r < dim_R; ++r) {
-                    int orig_P = aux_start + r;
-                    int new_P  = inv_pivot[orig_P];
+                    for (int r = 0; r < dim_R; ++r) {
+                        int orig_P = aux_start + r;
+                        int new_P  = inv_pivot[orig_P];
 
-                    for (int p_j = 0; p_j < dim_j; ++p_j) {
-                        int base_r1 = bf_j_start + p_j;
-                        int base_r2 = (bf_j_start + p_j) * n_primary_;
-                        int buffer_offset = dim_i * (p_j + dim_j * r);
-                        
-                        for (int p_i = 0; p_i < dim_i; ++p_i) {
-                            double val = buffer[p_i + buffer_offset];
-                            int r1 = (bf_i_start + p_i) * n_primary_ + base_r1;
-                            int r2 = base_r2 + (bf_i_start + p_i);
+                        for (int p_j = 0; p_j < dim_j; ++p_j) {
+                            int base_r1 = bf_j_start + p_j;
+                            int base_r2 = (bf_j_start + p_j) * n_primary_;
+                            int buffer_offset = dim_i * (p_j + dim_j * r);
                             
-                            B_mat_(r1, new_P) = val;
-                            if (r1 != r2) B_mat_(r2, new_P) = val;
+                            for (int p_i = 0; p_i < dim_i; ++p_i) {
+                                double val = buffer[p_i + buffer_offset];
+                                int r1 = (bf_i_start + p_i) * n_primary_ + base_r1;
+                                int r2 = base_r2 + (bf_i_start + p_i);
+                                
+                                B_mat_(r1, new_P) = val;
+                                if (r1 != r2) B_mat_(r2, new_P) = val;
+                            }
                         }
                     }
                 }

@@ -393,6 +393,22 @@ std::vector<double> IntegralEngine::compute_3c2e_block(int sh_i, int sh_j, int s
     return t_buffer;
 }
 
+int IntegralEngine::compute_2c2e_block_raw(int sh_P, int sh_Q, double* buf_out) const {
+    int shls[2] = {sh_P, sh_Q};
+    return cint2c2e_sph(buf_out, shls,
+                        const_cast<int*>(atm_.data()), mol_.n_atoms(),
+                        const_cast<int*>(bas_.data()), basis_.n_shells(),
+                        const_cast<double*>(env_.data()), nullptr);
+}
+
+int IntegralEngine::compute_3c2e_block_raw(int sh_i, int sh_j, int sh_P, double* buf_out) const {
+    int shls[3] = {sh_i, sh_j, sh_P};
+    return cint3c2e_sph(buf_out, shls,
+                        const_cast<int*>(atm_.data()), mol_.n_atoms(),
+                        const_cast<int*>(bas_.data()), basis_.n_shells(),
+                        const_cast<double*>(env_.data()), nullptr);
+}
+
 
 // STUBS
 Eigen::Tensor<double, 3> IntegralEngine::compute_3center_eri(const BasisSet&) { return Eigen::Tensor<double, 3>(1,1,1); }
