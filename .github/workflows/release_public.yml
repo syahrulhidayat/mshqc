@@ -2,7 +2,8 @@ name: Compile and Release Wheel to Public Repo
 
 on:
   push:
-    branches: [ "debug5" ]
+    branches: [ "main", "master", "debug5" ]
+    tags: [ "v*" ]
   workflow_dispatch:
 
 permissions:
@@ -27,7 +28,7 @@ jobs:
       - name: Setup Miniconda
         uses: conda-incubator/setup-miniconda@v3
         with:
-          miniforge-version: latest 
+          miniforge-version: latest
           python-version: "3.14"
           activate-environment: mshqc_314
           channels: conda-forge, defaults
@@ -38,7 +39,7 @@ jobs:
           conda install -y cmake make ninja compilers pkg-config ccache \
             eigen "hdf5=1.14.3" liblapacke mkl mkl-devel mkl-include
           python -m pip install --upgrade pip
-          python -m pip install cmake ninja build wheel nanobind setuptools
+          python -m pip install cmake ninja build wheel nanobind setuptools pytest numpy scipy
 
       # =========================================================================
       # 2. KONFIGURASI CCACHE
@@ -87,12 +88,12 @@ jobs:
         run: |
           git clone --depth 1 -b v1.2.0 https://github.com/devinamatthews/tblis.git /tmp/tblis
           cd /tmp/tblis && git submodule update --init --recursive
-          
+
           sed -i 's/SIGSTKSZ/8192/g' src/external/catch/catch.hpp
           sed -i '1i #include <limits>' src/external/marray/include/short_vector.hpp
           sed -i '1i #include <limits>' src/external/marray/include/range.hpp
           sed -i '1i #include <limits>' src/util/thread.h
-          
+
           export CFLAGS="-O3 -fPIC -mno-avx512f -mno-avx512vl -mno-avx512dq -mno-avx512bw -mno-avx512cd -Wno-incompatible-pointer-types -std=gnu17"
           export CXXFLAGS="-O3 -fPIC -mno-avx512f -mno-avx512vl -mno-avx512dq -mno-avx512bw -mno-avx512cd -Wno-incompatible-pointer-types -std=gnu++17"
           ./configure --prefix=$HOME/tblis_install --enable-static --disable-shared \
@@ -101,50 +102,56 @@ jobs:
           make -j$(nproc) && make install
 
       # =========================================================================
-      # 5. BUILD MSHQC WHEEL (DEBUG MODE)
+      # 5. BUILD MSHQC WHEEL (RELEASE HPC MODE)
       # =========================================================================
       - name: Build Python Wheel (.whl)
         run: |
           rm -rf dist/ build/ release/ python/*.egg-info *.egg-info
           mkdir -p release
-          
+
           export CC="ccache gcc"
           export CXX="ccache g++"
-          
-          # Hapus -O3 dan -DNDEBUG. Ganti dengan -g -O0 untuk mempertahankan simbol debug
-          export CXXFLAGS="-std=c++20 -fopenmp -g -O0 -mavx2 -mfma -mno-avx512f -mtune=generic -DEIGEN_USE_MKL_ALL -I$HOME/tblis_install/include -I$HOME/libcint_install/include -I$CONDA_PREFIX/include"
-          export CFLAGS="-g -O0"
-          export CMAKE_BUILD_TYPE=Debug
-          export DEBUG=1
-          
+
+          export CXXFLAGS="-std=c++20 -fopenmp -O3 -DNDEBUG -mavx2 -mfma -mno-avx512f -funroll-loops -ftree-vectorize -mtune=generic -fno-math-errno -DEIGEN_USE_MKL_ALL -I$HOME/tblis_install/include -I$HOME/libcint_install/include -I$CONDA_PREFIX/include"
+          export CFLAGS="-O3 -DNDEBUG"
+          export CMAKE_BUILD_TYPE=Release
+
           LIBCINT_LIB=$( [ -d "$HOME/libcint_install/lib64" ] && echo "$HOME/libcint_install/lib64" || echo "$HOME/libcint_install/lib" )
           TBLIS_LIB=$( [ -d "$HOME/tblis_install/lib64" ] && echo "$HOME/tblis_install/lib64" || echo "$HOME/tblis_install/lib" )
-          
+
           export LDFLAGS="-L$LIBCINT_LIB -L$TBLIS_LIB -L$CONDA_PREFIX/lib -lquadmath"
           export CMAKE_PREFIX_PATH="$HOME/libcint_install:$HOME/tblis_install:$CONDA_PREFIX"
           export TBLIS_DIR="$HOME/tblis_install"
           export CMAKE_BUILD_PARALLEL_LEVEL=$(nproc)
-          
+
           python -m build --wheel --no-isolation --outdir release
           ccache -s
 
       # =========================================================================
-      # 6. UPLOAD WHEEL KE GITHUB RELEASES
+      # 6. INSTALL WHEEL & RUN PYTEST SUITE
+      # =========================================================================
+      - name: Install Built Wheel and Run Pytest
+        run: |
+          python -m pip install release/*.whl
+          pytest tests/ -v
+
+      # =========================================================================
+      # 7. UPLOAD WHEEL KE GITHUB RELEASES
       # =========================================================================
       - name: Create or Update Release and Upload Wheel
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: "v1.0.3-nightly"
-          name: "MSHQC 1.0.3 (AOT Build)"
-          body: "Automated build of MSHQC natively compiled without MLIR/JIT dependency."
+          tag_name: "v1.0.3"
+          name: "MSHQC 1.0.3 (Release HPC Build)"
+          body: "Automated C++20 HPC release build of MSHQC."
           files: "release/*.whl"
           fail_on_unmatched_files: true
-          prerelease: true
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       # =========================================================================
-      # 7. EXPOSE ARTIFACT DIRECTORY KE GITHUB ACTIONS UI
+      # 8. EXPOSE ARTIFACT DIRECTORY KE GITHUB ACTIONS UI
       # =========================================================================
       - name: Expose Release Artifacts
         uses: actions/upload-artifact@v4
