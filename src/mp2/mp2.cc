@@ -930,7 +930,11 @@ MP2Result OMP2::compute() {
 
     if(omp_get_thread_num() == 0) {
         std::cout << "\n========================================================\n";
-        std::cout << "      Orbital-Optimized MP2 (OMP2)\n";
+        if (typeid(*this) == typeid(OMP2)) {
+            std::cout << "      Orbital-Optimized MP2 (OMP2)\n";
+        } else {
+            std::cout << "      Orbital-Optimized MP3 (OMP3 - Professional)\n";
+        }
         if (config_.opt_method == "soscf") {
             std::cout << "      Trust-Region SOSCF (Approximate Hessian)\n";
         } else {

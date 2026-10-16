@@ -2002,12 +2002,6 @@ void OMP3::debug_gradient_fd(int i_target, int a_target) {
 }
 
 MP3Result OMP3::compute_omp3() {
-    if(omp_get_thread_num() == 0) {
-        std::cout << "\n========================================================\n";
-        std::cout << "      Orbital-Optimized MP3 (OMP3 - Professional)\n";
-        std::cout << "========================================================\n";
-    }
-    
     MP2Result res2 = OMP2::compute();
 
     MP3Result res3;
