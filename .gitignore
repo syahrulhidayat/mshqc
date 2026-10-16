@@ -10,22 +10,25 @@ tunning/
 ActiveState.venv
 environment.yml.user
 
-# --- Editor & IDE Config ---
+# --- Editor, IDE & Language Server Config ---
 .vscode/
 .idea/
+.clangd
 *.swp
 *.swo
 .DS_Store
 Thumbs.db
+compile_commands.json
 
 # --- Build Artifacts & Compilations (C++ & Python) ---
 build/
 dist/
-
+releases/
 *.so
 *.o
 *.a
 *.pyc
+*.whl
 __pycache__/
 *.egg-info/
 .cmake/
@@ -33,29 +36,21 @@ CMakeCache.txt
 CMakeFiles/
 Makefile
 cmake_install.cmake
-test/
-test/
-
-
 
 # --- Quantum Chemistry Output & Temporary Logs ---
 psi.*.clean
 *.out
 *.log
-timer.dat
 *.h5
+timer.dat
 hasil/
 
+# --- Testing & Debugging ---
+test/
+debug.py
+# Memperbaiki kesalahan ketik agar berkas "debug" benar-benar terabaikan
+debug
+
 # --- Text Files and Custom Script Exceptions ---
-
-!recaftor.py
 *.sh
-
-*.whl
-releases/
-dist/
-*.whl
-releases/
-dist/
-compile_commands.json
-.clangd
+!recaftor.py
