@@ -40,12 +40,10 @@ jobs:
           # =========================================================================
           # STATIC COMPILATION DI DALAM DOCKER MANYLINUX
           # =========================================================================
-          # Di sini libcint dan tblis dikompilasi secara STATIC (--disable-shared)
-          # sehingga kodenya menyatu dengan mshqc saat proses linkage, 
-          # ini memastikan user TIDAK PERLU libcint atau tblis di sistem mereka.
           CIBW_BEFORE_ALL: >
-            dnf install -y epel-release git wget hdf5-devel &&
-            pip3 install cmake ninja &&
+            dnf install -y dnf-plugins-core epel-release &&
+            dnf config-manager --set-enabled crb &&
+            dnf install -y git wget hdf5-devel ninja-build &&
             git clone --depth 1 -b v6.1.2 https://github.com/sunqm/libcint.git /tmp/libcint &&
             cd /tmp/libcint && mkdir build && cd build &&
             cmake -DCMAKE_INSTALL_PREFIX=/usr/local -DENABLE_EXAMPLE=0 -DENABLE_TEST=0 -DBUILD_SHARED_LIBS=OFF .. &&
