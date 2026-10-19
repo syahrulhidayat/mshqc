@@ -51,7 +51,7 @@ elseif(EXISTS "/opt/conda")
     link_directories("/opt/conda/lib")
 endif()
 
-find_package(Python COMPONENTS Interpreter Development REQUIRED)
+find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 
 # Ekstrak direktori konfigurasi nanobind langsung dari interpreter Python yang ditemukan
 execute_process(
