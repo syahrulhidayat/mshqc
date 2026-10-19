@@ -43,7 +43,7 @@ jobs:
           CIBW_BEFORE_ALL: >
             dnf install -y dnf-plugins-core epel-release &&
             dnf config-manager --set-enabled powertools &&
-            dnf install -y git wget hdf5-devel ninja-build &&
+            dnf install -y git wget hdf5-devel ninja-build libatomic &&
             git clone --depth 1 -b v6.1.2 https://github.com/sunqm/libcint.git /tmp/libcint &&
             cd /tmp/libcint && mkdir build && cd build &&
             cmake -DCMAKE_INSTALL_PREFIX=/usr/local -DENABLE_EXAMPLE=0 -DENABLE_TEST=0 -DBUILD_SHARED_LIBS=OFF .. &&
@@ -60,12 +60,11 @@ jobs:
           CIBW_BEFORE_BUILD: >
             pip install mkl mkl-devel mkl-include cmake ninja pytest numpy scipy
           
-          # CXXFLAGS dll mengarah ke /usr/local tempat libcint dan tblis hasil compile di atas berada
           CIBW_ENVIRONMENT: >
             CXXFLAGS="-std=c++20 -fopenmp -O3 -DNDEBUG -mavx2 -mfma -mno-avx512f -funroll-loops -ftree-vectorize -mtune=generic -fno-math-errno -DEIGEN_USE_MKL_ALL -I/usr/local/include"
             CFLAGS="-O3 -DNDEBUG"
             CMAKE_BUILD_TYPE=Release
-            LDFLAGS="-L/usr/local/lib -L/usr/local/lib64 -lquadmath"
+            LDFLAGS="-L/usr/local/lib -L/usr/local/lib64 -lquadmath -latomic"
             CMAKE_PREFIX_PATH="/usr/local"
             TBLIS_DIR="/usr/local"
             CMAKE_BUILD_PARALLEL_LEVEL=4
