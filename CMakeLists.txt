@@ -1,27 +1,12 @@
-# Copyright 2026 Muhamad Syahrul Hidayat
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 cmake_minimum_required(VERSION 3.14)
 
-project(mshqc VERSION 1.0.0 LANGUAGES CXX C)
+project(mshqc VERSION 1.0.3 LANGUAGES CXX C)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-# Aktif di GitHub Actions maupun di dalam container cibuildwheel
 if(DEFINED ENV{GITHUB_ACTIONS} OR DEFINED ENV{CIBUILDWHEEL})
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -mavx2 -mfma -mno-avx512f -funroll-loops -ftree-vectorize -mtune=generic -DNDEBUG -fno-math-errno")
 else()
@@ -53,7 +38,6 @@ endif()
 
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 
-# Ekstrak direktori konfigurasi nanobind langsung dari interpreter Python yang ditemukan
 if(NOT nanobind_DIR)
     execute_process(
         COMMAND "${Python_EXECUTABLE}" -c "import nanobind; print(nanobind.cmake_dir())"
@@ -66,32 +50,39 @@ find_package(nanobind CONFIG REQUIRED HINTS "${nanobind_DIR}" "$ENV{CONDA_PREFIX
 find_package(OpenMP REQUIRED)
 
 # ==============================================================================
-# 2. BLAS / LAPACK / MKL DISCOVERY (Support cibuildwheel Python_ROOT_DIR & Conda)
+# 2. BLAS / LAPACK / MKL DISCOVERY
 # ==============================================================================
-find_library(MKL_LIBRARY
-    NAMES mkl_rt libmkl_rt.so libmkl_rt.so.2
-    HINTS
-        "${Python_ROOT_DIR}/lib"
-        "${Python3_ROOT_DIR}/lib"
-        "$ENV{CONDA_PREFIX}/lib"
-        "/opt/conda/lib"
-        "/usr/local/lib"
-        "/usr/local/lib64"
-        "/usr/lib64"
-        "/usr/lib/x86_64-linux-gnu"
-        "/usr/lib"
-)
-find_path(MKL_INCLUDE_DIR
-    NAMES mkl.h
-    HINTS
-        "${Python_ROOT_DIR}/include"
-        "${Python3_ROOT_DIR}/include"
-        "$ENV{CONDA_PREFIX}/include"
-        "$ENV{CONDA_PREFIX}/include/mkl"
-        "/opt/conda/include"
-        "/usr/local/include"
-        "/usr/include"
-)
+set(CMAKE_FIND_LIBRARY_SUFFIXES ".so" ".so.2" ".a")
+
+if(NOT MKL_LIBRARY)
+    find_library(MKL_LIBRARY
+        NAMES mkl_rt libmkl_rt.so libmkl_rt.so.2
+        HINTS
+            "${Python_ROOT_DIR}/lib"
+            "${Python3_ROOT_DIR}/lib"
+            "$ENV{CONDA_PREFIX}/lib"
+            "/opt/conda/lib"
+            "/usr/local/lib"
+            "/usr/local/lib64"
+            "/usr/lib64"
+            "/usr/lib/x86_64-linux-gnu"
+            "/usr/lib"
+    )
+endif()
+
+if(NOT MKL_INCLUDE_DIR)
+    find_path(MKL_INCLUDE_DIR
+        NAMES mkl.h
+        HINTS
+            "${Python_ROOT_DIR}/include"
+            "${Python3_ROOT_DIR}/include"
+            "$ENV{CONDA_PREFIX}/include"
+            "$ENV{CONDA_PREFIX}/include/mkl"
+            "/opt/conda/include"
+            "/usr/local/include"
+            "/usr/include"
+    )
+endif()
 
 if(MKL_LIBRARY AND MKL_INCLUDE_DIR)
     message(STATUS "Found MKL: ${MKL_LIBRARY} (include: ${MKL_INCLUDE_DIR})")
@@ -123,19 +114,27 @@ endif()
 # ==============================================================================
 # 3. EIGEN DISCOVERY
 # ==============================================================================
-set(EIGEN_LOCAL_PATH "${CMAKE_SOURCE_DIR}/include/eigen-3.4.0")
-if(EXISTS "${EIGEN_LOCAL_PATH}/Eigen/Dense")
+find_path(EIGEN3_INCLUDE_DIR
+    NAMES Eigen/Dense
+    HINTS
+        "${CMAKE_SOURCE_DIR}/include/eigen-3.4.0"
+        "$ENV{CONDA_PREFIX}/include/eigen3"
+        "$ENV{CONDA_PREFIX}/include"
+        "/usr/local/include/eigen3"
+        "/usr/local/include"
+        "/usr/include/eigen3"
+        "/usr/include"
+)
+if(NOT EIGEN3_INCLUDE_DIR)
+    message(FATAL_ERROR "CRITICAL: Eigen/Dense header tidak ditemukan!")
+endif()
+if(NOT TARGET Eigen3::Eigen)
     add_library(Eigen3::Eigen INTERFACE IMPORTED)
-    target_include_directories(Eigen3::Eigen INTERFACE "${EIGEN_LOCAL_PATH}")
-else()
-    find_package(Eigen3 CONFIG HINTS "$ENV{CONDA_PREFIX}/share/eigen3/cmake" "/opt/conda/share/eigen3/cmake" "/usr/share/eigen3/cmake" "/usr/local/share/eigen3/cmake")
-    if(NOT Eigen3_FOUND)
-        find_package(Eigen3 REQUIRED NO_MODULE)
-    endif()
+    target_include_directories(Eigen3::Eigen INTERFACE "${EIGEN3_INCLUDE_DIR}")
 endif()
 
 # ==============================================================================
-# 4. LIBCINT & TBLIS DISCOVERY (Support manylinux /usr/local & Fedora lib64)
+# 4. LIBCINT & TBLIS DISCOVERY
 # ==============================================================================
 find_library(CINT_LIBRARY
     NAMES cint libcint.a
@@ -168,7 +167,7 @@ if(NOT TBLIS_LIBRARY OR NOT TBLIS_INCLUDE_DIR)
 endif()
 
 # ==============================================================================
-# 5. HDF5 DISCOVERY (Support manylinux /usr/lib64)
+# 5. HDF5 DISCOVERY
 # ==============================================================================
 find_library(HDF5_C_LIB
     NAMES hdf5
@@ -177,6 +176,10 @@ find_library(HDF5_C_LIB
 find_library(HDF5_CXX_LIB
     NAMES hdf5_cpp
     HINTS "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib64" "/usr/local/lib" "/usr/lib64" "/usr/lib/x86_64-linux-gnu" "/usr/lib"
+)
+find_path(HDF5_INCLUDE_DIR
+    NAMES H5Cpp.h
+    HINTS "$ENV{CONDA_PREFIX}/include" "/usr/local/include" "/usr/include" "/usr/include/hdf5/serial"
 )
 
 if(HDF5_C_LIB AND HDF5_CXX_LIB)
@@ -188,10 +191,6 @@ endif()
 # ==============================================================================
 # 6. SOURCE FILES & TARGET CONFIGURATION
 # ==============================================================================
-if(JEMALLOC_LIB)
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-builtin-malloc -fno-builtin-calloc -fno-builtin-realloc -fno-builtin-free")
-endif()
-
 file(GLOB_RECURSE SRC_CORE CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/core/*.cc")
 file(GLOB_RECURSE SRC_SCF CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/scf/*.cc")
 file(GLOB_RECURSE SRC_MP CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/mp/*.cc" "${CMAKE_SOURCE_DIR}/src/mp2/*.cc" "${CMAKE_SOURCE_DIR}/src/mp3/*.cc")
@@ -219,11 +218,10 @@ set_target_properties(mshqc PROPERTIES
     BUILD_WITH_INSTALL_RPATH TRUE
 )
 
-target_compile_definitions(mshqc PUBLIC 
-    EIGEN_USE_MKL_ALL
-    EIGEN_NO_DEBUG 
-    EIGEN_MPL2_ONLY
-)
+if(MKL_LIBRARY AND MKL_INCLUDE_DIR)
+    target_compile_definitions(mshqc PUBLIC EIGEN_USE_MKL_ALL)
+endif()
+target_compile_definitions(mshqc PUBLIC EIGEN_NO_DEBUG EIGEN_MPL2_ONLY)
 
 set(MSHQC_LINK_LIBS 
     Eigen3::Eigen
@@ -242,14 +240,12 @@ endif()
 
 target_link_libraries(mshqc PUBLIC ${MSHQC_LINK_LIBS})
 
-if(JEMALLOC_LIB)
-    target_link_libraries(mshqc PUBLIC ${JEMALLOC_LIB})
-endif()
-
 target_include_directories(mshqc PUBLIC 
     $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
+    $<BUILD_INTERFACE:${EIGEN3_INCLUDE_DIR}>
     $<BUILD_INTERFACE:${CINT_INCLUDE_DIR}>
     $<BUILD_INTERFACE:${TBLIS_INCLUDE_DIR}>
+    $<BUILD_INTERFACE:${HDF5_INCLUDE_DIR}>
     $<BUILD_INTERFACE:${MKL_INCLUDE_DIR}>
     $<BUILD_INTERFACE:${Python_ROOT_DIR}/include>
     $<BUILD_INTERFACE:$ENV{CONDA_PREFIX}/include>
@@ -258,11 +254,8 @@ target_include_directories(mshqc PUBLIC
 
 nanobind_add_module(_mshqc "python/bindings.cc")
 
-if(JEMALLOC_LIB)
-    target_link_libraries(_mshqc PRIVATE mshqc ${CINT_LIBRARY} ${TBLIS_LIBRARY} ${TCI_LIBRARY} ${JEMALLOC_LIB} quadmath atomic) 
-else()
-    target_link_libraries(_mshqc PRIVATE mshqc ${CINT_LIBRARY} ${TBLIS_LIBRARY} ${TCI_LIBRARY} quadmath atomic)
-endif()
+target_include_directories(_mshqc PRIVATE "${EIGEN3_INCLUDE_DIR}" "${MKL_INCLUDE_DIR}")
+target_link_libraries(_mshqc PRIVATE mshqc ${CINT_LIBRARY} ${TBLIS_LIBRARY} ${TCI_LIBRARY} ${BLAS_LIBRARIES} quadmath atomic)
 
 set_target_properties(_mshqc PROPERTIES 
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/python/mshqc"
@@ -271,7 +264,7 @@ set_target_properties(_mshqc PROPERTIES
     BUILD_WITH_INSTALL_RPATH TRUE
 )
 
-if(ipo_supported)
+if(ipo_supported AND NOT DEFINED ENV{CIBUILDWHEEL})
     set_target_properties(mshqc PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
     set_target_properties(_mshqc PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
 endif()

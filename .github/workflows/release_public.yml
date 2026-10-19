@@ -25,7 +25,6 @@ jobs:
         with:
           python-version: "3.12"
 
-      # Cache hasil kompilasi statis libcint & tblis agar tidak memakan 11 menit setiap run
       - name: Cache Static Dependencies (libcint & TBLIS)
         uses: actions/cache@v4
         with:
@@ -39,14 +38,9 @@ jobs:
         run: python -m cibuildwheel --output-dir wheelhouse
         env:
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+          CIBW_BUILD: "cp311-manylinux_x86_64 cp312-manylinux_x86_64 cp313-manylinux_x86_64"
+          CIBW_BUILD_FRONTEND: "pip; args: --no-build-isolation"
 
-          # Membangun untuk CPython 3.11 sampai 3.14 x86_64
-          CIBW_BUILD: "cp311-manylinux_x86_64 cp312-manylinux_x86_64 cp313-manylinux_x86_64 cp314-manylinux_x86_64"
-          CIBW_PRERELEASE_PYTHONS: 1
-
-          # =========================================================================
-          # 1. STATIC COMPILATION DI DALAM DOCKER MANYLINUX (DENGAN CACHE & -fPIC)
-          # =========================================================================
           CIBW_BEFORE_ALL: >
             dnf install -y dnf-plugins-core epel-release &&
             dnf config-manager --set-enabled powertools &&
@@ -80,16 +74,13 @@ jobs:
               cp -r /usr/local/include /usr/local/lib* /project/.cache_deps/ 2>/dev/null || true
             fi
 
-          # =========================================================================
-          # 2. INSTALL MKL & BUILD TOOLS DI SETIAP VERSI PYTHON
-          # =========================================================================
           CIBW_BEFORE_BUILD: >
-            pip install mkl mkl-devel mkl-include cmake ninja pytest numpy scipy nanobind setuptools wheel
+            pip install --upgrade pip setuptools wheel nanobind cmake ninja mkl mkl-devel mkl-include numpy scipy pytest
 
           CIBW_ENVIRONMENT: >
             GITHUB_ACTIONS=true
             CIBUILDWHEEL=1
-            CXXFLAGS="-std=c++20 -fopenmp -O3 -DNDEBUG -mavx2 -mfma -mno-avx512f -funroll-loops -ftree-vectorize -mtune=generic -fno-math-errno -DEIGEN_USE_MKL_ALL -I/usr/local/include"
+            CXXFLAGS="-std=c++20 -fopenmp -O3 -DNDEBUG -mavx2 -mfma -mno-avx512f -funroll-loops -ftree-vectorize -mtune=generic -fno-math-errno -DEIGEN_USE_MKL_ALL -I/usr/local/include -I/usr/include/eigen3"
             CFLAGS="-O3 -fPIC -DNDEBUG"
             CMAKE_BUILD_TYPE=Release
             LDFLAGS="-L/usr/local/lib -L/usr/local/lib64 -lquadmath -latomic"
@@ -97,31 +88,11 @@ jobs:
             TBLIS_DIR="/usr/local"
             CMAKE_BUILD_PARALLEL_LEVEL=4
 
-          # =========================================================================
-          # 3. BUNGKUS SEMUA DEPENDENCY (.so) KE DALAM WHEEL & SET RPATH MKL
-          # =========================================================================
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
-            auditwheel repair --exclude libmkl_rt.so.2 --exclude libmkl_rt.so -w {dest_dir} {wheel} &&
-            python -c "
-            import glob, os, subprocess, tempfile, zipfile
-            for whl in glob.glob('{dest_dir}/*.whl'):
-                with tempfile.TemporaryDirectory() as tmp:
-                    with zipfile.ZipFile(whl, 'r') as z:
-                        z.extractall(tmp)
-                    for so in glob.glob(os.path.join(tmp, 'mshqc', '_mshqc*.so')):
-                        cur = subprocess.check_output(['patchelf', '--print-rpath', so], text=True).strip()
-                        rpath = (cur + ':' if cur else '') + '\$ORIGIN:\$ORIGIN/../../..:\$ORIGIN/../../../..'
-                        subprocess.check_call(['patchelf', '--set-rpath', rpath, so])
-                    os.remove(whl)
-                    with zipfile.ZipFile(whl, 'w', zipfile.ZIP_DEFLATED) as z:
-                        for root, _, files in os.walk(tmp):
-                            for f in files:
-                                full = os.path.join(root, f)
-                                z.write(full, os.path.relpath(full, tmp))
-            "
+            auditwheel repair --exclude libmkl_rt.so.2 --exclude libmkl_rt.so --exclude libiomp5.so --exclude libtbb.so.12 -w {dest_dir} {wheel}
 
           CIBW_TEST_REQUIRES: "pytest numpy scipy mkl"
-          CIBW_TEST_COMMAND: "pytest {project}/tests/ -v"
+          CIBW_TEST_COMMAND: "pytest {project}/tests/test_mshqc.py -v"
 
       - name: Upload Wheels as Artifacts
         uses: actions/upload-artifact@v4
@@ -134,6 +105,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Remove local cache dir if exists
+        run: rm -rf .cache_deps
       - name: Build sdist
         run: pipx run build --sdist
       - uses: actions/upload-artifact@v4

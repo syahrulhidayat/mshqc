@@ -1,17 +1,3 @@
-# Copyright 2026 Muhamad Syahrul Hidayat
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 import os
 import sys
 import glob
@@ -41,34 +27,69 @@ class CMakeBuild(build_ext):
     def build_extension(self, ext: CMakeExtension) -> None:
         extdir = os.path.abspath(os.path.dirname(self.get_ext_fullpath(ext.name)))
 
-        # Resolusi hierarki direktori modul mshqc
         if not extdir.endswith("mshqc"):
             extdir = os.path.join(extdir, "mshqc")
         os.makedirs(extdir, exist_ok=True)
 
         import nanobind
         nanobind_cmake_path = nanobind.cmake_dir()
-        python_root = os.path.dirname(sys.executable)
-        if python_root.endswith('/bin'):
-            python_root = os.path.dirname(python_root)
+
+        # Cari semua kemungkinan prefix tempat pip menginstal mkl-devel & mkl-include
+        real_exe_root = os.path.dirname(os.path.dirname(os.path.realpath(sys.executable)))
+        exe_root = os.path.dirname(os.path.dirname(os.path.abspath(sys.executable)))
+        candidate_roots = [
+            sys.prefix,
+            sys.base_prefix,
+            exe_root,
+            real_exe_root,
+            os.environ.get("MKLROOT", ""),
+            os.environ.get("CONDA_PREFIX", ""),
+            "/usr/local",
+        ]
+
+        mkl_lib_path = ""
+        mkl_inc_path = ""
+        for root in candidate_roots:
+            if not root:
+                continue
+            lib_dir = os.path.join(root, "lib")
+            inc_dir = os.path.join(root, "include")
+            if not mkl_lib_path and os.path.isdir(lib_dir):
+                matches = glob.glob(os.path.join(lib_dir, "libmkl_rt.so*"))
+                if matches:
+                    # Buat symlink libmkl_rt.so jika hanya ada libmkl_rt.so.2
+                    so_link = os.path.join(lib_dir, "libmkl_rt.so")
+                    if not os.path.exists(so_link):
+                        try:
+                            os.symlink(os.path.basename(matches[0]), so_link)
+                            mkl_lib_path = so_link
+                        except OSError:
+                            mkl_lib_path = matches[0]
+                    else:
+                        mkl_lib_path = so_link
+            if not mkl_inc_path and os.path.isfile(os.path.join(inc_dir, "mkl.h")):
+                mkl_inc_path = inc_dir
 
         cmake_args = [
             f"-DCMAKE_LIBRARY_OUTPUT_DIRECTORY={extdir}",
             f"-DCMAKE_RUNTIME_OUTPUT_DIRECTORY={extdir}",
-            f"-DPython_ROOT_DIR={python_root}",       
-            f"-DPython3_ROOT_DIR={python_root}",      
+            f"-DPython_ROOT_DIR={real_exe_root}",
+            f"-DPython3_ROOT_DIR={real_exe_root}",
             f"-DPython_EXECUTABLE={sys.executable}",
             f"-DPython3_EXECUTABLE={sys.executable}",
             f"-Dnanobind_DIR={nanobind_cmake_path}",
             "-DCMAKE_BUILD_TYPE=Release",
         ]
 
-        # Injeksi argumen CMake kustom dari environment variable (umum pada sistem build HPC)
+        if mkl_lib_path:
+            cmake_args.append(f"-DMKL_LIBRARY={mkl_lib_path}")
+        if mkl_inc_path:
+            cmake_args.append(f"-DMKL_INCLUDE_DIR={mkl_inc_path}")
+
         env_cmake_args = os.environ.get("CMAKE_ARGS")
         if env_cmake_args:
             cmake_args.extend(shlex.split(env_cmake_args))
 
-        # Generator Ninja direkomendasikan untuk menghindari inefisiensi re-evaluasi target pada Make
         if shutil.which("ninja"):
             cmake_args.extend(["-G", "Ninja"])
 
@@ -78,14 +99,11 @@ class CMakeBuild(build_ext):
         os.makedirs(self.build_temp, exist_ok=True)
 
         env = os.environ.copy()
-        # Injeksi metadata versi dengan flag C++ preprocessor
         env["CXXFLAGS"] = f'{env.get("CXXFLAGS", "")} -DVERSION_INFO=\\"{self.distribution.get_version()}\\"'
 
-        # Eksekusi pipeline kompilasi
         subprocess.check_call(["cmake", ext.sourcedir] + cmake_args, cwd=self.build_temp, env=env)
         subprocess.check_call(["cmake", "--build", "."] + build_args, cwd=self.build_temp)
 
-        # Pemindahan artifak biner (.so) menggunakan copy2
         for filepath in glob.glob(os.path.join(self.build_temp, "**/*.so"), recursive=True):
             shutil.copy2(filepath, extdir)
 
@@ -93,7 +111,6 @@ class CMakeBuild(build_ext):
             if "_mshqc" in os.path.basename(filepath):
                 shutil.copy2(filepath, extdir)
 
-        # Bundling file basis set (.gbs) ke dalam paket mshqc/basis untuk PyPI Wheel & Editable Install
         src_basis_dir = os.path.join(ext.sourcedir, "data", "basis")
         if os.path.isdir(src_basis_dir):
             pkg_src_basis_dir = os.path.join(ext.sourcedir, "python", "mshqc", "basis")

@@ -1,19 +1,8 @@
-# Copyright 2026 Muhamad Syahrul Hidayat
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-
 # File: python/mshqc/__init__.py
 import os
+import sys
+import glob
+import ctypes
 import multiprocessing
 
 def _configure_environment():
@@ -41,7 +30,35 @@ def _configure_environment():
         elif os.path.isdir(repo_basis):
             os.environ["MSHQC_BASIS_PATH"] = repo_basis
 
+def _preload_mkl():
+    """Preload MKL runtime libraries dari sys.prefix/lib agar _mshqc.so selalu menemukan simbol MKL."""
+    search_dirs = [
+        os.path.join(sys.prefix, "lib"),
+        os.path.join(sys.base_prefix, "lib"),
+        os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(sys.executable))), "lib"),
+    ]
+    lib_patterns = [
+        "libtbb.so*",
+        "libiomp5.so*",
+        "libmkl_core.so*",
+        "libmkl_gnu_thread.so*",
+        "libmkl_intel_thread.so*",
+        "libmkl_intel_lp64.so*",
+        "libmkl_rt.so*",
+    ]
+    rtld_flags = getattr(ctypes, "RTLD_GLOBAL", 0) | getattr(os, "RTLD_LAZY", 1)
+    for d in search_dirs:
+        if not os.path.isdir(d):
+            continue
+        for pat in lib_patterns:
+            for lib_path in sorted(glob.glob(os.path.join(d, pat))):
+                try:
+                    ctypes.CDLL(lib_path, mode=rtld_flags)
+                except OSError:
+                    pass
+
 _configure_environment()
+_preload_mkl()
 
 from ._mshqc import *
 from .calculators import MSHQCCalculator, build_molecule, run
