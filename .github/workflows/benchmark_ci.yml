@@ -31,7 +31,7 @@ jobs:
         run: |
           python3 -m venv /tmp/mshqc_venv
           /tmp/mshqc_venv/bin/pip install --upgrade pip
-          /tmp/mshqc_venv/bin/pip uninstall mshqc
+          /tmp/mshqc_venv/bin/pip uninstall -y mshqc || true
           /tmp/mshqc_venv/bin/pip install mshqc --no-cache-dir pytest
 
       - name: Run Automated Pytest Validation Suite (tests/test_mshqc.py)

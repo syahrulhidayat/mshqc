@@ -12,7 +12,7 @@ tags:
   - tensor contraction
 authors:
   - name: Muhamad Syahrul Hidayat
-    orcid: 0009-0000-0000-0000
+    orcid: 0009-0005-4112-1807
     affiliation: 1
 affiliations:
   - name: Department of Physics, Faculty of Mathematics and Natural Sciences, Universitas Gadjah Mada, Yogyakarta, Indonesia
@@ -42,19 +42,19 @@ Production packages such as `Psi4` [@smith2020psi4] (`fnocc`/`dfocc`) and `PySCF
 `mshqc` is structured into four C++20 layers exposed to Python via `nanobind` [@jakob2022nanobind] with zero-copy `Eigen` [@guennebaud2010eigen] interoperability and automatic `GIL` release:
 
 1. **Symmetry & Basis Infrastructure (`Molecule`, `BasisSet`, `PointGroup`, `PetiteList`):** Parses 538 bundled Gaussian basis sets (`.gbs`), including Dunning `cc-pVXZ` [@dunning1989gaussian] and `-RI`/`-JKFIT` auxiliary bases [@weigend2002fully], with contraction normalization [@helgaker2000molecular], canonical axis alignment, and `PetiteList` symmetry reduction [@atkins1970tables].
-2. **Unified Integral Engine (`IntegralEngine`, `Screening`, `CholeskyERI`, `DensityFittingERI`):** Evaluates integrals via `libcint` [@sun2015libcint] under a unified `eri_method` (`"exact"`, `"cholesky"`, `"df"`), reducing storage from $\mathcal{O}(N^4)$ to $\mathcal{O}(N_{	ext{aux}} N^2)$ three-center tensors $B_{pq}^Q$ with optional `HDF5` out-of-core storage [@hdfgroup1997hdf5].
+2. **Unified Integral Engine (`IntegralEngine`, `Screening`, `CholeskyERI`, `DensityFittingERI`):** Evaluates integrals via `libcint` [@sun2015libcint] under a unified `eri_method` (`"exact"`, `"cholesky"`, `"df"`), reducing storage from $\mathcal{O}(N^4)$ to $\mathcal{O}(N_{\text{aux}} N^2)$ three-center tensors $B_{pq}^Q$ with optional `HDF5` out-of-core storage [@hdfgroup1997hdf5].
 3. **Self-Consistent Field (`RHF`, `UHF`, `ROHF`):** Shares a common `BaseSCF` architecture with `SAD` guesses, Schwarz screening, `DIIS` extrapolation, and rank-projected `df` exchange contractions.
 4. **Correlated & Orbital-Optimized Solvers (`RMP2`, `UMP2`, `OMP2`, `RMP3`, `UMP3`, `OMP3`):** Dispatches four-index contractions to `TBLIS` [@matthews2017high] and three-index contractions to cache-blocked `OpenMP` + `BLAS` kernels [@dagum1998openmp], coupled with `TrustRegionSOSCF` orbital optimization.
 
 # Validation and performance
 
-All solvers in `mshqc` were validated against `Psi4` [@smith2020psi4] across closed-shell (`Ne`, $	ext{H}_2	ext{O}$) and open-shell (`Li`, `C`, `O`) systems in the `cc-pVTZ` (`cc-pVTZ-RI`) basis at a $10^{-9}	ext{ Ha}$ threshold. Across all 60 benchmark runs (`5 systems × 3 ERI modes × 4 methods`), `mshqc` reproduces `Psi4` energies within $|\Delta E| \le 1.27\ \mu	ext{Ha}$ (with 54 of 60 runs matching to $0.00\ \mu	ext{Ha}$ at $10^{-8}	ext{ Ha}$ precision, and all 20 `df` runs within $|\Delta E| \le 0.01\ \mu	ext{Ha}$).
+All solvers in `mshqc` were validated against `Psi4` [@smith2020psi4] across closed-shell (`Ne`, $\text{H}_2\text{O}$) and open-shell (`Li`, `C`, `O`) systems in the `cc-pVTZ` (`cc-pVTZ-RI`) basis at a $10^{-9}\text{ Ha}$ threshold. Across all 60 benchmark runs (`5 systems × 3 ERI modes × 4 methods`), `mshqc` reproduces `Psi4` energies within $|\Delta E| \le 1.27\ \mu\text{Ha}$ (with 54 of 60 runs matching to $0.00\ \mu\text{Ha}$ at $10^{-8}\text{ Ha}$ precision, and all 20 `df` runs within $|\Delta E| \le 0.01\ \mu\text{Ha}$).
 
-As shown in Figure 1 and Table 1, `mshqc` achieves wall-clock speedups of $2.4	imes$ to $18.6	imes$ on `OMP2` and $2.8	imes$ to $11.6	imes$ on `OMP3` over `Psi4`, converging the orbital gradient norm $\|\mathbf{g}\|_2 < 10^{-5}	ext{ Ha}$ in 3 to 4 macro-iterations. On $	ext{H}_2	ext{O}$ ($N = 58$, $N_{	ext{aux}} = 141$), switching from `exact` to `cholesky` and `df` integrals reduces `OMP3` wall-clock time from $0.797	ext{ s}$ to $0.705	ext{ s}$ and $0.358	ext{ s}$.
+As shown in Figure 1 and Table 1, `mshqc` achieves wall-clock speedups of $2.4\times$ to $18.6\times$ on `OMP2` and $2.8\times$ to $11.6\times$ on `OMP3` over `Psi4`, converging the orbital gradient norm $\|\mathbf{g}\|_2 < 10^{-5}\text{ Ha}$ in 3 to 4 macro-iterations. On $\text{H}_2\text{O}$ ($N = 58$, $N_{\text{aux}} = 141$), switching from `exact` to `cholesky` and `df` integrals reduces `OMP3` wall-clock time from $0.797\text{ s}$ to $0.705\text{ s}$ and $0.358\text{ s}$.
 
-![Benchmark evaluation of `mshqc` vs `Psi4` in the `cc-pVTZ` (`cc-pVTZ-RI`) basis: (A) `OMP3` wall-clock speedup ($t_{	ext{Psi4}} / t_{	ext{mshqc}}$) across `exact`, `cholesky`, and `df` integral modes; (B) Trust-Region SOSCF orbital gradient norm $\|\mathbf{g}\|_2$ convergence per macro-iteration.](benchmark_figure.pdf){ width=100% }
+![Benchmark evaluation of `mshqc` vs `Psi4` in the `cc-pVTZ` (`cc-pVTZ-RI`) basis: (A) `OMP3` wall-clock speedup ($t_{\text{Psi4}} / t_{\text{mshqc}}$) across `exact`, `cholesky`, and `df` integral modes; (B) Trust-Region SOSCF orbital gradient norm $\|\mathbf{g}\|_2$ convergence per macro-iteration.](benchmark_figure.pdf){ width=100% }
 
-Table 1: Representative benchmark comparison between `mshqc` and `Psi4` (`cc-pVTZ` / `cc-pVTZ-RI`, threshold $10^{-9}	ext{ Ha}$), reporting total energy, absolute deviation $|\Delta E|$ ($\mu	ext{Ha}$), wall-clock times (s), and speedup.
+Table 1: Representative benchmark comparison between `mshqc` and `Psi4` (`cc-pVTZ` / `cc-pVTZ-RI`, threshold $10^{-9}\text{ Ha}$), reporting total energy, absolute deviation $|\Delta E|$ ($\mu\text{Ha}$), wall-clock times (s), and speedup.
 
 |System|ERI|Method|Energy (Ha)|$|\Delta E|$|`mshqc` (s)|`Psi4` (s)|Speedup|
 |:--|:--|:--|--:|--:|--:|--:|--:|
