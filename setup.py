@@ -48,6 +48,9 @@ class CMakeBuild(build_ext):
 
         import nanobind
         nanobind_cmake_path = nanobind.cmake_dir()
+        python_root = os.path.dirname(sys.executable)
+        if python_root.endswith('/bin'):
+            python_root = os.path.dirname(python_root)
 
         cmake_args = [
             f"-DCMAKE_LIBRARY_OUTPUT_DIRECTORY={extdir}",
