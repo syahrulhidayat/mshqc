@@ -42,7 +42,7 @@ jobs:
           # =========================================================================
           CIBW_BEFORE_ALL: >
             dnf install -y dnf-plugins-core epel-release &&
-            dnf config-manager --set-enabled crb &&
+            dnf config-manager --set-enabled powertools &&
             dnf install -y git wget hdf5-devel ninja-build &&
             git clone --depth 1 -b v6.1.2 https://github.com/sunqm/libcint.git /tmp/libcint &&
             cd /tmp/libcint && mkdir build && cd build &&
