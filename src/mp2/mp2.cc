@@ -633,7 +633,7 @@ void OMP2::transform_integrals() {
 
         g_aa_.clear(); g_bb_.clear(); g_ab_.clear();
 
-        if (config_.print_level > 0) std::cout << "  [DEBUG] Memulai Transformasi Integral OOVV (HPC Dense TBLIS)..." << std::endl;
+        if (config_.print_level >= 3) std::cout << "  [DEBUG] Memulai Transformasi Integral OOVV (HPC Dense TBLIS)..." << std::endl;
 
         auto dense_aa = integrals::ERITransformer::transform_custom(eri_ao, Ca_o, Ca_v, Ca_o, Ca_v, nbf_, na_, va_, na_, va_);
         g_aa_.allocate_block(0, 0, 0, 0, na_, va_, na_, va_);
@@ -864,7 +864,7 @@ double OMP2::execute_micro_iterations() {
 void OMP2::execute_macro_iterations(DIIS& diis_a, DIIS& diis_b, int macro_iter) {
     build_generalized_fock();
 
-    bool is_restricted = (na_ == nb_ && va_ == vb_);
+    bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     
 
     if (is_restricted && nb_ > 0) F_gen_b_ = F_gen_a_; 
@@ -947,7 +947,7 @@ MP2Result OMP2::compute() {
     int macro_iter = 0;
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     bool step_rejected = false;
-    if (omp_get_thread_num() == 0 && config_.print_level > 0 && na_ > 0 && va_ > 0) {
+    if (omp_get_thread_num() == 0 && config_.print_level >= 3 && na_ > 0 && va_ > 0) {
         std::cout << "\n--- [DEBUG] Memulai Uji Finite-Difference OMP2 (Total Energy) ---\n";
         int i_target = na_ - 1; 
         int a_target = 0;

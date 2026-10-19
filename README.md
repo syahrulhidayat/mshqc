@@ -2,6 +2,7 @@
 
 **A C++20 quantum chemistry engine for orbital-optimized Møller–Plesset perturbation theory**
 
+[![PyPI version](https://img.shields.io/pypi/v/mshqc.svg)](https://pypi.org/project/mshqc/)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 [![C++20](https://img.shields.io/badge/C++-20-blue.svg)](https://en.cppreference.com/w/cpp/20)
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/downloads/)
@@ -64,20 +65,34 @@ Mature quantum chemistry ecosystems such as Psi4 and PySCF provide broad method 
 
 ## Installation
 
-A `conda-forge` environment is recommended to ensure ABI-compatible builds of MKL, HDF5, OpenMP, `libcint`, and `tblis`.
+### Option 1: Install Precompiled Wheel from PyPI (Recommended for Linux x86_64)
+
+Precompiled `manylinux_2_28` wheels (Python 3.11–3.13) with statically linked `libcint` and `TBLIS` kernels and bundled Gaussian basis sets (`.gbs`) are available directly on PyPI:
 
 ```bash
-# 1. Create and activate the Conda environment
+pip install mshqc
+```
+
+### Option 2: Build from Source (Conda + CMake)
+
+To compile `mshqc` from source or develop custom C++20 kernels, a `conda-forge` environment is recommended to provide ABI-compatible headers and libraries (`eigen`, `tblis`, `libcint`, `mkl`, `hdf5`, and `nanobind`):
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/syahrulhidayat/mshqc.git
+cd mshqc
+
+# 2. Create and activate the Conda environment
 conda env create -f environment.yml
 conda activate mshqc_314
 
-# 2. Build and install mshqc in editable mode
+# 3. Build and install mshqc in editable mode
 pip install -v -e . --no-build-isolation
 ```
 
 ### Build Options
 
-By default, `mshqc` compiles with `-O3 -march=native` on local machines. When building portable binaries for heterogeneous clusters, override the C++ flags via `CMAKE_ARGS`:
+By default, local source builds compile with `-O3 -march=native`. When building portable binaries for heterogeneous clusters, override the C++ flags via `CMAKE_ARGS`:
 
 ```bash
 CMAKE_ARGS="-DCMAKE_CXX_FLAGS='-O3 -mavx2 -mfma -DNDEBUG'" pip install -v -e . --no-build-isolation
@@ -156,14 +171,15 @@ See [`docs/QUICKSTART.md`](docs/QUICKSTART.md) for open-shell (`UHF`/`ROHF`/`UMP
 Run the automated validation test suite via `pytest`:
 
 ```bash
-pytest tests/ -v
+pip install pytest
+pytest tests/test_mshqc.py -v
 ```
 
 ---
 
 ## Contributing
 
-Bug reports and pull requests are welcome via the [GitHub issue tracker](https://github.com/syahrulhidayat/mshqc/issues). Please include your OS, compiler version, and `conda list` output when reporting build or runtime issues.
+Bug reports and pull requests are welcome via the [GitHub issue tracker](https://github.com/syahrulhidayat/mshqc/issues). Please include your OS, compiler version, and `conda list` or `pip list` output when reporting build or runtime issues.
 
 ---
 
@@ -177,7 +193,7 @@ If you use `mshqc` in published work, please cite:
   title   = {mshqc: A C++20 Quantum Chemistry Engine for Orbital-Optimized M{\o}ller--Plesset Perturbation Theory},
   year    = {2026},
   url     = {https://github.com/syahrulhidayat/mshqc},
-  version = {1.0.3}
+  version = {1.0.4}
 }
 ```
 

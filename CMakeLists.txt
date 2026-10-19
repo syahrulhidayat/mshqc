@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.14)
 
-project(mshqc VERSION 1.0.3 LANGUAGES CXX C)
+project(mshqc VERSION 1.0.4 LANGUAGES CXX C)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 if(NOT CMAKE_BUILD_TYPE)

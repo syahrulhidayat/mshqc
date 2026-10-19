@@ -40,7 +40,7 @@ def run_benchmark():
                 mol.add_atom("O", 0.0, 0.0, 0.0, units="angstrom")
                 ref_type = "U"
 
-            print(f"Executando: {sys_name:<9}-> {ref_type}HF, {ref_type}MP2, OMP2, & OMP3 (Integral: {mode.upper()})")
+            print(f"Running: {sys_name:<9}-> {ref_type}HF, {ref_type}MP2, OMP2, & OMP3 (Integral: {mode.upper()})")
 
             # 2. Load Basis Set & Integral
             basis = mshqc.BasisSet("cc-pVTZ", mol)
@@ -80,10 +80,10 @@ def run_benchmark():
 
     # Print Tabel Hasil Akhir
     print("\n===============================================================================")
-    print("                     RESULTADO FINAL DO BENCHMARK MSHQC")
+    print("                     MSHQC BENCHMARK FINAL RESULTS")
     print("===============================================================================")
     print("-" * 67)
-    print(f"| {'Sistema':<8} | {'ERI Mode':<10} | {'Método':<8} | {'Energia (Ha)':<16} | {'Tempo (s)'} |")
+    print(f"| {'System':<8} | {'ERI Mode':<10} | {'Method':<8} | {'Energy (Ha)':<16} | {'Time (s)'} |")
     print("-" * 67)
     for r in results:
         print(f"| {r[0]:<8} | {r[1]:<10} | {r[2]:<8} | {r[3]:<16.8f} | {r[4]:.3f}     |")
