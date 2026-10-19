@@ -43,7 +43,7 @@ jobs:
           CIBW_BEFORE_ALL: >
             dnf install -y dnf-plugins-core epel-release &&
             dnf config-manager --set-enabled powertools &&
-            dnf install -y git wget hdf5-devel ninja-build libatomic &&
+            dnf install -y git wget hdf5-devel ninja-build libatomic gcc-toolset-12-libatomic-devel &&
             git clone --depth 1 -b v6.1.2 https://github.com/sunqm/libcint.git /tmp/libcint &&
             cd /tmp/libcint && mkdir build && cd build &&
             cmake -DCMAKE_INSTALL_PREFIX=/usr/local -DENABLE_EXAMPLE=0 -DENABLE_TEST=0 -DBUILD_SHARED_LIBS=OFF .. &&
@@ -54,9 +54,8 @@ jobs:
             sed -i '1i #include <limits>' src/external/marray/include/short_vector.hpp &&
             sed -i '1i #include <limits>' src/external/marray/include/range.hpp &&
             sed -i '1i #include <limits>' src/util/thread.h &&
-            ./configure --prefix=/usr/local --enable-static --disable-shared --without-hwloc --enable-config=haswell,zen,core2,sandybridge,bulldozer,piledriver,excavator,reference &&
+            ./configure --prefix=/usr/local --enable-static --disable-shared --without-hwloc --enable-config=haswell,zen,core2,sandybridge,bulldozer,piledriver,excavator,reference LIBS="-latomic" &&
             make -j$(nproc) && make install
-
           CIBW_BEFORE_BUILD: >
             pip install mkl mkl-devel mkl-include cmake ninja pytest numpy scipy
           
