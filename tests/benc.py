@@ -4,16 +4,16 @@ import time
 # =====================================================================
 # 1. KONFIGURASI HPC & LINGKUNGAN (Setara 6 Thread dengan MSHQC)
 # =====================================================================
-os.environ["OMP_NUM_THREADS"] = "6"
+os.environ.setdefault("OMP_NUM_THREADS", "6")
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
-os.environ["TBLIS_NUM_THREADS"] = "6"
+os.environ.setdefault("TBLIS_NUM_THREADS", "6")
 os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
 import psi4
 
 # Set thread & memori untuk Psi4 API
-psi4.set_num_threads(6)
+psi4.set_num_threads(int(os.environ.get("OMP_NUM_THREADS", "6")))
 psi4.set_memory("8 GB")
 psi4.core.be_quiet()
 
@@ -189,7 +189,7 @@ def main():
         mp2_lbl = "RMP2" if ref == 'rhf' else "UMP2"
         
         for eri_mode in ERI_MODES:
-            print(f"Menjalankan: {sys_name:<8} -> {ref_label}, {mp2_lbl}, OMP2, & OMP3 (Integral: {eri_mode.upper()})")
+            print(f"Running: {sys_name:<8} -> {ref_label}, {mp2_lbl}, OMP2, & OMP3 (Integral: {eri_mode.upper()})")
             
             e_scf, t_scf, mp2_label, e_mp2, t_mp2, e_omp2, t_omp2, e_omp3, t_omp3 = run_psi4_bench(
                 sys_name, atoms, chg, mult, ref, BASIS_NAME, eri_mode
@@ -219,9 +219,9 @@ def main():
             time.sleep(0.5)
 
     print("\n===============================================================================")
-    print(f"                        HASIL AKHIR BENCHMARK PSI4")
+    print(f"                        PSI4 BENCHMARK FINAL RESULTS")
     print("===============================================================================")
-    header = f"| {'Sistem':<8} | {'Mode ERI':<10} | {'Metode':<8} | {'Energi (Ha)':<16} | {'Waktu (s)':<8} |"
+    header = f"| {'System':<8} | {'ERI Mode':<10} | {'Method':<8} | {'Energy (Ha)':<16} | {'Time (s)':<8} |"
     print("-" * len(header)); print(header); print("-" * len(header))
 
     for row in RESULTS_DB:

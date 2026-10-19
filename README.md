@@ -193,7 +193,7 @@ If you use `mshqc` in published work, please cite:
   title   = {mshqc: A C++20 Quantum Chemistry Engine for Orbital-Optimized M{\o}ller--Plesset Perturbation Theory},
   year    = {2026},
   url     = {https://github.com/syahrulhidayat/mshqc},
-  version = {1.0.4}
+  version = {1.0.3}
 }
 ```
 
