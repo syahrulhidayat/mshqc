@@ -1,4 +1,4 @@
-name: Compile and Release Wheel to Public Repoo
+name: Compile and Release Wheel to Public Repo
 
 on:
   push:
@@ -13,7 +13,7 @@ jobs:
   build_wheels:
     name: Build wheels on ubuntu-latest (manylinux)
     runs-on: ubuntu-latest
-    
+
     steps:
       - name: Checkout Source Code
         uses: actions/checkout@v4
@@ -23,52 +23,104 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.x"
+          python-version: "3.12"
+
+      # Cache hasil kompilasi statis libcint & tblis agar tidak memakan 11 menit setiap run
+      - name: Cache Static Dependencies (libcint & TBLIS)
+        uses: actions/cache@v4
+        with:
+          path: .cache_deps
+          key: manylinux_2_28-static-deps-v6.1.2-tblis-v1.2.0
 
       - name: Install cibuildwheel
-        run: python -m pip install cibuildwheel==2.17.0
+        run: python -m pip install --upgrade cibuildwheel
 
       - name: Build wheels
         run: python -m cibuildwheel --output-dir wheelhouse
         env:
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
-          
-          # Kita hanya membangun untuk versi 3.11 sampai 3.14 x86_64
+
+          # Membangun untuk CPython 3.11 sampai 3.14 x86_64
           CIBW_BUILD: "cp311-manylinux_x86_64 cp312-manylinux_x86_64 cp313-manylinux_x86_64 cp314-manylinux_x86_64"
           CIBW_PRERELEASE_PYTHONS: 1
-          
+
           # =========================================================================
-          # STATIC COMPILATION DI DALAM DOCKER MANYLINUX
+          # 1. STATIC COMPILATION DI DALAM DOCKER MANYLINUX (DENGAN CACHE & -fPIC)
           # =========================================================================
           CIBW_BEFORE_ALL: >
             dnf install -y dnf-plugins-core epel-release &&
             dnf config-manager --set-enabled powertools &&
-            dnf install -y git wget hdf5-devel ninja-build libatomic gcc-toolset-12-libatomic-devel &&
-            git clone --depth 1 -b v6.1.2 https://github.com/sunqm/libcint.git /tmp/libcint &&
-            cd /tmp/libcint && mkdir build && cd build &&
-            cmake -DCMAKE_INSTALL_PREFIX=/usr/local -DENABLE_EXAMPLE=0 -DENABLE_TEST=0 -DBUILD_SHARED_LIBS=OFF .. &&
-            make -j$(nproc) && make install &&
-            git clone --depth 1 -b v1.2.0 https://github.com/devinamatthews/tblis.git /tmp/tblis &&
-            cd /tmp/tblis && git submodule update --init --recursive &&
-            sed -i 's/SIGSTKSZ/8192/g' src/external/catch/catch.hpp &&
-            sed -i '1i #include <limits>' src/external/marray/include/short_vector.hpp &&
-            sed -i '1i #include <limits>' src/external/marray/include/range.hpp &&
-            sed -i '1i #include <limits>' src/util/thread.h &&
-            ./configure --prefix=/usr/local --enable-static --disable-shared --without-hwloc --enable-config=haswell,zen,core2,sandybridge,bulldozer,piledriver,excavator,reference LIBS="-latomic" &&
-            make -j$(nproc) && make install
+            dnf install -y git wget hdf5-devel eigen3-devel ninja-build patchelf libatomic gcc-toolset-12-libatomic-devel &&
+            if [ -f "/project/.cache_deps/lib/libtblis.a" ] || [ -f "/project/.cache_deps/lib64/libtblis.a" ]; then
+              echo "Restoring cached libcint and TBLIS to /usr/local..." &&
+              cp -rn /project/.cache_deps/* /usr/local/ &&
+              ldconfig
+            else
+              mkdir -p /project/.cache_deps &&
+              git clone --depth 1 -b v6.1.2 https://github.com/sunqm/libcint.git /tmp/libcint &&
+              cd /tmp/libcint && mkdir build && cd build &&
+              export CFLAGS="-O3 -fPIC -mavx2 -mfma -mno-avx512f -funroll-loops -fno-math-errno -Wno-incompatible-pointer-types -std=gnu17" &&
+              cmake -DCMAKE_INSTALL_PREFIX=/usr/local \
+                    -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+                    -DCMAKE_C_FLAGS="$CFLAGS" \
+                    -DENABLE_EXAMPLE=0 -DENABLE_TEST=0 -DBUILD_SHARED_LIBS=OFF .. &&
+              make -j$(nproc) && make install &&
+              git clone --depth 1 -b v1.2.0 https://github.com/devinamatthews/tblis.git /tmp/tblis &&
+              cd /tmp/tblis && git submodule update --init --recursive &&
+              sed -i 's/SIGSTKSZ/8192/g' src/external/catch/catch.hpp &&
+              sed -i '1i #include <limits>' src/external/marray/include/short_vector.hpp &&
+              sed -i '1i #include <limits>' src/external/marray/include/range.hpp &&
+              sed -i '1i #include <limits>' src/util/thread.h &&
+              export CFLAGS="-O3 -fPIC -mno-avx512f -mno-avx512vl -mno-avx512dq -mno-avx512bw -mno-avx512cd -Wno-incompatible-pointer-types -std=gnu17" &&
+              export CXXFLAGS="-O3 -fPIC -mno-avx512f -mno-avx512vl -mno-avx512dq -mno-avx512bw -mno-avx512cd -Wno-incompatible-pointer-types -std=gnu++17" &&
+              ./configure --prefix=/usr/local --enable-static --disable-shared --with-pic --without-hwloc \
+                          --enable-config=haswell,zen,core2,sandybridge,bulldozer,piledriver,excavator,reference \
+                          CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS" LIBS="-latomic" &&
+              make -j$(nproc) && make install &&
+              cp -r /usr/local/include /usr/local/lib* /project/.cache_deps/ 2>/dev/null || true
+            fi
+
+          # =========================================================================
+          # 2. INSTALL MKL & BUILD TOOLS DI SETIAP VERSI PYTHON
+          # =========================================================================
           CIBW_BEFORE_BUILD: >
-            pip install mkl mkl-devel mkl-include cmake ninja pytest numpy scipy
-          
+            pip install mkl mkl-devel mkl-include cmake ninja pytest numpy scipy nanobind setuptools wheel
+
           CIBW_ENVIRONMENT: >
+            GITHUB_ACTIONS=true
+            CIBUILDWHEEL=1
             CXXFLAGS="-std=c++20 -fopenmp -O3 -DNDEBUG -mavx2 -mfma -mno-avx512f -funroll-loops -ftree-vectorize -mtune=generic -fno-math-errno -DEIGEN_USE_MKL_ALL -I/usr/local/include"
-            CFLAGS="-O3 -DNDEBUG"
+            CFLAGS="-O3 -fPIC -DNDEBUG"
             CMAKE_BUILD_TYPE=Release
             LDFLAGS="-L/usr/local/lib -L/usr/local/lib64 -lquadmath -latomic"
             CMAKE_PREFIX_PATH="/usr/local"
             TBLIS_DIR="/usr/local"
             CMAKE_BUILD_PARALLEL_LEVEL=4
-          
-          CIBW_TEST_REQUIRES: pytest
+
+          # =========================================================================
+          # 3. BUNGKUS SEMUA DEPENDENCY (.so) KE DALAM WHEEL & SET RPATH MKL
+          # =========================================================================
+          CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
+            auditwheel repair --exclude libmkl_rt.so.2 --exclude libmkl_rt.so -w {dest_dir} {wheel} &&
+            python -c "
+            import glob, os, subprocess, tempfile, zipfile
+            for whl in glob.glob('{dest_dir}/*.whl'):
+                with tempfile.TemporaryDirectory() as tmp:
+                    with zipfile.ZipFile(whl, 'r') as z:
+                        z.extractall(tmp)
+                    for so in glob.glob(os.path.join(tmp, 'mshqc', '_mshqc*.so')):
+                        cur = subprocess.check_output(['patchelf', '--print-rpath', so], text=True).strip()
+                        rpath = (cur + ':' if cur else '') + '\$ORIGIN:\$ORIGIN/../../..:\$ORIGIN/../../../..'
+                        subprocess.check_call(['patchelf', '--set-rpath', rpath, so])
+                    os.remove(whl)
+                    with zipfile.ZipFile(whl, 'w', zipfile.ZIP_DEFLATED) as z:
+                        for root, _, files in os.walk(tmp):
+                            for f in files:
+                                full = os.path.join(root, f)
+                                z.write(full, os.path.relpath(full, tmp))
+            "
+
+          CIBW_TEST_REQUIRES: "pytest numpy scipy mkl"
           CIBW_TEST_COMMAND: "pytest {project}/tests/ -v"
 
       - name: Upload Wheels as Artifacts
@@ -93,8 +145,8 @@ jobs:
     name: Upload to PyPI
     needs: [build_wheels, build_sdist]
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/build-pypi' || github.event_name == 'workflow_dispatch'
-    
+    if: (github.event_name == 'push' && (github.ref == 'refs/heads/build-pypi' || startsWith(github.ref, 'refs/tags/v'))) || github.event_name == 'workflow_dispatch'
+
     steps:
       - name: Download artifacts
         uses: actions/download-artifact@v4

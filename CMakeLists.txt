@@ -21,8 +21,8 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-# Environment GITHUB_ACTIONS aktif di ubuntu-latest DAN self-hosted runner
-if(DEFINED ENV{GITHUB_ACTIONS})
+# Aktif di GitHub Actions maupun di dalam container cibuildwheel
+if(DEFINED ENV{GITHUB_ACTIONS} OR DEFINED ENV{CIBUILDWHEEL})
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -mavx2 -mfma -mno-avx512f -funroll-loops -ftree-vectorize -mtune=generic -DNDEBUG -fno-math-errno")
 else()
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -march=native -funroll-loops -ftree-vectorize -DNDEBUG -fno-math-errno")
@@ -54,27 +54,52 @@ endif()
 find_package(Python COMPONENTS Interpreter Development.Module REQUIRED)
 
 # Ekstrak direktori konfigurasi nanobind langsung dari interpreter Python yang ditemukan
-execute_process(
-    COMMAND "${Python_EXECUTABLE}" -c "import nanobind; print(nanobind.cmake_dir())"
-    OUTPUT_VARIABLE nanobind_DIR
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-)
+if(NOT nanobind_DIR)
+    execute_process(
+        COMMAND "${Python_EXECUTABLE}" -c "import nanobind; print(nanobind.cmake_dir())"
+        OUTPUT_VARIABLE nanobind_DIR
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+endif()
 
-find_package(nanobind CONFIG REQUIRED HINTS "\({nanobind_DIR}" "\)ENV{CONDA_PREFIX}/lib/python3.14/site-packages/nanobind/cmake")
+find_package(nanobind CONFIG REQUIRED HINTS "${nanobind_DIR}" "$ENV{CONDA_PREFIX}/lib/python3.14/site-packages/nanobind/cmake")
 find_package(OpenMP REQUIRED)
 
 # ==============================================================================
-# 2. BLAS / LAPACK / MKL DISCOVERY
+# 2. BLAS / LAPACK / MKL DISCOVERY (Support cibuildwheel Python_ROOT_DIR & Conda)
 # ==============================================================================
-find_library(MKL_LIBRARY NAMES mkl_rt HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/local/lib" "/usr/lib/x86_64-linux-gnu" "/usr/lib")
-find_path(MKL_INCLUDE_DIR NAMES mkl.h HINTS "$ENV{CONDA_PREFIX}/include" "$ENV{CONDA_PREFIX}/include/mkl" "/opt/conda/include" )
+find_library(MKL_LIBRARY
+    NAMES mkl_rt libmkl_rt.so libmkl_rt.so.2
+    HINTS
+        "${Python_ROOT_DIR}/lib"
+        "${Python3_ROOT_DIR}/lib"
+        "$ENV{CONDA_PREFIX}/lib"
+        "/opt/conda/lib"
+        "/usr/local/lib"
+        "/usr/local/lib64"
+        "/usr/lib64"
+        "/usr/lib/x86_64-linux-gnu"
+        "/usr/lib"
+)
+find_path(MKL_INCLUDE_DIR
+    NAMES mkl.h
+    HINTS
+        "${Python_ROOT_DIR}/include"
+        "${Python3_ROOT_DIR}/include"
+        "$ENV{CONDA_PREFIX}/include"
+        "$ENV{CONDA_PREFIX}/include/mkl"
+        "/opt/conda/include"
+        "/usr/local/include"
+        "/usr/include"
+)
 
 if(MKL_LIBRARY AND MKL_INCLUDE_DIR)
+    message(STATUS "Found MKL: ${MKL_LIBRARY} (include: ${MKL_INCLUDE_DIR})")
     set(BLAS_LIBRARIES ${MKL_LIBRARY})
     set(LAPACK_LIBRARIES ${MKL_LIBRARY})
 else()
-    find_library(BLIS_LIBRARY NAMES blis-mt blis HINTS "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/lib/x86_64-linux-gnu" "/usr/lib")
-    find_library(FLAME_LIBRARY NAMES flame HINTS "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/lib/x86_64-linux-gnu" "/usr/lib")
+    find_library(BLIS_LIBRARY NAMES blis-mt blis HINTS "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/local/lib64" "/usr/lib64" "/usr/lib/x86_64-linux-gnu" "/usr/lib")
+    find_library(FLAME_LIBRARY NAMES flame HINTS "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/local/lib64" "/usr/lib64" "/usr/lib/x86_64-linux-gnu" "/usr/lib")
 
     if(BLIS_LIBRARY)
         set(BLAS_LIBRARIES ${BLIS_LIBRARY})
@@ -86,7 +111,7 @@ else()
         set(LAPACK_LIBRARIES ${FLAME_LIBRARY})
     else()
         find_package(LAPACK REQUIRED)
-        find_library(LAPACKE_LIBRARY NAMES lapacke HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/lib/x86_64-linux-gnu" "/usr/lib")
+        find_library(LAPACKE_LIBRARY NAMES lapacke HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/lib64" "/usr/lib/x86_64-linux-gnu" "/usr/lib")
         if(LAPACKE_LIBRARY)
             list(APPEND LAPACK_LIBRARIES ${LAPACKE_LIBRARY})
         else()
@@ -103,34 +128,56 @@ if(EXISTS "${EIGEN_LOCAL_PATH}/Eigen/Dense")
     add_library(Eigen3::Eigen INTERFACE IMPORTED)
     target_include_directories(Eigen3::Eigen INTERFACE "${EIGEN_LOCAL_PATH}")
 else()
-    find_package(Eigen3 CONFIG HINTS "$ENV{CONDA_PREFIX}/share/eigen3/cmake" "/opt/conda/share/eigen3/cmake" "/usr/share/eigen3/cmake")
+    find_package(Eigen3 CONFIG HINTS "$ENV{CONDA_PREFIX}/share/eigen3/cmake" "/opt/conda/share/eigen3/cmake" "/usr/share/eigen3/cmake" "/usr/local/share/eigen3/cmake")
     if(NOT Eigen3_FOUND)
         find_package(Eigen3 REQUIRED NO_MODULE)
     endif()
 endif()
 
 # ==============================================================================
-# 4. LIBCINT & TBLIS DISCOVERY (Support Fedora lib64)
+# 4. LIBCINT & TBLIS DISCOVERY (Support manylinux /usr/local & Fedora lib64)
 # ==============================================================================
-find_library(CINT_LIBRARY NAMES cint HINTS "$ENV{CONDA_PREFIX}/lib" "$ENV{HOME}/libcint_install/lib64" "$ENV{HOME}/libcint_install/lib" "/usr/local/lib64" "/usr/local/lib" "/usr/lib64" "/usr/lib")
-find_path(CINT_INCLUDE_DIR NAMES cint.h HINTS "$ENV{CONDA_PREFIX}/include" "$ENV{HOME}/libcint_install/include")
+find_library(CINT_LIBRARY
+    NAMES cint libcint.a
+    HINTS "$ENV{CONDA_PREFIX}/lib" "$ENV{HOME}/libcint_install/lib64" "$ENV{HOME}/libcint_install/lib" "/usr/local/lib64" "/usr/local/lib" "/usr/lib64" "/usr/lib"
+)
+find_path(CINT_INCLUDE_DIR
+    NAMES cint.h
+    HINTS "$ENV{CONDA_PREFIX}/include" "$ENV{HOME}/libcint_install/include" "/usr/local/include" "/usr/include"
+)
 
 if(NOT CINT_LIBRARY OR NOT CINT_INCLUDE_DIR)
     message(FATAL_ERROR "CRITICAL: libcint library atau cint.h header tidak ditemukan!")
 endif()
 
-find_library(TBLIS_LIBRARY NAMES tblis libtblis.a HINTS "$ENV{TBLIS_DIR}/lib64" "$ENV{TBLIS_DIR}/lib" "$ENV{CONDA_PREFIX}/lib" "$ENV{HOME}/tblis_install/lib64" "$ENV{HOME}/tblis_install/lib" "/usr/lib64" "/usr/lib")
-find_library(TCI_LIBRARY NAMES tci libtci.a HINTS "$ENV{TBLIS_DIR}/lib64" "$ENV{TBLIS_DIR}/lib" "$ENV{CONDA_PREFIX}/lib" "$ENV{HOME}/tblis_install/lib64" "$ENV{HOME}/tblis_install/lib" "/usr/lib64" "/usr/lib")
-find_path(TBLIS_INCLUDE_DIR NAMES tblis/tblis.h HINTS "$ENV{TBLIS_DIR}/include" "$ENV{CONDA_PREFIX}/include" "$ENV{HOME}/tblis_install/include")
+find_library(TBLIS_LIBRARY
+    NAMES tblis libtblis.a
+    HINTS "$ENV{TBLIS_DIR}/lib64" "$ENV{TBLIS_DIR}/lib" "$ENV{CONDA_PREFIX}/lib" "$ENV{HOME}/tblis_install/lib64" "$ENV{HOME}/tblis_install/lib" "/usr/local/lib64" "/usr/local/lib" "/usr/lib64" "/usr/lib"
+)
+find_library(TCI_LIBRARY
+    NAMES tci libtci.a
+    HINTS "$ENV{TBLIS_DIR}/lib64" "$ENV{TBLIS_DIR}/lib" "$ENV{CONDA_PREFIX}/lib" "$ENV{HOME}/tblis_install/lib64" "$ENV{HOME}/tblis_install/lib" "/usr/local/lib64" "/usr/local/lib" "/usr/lib64" "/usr/lib"
+)
+find_path(TBLIS_INCLUDE_DIR
+    NAMES tblis/tblis.h
+    HINTS "$ENV{TBLIS_DIR}/include" "$ENV{CONDA_PREFIX}/include" "$ENV{HOME}/tblis_install/include" "/usr/local/include" "/usr/include"
+)
 
 if(NOT TBLIS_LIBRARY OR NOT TBLIS_INCLUDE_DIR)
     message(FATAL_ERROR "CRITICAL: TBLIS library atau header tidak ditemukan!")
 endif()
+
 # ==============================================================================
-# 5. HDF5 DISCOVERY (Removed NO_DEFAULT_PATH restrictions)
+# 5. HDF5 DISCOVERY (Support manylinux /usr/lib64)
 # ==============================================================================
-find_library(HDF5_C_LIB NAMES hdf5 HINTS "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/lib/x86_64-linux-gnu" "/usr/lib")
-find_library(HDF5_CXX_LIB NAMES hdf5_cpp HINTS "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/lib/x86_64-linux-gnu" "/usr/lib")
+find_library(HDF5_C_LIB
+    NAMES hdf5
+    HINTS "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib64" "/usr/local/lib" "/usr/lib64" "/usr/lib/x86_64-linux-gnu" "/usr/lib"
+)
+find_library(HDF5_CXX_LIB
+    NAMES hdf5_cpp
+    HINTS "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib64" "/usr/local/lib" "/usr/lib64" "/usr/lib/x86_64-linux-gnu" "/usr/lib"
+)
 
 if(HDF5_C_LIB AND HDF5_CXX_LIB)
     set(HDF5_LIBRARIES ${HDF5_CXX_LIB} ${HDF5_C_LIB})
@@ -178,7 +225,6 @@ target_compile_definitions(mshqc PUBLIC
     EIGEN_MPL2_ONLY
 )
 
-# TCI is optional in some setups, we handle if it exists or not
 set(MSHQC_LINK_LIBS 
     Eigen3::Eigen
     ${CINT_LIBRARY}
@@ -187,6 +233,7 @@ set(MSHQC_LINK_LIBS
     ${BLAS_LIBRARIES}
     ${LAPACK_LIBRARIES}
     OpenMP::OpenMP_CXX   
+    quadmath
     atomic
 )
 if(TCI_LIBRARY)
@@ -204,6 +251,7 @@ target_include_directories(mshqc PUBLIC
     $<BUILD_INTERFACE:${CINT_INCLUDE_DIR}>
     $<BUILD_INTERFACE:${TBLIS_INCLUDE_DIR}>
     $<BUILD_INTERFACE:${MKL_INCLUDE_DIR}>
+    $<BUILD_INTERFACE:${Python_ROOT_DIR}/include>
     $<BUILD_INTERFACE:$ENV{CONDA_PREFIX}/include>
     $<INSTALL_INTERFACE:include>
 )
@@ -211,9 +259,9 @@ target_include_directories(mshqc PUBLIC
 nanobind_add_module(_mshqc "python/bindings.cc")
 
 if(JEMALLOC_LIB)
-    target_link_libraries(_mshqc PRIVATE mshqc ${CINT_LIBRARY} ${TBLIS_LIBRARY} ${JEMALLOC_LIB} atomic) 
+    target_link_libraries(_mshqc PRIVATE mshqc ${CINT_LIBRARY} ${TBLIS_LIBRARY} ${TCI_LIBRARY} ${JEMALLOC_LIB} quadmath atomic) 
 else()
-    target_link_libraries(_mshqc PRIVATE mshqc ${CINT_LIBRARY} ${TBLIS_LIBRARY} atomic)
+    target_link_libraries(_mshqc PRIVATE mshqc ${CINT_LIBRARY} ${TBLIS_LIBRARY} ${TCI_LIBRARY} quadmath atomic)
 endif()
 
 set_target_properties(_mshqc PROPERTIES 
