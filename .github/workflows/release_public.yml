@@ -89,7 +89,7 @@ jobs:
             CMAKE_BUILD_PARALLEL_LEVEL=4
 
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
-            auditwheel repair --exclude libmkl_rt.so.2 --exclude libmkl_rt.so --exclude libiomp5.so --exclude libtbb.so.12 -w {dest_dir} {wheel}
+            auditwheel repair --exclude libmkl_rt.so.3 --exclude libmkl_rt.so.2 --exclude libmkl_rt.so --exclude libiomp5.so --exclude libtbb.so.12 -w {dest_dir} {wheel}
 
           CIBW_TEST_REQUIRES: "pytest numpy scipy mkl"
           CIBW_TEST_COMMAND: "pytest {project}/tests/test_mshqc.py -v"
