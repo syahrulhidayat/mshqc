@@ -40,7 +40,7 @@ atexit.register(print_final_table)
 
 
 @pytest.mark.parametrize("eri_mode", ["exact", "cholesky", "df"])
-def test_closed_shell_h2o(eri_mode: str = "exact"):
+def test_closed_shell_h2o(eri_mode: str):
     """Test closed-shell H2O (RHF -> RMP2 -> OMP2 -> OMP3) with simplified bindings."""
     # 1. Initialize molecule
     mol = mshqc.Molecule(charge=0, multiplicity=1)
@@ -84,7 +84,7 @@ def test_closed_shell_h2o(eri_mode: str = "exact"):
 
 
 @pytest.mark.parametrize("eri_mode", ["exact", "cholesky", "df"])
-def test_open_shell_oxygen(eri_mode: str = "exact"):
+def test_open_shell_oxygen(eri_mode: str):
     """Test open-shell Oxygen (UHF -> UMP2 -> OMP2 -> OMP3) with simplified bindings."""
     # 1. Initialize triplet Oxygen atom (charge=0, multiplicity=3)
     mol = mshqc.Molecule(charge=0, multiplicity=3)
