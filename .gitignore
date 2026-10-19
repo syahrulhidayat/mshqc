@@ -1,43 +1,56 @@
-# CMake build directories
-build*/
-cmake-build-*/
-install/
+# ====================================================================
+# MSHQ Custom .gitignore (C++ / Python Bindings / Quantum Chemistry)
+# ====================================================================
 
-# Compiled object files
-*.o
-*.obj
+# --- Environment and Virtual Environments ---
+venv/
+.venv/
+env/
+tunning/
+ActiveState.venv
+environment.yml.user
 
-# Compiled executables
-*.exe
-*.out
-*.app
-
-# Compiled libraries
-*.so
-*.dylib
-*.a
-
-# IDE files
+# --- Editor, IDE & Language Server Config ---
 .vscode/
 .idea/
+.clangd
 *.swp
 *.swo
-*~
-
-# OS generated files
 .DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
 Thumbs.db
+compile_commands.json
 
-# Logs and temporary files
+# --- Build Artifacts & Compilations (C++ & Python) ---
+build/
+dist/
+releases/
+*.so
+*.o
+*.a
+*.pyc
+*.whl
+__pycache__/
+*.egg-info/
+.cmake/
+CMakeCache.txt
+CMakeFiles/
+Makefile
+cmake_install.cmake
+
+# --- Quantum Chemistry Output & Temporary Logs ---
+psi.*.clean
+*.out
 *.log
-*.tmp
-*.cache
+*.h5
+timer.dat
+hasil/
 
-# Test output
-test_*/
-*_test
+# --- Testing & Debugging ---
+test/
+debug.py
+# Memperbaiki kesalahan ketik agar berkas "debug" benar-benar terabaikan
+debug
+
+# --- Text Files and Custom Script Exceptions ---
+*.sh
+!recaftor.py

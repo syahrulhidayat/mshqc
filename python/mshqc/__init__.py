@@ -1,104 +1,81 @@
-"""
-MSH-QC: Quantum Mechanics Library for Computational Chemistry
-
-This package provides Python bindings for the MSH-QC quantum chemistry library.
-MSH-QC implements a range of electronic structure methods from Hartree-Fock
-to multi-reference approaches.
-"""
-
-from ._core import *
+# File: python/mshqc/__init__.py
 import os
+import sys
+import glob
+import ctypes
+import multiprocessing
 
-# Set default data path for basis sets
-try:
-    this_dir = os.path.dirname(os.path.abspath(__file__))
-    default_basis_path = os.path.join(os.path.dirname(this_dir), "data", "basis")
-    if os.path.exists(default_basis_path):
-        set_default_basis_path(default_basis_path)
-except:
-    pass  # If this fails, users can still specify path manually
+def _configure_environment():
+    try:
+        n_cores = multiprocessing.cpu_count()
+    except (ImportError, NotImplementedError):
+        n_cores = 4
 
-# Version
-__version__ = "0.1.0"
-__author__ = "Muhamad Sahrul Hidayat"
+    if "OMP_NUM_THREADS" not in os.environ:
+        os.environ["OMP_NUM_THREADS"] = str(n_cores)
+    if "OPENBLAS_NUM_THREADS" not in os.environ:
+        os.environ["OPENBLAS_NUM_THREADS"] = "1"
+    if "MKL_NUM_THREADS" not in os.environ:
+        os.environ["MKL_NUM_THREADS"] = "1"
+    if "VECLIB_MAXIMUM_THREADS" not in os.environ:
+        os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+    if "NUMEXPR_NUM_THREADS" not in os.environ:
+        os.environ["NUMEXPR_NUM_THREADS"] = "1"
 
-# Convenience functions
-def quick_rhf(molecule, basis="sto-3g"):
-    """Perform a quick RHF calculation
-    
-    Args:
-        molecule: Molecule object
-        basis: Basis set name (default: sto-3g)
-    
-    Returns:
-        SCFResult object
-    """
-    from . import BasisSet, RHF
-    
-    bas = BasisSet()
-    bas.load_minimal(basis)
-    
-    rhf = RHF(molecule, bas)
-    result = rhf.solve()
-    
-    return result
+    if "MSHQC_BASIS_PATH" not in os.environ:
+        pkg_basis = os.path.join(os.path.dirname(__file__), "basis")
+        repo_basis = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "data", "basis"))
+        if os.path.isdir(pkg_basis):
+            os.environ["MSHQC_BASIS_PATH"] = pkg_basis
+        elif os.path.isdir(repo_basis):
+            os.environ["MSHQC_BASIS_PATH"] = repo_basis
 
-def quick_mp2(molecule, basis="sto-3g"):
-    """Perform a quick RHF followed by MP2 calculation
-    
-    Args:
-        molecule: Molecule object
-        basis: Basis set name (default: sto-3g)
-    
-    Returns:
-        Tuple of (RHF result, MP2 result)
-    """
-    from . import BasisSet, RHF, MP2
-    
-    # First RHF
-    rhf_result = quick_rhf(molecule, basis)
-    
-    # Then MP2
-    mp2 = MP2(rhf_result)
-    mp2_result = mp2.solve()
-    
-    return rhf_result, mp2_result
+def _preload_mkl():
+    """Preload MKL runtime libraries dari sys.prefix/lib agar _mshqc.so selalu menemukan simbol MKL."""
+    search_dirs = [
+        os.path.join(sys.prefix, "lib"),
+        os.path.join(sys.base_prefix, "lib"),
+        os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(sys.executable))), "lib"),
+    ]
+    lib_patterns = [
+        "libtbb.so*",
+        "libiomp5.so*",
+        "libmkl_core.so*",
+        "libmkl_gnu_thread.so*",
+        "libmkl_intel_thread.so*",
+        "libmkl_intel_lp64.so*",
+        "libmkl_rt.so*",
+    ]
+    rtld_flags = getattr(ctypes, "RTLD_GLOBAL", 0) | getattr(os, "RTLD_LAZY", 1)
+    for d in search_dirs:
+        if not os.path.isdir(d):
+            continue
+        for pat in lib_patterns:
+            for lib_path in sorted(glob.glob(os.path.join(d, pat))):
+                try:
+                    ctypes.CDLL(lib_path, mode=rtld_flags)
+                except OSError:
+                    pass
 
-def quick_cisd(molecule, basis="sto-3g"):
-    """Perform a quick RHF followed by CISD calculation
-    
-    Args:
-        molecule: Molecule object
-        basis: Basis set name (default: sto-3g)
-    
-    Returns:
-        Tuple of (RHF result, CISD result)
-    """
-    from . import BasisSet, RHF, CISD
-    
-    # First RHF
-    rhf_result = quick_rhf(molecule, basis)
-    
-    # Then CISD
-    cisd = CISD(rhf_result)
-    cisd_result = cisd.solve()
-    
-    return rhf_result, cisd_result
+_configure_environment()
+_preload_mkl()
 
-# Export convenience functions
+from ._mshqc import *
+from .calculators import MSHQCCalculator, build_molecule, run
+from .session import MSHQCSession
+from .utils import quick_calculation, benchmark_basis_sets, compare_methods
+
+__version__ = "1.0.4"
+
 __all__ = [
-    # Core classes
-    "Molecule", "BasisSet", "SCFResult",
-    
-    # SCF methods
-    "RHF", "UHF",
-    
-    # Correlation methods
-    "MP2", "CISD", "CASSCF",
-    
-    # Convenience functions
-    "quick_rhf", "quick_mp2", "quick_cisd",
-    
-    # Utility functions
-    "create_water_molecule", "create_h2_molecule", "create_li_atom"
+    "Atom", "Molecule", "GaussianPrimitive", "Shell", "AngularMomentum",
+    "BasisSet", "IntegralEngine", "ERITensor", "Screening", "ShellPair",
+    "CholeskyERI", "CholeskyDecompositionResult",
+    "PointGroup", "SymmetryOperation", "SymOpType", "PetiteList", "UniqueShellPair", "BasisSymmetrizer",
+    "DIIS", "SCFConfig", "SCFResult", "RHF", "UHF", "ROHF",
+    "MP2Config", "MP2Result", "RMP2", "UMP2", "OMP2",
+    "MP3Result", "RMP3", "UMP3", "OMP3",
+    "bohr_to_angstrom", "angstrom_to_bohr", "hartree_to_ev", "hartree_to_kcal",
+    "MSHQCCalculator", "MSHQCSession", "build_molecule", "run",
+    "quick_calculation", "benchmark_basis_sets", "compare_methods",
 ]

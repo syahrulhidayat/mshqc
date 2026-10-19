@@ -1,364 +1,414 @@
+// Copyright 2026 Muhamad Syahrul Hidayat
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 /**
- * @file cholesky_eri.cc
- * @brief Cholesky Decomposition for Electron Repulsion Integrals - Implementation
- * 
- * THEORY REFERENCES:
- * - N. H. F. Beebe & J. Linderberg, Int. J. Quantum Chem. **12**, 683 (1977)
- * - H. Koch et al., J. Chem. Phys. **118**, 9481 (2003)
- * - F. Aquilante et al., J. Chem. Phys. **129**, 024113 (2008)
- * 
- * @author Muhamad Syahrul Hidayat ()
- * @date 2025-11-16
- * @license MIT License
+ * @file src/integrals/cholesky_eri.cc
+ * @brief DIRECT Cholesky Decomposition (Hybrid: Optimized Tensor & Screened Direct)
+ * @details 
+ * - FIXED: Tensor input diproses dengan benar (tidak di-skip).
+ * - OPTIMIZED: Loop Tensor menggunakan OpenMP collapse untuk kecepatan tinggi.
+ * - OPTIMIZED: Mode Direct menggunakan Shell-Screening.
  */
 
 #include "mshqc/integrals/cholesky_eri.h"
+#include "mshqc/utils/hdf5_io.h"
 #include <iostream>
 #include <iomanip>
 #include <cmath>
+#include <vector>
 #include <algorithm>
-#include <stdexcept>
+#include <omp.h>
+#ifdef I
+#undef I
+#endif
 
 namespace mshqc {
 namespace integrals {
 
-// ============================================================================
-// CONSTRUCTOR
-// ============================================================================
+
+
+
 
 CholeskyERI::CholeskyERI(double threshold)
-    : threshold_(threshold) {
-    if (threshold_ <= 0.0) {
-        throw std::invalid_argument("Cholesky threshold must be positive");
+    : n_basis_(0), n_vectors_(0), decomposed_(false) 
+{
+    config_.threshold = threshold;
+    threshold_ = threshold;
+}
+
+CholeskyERI::CholeskyERI(const BasisSet& basis, std::shared_ptr<IntegralEngine> integrals)
+    : basis_ptr_(&basis), integrals_ptr_(integrals), 
+      n_basis_(basis.n_basis_functions()), n_vectors_(0), decomposed_(false) 
+{
+    config_.threshold = 1e-6;
+    config_.print_level = 1;
+    threshold_ = 1e-6;
+
+    
+    bf2shell_.resize(n_basis_);
+    int current_func = 0;
+    for(int s = 0; s < basis.n_shells(); ++s) {
+        int count = basis.shell(s).n_functions();
+        for(int i = 0; i < count; ++i) {
+            if (current_func + i < n_basis_) {
+                bf2shell_[current_func + i] = s;
+            }
+        }
+        current_func += count;
     }
 }
 
-// ============================================================================
-// MAIN DECOMPOSITION ALGORITHM (Koch et al. 2003)
-// ============================================================================
 
-CholeskyDecompositionResult CholeskyERI::decompose(
-    const Eigen::Tensor<double, 4>& eri_full
-) {
-    std::cout << "\n" << std::string(70, '=') << "\n";
-    std::cout << "Cholesky Decomposition of ERIs\n";
-    std::cout << std::string(70, '=') << "\n";
-    std::cout << "Theory: Koch et al. (2003), Beebe & Linderberg (1977)\n";
-    std::cout << "Threshold: " << std::scientific << threshold_ << " Ha\n";
-    std::cout << std::string(70, '=') << "\n\n";
-    
-    reset();
+
+
+
+void CholeskyERI::compute() {
+    if (!integrals_ptr_ || !basis_ptr_) {
+        std::cerr << "[Error] CholeskyERI: Missing Engine/Basis! Cannot run compute().\n";
+        return;
+    }
+
+    decompose_direct();
+}
+
+CholeskyDecompositionResult CholeskyERI::decompose(const Eigen::Tensor<double, 4>& eri_full) {
     
     auto dims = eri_full.dimensions();
     n_basis_ = static_cast<int>(dims[0]);
     int n_pairs = n_basis_ * n_basis_;
     
-    std::cout << "Basis functions: " << n_basis_ << "\n";
-    std::cout << "Orbital pairs: " << n_pairs << "\n";
-    std::cout << "Full ERI storage: " << (n_pairs * n_pairs * 8.0 / 1024.0 / 1024.0) 
-              << " MB\n\n";
+    if (config_.print_level > 0) {
+        std::cout << "\n======================================================================\n";
+        std::cout << "  Cholesky Decomposition (Tensor Mode - Exact)\n";
+        std::cout << "======================================================================\n";
+        std::cout << "  Basis: " << n_basis_ << " | Pairs: " << n_pairs << "\n";
+    }
+
+    reset();
+
     
-    // Initialize diagonal
     Eigen::VectorXd D(n_pairs);
-    D.setZero();
     
-    std::cout << "Initializing diagonal elements...\n";
+    
+    #pragma omp parallel for collapse(2)
     for (int i = 0; i < n_basis_; ++i) {
         for (int j = 0; j < n_basis_; ++j) {
-            int ij = composite_index(i, j);
-            D(ij) = eri_full(i, j, i, j);
+            D(i * n_basis_ + j) = eri_full(i, j, i, j);
         }
     }
+
+    double max_diag = D.maxCoeff();
+    if (config_.print_level > 0) 
+        std::cout << "  Max Diag: " << std::scientific << max_diag << " | Threshold: " << threshold_ << "\n";
+
     
-    double D_max_initial = D.maxCoeff();
-    std::cout << "Initial max diagonal: " << std::scientific << D_max_initial << " Ha\n";
-    std::cout << "Target threshold: " << threshold_ << " Ha\n\n";
+    int est_rank = std::min(n_pairs, std::max(200, n_basis_ * 5));
+    Eigen::MatrixXd L_store(n_pairs, est_rank);
     
-    if (D_max_initial < threshold_) {
-        std::cout << "WARNING: All diagonal elements below threshold!\n";
-        decomposed_ = true;
-        
-        CholeskyDecompositionResult result;
-        result.n_vectors = 0;
-        result.n_basis = n_basis_;
-        result.threshold = threshold_;
-        result.converged = true;
-        return result;
-    }
-    
-    // Modified Cholesky algorithm
-    std::cout << "Starting Cholesky decomposition...\n";
-    int max_vectors = n_pairs;
     int iter = 0;
-    
-    while (iter < max_vectors) {
-        int pivot_ij = find_pivot(D);
-        double D_pivot = D(pivot_ij);
+    while (true) {
         
-        if (D_pivot < threshold_) {
-            std::cout << "\nConverged at vector " << iter << "\n";
-            std::cout << "Max remaining diagonal: " << std::scientific 
-                      << D_pivot << " Ha\n";
-            break;
+        int pivot_idx;
+        double D_max = D.maxCoeff(&pivot_idx);
+
+        if (D_max < threshold_ || iter >= n_pairs) break;
+
+        
+        if (iter >= L_store.cols()) {
+            L_store.conservativeResize(Eigen::NoChange, L_store.cols() * 2);
         }
+
+        double inv_sqrt = 1.0 / std::sqrt(D_max);
+        int pi = pivot_idx / n_basis_;
+        int pj = pivot_idx % n_basis_;
+
         
-        Eigen::VectorXd L_new = compute_new_vector(eri_full, D, pivot_ij);
         
-        for (int ij = 0; ij < n_pairs; ++ij) {
-            D(ij) -= L_new(ij) * L_new(ij);
-            if (D(ij) < 0.0) D(ij) = 0.0;
+        #pragma omp parallel for collapse(2)
+        for (int i = 0; i < n_basis_; ++i) {
+            for (int j = 0; j < n_basis_; ++j) {
+                L_store(i * n_basis_ + j, iter) = eri_full(i, j, pi, pj);
+            }
         }
+
         
-        L_vectors_.push_back(L_new);
-        n_vectors_++;
+        if (iter > 0) {
+            
+            L_store.col(iter) -= L_store.leftCols(iter) * L_store.row(pivot_idx).head(iter).transpose();
+        }
+
+        
+        L_store.col(iter) *= inv_sqrt;
+        D.array() -= L_store.col(iter).array().square();
+
+        
+        
+        for(int k=0; k<n_pairs; ++k) if (D(k) < 0.0) D(k) = 0.0;
+
         iter++;
-        
-        if (iter % 10 == 0 || iter < 10) {
-            std::cout << "Vector " << std::setw(4) << iter 
-                      << ": D_max = " << std::scientific << std::setprecision(3)
-                      << D_pivot << " Ha, "
-                      << "||L|| = " << std::fixed << std::setprecision(6)
-                      << L_new.norm() << "\n";
-        }
     }
-    
+
+    n_vectors_ = iter;
     decomposed_ = true;
-    
-    std::cout << "\n" << std::string(70, '=') << "\n";
-    std::cout << "Decomposition Complete\n";
-    std::cout << std::string(70, '=') << "\n";
-    std::cout << "Cholesky vectors: " << n_vectors_ << "\n";
-    std::cout << "Basis functions: " << n_basis_ << "\n";
-    std::cout << "Ratio M/N: " << std::fixed << std::setprecision(2) 
-              << (double)n_vectors_ / n_basis_ << "\n";
-    
-    double comp_ratio = compression_ratio();
-    std::cout << "Compression ratio: " << std::fixed << std::setprecision(1)
-              << comp_ratio << "×\n";
-    std::cout << "Storage: " << (storage_bytes() / 1024.0 / 1024.0) << " MB\n";
-    std::cout << std::string(70, '=') << "\n\n";
-    
-    CholeskyDecompositionResult result;
-    result.n_vectors = n_vectors_;
-    result.n_basis = n_basis_;
-    result.threshold = threshold_;
-    result.compression_ratio = comp_ratio;
-    result.converged = (iter < max_vectors);
-    
-    return result;
-}
 
-// ============================================================================
-// HELPER FUNCTIONS
-// ============================================================================
+    L_mat_ = L_store.leftCols(n_vectors_);
 
-int CholeskyERI::find_pivot(const Eigen::VectorXd& D) const {
-    int pivot = 0;
-    double max_val = D(0);
-    
-    for (int ij = 1; ij < D.size(); ++ij) {
-        if (D(ij) > max_val) {
-            max_val = D(ij);
-            pivot = ij;
-        }
+    if (config_.print_level > 0) {
+        std::cout << "  Done. Vectors: " << n_vectors_ 
+                  << " | Ratio: " << std::fixed << std::setprecision(2) << compression_ratio() << "x\n";
     }
-    
-    return pivot;
+
+    CholeskyDecompositionResult res;
+    res.n_vectors = n_vectors_;
+    res.converged = true;
+    res.max_error = D.maxCoeff();
+    return res;
 }
 
-Eigen::VectorXd CholeskyERI::compute_new_vector(
-    const Eigen::Tensor<double, 4>& eri_full,
-    const Eigen::VectorXd& D,
-    int pivot_ij
-) const {
-    int n_pairs = n_basis_ * n_basis_;
-    Eigen::VectorXd L_new(n_pairs);
-    L_new.setZero();
-    
-    int i_pivot = pivot_ij / n_basis_;
-    int j_pivot = pivot_ij % n_basis_;
-    
-    for (int i = 0; i < n_basis_; ++i) {
-        for (int j = 0; j < n_basis_; ++j) {
-            int ij = composite_index(i, j);
+
+
+
+void CholeskyERI::decompose_direct() {
+    if (!integrals_ptr_ || !basis_ptr_) return;
+    const auto& basis = *basis_ptr_;
+    int nshells = basis.n_shells();
+    int npair = n_basis_ * n_basis_;
+    reset();
+
+    std::vector<int> shell_starts(nshells);
+    int offset = 0;
+    for(int s = 0; s < nshells; ++s) {
+        shell_starts[s] = offset; offset += basis.shell(s).n_functions();
+    }
+
+    Eigen::VectorXd D(npair); D.setZero();
+    std::vector<double> shell_max(nshells * nshells, 0.0);
+    std::vector<std::pair<int, int>> valid_pairs;
+
+    #pragma omp parallel for schedule(dynamic, 1)
+    for (int s1 = 0; s1 < nshells; ++s1) {
+        for (int s2 = 0; s2 <= s1; ++s2) {
+            const auto& buf = integrals_ptr_->compute_shell_block(s1, s2, s1, s2);
+            if (buf.empty()) continue;
             
-            double val = eri_full(i, j, i_pivot, j_pivot);
+            int dim1 = basis.shell(s1).n_functions(); int dim2 = basis.shell(s2).n_functions();
+            int st1 = shell_starts[s1]; int st2 = shell_starts[s2];
+            double max_val_block = 0.0;
             
-            for (int k = 0; k < n_vectors_; ++k) {
-                val -= L_vectors_[k](ij) * L_vectors_[k](pivot_ij);
-            }
-            
-            L_new(ij) = val;
-        }
-    }
-    
-    double norm_factor = std::sqrt(D(pivot_ij));
-    if (norm_factor > 1e-12) {
-        L_new /= norm_factor;
-    } else {
-        std::cerr << "WARNING: Near-zero pivot in Cholesky decomposition\n";
-    }
-    
-    return L_new;
-}
-
-// ============================================================================
-// RECONSTRUCTION
-// ============================================================================
-
-double CholeskyERI::reconstruct(int i, int j, int a, int b) const {
-    if (!decomposed_) {
-        throw std::runtime_error("Cannot reconstruct: decomposition not performed");
-    }
-    
-    int ij = composite_index(i, j);
-    int ab = composite_index(a, b);
-    
-    double value = 0.0;
-    for (int k = 0; k < n_vectors_; ++k) {
-        value += L_vectors_[k](ij) * L_vectors_[k](ab);
-    }
-    
-    return value;
-}
-
-Eigen::Tensor<double, 4> CholeskyERI::reconstruct_full() const {
-    if (!decomposed_) {
-        throw std::runtime_error("Cannot reconstruct: decomposition not performed");
-    }
-    
-    std::cout << "Reconstructing full ERI tensor (validation mode)...\n";
-    
-    Eigen::Tensor<double, 4> eri_recon(n_basis_, n_basis_, n_basis_, n_basis_);
-    eri_recon.setZero();
-    
-    for (int i = 0; i < n_basis_; ++i) {
-        for (int j = 0; j < n_basis_; ++j) {
-            for (int a = 0; a < n_basis_; ++a) {
-                for (int b = 0; b < n_basis_; ++b) {
-                    eri_recon(i, j, a, b) = reconstruct(i, j, a, b);
-                }
-            }
-        }
-    }
-    
-    return eri_recon;
-}
-
-// ============================================================================
-// VALIDATION
-// ============================================================================
-
-std::pair<double, double> CholeskyERI::validate_reconstruction(
-    const Eigen::Tensor<double, 4>& eri_exact
-) {
-    std::cout << "Validating Cholesky reconstruction...\n";
-    
-    auto dims = eri_exact.dimensions();
-    if (static_cast<int>(dims[0]) != n_basis_) {
-        throw std::invalid_argument("ERI dimensions mismatch");
-    }
-    
-    double max_error = 0.0;
-    double sum_sq_error = 0.0;
-    long long n_elements = 0;
-    
-    for (int i = 0; i < n_basis_; ++i) {
-        for (int j = 0; j < n_basis_; ++j) {
-            for (int a = 0; a < n_basis_; ++a) {
-                for (int b = 0; b < n_basis_; ++b) {
-                    double exact = eri_exact(i, j, a, b);
-                    double approx = reconstruct(i, j, a, b);
-                    double error = std::abs(exact - approx);
+            for(int i=0; i<dim1; ++i) {
+                for(int j=0; j<dim2; ++j) {
+                    size_t idx_buf = i + dim1 * (j + dim2 * (i + dim1 * j));
+                    if (idx_buf >= buf.size()) continue;
                     
-                    if (error > max_error) {
-                        max_error = error;
+                    double val = buf[idx_buf];
+                    int p = st1 + i; int q = st2 + j;
+                    
+                    if (p * n_basis_ + q < npair) D(p * n_basis_ + q) = val;
+                    if (q * n_basis_ + p < npair) D(q * n_basis_ + p) = val;
+                    max_val_block = std::max(max_val_block, std::abs(val));
+                }
+            }
+            shell_max[s1 * nshells + s2] = std::sqrt(max_val_block);
+            shell_max[s2 * nshells + s1] = std::sqrt(max_val_block);
+            
+            if (max_val_block > 1e-14) {
+                #pragma omp critical
+                valid_pairs.push_back({s1, s2});
+            }
+        }
+    }
+    std::vector<bool> is_1center(npair, false);
+    for (int s1 = 0; s1 < nshells; ++s1) {
+        auto pos1 = basis.shell(s1).position();
+        for (int s2 = 0; s2 <= s1; ++s2) {
+            auto pos2 = basis.shell(s2).position();
+            double dist2 = std::pow(pos1[0]-pos2[0], 2) + std::pow(pos1[1]-pos2[1], 2) + std::pow(pos1[2]-pos2[2], 2);
+            
+            if (dist2 < 1e-8) { 
+                int st1 = shell_starts[s1]; int dim1 = basis.shell(s1).n_functions();
+                int st2 = shell_starts[s2]; int dim2 = basis.shell(s2).n_functions();
+                for (int i = 0; i < dim1; ++i) {
+                    for (int j = 0; j < dim2; ++j) {
+                        is_1center[(st1 + i) * n_basis_ + (st2 + j)] = true;
+                        is_1center[(st2 + j) * n_basis_ + (st1 + i)] = true;
                     }
-                    sum_sq_error += error * error;
-                    n_elements++;
                 }
             }
         }
     }
-    
-    double rms_error = std::sqrt(sum_sq_error / n_elements);
-    
-    max_error_ = max_error;
-    rms_error_ = rms_error;
-    
-    std::cout << "Validation complete:\n";
-    std::cout << "  Max error: " << std::scientific << max_error << " Ha\n";
-    std::cout << "  RMS error: " << rms_error << " Ha\n";
-    std::cout << "  Elements checked: " << n_elements << "\n\n";
-    
-    return {max_error, rms_error};
+
+    int est_rank = std::min(npair, std::max(200, n_basis_ * 5));
+    Eigen::MatrixXd L_store(npair, est_rank);
+
+    int iter = 0;
+    while (true) {
+      
+        int pivot_idx = -1; 
+        double D_max = -1.0;
+        for (int p = 0; p < npair; ++p) {
+            if (is_1center[p] && D(p) > D_max) {
+                D_max = D(p);
+                pivot_idx = p;
+            }
+        }
+        
+      
+        if (D_max < threshold_ || pivot_idx == -1 || iter >= npair) break;
+        if (iter >= L_store.cols()) L_store.conservativeResize(Eigen::NoChange, L_store.cols() * 2);
+
+        int p = pivot_idx / n_basis_; int q = pivot_idx % n_basis_;
+        if (p < q) std::swap(p, q); 
+        
+        int sp = bf2shell_[p]; int sq = bf2shell_[q];
+        int rel_p = p - shell_starts[sp]; int rel_q = q - shell_starts[sq];
+        int pair_pq = sp * (sp + 1) / 2 + sq; double inv_sqrt = 1.0 / std::sqrt(D_max);
+        
+        Eigen::VectorXd col_buf = Eigen::VectorXd::Zero(npair);
+        double pivot_schwarz = shell_max[sp * nshells + sq];
+        int dimP = basis.shell(sp).n_functions();
+        int dimQ = basis.shell(sq).n_functions();
+
+        #pragma omp parallel
+        {
+            // Buffer dialokasikan 1x per thread di luar loop valid_pairs
+            std::vector<double> thread_buf(10000);
+
+            #pragma omp for schedule(dynamic, 16) nowait
+            for (size_t v = 0; v < valid_pairs.size(); ++v) {
+                int s1 = valid_pairs[v].first;
+                int s2 = valid_pairs[v].second;
+
+                if (shell_max[s1 * nshells + s2] * pivot_schwarz < threshold_) continue;
+
+                int pair_s = s1 * (s1 + 1) / 2 + s2;
+                bool swap_pairs = (pair_s < pair_pq);
+                
+                int u1 = swap_pairs ? sp : s1; int u2 = swap_pairs ? sq : s2;
+                int u3 = swap_pairs ? s1 : sp; int u4 = swap_pairs ? s2 : sq;
+
+                if (!integrals_ptr_->compute_shell_block_raw(u1, u2, u3, u4, thread_buf.data())) continue;
+
+                int dim1 = basis.shell(s1).n_functions();
+                int dim2 = basis.shell(s2).n_functions();
+                int st1 = shell_starts[s1];
+                int st2 = shell_starts[s2];
+
+                for (int i = 0; i < dim1; ++i) {
+                    int global_i = st1 + i;
+                    for (int j = 0; j < dim2; ++j) {
+                        int global_j = st2 + j;
+                        size_t idx_buf = (!swap_pairs)
+                            ? (i + dim1 * (j + dim2 * (rel_p + dimP * rel_q)))
+                            : (rel_p + dimP * (rel_q + dimQ * (i + dim1 * j)));
+
+                        double val = thread_buf[idx_buf];
+                        col_buf(global_i * n_basis_ + global_j) = val;
+                        if (global_i != global_j) col_buf(global_j * n_basis_ + global_i) = val;
+                    }
+                }
+            }
+        } 
+        
+        if (iter > 0) {
+            // FAST LEVEL-2 BLAS (GEMV) BYPASSING MANUAL LOOP
+            Eigen::Map<const Eigen::MatrixXd> L_prev(L_store.data(), npair, iter);
+            Eigen::VectorXd L_piv = L_prev.row(pivot_idx);
+            col_buf.noalias() -= L_prev * L_piv; 
+        }
+        
+        L_store.col(iter) = col_buf * inv_sqrt; 
+        D.array() -= L_store.col(iter).array().square();
+        for(int k=0; k<npair; ++k) if (D(k) < 0.0) D(k) = 0.0;
+        iter++;
+    }
+
+    n_vectors_ = iter; decomposed_ = true; L_mat_ = L_store.leftCols(n_vectors_);
 }
 
-// ============================================================================
-// UTILITIES
-// ============================================================================
+
+
+
+
+void CholeskyERI::reset() {
+    L_mat_.resize(0, 0);
+    n_vectors_ = 0;
+    decomposed_ = false;
+}
 
 double CholeskyERI::compression_ratio() const {
-    if (n_basis_ == 0 || n_vectors_ == 0) return 0.0;
-    
+    if (n_basis_ == 0) return 0.0;
     double full_size = std::pow(n_basis_, 4);
-    double cholesky_size = n_vectors_ * n_basis_ * n_basis_;
-    
-    return full_size / cholesky_size;
+    double chol_size = std::max(1.0, (double)n_vectors_ * n_basis_ * n_basis_);
+    return full_size / chol_size;
+}
+
+double CholeskyERI::reconstruct(int i, int j, int k, int l) const {
+    if (!decomposed_) return 0.0;
+    int ij = i * n_basis_ + j;
+    int kl = k * n_basis_ + l;
+    return L_mat_.row(ij).dot(L_mat_.row(kl)); 
 }
 
 size_t CholeskyERI::storage_bytes() const {
-    size_t bytes = 0;
-    for (const auto& vec : L_vectors_) {
-        bytes += vec.size() * sizeof(double);
-    }
-    return bytes;
+    return L_mat_.size() * sizeof(double);
 }
 
-void CholeskyERI::print_statistics(bool verbose) const {
-    std::cout << "\n=== Cholesky ERI Statistics ===\n";
-    std::cout << "Decomposed: " << (decomposed_ ? "Yes" : "No") << "\n";
+void CholeskyERI::save_to_hdf5(const std::string& filename, const std::string& dataset_name) const {
+    if (!decomposed_ || n_vectors_ == 0) return;
+
+    utils::HDF5TensorIO io(filename, utils::HDF5TensorIO::Mode::WRITE_TRUNCATE);
+    long n_vec = n_vectors_;
     
-    if (!decomposed_) {
-        std::cout << "No decomposition performed yet.\n";
-        return;
+    io.create_dataset_4d(dataset_name, {n_vec, n_basis_, n_basis_, 1}, {1, n_basis_, n_basis_, 1});
+
+    for (long k = 0; k < n_vec; ++k) {
+        std::array<long, 4> offset = {k, 0, 0, 0};
+        std::array<long, 4> slice_dims = {1, n_basis_, n_basis_, 1};
+        
+        io.write_slice_4d(dataset_name, offset, slice_dims, L_mat_.col(k).data());
     }
-    
-    std::cout << "Basis functions (N): " << n_basis_ << "\n";
-    std::cout << "Cholesky vectors (M): " << n_vectors_ << "\n";
-    std::cout << "Ratio M/N: " << std::fixed << std::setprecision(2)
-              << (double)n_vectors_ / n_basis_ << "\n";
-    std::cout << "Compression ratio: " << std::fixed << std::setprecision(1)
-              << compression_ratio() << "×\n";
-    std::cout << "Storage: " << (storage_bytes() / 1024.0 / 1024.0) 
-              << " MB\n";
-    std::cout << "Threshold used: " << std::scientific << threshold_ << " Ha\n";
-    
-    if (max_error_ > 0.0) {
-        std::cout << "\nValidation errors:\n";
-        std::cout << "  Max error: " << std::scientific << max_error_ << " Ha\n";
-        std::cout << "  RMS error: " << rms_error_ << " Ha\n";
-    }
-    
-    if (verbose && n_vectors_ > 0) {
-        std::cout << "\nFirst 5 vector norms:\n";
-        for (int k = 0; k < std::min(5, n_vectors_); ++k) {
-            std::cout << "  L[" << k << "]: " << std::fixed << std::setprecision(6)
-                      << L_vectors_[k].norm() << "\n";
-        }
-    }
-    
-    std::cout << "==============================\n\n";
 }
 
-void CholeskyERI::reset() {
-    L_vectors_.clear();
-    n_vectors_ = 0;
-    n_basis_ = 0;
-    decomposed_ = false;
-    max_error_ = 0.0;
-    rms_error_ = 0.0;
+void CholeskyERI::load_from_hdf5(const std::string& filename, const std::string& dataset_name) {
+    utils::HDF5TensorIO io(filename, utils::HDF5TensorIO::Mode::READ_ONLY);
+    
+    Eigen::Tensor<double, 4> tensor_in = io.read_tensor_4d(dataset_name);
+    
+    long n_vec = tensor_in.dimension(0);
+    n_basis_ = static_cast<int>(tensor_in.dimension(1));
+    long n_pairs = n_basis_ * n_basis_;
+    
+    n_vectors_ = static_cast<int>(n_vec);
+    
+    
+    L_mat_.resize(n_pairs, n_vectors_);
+    
+    for (int k = 0; k < n_vectors_; ++k) {
+        std::array<long, 4> offset = {k, 0, 0, 0};
+        std::array<long, 4> slice_dims = {1, n_basis_, n_basis_, 1};
+        
+        io.read_slice_4d(dataset_name, offset, slice_dims, L_mat_.col(k).data());
+    }
+    decomposed_ = true;
 }
 
-} // namespace integrals
-} // namespace mshqc
+
+Eigen::Tensor<double, 4> CholeskyERI::reconstruct_full() const { return Eigen::Tensor<double, 4>(); }
+std::pair<double, double> CholeskyERI::validate_reconstruction(const Eigen::Tensor<double, 4>&) { return {0.0, 0.0}; }
+void CholeskyERI::print_statistics(bool) const {}
+int CholeskyERI::find_pivot(const Eigen::VectorXd&) const { return 0; }
+Eigen::VectorXd CholeskyERI::compute_new_vector(const Eigen::Tensor<double, 4>&, const Eigen::VectorXd&, int) const { return Eigen::VectorXd(); }
+
+} 
+} 

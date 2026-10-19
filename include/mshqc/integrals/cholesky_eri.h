@@ -1,29 +1,35 @@
-/**
- * @file cholesky_eri.h
- * @brief Cholesky Decomposition for Electron Repulsion Integrals
- * 
- * THEORY REFERENCES:
- * - N. H. F. Beebe & J. Linderberg, Int. J. Quantum Chem. **12**, 683 (1977)
- * - H. Koch et al., J. Chem. Phys. **118**, 9481 (2003)
- * - F. Aquilante et al., J. Chem. Phys. **129**, 024113 (2008)
- * 
- * @author Muhamad Syahrul Hidayat (Agent 2)
- * @date 2025-11-16
- * @license MIT License
- */
+// Copyright 2026 Muhamad Syahrul Hidayat
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
 
 #ifndef MSHQC_INTEGRALS_CHOLESKY_ERI_H
 #define MSHQC_INTEGRALS_CHOLESKY_ERI_H
 
+#include "mshqc/basis.h"
+#include "mshqc/ints/integrals.h" 
 #include <vector>
 #include <utility>
 #include <memory>
 #include <Eigen/Dense>
 #include <unsupported/Eigen/CXX11/Tensor>
+#ifdef I
+#undef I
+#endif
 
 namespace mshqc {
 namespace integrals {
 
+// Hasil dekomposisi untuk report
 struct CholeskyDecompositionResult {
     int n_vectors = 0;
     int n_basis = 0;
@@ -34,59 +40,91 @@ struct CholeskyDecompositionResult {
     bool converged = false;
 };
 
+// Konfigurasi
+struct CholeskyERIConfig {
+    double threshold = 1e-6;
+    int print_level = 1;
+};
+
 class CholeskyERI {
 public:
+    // Constructor
     explicit CholeskyERI(double threshold = 1e-6);
+    CholeskyERI(const BasisSet& basis, std::shared_ptr<IntegralEngine> integrals);
+
     ~CholeskyERI() = default;
     
-    // Main methods
-    CholeskyDecompositionResult decompose(
-        const Eigen::Tensor<double, 4>& eri_full
-    );
-    
-    double reconstruct(int i, int j, int a, int b) const;
+    // --- MAIN METHODS ---
+    void compute(); 
+    void decompose_direct();
+    CholeskyDecompositionResult decompose(const Eigen::Tensor<double, 4>& eri_full);
+
+    // --- RECONSTRUCTION ---
+    double reconstruct(int i, int j, int k, int l) const;
     Eigen::Tensor<double, 4> reconstruct_full() const;
     
-    // Getters
-    int n_vectors() const { return n_vectors_; }
-    int n_basis() const { return n_basis_; }
+    // --- SETTERS & GETTERS ---
+    void set_threshold(double t) { config_.threshold = t; threshold_ = t; }
+    void set_print_level(int p) { config_.print_level = p; }
+    
     double threshold() const { return threshold_; }
+    int n_basis() const { return n_basis_; }
+    int n_vectors() const { return n_vectors_; }
+    
+    //const std::vector<Eigen::VectorXd>& get_L_vectors() const { return L_vectors_; }
+    
+    // Alias untuk kompatibilitas
+    int get_n_vectors() const { return n_vectors_; }
+    //          const std::vector<Eigen::VectorXd>& get_vectors() const { return L_vectors_; }
+
+    // [FIX] Menambahkan decomposed() agar kompatibel dengan UMP3
+    bool decomposed() const { return decomposed_; }
     bool is_decomposed() const { return decomposed_; }
+    
     double compression_ratio() const;
     size_t storage_bytes() const;
-    double max_reconstruction_error() const { return max_error_; }
-    double rms_reconstruction_error() const { return rms_error_; }
     
-    // Utilities
-    std::pair<double, double> validate_reconstruction(
-        const Eigen::Tensor<double, 4>& eri_exact
-    );
-    void print_statistics(bool verbose = false) const;
     void reset();
-    
-    const std::vector<Eigen::VectorXd>& get_L_vectors() const {
-        return L_vectors_;
+    const Eigen::MatrixXd& get_L_mat() const { return L_mat_; }
+    const Eigen::MatrixXd& get_L_matrix() const { return L_mat_; }
+    const std::vector<Eigen::MatrixXd>& get_L_vectors() const {
+        return L_vectors_; // Pastikan nama variabel internalnya benar
     }
 
+    // --- LEGACY STUBS (Agar bindings.cc tidak error) ---
+    std::pair<double, double> validate_reconstruction(const Eigen::Tensor<double, 4>& eri_exact);
+    void print_statistics(bool verbose = false) const;
+    int find_pivot(const Eigen::VectorXd& D) const;
+    Eigen::VectorXd compute_new_vector(const Eigen::Tensor<double, 4>& eri, const Eigen::VectorXd& D, int pivot) const;
+    /**
+     * @brief Menyimpan vektor Cholesky ke SSD menggunakan HDF5.
+     */
+    void save_to_hdf5(const std::string& filename, const std::string& dataset_name = "cholesky_vectors") const;
+
+    /**
+     * @brief Memuat vektor Cholesky dari file HDF5 di SSD ke RAM.
+     */
+    void load_from_hdf5(const std::string& filename, const std::string& dataset_name = "cholesky_vectors");
+    
+
 private:
-    std::vector<Eigen::VectorXd> L_vectors_;
+    // Pointers
+    const BasisSet* basis_ptr_ = nullptr;
+    std::shared_ptr<IntegralEngine> integrals_ptr_;
+
+    // Config & Storage
+    CholeskyERIConfig config_; 
+    Eigen::MatrixXd L_mat_;
+    std::vector<int> bf2shell_;
+    std::vector<Eigen::MatrixXd> L_vectors_; 
+    
+    
     int n_basis_ = 0;
     int n_vectors_ = 0;
     double threshold_ = 1e-6;
     bool decomposed_ = false;
     double max_error_ = 0.0;
     double rms_error_ = 0.0;
-    
-    inline int composite_index(int i, int j) const {
-        return i * n_basis_ + j;
-    }
-    
-    int find_pivot(const Eigen::VectorXd& D) const;
-    Eigen::VectorXd compute_new_vector(
-        const Eigen::Tensor<double, 4>& eri_full,
-        const Eigen::VectorXd& D,
-        int pivot_ij
-    ) const;
 };
 
 } // namespace integrals

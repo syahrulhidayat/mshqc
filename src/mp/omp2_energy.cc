@@ -1,0 +1,384 @@
+// Copyright 2026 Muhamad Syahrul Hidayat
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+#include "mshqc/mp2/mp2.h"
+#include "mshqc/integrals/eri_transformer.h"
+#include <unsupported/Eigen/MatrixFunctions>
+#include <omp.h>
+#include <tblis/tblis.h>
+
+namespace mshqc {
+
+void OMP2::compute_t2_amplitudes() {
+    t2_aa_.clear(); t2_bb_.clear(); t2_ab_.clear();
+    int nf = n_frozen_;
+    bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
+    constexpr double sigma_sq = 1e-20; 
+
+    std::vector<int> dummy_irreps(nbf_, 0);
+    auto occ_spaces_a = get_irrep_spaces(dummy_irreps, 0, na_);
+    auto vir_spaces_a = get_irrep_spaces(dummy_irreps, na_, va_);
+
+    for (const auto& o1 : occ_spaces_a) {
+        if (o1.size == 0) continue; 
+        for (const auto& v1 : vir_spaces_a) {
+            if (v1.size == 0) continue; 
+            for (const auto& o2 : occ_spaces_a) {
+                if (o2.size == 0) continue; 
+                for (const auto& v2 : vir_spaces_a) {
+                    if (v2.size == 0) continue; 
+
+                    if ((o1.id ^ v1.id ^ o2.id ^ v2.id) == 0) {
+                        auto* g_blk = g_aa_.get_block(o1.id, v1.id, o2.id, v2.id);
+                        auto* g_blk_ex = g_aa_.get_block(o1.id, v2.id, o2.id, v1.id);
+
+                        bool ex_valid = (g_blk_ex != nullptr && g_blk_ex->dimension(1) == (Eigen::Index)v2.size && g_blk_ex->dimension(3) == (Eigen::Index)v1.size);
+
+                        if (g_blk && ex_valid) { 
+                            t2_aa_.allocate_block(o1.id, v1.id, o2.id, v2.id, o1.size, v1.size, o2.size, v2.size);
+                            auto* t_blk = t2_aa_.get_block(o1.id, v1.id, o2.id, v2.id);
+
+                            if (t_blk) {              
+                                t_blk->setZero(); 
+                                #pragma omp parallel for collapse(2) schedule(static)
+                                for (int di = 0; di < o1.size; ++di) {
+                                    for (int dj = 0; dj < o2.size; ++dj) {
+                                        int i_glb = o1.offset + di;
+                                        int j_glb = o2.offset + dj;
+                                        if (i_glb < nf || j_glb < nf) continue; 
+
+                                        double e_ij = scf_.orbital_energies_alpha(i_glb) + scf_.orbital_energies_alpha(j_glb);
+                                        for (int da = 0; da < v1.size; ++da) {
+                                            double den_a = e_ij - scf_.orbital_energies_alpha(na_ + v1.offset + da);
+                                            for (int db = 0; db < v2.size; ++db) {
+                                                double den = den_a - scf_.orbital_energies_alpha(na_ + v2.offset + db);
+                                                double val = (*g_blk)(di, da, dj, db);
+                                                if (!is_restricted) val -= (*g_blk_ex)(di, db, dj, da);
+                                                double reg_den = (std::abs(den) > 1e-12) ? (1.0 / den) : 0.0;
+                                                (*t_blk)(di, da, dj, db) = val * reg_den;
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (!is_restricted && nb_ > 0 && vb_ > 0) {
+        auto* g_bb_blk = g_bb_.get_block(0,0,0,0);
+        if (g_bb_blk) {
+            t2_bb_.allocate_block(0,0,0,0, nb_, nb_, vb_, vb_);
+            auto* t_bb_blk = t2_bb_.get_block(0,0,0,0);
+            if (t_bb_blk) t_bb_blk->setZero();
+
+            for(int i = nf; i < nb_; ++i) {
+                for(int j = nf; j < nb_; ++j) {
+                    double e_ij = scf_.orbital_energies_beta(i) + scf_.orbital_energies_beta(j);
+                    for(int a=0; a<vb_; ++a) {
+                        double den_a = e_ij - scf_.orbital_energies_beta(nb_+a);
+                        for(int b=0; b<vb_; ++b) {
+                            double den = den_a - scf_.orbital_energies_beta(nb_+b);
+                            double val = (*g_bb_blk)(i, a, j, b) - (*g_bb_blk)(i, b, j, a);
+                            double reg_den = (std::abs(den) > 1e-12) ? (1.0 / den) : 0.0;
+                            (*t_bb_blk)(i, j, a, b) = val * reg_den;
+                        }
+                    }
+                }
+            }
+        }
+
+        auto* g_ab_blk = g_ab_.get_block(0,0,0,0);
+        if (g_ab_blk) {
+            t2_ab_.allocate_block(0,0,0,0, na_, nb_, va_, vb_);
+            auto* t_ab_blk = t2_ab_.get_block(0,0,0,0);
+            if (t_ab_blk) t_ab_blk->setZero(); 
+
+            for(int i = nf; i < na_; ++i) {
+                for(int j = nf; j < nb_; ++j) {
+                    double e_ij = scf_.orbital_energies_alpha(i) + scf_.orbital_energies_beta(j);
+                    for(int a=0; a<va_; ++a) {
+                        double den_a = e_ij - scf_.orbital_energies_alpha(na_+a);
+                        for(int b=0; b<vb_; ++b) {
+                            double den = den_a - scf_.orbital_energies_beta(nb_+b);
+                            double reg_den = (std::abs(den) > 1e-12) ? (1.0 / den) : 0.0;
+                            (*t_ab_blk)(i, j, a, b) = (*g_ab_blk)(i, a, j, b) * reg_den;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+double OMP2::compute_mp2_energy() {
+    double E_ss_aa = 0.0, E_ss_bb = 0.0, E_os = 0.0;
+    int nf = n_frozen_;
+    bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
+
+    std::vector<int> dummy_irreps(nbf_, 0);
+    auto occ_spaces_a = get_irrep_spaces(dummy_irreps, 0, na_);
+    auto vir_spaces_a = get_irrep_spaces(dummy_irreps, na_, va_);
+
+    if (is_restricted) {
+        double E_corr = 0.0;
+        for (const auto& o1 : occ_spaces_a) {
+            if (o1.size == 0) continue; 
+            for (const auto& v1 : vir_spaces_a) {
+                if (v1.size == 0) continue; 
+                for (const auto& o2 : occ_spaces_a) {
+                    if (o2.size == 0) continue; 
+                    for (const auto& v2 : vir_spaces_a) {
+                        if (v2.size == 0) continue; 
+
+                        if ((o1.id ^ v1.id ^ o2.id ^ v2.id) != 0) continue;
+
+                        auto* t_blk = t2_aa_.get_block(o1.id, v1.id, o2.id, v2.id);
+                        auto* g_blk = g_aa_.get_block(o1.id, v1.id, o2.id, v2.id);
+                        auto* g_blk_ex = g_aa_.get_block(o1.id, v2.id, o2.id, v1.id);
+
+                        bool ex_valid = (g_blk_ex != nullptr && 
+                                         g_blk_ex->dimension(1) == (Eigen::Index)v2.size && 
+                                         g_blk_ex->dimension(3) == (Eigen::Index)v1.size);
+
+                        if (t_blk && g_blk && ex_valid) {
+                            #pragma omp parallel for collapse(2) reduction(+:E_corr) schedule(static)
+                            for (int di = 0; di < o1.size; ++di) {
+                                for (int dj = 0; dj < o2.size; ++dj) {
+                                    if (o1.offset+di < nf || o2.offset+dj < nf) continue;
+                                    for (int da = 0; da < v1.size; ++da) {
+                                        for (int db = 0; db < v2.size; ++db) {
+                                            double g_dir = (*g_blk)(di, da, dj, db);
+                                            double g_ex = (*g_blk_ex)(di, db, dj, da);
+                                            double t_val = (*t_blk)(di, da, dj, db);
+                                            E_corr += t_val * (2.0 * g_dir - g_ex);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        e_ss_ = 0.0;
+        e_os_ = E_corr; 
+        return E_corr;
+
+    } else {
+        for (const auto& o1 : occ_spaces_a) {
+            if (o1.size == 0) continue; 
+            for (const auto& v1 : vir_spaces_a) {
+                if (v1.size == 0) continue; 
+                for (const auto& o2 : occ_spaces_a) {
+                    if (o2.size == 0) continue; 
+                    for (const auto& v2 : vir_spaces_a) {
+                        if (v2.size == 0) continue; 
+
+                        if ((o1.id ^ v1.id ^ o2.id ^ v2.id) != 0) continue;
+
+                        auto* t_blk = t2_aa_.get_block(o1.id, v1.id, o2.id, v2.id);
+                        auto* g_blk = g_aa_.get_block(o1.id, v1.id, o2.id, v2.id);
+                        auto* g_blk_ex = g_aa_.get_block(o1.id, v2.id, o2.id, v1.id);
+
+                        bool ex_valid = false;
+                        if (g_blk_ex != nullptr) {
+                            if (g_blk_ex->dimension(1) == (Eigen::Index)v2.size && 
+                                g_blk_ex->dimension(3) == (Eigen::Index)v1.size) {
+                                ex_valid = true;
+                            }
+                        }
+
+                        if (t_blk && g_blk && ex_valid) {
+                            for (int di = 0; di < o1.size; ++di) {
+                                if (o1.offset+di < nf) continue;
+                                for (int dj = 0; dj < o2.size; ++dj) {
+                                    if (o2.offset+dj < nf) continue;
+                                    for (int da = 0; da < v1.size; ++da) {
+                                        for (int db = 0; db < v2.size; ++db) {
+                                            double g_val = (*g_blk)(di, da, dj, db) - (*g_blk_ex)(di, db, dj, da);
+                                            E_ss_aa += (*t_blk)(di, da, dj, db) * g_val;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (nb_ > 0 && vb_ > 0) {
+            auto* t_bb = t2_bb_.get_block(0,0,0,0);
+            auto* g_bb = g_bb_.get_block(0,0,0,0);
+            if (t_bb && g_bb) {
+              #pragma omp parallel for collapse(2) reduction(+:E_ss_bb)
+                for(int i=nf; i<nb_; ++i) for(int j=nf; j<nb_; ++j) for(int a=0; a<vb_; ++a) for(int b=0; b<vb_; ++b)
+                    E_ss_bb += (*t_bb)(i, j, a, b) * ((*g_bb)(i, a, j, b) - (*g_bb)(i, b, j, a));
+            }
+            auto* t_ab = t2_ab_.get_block(0,0,0,0);
+            auto* g_ab = g_ab_.get_block(0,0,0,0);
+            if (t_ab && g_ab) {
+                for(int i=nf; i<na_; ++i) for(int j=nf; j<nb_; ++j) for(int a=0; a<va_; ++a) for(int b=0; b<vb_; ++b)
+                    E_os += (*t_ab)(i, j, a, b) * (*g_ab)(i, a, j, b);
+            }
+        }
+
+        e_ss_ = 0.25 * E_ss_aa + 0.25 * E_ss_bb;
+        e_os_ = E_os;
+        return e_ss_ + e_os_;
+    }
+}
+void OMP2::compute_t2_and_energy_cholesky() {
+    double E_ss_aa = 0.0, E_ss_bb = 0.0, E_os = 0.0;
+    int nf = n_frozen_;
+    bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
+    
+    auto parallel_gemm_abt = [](const Eigen::MatrixXd& A, const Eigen::MatrixXd& B) {
+        Eigen::MatrixXd C(A.rows(), B.rows());
+        const int m = A.rows();
+        constexpr int tile = 64;
+        #pragma omp parallel for schedule(dynamic)
+        for (int i = 0; i < m; i += tile) {
+            int rows = std::min(tile, m - i);
+            C.middleRows(i, rows).noalias() = A.middleRows(i, rows) * B.transpose();
+        }
+        return C;
+    };
+
+    t2_aa_.allocate_block(0, 0, 0, 0, na_, va_, na_, va_);
+    auto* t_aa_blk = t2_aa_.get_block(0, 0, 0, 0);
+
+    if (t_aa_blk) {
+        t_aa_blk->setZero();
+        Eigen::MatrixXd G_aa = parallel_gemm_abt(B_ia_P_alpha_, B_ia_P_alpha_);
+        
+        const double* eps_a = scf_.orbital_energies_alpha.data();
+        
+        #pragma omp parallel for reduction(+:E_ss_aa) schedule(static)
+        for (int i = nf; i < na_; ++i) {
+            for (int j = nf; j < na_; ++j) {
+                double e_ij = eps_a[i] + eps_a[j];
+                for (int a = 0; a < va_; ++a) {
+                    double den_a = e_ij - eps_a[na_ + a];
+                    int idx_ia = i * va_ + a;
+                    
+                    for (int b = 0; b < va_; ++b) {
+                        double den = den_a - eps_a[na_ + b];
+                        int idx_jb = j * va_ + b;
+                        int idx_ib = i * va_ + b;
+                        int idx_ja = j * va_ + a;
+
+                        double val_dir = G_aa(idx_ia, idx_jb);
+                        double val_ex  = G_aa(idx_ib, idx_ja); 
+
+                        double reg_den = (std::abs(den) > 1e-12) ? (1.0 / den) : 0.0;
+                        double t_val = 0.0;
+
+                        if (is_restricted) {
+                            t_val = val_dir * reg_den;
+                            E_ss_aa += t_val * (2.0 * val_dir - val_ex); 
+                        } else {
+                            t_val = (val_dir - val_ex) * reg_den;
+                            E_ss_aa += t_val * (val_dir - val_ex); 
+                        }
+                        (*t_aa_blk)(i, a, j, b) = t_val;
+                    }
+                }
+            }
+        }
+    }
+    
+    if (!is_restricted && nb_ > 0 && vb_ > 0) {
+        t2_bb_.allocate_block(0, 0, 0, 0, nb_, nb_, vb_, vb_);
+        auto* t_bb_blk = t2_bb_.get_block(0, 0, 0, 0);
+        if (t_bb_blk) t_bb_blk->setZero();
+
+        t2_ab_.allocate_block(0, 0, 0, 0, na_, nb_, va_, vb_);
+        auto* t_ab_blk = t2_ab_.get_block(0, 0, 0, 0);
+        if (t_ab_blk) t_ab_blk->setZero();
+
+        const double* eps_b = scf_.orbital_energies_beta.data();
+
+        if (t_bb_blk) {
+            Eigen::MatrixXd G_bb = B_ia_P_beta_ * B_ia_P_beta_.transpose();
+            
+            #pragma omp parallel for reduction(+:E_ss_bb) schedule(static)
+            for (int i = nf; i < nb_; ++i) {
+                for (int j = nf; j < nb_; ++j) {
+                    double e_ij = eps_b[i] + eps_b[j];
+                    for (int a = 0; a < vb_; ++a) {
+                        double den_a = e_ij - eps_b[nb_ + a];
+                        int idx_ia = i * vb_ + a;
+                        
+                        for (int b = 0; b < vb_; ++b) {
+                            double den = den_a - eps_b[nb_ + b];
+                            int idx_jb = j * vb_ + b;
+                            int idx_ib = i * vb_ + b;
+                            int idx_ja = j * vb_ + a;
+
+                            double val_dir = G_bb(idx_ia, idx_jb);
+                            double val_ex  = G_bb(idx_ib, idx_ja);
+                            
+                            double reg_den = (std::abs(den) > 1e-12) ? (1.0 / den) : 0.0;
+                            double t_val = (val_dir - val_ex) * reg_den;
+                            
+                            E_ss_bb += t_val * (val_dir - val_ex);
+                            (*t_bb_blk)(i, j, a, b) = t_val; 
+                        }
+                    }
+                }
+            }
+        }
+
+        if (t_ab_blk) {
+            Eigen::MatrixXd G_ab = B_ia_P_alpha_ * B_ia_P_beta_.transpose();
+            const double* eps_a = scf_.orbital_energies_alpha.data();
+            
+            #pragma omp parallel for reduction(+:E_os) schedule(static)
+            for (int i = nf; i < na_; ++i) {
+                for (int j = nf; j < nb_; ++j) {
+                    double e_ij = eps_a[i] + eps_b[j];
+                    for (int a = 0; a < va_; ++a) {
+                        double den_a = e_ij - eps_a[na_ + a];
+                        int idx_ia = i * va_ + a;
+                        
+                        for (int b = 0; b < vb_; ++b) {
+                            double den = den_a - eps_b[nb_ + b];
+                            int idx_jb = j * vb_ + b;
+
+                            double val_dir = G_ab(idx_ia, idx_jb);
+                            double reg_den = (std::abs(den) > 1e-12) ? (1.0 / den) : 0.0;
+                            double t_val = val_dir * reg_den;
+                            
+                            E_os += t_val * val_dir; 
+                            (*t_ab_blk)(i, j, a, b) = t_val;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (is_restricted) {
+        e_ss_ = 0.0;
+        e_os_ = E_ss_aa;
+    } else {
+        e_ss_ = 0.25 * E_ss_aa + 0.25 * E_ss_bb;
+        e_os_ = E_os;
+    }
+}
+}

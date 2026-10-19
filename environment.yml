@@ -1,0 +1,31 @@
+name: mshqc_314
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python>=3.10
+  - pip
+  - cmake>=3.18
+  - ninja
+  - make
+  - pkg-config
+  - ccache
+  - compilers
+  - c-compiler
+  - cxx-compiler
+  - llvm-openmp
+  - mkl
+  - mkl-devel
+  - mkl-include
+  - liblapacke
+  - eigen
+  - hdf5=1.14.3
+  - jemalloc
+  - pip:
+      - build
+      - wheel
+      - nanobind>=1.9.0
+      - setuptools>=77.0.0
+      - numpy>=1.22.0
+      - scipy>=1.8.0
+      - pytest>=7.0.0
