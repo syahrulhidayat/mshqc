@@ -69,7 +69,7 @@ double BaseMP3::tensor_dot(const Eigen::Tensor<double, 4>& A, const Eigen::Tenso
 
 MP3Result RMP3::compute() {
     auto t_start = std::chrono::high_resolution_clock::now();
-    if(omp_get_thread_num() == 0) std::cout << "\n=== RMP3 (Unified Native TBLIS - HPC Cholesky) ===\n";
+    if(omp_get_thread_num() == 0) std::cout << "\n=== RMP3 (Unified Native TBLIS - Cholesky) ===\n";
 
     const auto& Co = scf_.C_alpha.leftCols(no_a_);
     const auto& Cv = scf_.C_alpha.rightCols(nv_a_);
@@ -241,7 +241,7 @@ MP3Result RMP3::compute() {
 
 MP3Result UMP3::compute() {
     auto t_start = std::chrono::high_resolution_clock::now();
-    if(omp_get_thread_num() == 0) std::cout << "\n=== UMP3 (Unified Native TBLIS - HPC Cholesky) ===\n";
+    if(omp_get_thread_num() == 0) std::cout << "\n=== UMP3 (Unified Native TBLIS - Cholesky) ===\n";
 
     const auto& Cao = scf_.C_alpha.leftCols(no_a_); const auto& Cav = scf_.C_alpha.rightCols(nv_a_);
     const auto& Cbo = scf_.C_beta.leftCols(no_b_);  const auto& Cbv = scf_.C_beta.rightCols(nv_b_);

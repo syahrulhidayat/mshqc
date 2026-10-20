@@ -99,7 +99,7 @@ CholeskyResult compute_pivoted_cholesky(Eigen::MatrixXd& J, double tol = 1e-10) 
     return {L, p, rank};
 }
 void DensityFittingERI::compute(bool save_hdf5) {
-    std::cout << "  Starting Density Fitting (RI) Decomposition (Ultra HPC)...\n";
+    std::cout << "  Starting Density Fitting (RI) Decomposition...\n";
     std::cout << "  Primary Basis: " << n_primary_ << " BF\n";
     std::cout << "  Auxiliary Basis: " << n_aux_ << " BF\n";
 

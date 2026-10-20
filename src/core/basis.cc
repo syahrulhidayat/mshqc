@@ -14,7 +14,7 @@
 
 /**
  * @file src/core/basis.cc
- * @brief Basis Set Handling (HPC Edition - Exact Contraction Normalization & Dynamic Path)
+ * @brief Basis Set Handling (Exact Contraction Normalization & Dynamic Path)
  */
 
 #include "mshqc/basis.h"
