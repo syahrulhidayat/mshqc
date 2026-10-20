@@ -273,35 +273,89 @@ SCFResult BaseSCF::compute() {
     if (config_.print_level > 0) printf("\n Iter       Energy (Ha)        Delta E    Delta P\n");
     
     for (iter_scf_ = 1; iter_scf_ <= config_.max_iterations; iter_scf_++) {
-        energy_old_ = energy_; Eigen::MatrixXd P_tot_snapshot = P_alpha_; if (is_uhf) P_tot_snapshot += P_beta_;
-        if (iter_scf_ > 2) { double de = std::abs(energy_ - energy_old_); if (de < 1e-3) thresh = 1e-9; if (de < 1e-6) thresh = 1e-13; }
-        if (symmetrizer_) { symmetrizer_->symmetrize(P_alpha_); if (is_uhf) symmetrizer_->symmetrize(P_beta_); }
+        energy_old_ = energy_;
+        Eigen::MatrixXd Pa_snapshot = P_alpha_;
+        Eigen::MatrixXd Pb_snapshot = P_beta_;
+
+        if (iter_scf_ > 2) {
+            double de = std::abs(energy_ - energy_old_);
+            if (de < 1e-3) thresh = 1e-9;
+            if (de < 1e-6) thresh = 1e-13;
+        }
+        if (symmetrizer_) {
+            symmetrizer_->symmetrize(P_alpha_);
+            if (is_uhf) symmetrizer_->symmetrize(P_beta_);
+        }
 
         build_fock_matrix(); 
 
-        if (symmetrizer_) { symmetrizer_->symmetrize(F_alpha_); if (is_uhf) symmetrizer_->symmetrize(F_beta_); }
+        if (symmetrizer_) {
+            symmetrizer_->symmetrize(F_alpha_);
+            if (is_uhf) symmetrizer_->symmetrize(F_beta_);
+        }
         energy_ = compute_energy(); 
         
         Eigen::MatrixXd F_eff_a, F_eff_b;
-        Eigen::MatrixXd FPS_a = F_alpha_ * P_alpha_ * S_; Eigen::MatrixXd err_a = FPS_a - FPS_a.transpose(); diis_a.add_iteration(F_alpha_, err_a, P_alpha_);
+        Eigen::MatrixXd FPS_a = F_alpha_ * P_alpha_ * S_;
+        Eigen::MatrixXd err_a = FPS_a - FPS_a.transpose();
+        diis_a.add_iteration(F_alpha_, err_a, P_alpha_);
         F_eff_a = (iter_scf_ <= 1) ? (0.7 * F_alpha_ + 0.3 * H_) : diis_a.extrapolate();
 
         if (is_uhf) {
-            Eigen::MatrixXd FPS_b = F_beta_ * P_beta_ * S_; Eigen::MatrixXd err_b = FPS_b - FPS_b.transpose(); diis_b.add_iteration(F_beta_, err_b, P_beta_);
+            Eigen::MatrixXd FPS_b = F_beta_ * P_beta_ * S_;
+            Eigen::MatrixXd err_b = FPS_b - FPS_b.transpose();
+            diis_b.add_iteration(F_beta_, err_b, P_beta_);
             F_eff_b = (iter_scf_ <= 1) ? (0.7 * F_beta_ + 0.3 * H_) : diis_b.extrapolate();
         }
 
-        solve_fock(F_eff_a, C_alpha_, eps_alpha_); occ_numbers_alpha_ = smear_electrons(eps_alpha_, n_alpha_);
-        if (is_uhf) { solve_fock(F_eff_b, C_beta_, eps_beta_); occ_numbers_beta_ = smear_electrons(eps_beta_, n_beta_); } 
-        else { C_beta_ = C_alpha_; eps_beta_ = eps_alpha_; occ_numbers_beta_ = occ_numbers_alpha_; }
+        solve_fock(F_eff_a, C_alpha_, eps_alpha_);
+        occ_numbers_alpha_ = smear_electrons(eps_alpha_, n_alpha_);
+        if (is_uhf) {
+            solve_fock(F_eff_b, C_beta_, eps_beta_);
+            occ_numbers_beta_ = smear_electrons(eps_beta_, n_beta_);
+        } else {
+            C_beta_ = C_alpha_;
+            eps_beta_ = eps_alpha_;
+            occ_numbers_beta_ = occ_numbers_alpha_;
+        }
 
         update_densities(); 
         
-        double dE = std::abs(energy_ - energy_old_); Eigen::MatrixXd P_tot_new = P_alpha_; if (is_uhf) P_tot_new += P_beta_;
-        double dP = (P_tot_new - P_tot_snapshot).norm() / nbasis_;
+        double dE = std::abs(energy_ - energy_old_);
+        double dP = is_uhf
+            ? std::hypot((P_alpha_ - Pa_snapshot).norm(), (P_beta_ - Pb_snapshot).norm())
+            : (P_alpha_ - Pa_snapshot).norm();
         
-        if (config_.print_level > 0) printf(" %4d %18.10f %10.2e %10.2e\n", iter_scf_, energy() , dE, dP);
-        if (dE < config_.energy_threshold && dP < config_.density_threshold) { converged = true; break; }
+        if (config_.print_level > 0) printf(" %4d %18.10f %10.2e %10.2e\n", iter_scf_, energy(), dE, dP);
+        if (dE < config_.energy_threshold && dP < config_.density_threshold) {
+            converged = true;
+            break;
+        }
+    }
+
+    // Sinkronisasi kanonikal akhir: bangun Fock murni dari densitas terkonvergensi & diagonalisasi tanpa DIIS
+    if (converged) {
+        if (symmetrizer_) {
+            symmetrizer_->symmetrize(P_alpha_);
+            if (is_uhf) symmetrizer_->symmetrize(P_beta_);
+        }
+        build_fock_matrix();
+        if (symmetrizer_) {
+            symmetrizer_->symmetrize(F_alpha_);
+            if (is_uhf) symmetrizer_->symmetrize(F_beta_);
+        }
+        energy_ = compute_energy();
+        solve_fock(F_alpha_, C_alpha_, eps_alpha_);
+        occ_numbers_alpha_ = smear_electrons(eps_alpha_, n_alpha_);
+        if (is_uhf) {
+            solve_fock(F_beta_, C_beta_, eps_beta_);
+            occ_numbers_beta_ = smear_electrons(eps_beta_, n_beta_);
+        } else {
+            C_beta_ = C_alpha_;
+            eps_beta_ = eps_alpha_;
+            occ_numbers_beta_ = occ_numbers_alpha_;
+        }
+        update_densities();
     }
     
     std::vector<int> irreps_a(nbasis_, 0), irreps_b(nbasis_, 0);
