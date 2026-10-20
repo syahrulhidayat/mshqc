@@ -10,7 +10,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mshqc"
-version = "1.0.4"
+version = "1.0.4.post1"
 description = "mshqc: A C++20 Quantum Chemistry Engine for Orbital-Optimized Correlation Methods"
 readme = "README.md"
 requires-python = ">=3.10"

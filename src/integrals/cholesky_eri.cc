@@ -188,11 +188,13 @@ void CholeskyERI::decompose_direct() {
 
     std::vector<int> shell_starts(nshells);
     int offset = 0;
-    for(int s = 0; s < nshells; ++s) {
-        shell_starts[s] = offset; offset += basis.shell(s).n_functions();
+    for (int s = 0; s < nshells; ++s) {
+        shell_starts[s] = offset;
+        offset += basis.shell(s).n_functions();
     }
 
-    Eigen::VectorXd D(npair); D.setZero();
+    Eigen::VectorXd D(npair);
+    D.setZero();
     std::vector<double> shell_max(nshells * nshells, 0.0);
     std::vector<std::pair<int, int>> valid_pairs;
 
@@ -201,49 +203,34 @@ void CholeskyERI::decompose_direct() {
         for (int s2 = 0; s2 <= s1; ++s2) {
             const auto& buf = integrals_ptr_->compute_shell_block(s1, s2, s1, s2);
             if (buf.empty()) continue;
-            
-            int dim1 = basis.shell(s1).n_functions(); int dim2 = basis.shell(s2).n_functions();
-            int st1 = shell_starts[s1]; int st2 = shell_starts[s2];
+
+            int dim1 = basis.shell(s1).n_functions();
+            int dim2 = basis.shell(s2).n_functions();
+            int st1 = shell_starts[s1];
+            int st2 = shell_starts[s2];
             double max_val_block = 0.0;
-            
-            for(int i=0; i<dim1; ++i) {
-                for(int j=0; j<dim2; ++j) {
+
+            for (int i = 0; i < dim1; ++i) {
+                for (int j = 0; j < dim2; ++j) {
                     size_t idx_buf = i + dim1 * (j + dim2 * (i + dim1 * j));
                     if (idx_buf >= buf.size()) continue;
-                    
+
                     double val = buf[idx_buf];
-                    int p = st1 + i; int q = st2 + j;
-                    
+                    int p = st1 + i;
+                    int q = st2 + j;
+
                     if (p * n_basis_ + q < npair) D(p * n_basis_ + q) = val;
                     if (q * n_basis_ + p < npair) D(q * n_basis_ + p) = val;
                     max_val_block = std::max(max_val_block, std::abs(val));
                 }
             }
-            shell_max[s1 * nshells + s2] = std::sqrt(max_val_block);
-            shell_max[s2 * nshells + s1] = std::sqrt(max_val_block);
-            
-            if (max_val_block > 1e-14) {
+            double s_max = std::sqrt(max_val_block);
+            shell_max[s1 * nshells + s2] = s_max;
+            shell_max[s2 * nshells + s1] = s_max;
+
+            if (s_max > 1e-14) {
                 #pragma omp critical
                 valid_pairs.push_back({s1, s2});
-            }
-        }
-    }
-    std::vector<bool> is_1center(npair, false);
-    for (int s1 = 0; s1 < nshells; ++s1) {
-        auto pos1 = basis.shell(s1).position();
-        for (int s2 = 0; s2 <= s1; ++s2) {
-            auto pos2 = basis.shell(s2).position();
-            double dist2 = std::pow(pos1[0]-pos2[0], 2) + std::pow(pos1[1]-pos2[1], 2) + std::pow(pos1[2]-pos2[2], 2);
-            
-            if (dist2 < 1e-8) { 
-                int st1 = shell_starts[s1]; int dim1 = basis.shell(s1).n_functions();
-                int st2 = shell_starts[s2]; int dim2 = basis.shell(s2).n_functions();
-                for (int i = 0; i < dim1; ++i) {
-                    for (int j = 0; j < dim2; ++j) {
-                        is_1center[(st1 + i) * n_basis_ + (st2 + j)] = true;
-                        is_1center[(st2 + j) * n_basis_ + (st1 + i)] = true;
-                    }
-                }
             }
         }
     }
@@ -251,29 +238,31 @@ void CholeskyERI::decompose_direct() {
     int est_rank = std::min(npair, std::max(200, n_basis_ * 5));
     Eigen::MatrixXd L_store(npair, est_rank);
 
+    // Cutoff screening integral mentah diperketat agar tidak teramplifikasi oleh 1/sqrt(D_max)
+    const double screen_cutoff = std::min(1e-12, threshold_ * 1e-4);
+
     int iter = 0;
     while (true) {
-      
-        int pivot_idx = -1; 
-        double D_max = -1.0;
-        for (int p = 0; p < npair; ++p) {
-            if (is_1center[p] && D(p) > D_max) {
-                D_max = D(p);
-                pivot_idx = p;
-            }
-        }
-        
-      
-        if (D_max < threshold_ || pivot_idx == -1 || iter >= npair) break;
-        if (iter >= L_store.cols()) L_store.conservativeResize(Eigen::NoChange, L_store.cols() * 2);
+        // 1. Full Pivoted Cholesky: cari pivot maksimum di seluruh pasangan (1-center & 2-center)
+        int pivot_idx = -1;
+        double D_max = D.maxCoeff(&pivot_idx);
 
-        int p = pivot_idx / n_basis_; int q = pivot_idx % n_basis_;
-        if (p < q) std::swap(p, q); 
-        
-        int sp = bf2shell_[p]; int sq = bf2shell_[q];
-        int rel_p = p - shell_starts[sp]; int rel_q = q - shell_starts[sq];
-        int pair_pq = sp * (sp + 1) / 2 + sq; double inv_sqrt = 1.0 / std::sqrt(D_max);
-        
+        if (D_max < threshold_ || pivot_idx == -1 || iter >= npair) break;
+        if (iter >= L_store.cols()) {
+            L_store.conservativeResize(Eigen::NoChange, L_store.cols() * 2);
+        }
+
+        int p = pivot_idx / n_basis_;
+        int q = pivot_idx % n_basis_;
+        if (p < q) std::swap(p, q);
+
+        int sp = bf2shell_[p];
+        int sq = bf2shell_[q];
+        int rel_p = p - shell_starts[sp];
+        int rel_q = q - shell_starts[sq];
+        int pair_pq = sp * (sp + 1) / 2 + sq;
+        double inv_sqrt = 1.0 / std::sqrt(D_max);
+
         Eigen::VectorXd col_buf = Eigen::VectorXd::Zero(npair);
         double pivot_schwarz = shell_max[sp * nshells + sq];
         int dimP = basis.shell(sp).n_functions();
@@ -281,7 +270,6 @@ void CholeskyERI::decompose_direct() {
 
         #pragma omp parallel
         {
-            // Buffer dialokasikan 1x per thread di luar loop valid_pairs
             std::vector<double> thread_buf(10000);
 
             #pragma omp for schedule(dynamic, 16) nowait
@@ -289,13 +277,16 @@ void CholeskyERI::decompose_direct() {
                 int s1 = valid_pairs[v].first;
                 int s2 = valid_pairs[v].second;
 
-                if (shell_max[s1 * nshells + s2] * pivot_schwarz < threshold_) continue;
+                // 2. Gunakan screen_cutoff yang ketat agar presisi penuh terjaga
+                if (shell_max[s1 * nshells + s2] * pivot_schwarz < screen_cutoff) continue;
 
                 int pair_s = s1 * (s1 + 1) / 2 + s2;
                 bool swap_pairs = (pair_s < pair_pq);
-                
-                int u1 = swap_pairs ? sp : s1; int u2 = swap_pairs ? sq : s2;
-                int u3 = swap_pairs ? s1 : sp; int u4 = swap_pairs ? s2 : sq;
+
+                int u1 = swap_pairs ? sp : s1;
+                int u2 = swap_pairs ? sq : s2;
+                int u3 = swap_pairs ? s1 : sp;
+                int u4 = swap_pairs ? s2 : sq;
 
                 if (!integrals_ptr_->compute_shell_block_raw(u1, u2, u3, u4, thread_buf.data())) continue;
 
@@ -318,26 +309,29 @@ void CholeskyERI::decompose_direct() {
                     }
                 }
             }
-        } 
-        
+        }
+
         if (iter > 0) {
-            // FAST LEVEL-2 BLAS (GEMV) BYPASSING MANUAL LOOP
             Eigen::Map<const Eigen::MatrixXd> L_prev(L_store.data(), npair, iter);
             Eigen::VectorXd L_piv = L_prev.row(pivot_idx);
-            col_buf.noalias() -= L_prev * L_piv; 
+            col_buf.noalias() -= L_prev * L_piv;
         }
-        
-        L_store.col(iter) = col_buf * inv_sqrt; 
+
+        L_store.col(iter) = col_buf * inv_sqrt;
         D.array() -= L_store.col(iter).array().square();
-        for(int k=0; k<npair; ++k) if (D(k) < 0.0) D(k) = 0.0;
+
+        // 3. Eksplisit nolkan diagonal pivot & pasangan simetrisnya serta clamp nilai negatif
+        D(p * n_basis_ + q) = 0.0;
+        D(q * n_basis_ + p) = 0.0;
+        D = D.cwiseMax(0.0);
+
         iter++;
     }
 
-    n_vectors_ = iter; decomposed_ = true; L_mat_ = L_store.leftCols(n_vectors_);
+    n_vectors_ = iter;
+    decomposed_ = true;
+    L_mat_ = L_store.leftCols(n_vectors_);
 }
-
-
-
 
 
 void CholeskyERI::reset() {
