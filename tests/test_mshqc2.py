@@ -4,19 +4,17 @@ import mshqc
 
 def run_benchmark():
     print("==========================================================================================================")
-    print("  MSHQC BENCHMARK | COMPARISON: EXACT vs CHOLESKY vs DF (HF, MP2, OMP2, OMP3)")
+    print("  MSHQC BENCHMARK | COMPARISON: EXACT vs CHOLESKY vs DF (HF, MP2, MP3, OMP2, OMP3)")
     print("  Base: cc-pVTZ | Aux Base: cc-pVTZ-RI | Chol Tol: 1e-09 | DF Tol: 1e-09")
     print("==========================================================================================================")
 
-    # Daftar sistem molekul yang akan diuji
     systems = ["Neon", "H2O", "Lithium", "Carbon", "Oxygen"]
     modes = ["exact", "cholesky", "df"]
     
-    results = [] # Untuk menyimpan data tabel akhir
+    results = []
 
     for sys_name in systems:
         for mode in modes:
-            # 1. Setup Molekul & Ref (RHF/UHF)
             if sys_name == "Neon":
                 mol = mshqc.Molecule(charge=0, multiplicity=1)
                 mol.add_atom("Ne", 0.0, 0.0, 0.0, units="angstrom")
@@ -40,13 +38,12 @@ def run_benchmark():
                 mol.add_atom("O", 0.0, 0.0, 0.0, units="angstrom")
                 ref_type = "U"
 
-            print(f"Running: {sys_name:<9}-> {ref_type}HF, {ref_type}MP2, OMP2, & OMP3 (Integral: {mode.upper()})")
+            print(f"Running: {sys_name:<9}-> {ref_type}HF, {ref_type}MP2, {ref_type}MP3, OMP2, & OMP3 (Integral: {mode.upper()})")
 
-            # 2. Load Basis Set & Integral
             basis = mshqc.BasisSet("cc-pVTZ", mol)
             integrals = mshqc.IntegralEngine(mol, basis)
 
-            # 3. Eksekusi HF (Catat Waktu)
+            # 1. HF
             scf_conf = mshqc.SCFConfig(eri_method=mode, threshold=1e-9)
             t0 = time.time()
             if ref_type == "R":
@@ -56,7 +53,7 @@ def run_benchmark():
             t_hf = time.time() - t0
             results.append((sys_name, mode.upper(), f"{ref_type}HF", scf_res.energy_total, t_hf))
 
-            # 4. Eksekusi MP2 (Catat Waktu)
+            # 2. MP2
             mp2_conf = mshqc.MP2Config(eri_method=mode, threshold=1e-9, gradient_threshold=1e-5)
             t0 = time.time()
             if ref_type == "R":
@@ -66,19 +63,27 @@ def run_benchmark():
             t_mp2 = time.time() - t0
             results.append((sys_name, mode.upper(), f"{ref_type}MP2", mp2_res.energy_total, t_mp2))
 
-            # 5. Eksekusi OMP2 (Catat Waktu)
+            # 3. MP3
+            t0 = time.time()
+            if ref_type == "R":
+                mp3_res = mshqc.RMP3(scf_res, mp2_res, mp2_conf, integrals).compute()
+            else:
+                mp3_res = mshqc.UMP3(scf_res, mp2_res, mp2_conf, integrals).compute()
+            t_mp3 = time.time() - t0
+            results.append((sys_name, mode.upper(), f"{ref_type}MP3", mp3_res.energy_total, t_mp3))
+
+            # 4. OMP2
             t0 = time.time()
             omp2_res = mshqc.OMP2(mol, basis, integrals, scf_res, mp2_conf).compute()
             t_omp2 = time.time() - t0
             results.append((sys_name, mode.upper(), "OMP2", omp2_res.energy_total, t_omp2))
 
-            # 6. Eksekusi OMP3 (Catat Waktu)
+            # 5. OMP3
             t0 = time.time()
             omp3_res = mshqc.OMP3(mol, basis, integrals, scf_res, mp2_conf).compute()
             t_omp3 = time.time() - t0
             results.append((sys_name, mode.upper(), "OMP3", omp3_res.energy_total, t_omp3))
 
-    # Print Tabel Hasil Akhir
     print("\n===============================================================================")
     print("                     MSHQC BENCHMARK FINAL RESULTS")
     print("===============================================================================")
