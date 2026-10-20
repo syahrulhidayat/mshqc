@@ -4,10 +4,11 @@ import re
 import sys
 from pathlib import Path
 
+# Ditambahkan RMP3 dan UMP3 pada regex agar hasil log terbaca
 ROW_RE = re.compile(
     r"^\|\s*(?P<sys>Neon|H2O|Lithium|Carbon|Oxygen)\s*"
     r"\|\s*(?P<eri>EXACT|CHOLESKY|DF)\s*"
-    r"\|\s*(?P<method>RHF|UHF|RMP2|UMP2|OMP2|OMP3)\s*"
+    r"\|\s*(?P<method>RHF|UHF|RMP2|UMP2|RMP3|UMP3|OMP2|OMP3)\s*"
     r"\|\s*(?P<energy>-?\d+\.\d+)\s*"
     r"\|\s*(?P<time>\d+\.\d+)\s*\|"
 )
@@ -54,6 +55,7 @@ def main():
 
     max_de_uha = 0.0
     sub_001_count = 0
+    mp3_speedups = []
     omp2_speedups = []
     omp3_speedups = []
 
@@ -66,7 +68,10 @@ def main():
         max_de_uha = max(max_de_uha, de_uha)
         if de_uha < 0.005:
             sub_001_count += 1
-        if method == "OMP2":
+            
+        if method in ["RMP3", "UMP3"]:
+            mp3_speedups.append(speedup)
+        elif method == "OMP2":
             omp2_speedups.append(speedup)
         elif method == "OMP3":
             omp3_speedups.append(speedup)
@@ -86,9 +91,11 @@ def main():
         f"Runs with 0.00 uHa deviation: {sub_001_count}/{len(keys)}"
     )
     print(stats_line)
-    if omp2_speedups and omp3_speedups:
+    
+    if omp2_speedups and omp3_speedups and mp3_speedups:
         sp_line = (
-            f"OMP2 Speedup Range: {min(omp2_speedups):.2f}x - {max(omp2_speedups):.2f}x | "
+            f"MP3 Speedup Range : {min(mp3_speedups):.2f}x - {max(mp3_speedups):.2f}x\n"
+            f"OMP2 Speedup Range: {min(omp2_speedups):.2f}x - {max(omp2_speedups):.2f}x\n"
             f"OMP3 Speedup Range: {min(omp3_speedups):.2f}x - {max(omp3_speedups):.2f}x"
         )
         print(sp_line)
@@ -96,11 +103,13 @@ def main():
 
     md_lines.extend([
         "",
-        f"- **Total Validated Runs:** `{len(keys)}` (`5 systems x 3 ERI modes x 4 methods`)",
+        # Diperbarui menjadi 5 methods
+        f"- **Total Validated Runs:** `{len(keys)}` (`5 systems x 3 ERI modes x 5 methods`)",
         f"- **Maximum Absolute Energy Deviation (`|dE|`):** `{max_de_uha:.2f} uHa` (`0.00 uHa` on `{sub_001_count}/{len(keys)}` runs at `1e-8 Ha` precision)",
     ])
-    if omp2_speedups and omp3_speedups:
+    if omp2_speedups and omp3_speedups and mp3_speedups:
         md_lines.extend([
+            f"- **`MP3` Speedup Range (`t_Psi4 / t_mshqc`):** `{min(mp3_speedups):.2f}x` to `{max(mp3_speedups):.2f}x`",
             f"- **`OMP2` Speedup Range (`t_Psi4 / t_mshqc`):** `{min(omp2_speedups):.2f}x` to `{max(omp2_speedups):.2f}x`",
             f"- **`OMP3` Speedup Range (`t_Psi4 / t_mshqc`):** `{min(omp3_speedups):.2f}x` to `{max(omp3_speedups):.2f}x`",
         ])
