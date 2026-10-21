@@ -63,25 +63,11 @@ jobs:
         run: |
           /tmp/mshqc_venv/bin/python tests/compare_mshqc_psi4.py mshqc_bench.txt psi4_bench.txt
 
-      - name: Run Chapter 4 - Memory & Cholesky Compression
+      - name: Run Extra Chapter 4 Benchmarks (RAM, S2, FD Gradient, SOSCF vs LBFGS)
+        shell: bash -el {0}
         run: |
-          /tmp/mshqc_venv/bin/python tests/test_01_mem_cholesky.py | tee bab4_01_mem.txt
-
-      - name: Run Chapter 4 - Basis Scaling Performance
-        run: |
-          /tmp/mshqc_venv/bin/python tests/test_02_basis_scaling.py | tee bab4_02_scale.txt
-
-      - name: Run Chapter 4 - Spin Contamination (UHF vs OMP2)
-        run: |
-          /tmp/mshqc_venv/bin/python tests/test_03_spin_contam.py | tee bab4_03_spin.txt
-
-      - name: Run Chapter 4 - Analytical vs FD Gradient Precision
-        run: |
-          /tmp/mshqc_venv/bin/python tests/test_04_grad_fd.py | tee bab4_04_grad.txt
-
-      - name: Run Chapter 4 - SOSCF vs L-BFGS Convergence Latency
-        run: |
-          /tmp/mshqc_venv/bin/python tests/test_05_soscf_vs_lbfgs.py | tee bab4_05_opt.txt
+          PSI4_PY=$(micromamba run -n psi4_env which python)
+          PSI4_PYTHON="$PSI4_PY" /tmp/mshqc_venv/bin/python tests/bench_bab4_extra.py | tee bab4_extra_bench.txt
 
       - name: Upload Benchmark Logs & Comparison Table as Artifacts
         uses: actions/upload-artifact@v4
@@ -91,4 +77,4 @@ jobs:
             mshqc_bench.txt
             psi4_bench.txt
             comparison_summary.md
-            bab4_*.txt
+            bab4_extra_bench.txt
