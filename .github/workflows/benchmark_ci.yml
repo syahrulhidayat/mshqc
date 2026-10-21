@@ -63,6 +63,13 @@ jobs:
         run: |
           /tmp/mshqc_venv/bin/python tests/compare_mshqc_psi4.py mshqc_bench.txt psi4_bench.txt
 
+      - name: Run Extra Chapter 4 Benchmarks (RAM, S2, FD Gradient, SOSCF vs LBFGS)
+              shell: bash -el {0}
+              run: |
+                PSI4_PY=$(micromamba run -n psi4_env which python)
+                PSI4_PYTHON="$PSI4_PY" /tmp/mshqc_venv/bin/python tests/bench_bab4_extra.py | tee bab4_extra_bench.txt
+
+
       - name: Upload Benchmark Logs & Comparison Table as Artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -71,3 +78,4 @@ jobs:
             mshqc_bench.txt
             psi4_bench.txt
             comparison_summary.md
+            bab4_extra_bench.txt
