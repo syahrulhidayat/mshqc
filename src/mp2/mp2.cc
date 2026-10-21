@@ -452,77 +452,6 @@ OMP2::OMP2(const Molecule& mol, const BasisSet& basis,
     symmetrizer_ = nullptr;
     init_fast_integrals();
 }
-struct OrbitalLBFGS {
-    EIGEN_MAKE_ALIGNED_OPERATOR_NEW
-    int m_max = 6;
-    std::vector<Eigen::VectorXd> s_hist;
-    std::vector<Eigen::VectorXd> y_hist;
-    std::vector<double> rho_hist;
-    std::array<double, 20> alpha_buffer;
-
-    Eigen::VectorXd g_prev;
-    Eigen::VectorXd s_prev;
-    bool is_first = true;
-
-    void reset() {
-        s_hist.clear(); y_hist.clear(); rho_hist.clear();
-        is_first = true;
-    }
-
-    Eigen::VectorXd get_direction(const Eigen::VectorXd& g_curr, const Eigen::VectorXd& diag_H) {
-        if (is_first) {
-            g_prev = g_curr;
-            is_first = false;
-            return -g_curr.cwiseQuotient(diag_H); 
-        }
-
-        Eigen::VectorXd y = g_curr - g_prev;
-        Eigen::VectorXd s = s_prev; 
-        double ys = y.dot(s);
-
-        Eigen::VectorXd Bs = s.cwiseProduct(diag_H); 
-        double sBs = s.dot(Bs);
-
-        double theta = 1.0;
-        if (ys < 0.2 * sBs) {
-            theta = (0.8 * sBs) / (sBs - ys);
-        }
-
-        Eigen::VectorXd y_mod = theta * y + (1.0 - theta) * Bs;
-        double ys_mod = y_mod.dot(s);
-
-        if (ys_mod > 1e-12) { 
-            if ((int)s_hist.size() >= m_max) {
-                s_hist.erase(s_hist.begin());
-                y_hist.erase(y_hist.begin());
-                rho_hist.erase(rho_hist.begin());
-            }
-            s_hist.push_back(s);
-            y_hist.push_back(y_mod); 
-            rho_hist.push_back(1.0 / ys_mod);
-        }
-
-        g_prev = g_curr;
-
-        Eigen::VectorXd q = g_curr;
-        int k = s_hist.size();
-        std::vector<double> alpha(k);
-
-        for (int i = k - 1; i >= 0; --i) {
-            alpha[i] = rho_hist[i] * s_hist[i].dot(q);
-            q -= alpha[i] * y_hist[i];
-        }
-
-        Eigen::VectorXd r = q.cwiseQuotient(diag_H);
-
-        for (int i = 0; i < k; ++i) {
-            double beta = rho_hist[i] * y_hist[i].dot(r);
-            r += s_hist[i] * (alpha[i] - beta);
-        }
-
-        return -r; 
-    }
-};
 
 
 void OMP2::init_fast_integrals() {
@@ -909,8 +838,6 @@ void OMP2::execute_macro_iterations(DIIS& diis_a, DIIS& diis_b, int macro_iter) 
     }
 }
 MP2Result OMP2::compute() {
-    auto start_time = std::chrono::high_resolution_clock::now();
-
     C_a_current_ = scf_.C_alpha;
     C_b_current_ = scf_.C_beta;
 
@@ -922,24 +849,21 @@ MP2Result OMP2::compute() {
 
     Eigen::MatrixXd C_a_last = scf_.C_alpha;
     Eigen::MatrixXd C_b_last = scf_.C_beta;
-    Eigen::VectorXd last_kappa; 
 
-    OrbitalLBFGS lbfgs_engine;
     DIIS diis_alpha(6);
     DIIS diis_beta(6);
 
-    if(omp_get_thread_num() == 0) {
+    const bool is_omp2_instance = (typeid(*this) == typeid(OMP2));
+    const char* method_tag = is_omp2_instance ? "OMP2" : "OMP3";
+
+    if (omp_get_thread_num() == 0) {
         std::cout << "\n========================================================\n";
-        if (typeid(*this) == typeid(OMP2)) {
+        if (is_omp2_instance) {
             std::cout << "      Orbital-Optimized MP2 (OMP2)\n";
         } else {
-            std::cout << "      Orbital-Optimized MP3 (OMP3 - Professional)\n";
+            std::cout << "      Orbital-Optimized MP3 (OMP3)\n";
         }
-        if (config_.opt_method == "soscf") {
-            std::cout << "      Trust-Region SOSCF (Approximate Hessian)\n";
-        } else {
-            std::cout << "      Macro-Micro Robust L-BFGS with Dynamic Shift\n";
-        }
+        std::cout << "      Trust-Region SOSCF (Approximate Hessian)\n";
         std::cout << "========================================================\n";
     }
 
@@ -947,8 +871,9 @@ MP2Result OMP2::compute() {
     int macro_iter = 0;
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     bool step_rejected = false;
+
     if (omp_get_thread_num() == 0 && config_.print_level >= 3 && na_ > 0 && va_ > 0) {
-        std::cout << "\n--- [DEBUG] Memulai Uji Finite-Difference OMP2 (Total Energy) ---\n";
+        std::cout << "\n--- [DEBUG] Memulai Uji Finite-Difference " << method_tag << " (Total Energy) ---\n";
         int i_target = na_ - 1; 
         int a_target = 0;
         
@@ -984,6 +909,7 @@ MP2Result OMP2::compute() {
         C_a_current_ = C_a_orig;
         C_b_current_ = C_b_orig;
     }
+
     while (macro_iter < config_.max_iterations) {
         scf_.C_alpha = C_a_current_;
         scf_.C_beta  = C_b_current_;
@@ -998,6 +924,7 @@ MP2Result OMP2::compute() {
 
         double e_mp2_corr = get_correlation_energy(); 
         double e_tot = e_scf + e_mp2_corr;
+
         if (macro_iter > 0 && !step_rejected) {
             double actual_change = e_tot - e_total_last;
             double rho = actual_change / expected_change; 
@@ -1007,7 +934,7 @@ MP2Result OMP2::compute() {
                 C_b_current_ = C_b_last;
                 trust_radius *= 0.25; 
                 if (trust_radius <= 1e-5) {
-                    if (omp_get_thread_num() == 0) std::cout << "  [OMP2] Trust radius minimum tercapai.\n";
+                    if (omp_get_thread_num() == 0) std::cout << "  [" << method_tag << "] Trust radius minimum tercapai.\n";
                     is_converged = true;
                     break; 
                 }
@@ -1024,7 +951,7 @@ MP2Result OMP2::compute() {
                 else if (rho < 0.25) trust_radius *= 0.5;
                 
                 if (trust_radius <= 1e-5) {
-                    if (omp_get_thread_num() == 0) std::cout << "  [OMP2] Trust radius minimum tercapai.\n";
+                    if (omp_get_thread_num() == 0) std::cout << "  [" << method_tag << "] Trust radius minimum tercapai.\n";
                     is_converged = true;
                     break;
                 }
@@ -1034,6 +961,7 @@ MP2Result OMP2::compute() {
 
         if (e_tot < e_total_best) { e_total_best = e_tot; e_corr_best = e_mp2_corr; }
         
+        double delta_e = (macro_iter > 0) ? std::abs(e_tot - e_total_last) : 1e99;
         e_total_last = e_tot;
         C_a_last = C_a_current_; 
         C_b_last = C_b_current_;
@@ -1041,47 +969,25 @@ MP2Result OMP2::compute() {
         execute_macro_iterations(diis_alpha, diis_beta, macro_iter);
         double grad_norm = orbital_gradient_.norm();
 
-        if(omp_get_thread_num() == 0) {
+        if (omp_get_thread_num() == 0) {
             std::cout << std::setw(4) << macro_iter << "    " 
                       << std::fixed << std::setprecision(8) << e_tot << "    "
                       << std::setprecision(8) << e_mp2_corr << "    " 
                       << std::scientific << std::setprecision(2) << grad_norm << "\n";
         }
 
-        if (macro_iter > 0 && grad_norm < grad_thresh_ && std::abs(e_tot - e_total_last) < conv_thresh_) {
-            is_converged = true; break;
+        if (macro_iter > 0 && grad_norm < grad_thresh_ && delta_e < conv_thresh_) {
+            is_converged = true;
+            break;
         }
 
-        int n_params = orbital_gradient_.size();
-        Eigen::VectorXd diag_H(n_params);
-        build_hessian_diagonal(diag_H, grad_norm);
-        Eigen::VectorXd actual_step;
-
-        if (config_.opt_method == "soscf") {
-            actual_step = compute_soscf_step(trust_radius, expected_change);
-
-        } else {
-            Eigen::VectorXd kappa = lbfgs_engine.get_direction(orbital_gradient_, diag_H);
-            if (kappa.dot(orbital_gradient_) > 0.0) {
-                lbfgs_engine.reset();
-                kappa = -orbital_gradient_.cwiseQuotient(diag_H); 
-            }
-            double step_norm = kappa.norm();
-            if (step_norm > trust_radius) {
-                actual_step = kappa * (trust_radius / step_norm);
-            } else {
-                actual_step = kappa;
-            }
-            lbfgs_engine.s_prev = actual_step;
-        }
-
+        Eigen::VectorXd actual_step = compute_soscf_step(trust_radius, expected_change);
         apply_orbital_rotation(actual_step);
 
         scf_.P_alpha = C_a_current_.leftCols(na_) * C_a_current_.leftCols(na_).transpose();
         if (!is_restricted && nb_ > 0) scf_.P_beta = C_b_current_.leftCols(nb_) * C_b_current_.leftCols(nb_).transpose();
         else scf_.P_beta = scf_.P_alpha;
 
-        last_kappa = actual_step;
         macro_iter++;
     }
 
