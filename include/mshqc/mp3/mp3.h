@@ -36,6 +36,10 @@ struct MP3Result {
     double e_total = 0.0;
     bool converged = true;
     int iterations = 1;
+    Eigen::MatrixXd C_alpha;
+    Eigen::MatrixXd C_beta;
+    int n_occ_alpha = 0;
+    int n_occ_beta = 0;
 };
 
 class BaseMP3 {
