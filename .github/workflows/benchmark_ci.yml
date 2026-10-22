@@ -67,7 +67,7 @@ jobs:
         shell: bash -el {0}
         run: |
           PSI4_PY=$(micromamba run -n psi4_env which python)
-          PSI4_PYTHON="$PSI4_PY" /tmp/mshqc_venv/bin/python tests/bench_bab4_extra.py | tee bab4_extra_bench.txt
+          PSI4_PYTHON="$PSI4_PY" /tmp/mshqc_venv/bin/python tests/test_bab4_benchmark.py |test_bab4_benchmark.txt
 
       - name: Upload Benchmark Logs & Comparison Table as Artifacts
         uses: actions/upload-artifact@v4
