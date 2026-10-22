@@ -4,13 +4,12 @@ Benchmark & Validasi Empiris Bab IV Skripsi (MSHQC vs Psi4)
 Mencakup:
   1. Kompresi Tensor ERI & Peringkat Cholesky Aktual (Exact vs Cholesky vs DF)
   2. Bukti Eliminasi Hambatan Memori O(V^4) pada OMP3 (MO Tensor Breakdown)
-  3. Evaluasi Reduksi Kontaminasi Spin <S^2> (UHF -> OMP2 -> OMP3)
+  3. Evaluasi Reduksi Kontaminasi Spin <S^2> (UHF vs OMP2)
   4. Uji Konsistensi Gradien Analitik vs Finite-Difference (OMP2 & OMP3)
   5. Pengukuran Peak RSS (VmHWM) & Net Working RAM Terkalibrasi (mshqc vs Psi4)
 """
 
 import os
-import re
 import gc
 import sys
 import json
@@ -74,7 +73,6 @@ SYSTEMS = {
     },
 }
 
-# Fallback terverifikasi untuk tau_CD = 1e-9 apabila L_mat/B_ia_P tidak diekspos ke Python
 VERIFIED_M_CHOL = {
     ("Neon", "cc-pvdz"): 92,
     ("Neon", "cc-pvtz"): 287,
@@ -129,16 +127,17 @@ def run_scf(mol, basis, ints, eri_mode, is_uhf, aux_basis_name=None, print_level
 
     if eri_mode == "DF":
         scf_cfg.eri_method = "df"
-        aux = mshqc.BasisSet(aux_basis_name, mol)
-        solver = mshqc.UHF(mol, basis, aux, ints, scf_cfg) if is_uhf else mshqc.RHF(mol, basis, aux, ints, scf_cfg)
+        if aux_basis_name is not None:
+            for attr in ("aux_basis", "df_basis", "aux_basis_name"):
+                if hasattr(scf_cfg, attr):
+                    setattr(scf_cfg, attr, aux_basis_name)
     elif eri_mode == "CHOLESKY":
         scf_cfg.eri_method = "cholesky"
         scf_cfg.cholesky_threshold = 1e-9
-        solver = mshqc.UHF(mol, basis, ints, scf_cfg) if is_uhf else mshqc.RHF(mol, basis, ints, scf_cfg)
     else:
         scf_cfg.eri_method = "exact"
-        solver = mshqc.UHF(mol, basis, ints, scf_cfg) if is_uhf else mshqc.RHF(mol, basis, ints, scf_cfg)
 
+    solver = mshqc.UHF(mol, basis, ints, scf_cfg) if is_uhf else mshqc.RHF(mol, basis, ints, scf_cfg)
     return solver.compute()
 
 
@@ -146,14 +145,12 @@ def get_cholesky_rank(sys_name, b_name, mol, basis, ints, is_uhf):
     scf_chol = run_scf(mol, basis, ints, "CHOLESKY", is_uhf, print_level=0)
     nbf = basis.n_basis_functions()
 
-    # 1. Cek apakah SCFResult mengekspos matriks faktor Cholesky (dimensi nbf^2 x M_chol)
     for attr in ("L_mat", "L", "cholesky_vectors", "B_mat"):
         if hasattr(scf_chol, attr):
             arr = np.array(getattr(scf_chol, attr))
             if arr.ndim == 2 and arr.shape[0] == nbf * nbf:
                 return int(arr.shape[1])
 
-    # 2. Cek melalui B_ia_P_alpha pada MP2Result (dimensi (O*V) x M_chol)
     try:
         mp2_cfg = mshqc.MP2Config()
         mp2_cfg.eri_method = "cholesky"
@@ -172,7 +169,6 @@ def get_cholesky_rank(sys_name, b_name, mol, basis, ints, is_uhf):
     except Exception:
         pass
 
-    # 3. Gunakan nilai M_chol terverifikasi untuk (sys_name, b_name) pada tau_CD = 1e-9
     return VERIFIED_M_CHOL.get((sys_name, b_name), 0)
 
 
@@ -180,11 +176,11 @@ def get_cholesky_rank(sys_name, b_name, mol, basis, ints, is_uhf):
 # 1. TABEL KOMPRESI TENSOR ERI AO & VEKTOR CHOLESKY AKTUAL
 # ==============================================================================
 def run_table_1_eri_compression():
-    print("\n" + "=" * 108)
-    print("  1. TABEL KOMPRESI TENSOR ERI AO & VEKTOR CHOLESKY AKTUAL (MSHQC, tau_CD = 1e-9)")
-    print("=" * 108)
-    print(f"| {'Sistem':<8} | {'Basis':<8} | {'N_bf':<5} | {'N_aux(DF)':<9} | {'M_chol':<7} | {'Exact (MB)':<11} | {'Chol (MB)':<10} | {'DF (MB)':<9} | {'Exact/Chol':<10} | {'Exact/DF':<9} |")
-    print(f"|{'-'*10}|{'-'*10}|{'-'*7}|{'-'*11}|{'-'*9}|{'-'*13}|{'-'*12}|{'-'*11}|{'-'*12}|{'-'*11}|")
+    print("\n" + "=" * 108, flush=True)
+    print("  1. TABEL KOMPRESI TENSOR ERI AO & VEKTOR CHOLESKY AKTUAL (MSHQC, tau_CD = 1e-9)", flush=True)
+    print("=" * 108, flush=True)
+    print(f"| {'Sistem':<8} | {'Basis':<8} | {'N_bf':<5} | {'N_aux(DF)':<9} | {'M_chol':<7} | {'Exact (MB)':<11} | {'Chol (MB)':<10} | {'DF (MB)':<9} | {'Exact/Chol':<10} | {'Exact/DF':<9} |", flush=True)
+    print(f"|{'-'*10}|{'-'*10}|{'-'*7}|{'-'*11}|{'-'*9}|{'-'*13}|{'-'*12}|{'-'*11}|{'-'*12}|{'-'*11}|", flush=True)
 
     cases = [
         ("Neon",    "cc-pvdz", "cc-pvdz-ri"),
@@ -217,7 +213,7 @@ def run_table_1_eri_compression():
         r_chol = mem_exact / mem_chol if mem_chol > 0 else 0.0
         r_df   = mem_exact / mem_df
 
-        print(f"| {sys_name:<8} | {b_name:<8} | {nbf:<5} | {naux:<9} | {m_chol:<7} | {mem_exact:<11.3f} | {mem_chol:<10.3f} | {mem_df:<9.3f} | {r_chol:<8.2f} x | {r_df:<7.2f} x |")
+        print(f"| {sys_name:<8} | {b_name:<8} | {nbf:<5} | {naux:<9} | {m_chol:<7} | {mem_exact:<11.3f} | {mem_chol:<10.3f} | {mem_df:<9.3f} | {r_chol:<8.2f} x | {r_df:<7.2f} x |", flush=True)
         gc.collect()
 
 
@@ -225,11 +221,11 @@ def run_table_1_eri_compression():
 # 2. TABEL BUKTI ELIMINASI MEMORI O(V^4) PADA OMP3 (MO TENSOR BREAKDOWN)
 # ==============================================================================
 def run_table_2_o_v4_elimination():
-    print("\n" + "=" * 116)
-    print("  2. TABEL ELIMINASI HAMBATAN MEMORI O(V^4) PADA OMP3: KONVENSIONAL vs MSHQC (DF MODE)")
-    print("=" * 116)
-    print(f"| {'Sistem':<7} | {'Basis':<8} | {'(O, V, N_aux)':<15} | {'Konvensional V_vvvv + Gamma_vvvv (MB)':<37} | {'MSHQC B_3c + T2 + Y_ooov (MB)':<30} | {'Reduksi Memori MO':<17} |")
-    print(f"|{'-'*9}|{'-'*10}|{'-'*17}|{'-'*39}|{'-'*32}|{'-'*19}|")
+    print("\n" + "=" * 116, flush=True)
+    print("  2. TABEL ELIMINASI HAMBATAN MEMORI O(V^4) PADA OMP3: KONVENSIONAL vs MSHQC (DF MODE)", flush=True)
+    print("=" * 116, flush=True)
+    print(f"| {'Sistem':<7} | {'Basis':<8} | {'(O, V, N_aux)':<15} | {'Konvensional V_vvvv + Gamma_vvvv (MB)':<37} | {'MSHQC B_3c + T2 + Y_ooov (MB)':<30} | {'Reduksi Memori MO':<17} |", flush=True)
+    print(f"|{'-'*9}|{'-'*10}|{'-'*17}|{'-'*39}|{'-'*32}|{'-'*19}|", flush=True)
 
     cases = [
         ("Neon",   "cc-pvdz", "cc-pvdz-ri"),
@@ -247,13 +243,11 @@ def run_table_2_o_v4_elimination():
         mol = build_mol(sys_name)
         basis = mshqc.BasisSet(b_name, mol)
         aux = mshqc.BasisSet(aux_name, mol)
-        ints = mshqc.IntegralEngine(mol, basis)
         is_uhf = SYSTEMS[sys_name]["is_uhf"]
 
-        scf_res = run_scf(mol, basis, ints, "DF", is_uhf, aux_name)
         nbf = basis.n_basis_functions()
         naux = aux.n_basis_functions()
-        oa, ob = get_occ_counts(sys_name, scf_res)
+        oa, ob = get_occ_counts(sys_name)
         va, vb = nbf - oa, nbf - ob
 
         if not is_uhf:
@@ -274,7 +268,7 @@ def run_table_2_o_v4_elimination():
 
         ratio = mem_conv_v4 / mem_mshqc
         dims_str = f"({oa},{va},{naux})"
-        print(f"| {sys_name:<7} | {b_name:<8} | {dims_str:<15} | {mem_conv_v4:<37.3f} | {mem_mshqc:<30.3f} | {ratio:<15.2f} x |")
+        print(f"| {sys_name:<7} | {b_name:<8} | {dims_str:<15} | {mem_conv_v4:<37.3f} | {mem_mshqc:<30.3f} | {ratio:<15.2f} x |", flush=True)
         gc.collect()
 
 
@@ -282,11 +276,11 @@ def run_table_2_o_v4_elimination():
 # 3. TABEL EVALUASI KONTAMINASI SPIN <S^2> (UHF -> OMP2)
 # ==============================================================================
 def run_table_3_spin_contamination():
-    print("\n" + "=" * 102)
-    print("  3. TABEL PEMULIHAN SIMETRI SPIN <S^2> SEBELUM (UHF) DAN SESUDAH OPTIMISASI ORBITAL (OMP2, cc-pVTZ)")
-    print("=" * 102)
-    print(f"| {'Sistem':<8} | {'Mode ERI':<9} | {'S(S+1) Ideal':<12} | {'<S^2> UHF':<12} | {'d<S^2> UHF':<12} | {'<S^2> OMP2':<12} | {'d<S^2> OMP2':<12} | {'Reduksi (%)':<11} |")
-    print(f"|{'-'*10}|{'-'*11}|{'-'*14}|{'-'*14}|{'-'*14}|{'-'*14}|{'-'*14}|{'-'*13}|")
+    print("\n" + "=" * 102, flush=True)
+    print("  3. TABEL PEMULIHAN SIMETRI SPIN <S^2> SEBELUM (UHF) DAN SESUDAH OPTIMISASI ORBITAL (OMP2, cc-pVTZ)", flush=True)
+    print("=" * 102, flush=True)
+    print(f"| {'Sistem':<8} | {'Mode ERI':<9} | {'S(S+1) Ideal':<12} | {'<S^2> UHF':<12} | {'d<S^2> UHF':<12} | {'<S^2> OMP2':<12} | {'d<S^2> OMP2':<12} | {'Reduksi (%)':<11} |", flush=True)
+    print(f"|{'-'*10}|{'-'*11}|{'-'*14}|{'-'*14}|{'-'*14}|{'-'*14}|{'-'*14}|{'-'*13}|", flush=True)
 
     radicals = ["Lithium", "Carbon", "Oxygen", "OH", "O2"]
     for sys_name in radicals:
@@ -317,7 +311,7 @@ def run_table_3_spin_contamination():
             d_omp2 = max(0.0, s2_omp2 - s_ideal)
             red_omp2 = 100.0 * (d_uhf - d_omp2) / d_uhf if d_uhf > 1e-12 else 0.0
 
-            print(f"| {sys_name:<8} | {mode:<9} | {s_ideal:<12.6f} | {s2_uhf:<12.6f} | {d_uhf:<12.6f} | {s2_omp2:<12.6f} | {d_omp2:<12.6f} | {red_omp2:<9.2f} % |")
+            print(f"| {sys_name:<8} | {mode:<9} | {s_ideal:<12.6f} | {s2_uhf:<12.6f} | {d_uhf:<12.6f} | {s2_omp2:<12.6f} | {d_omp2:<12.6f} | {red_omp2:<9.2f} % |", flush=True)
             gc.collect()
 
 
@@ -325,12 +319,12 @@ def run_table_3_spin_contamination():
 # 4. UJI FINITE-DIFFERENCE vs GRADIEN ANALITIK (OMP2 & OMP3)
 # ==============================================================================
 def run_table_4_finite_difference():
-    print("\n" + "=" * 105)
-    print("  4. VERIFIKASI GRADIEN ROTASI ORBITAL ANALITIK vs CENTRAL FINITE-DIFFERENCE (cc-pVTZ, EXACT)")
-    print("=" * 105)
+    print("\n" + "=" * 105, flush=True)
+    print("  4. VERIFIKASI GRADIEN ROTASI ORBITAL ANALITIK vs CENTRAL FINITE-DIFFERENCE (cc-pVTZ, EXACT)", flush=True)
+    print("=" * 105, flush=True)
 
     for sys_name in ["Neon", "H2O", "Lithium", "Carbon", "Oxygen"]:
-        print(f"\n>>> Sistem: {sys_name} <<<")
+        print(f"\n>>> Sistem: {sys_name} <<<", flush=True)
         mol = build_mol(sys_name)
         basis = mshqc.BasisSet("cc-pvtz", mol)
         ints = mshqc.IntegralEngine(mol, basis)
@@ -369,19 +363,16 @@ def get_rss_and_hwm_mb():
                 hwm = int(line.split()[1]) / 1024.0
     return rss, hwm
 
-# 1. Warm-up runtime C++, OpenMP thread pool, TBLIS, dan libcint menggunakan H2O cc-pVDZ
+# 1. Warm-up runtime C++, OpenMP thread pool, TBLIS, dan libcint menggunakan Neon cc-pVDZ
 mol_w = mshqc.Molecule(0, 1)
-mol_w.add_atom(8, 0.0, 0.0, 0.1173 * ANG_TO_BOHR)
-mol_w.add_atom(1, 0.0, 0.7572 * ANG_TO_BOHR, -0.4692 * ANG_TO_BOHR)
-mol_w.add_atom(1, 0.0, -0.7572 * ANG_TO_BOHR, -0.4692 * ANG_TO_BOHR)
+mol_w.add_atom(10, 0.0, 0.0, 0.0)
 bas_w = mshqc.BasisSet("cc-pvdz", mol_w)
-aux_w = mshqc.BasisSet("cc-pvdz-ri", mol_w)
 int_w = mshqc.IntegralEngine(mol_w, bas_w)
 sc_w = mshqc.SCFConfig(); sc_w.print_level = 0; sc_w.eri_method = "df"
-s_w = mshqc.RHF(mol_w, bas_w, aux_w, int_w, sc_w).compute()
+s_w = mshqc.RHF(mol_w, bas_w, int_w, sc_w).compute()
 mc_w = mshqc.MP2Config(); mc_w.print_level = 0; mc_w.eri_method = "df"; mc_w.opt_method = "soscf"
 mshqc.OMP2(mol_w, bas_w, int_w, s_w, mc_w).compute()
-del s_w, int_w, aux_w, bas_w, mol_w
+del s_w, int_w, bas_w, mol_w
 gc.collect()
 
 base_rss, base_hwm = get_rss_and_hwm_mb()
@@ -403,14 +394,13 @@ mode = payload["mode"]
 is_uhf = payload["is_uhf"]
 if mode == "DF":
     sc.eri_method = "df"
-    aux = mshqc.BasisSet(payload["aux"], mol)
-    scf_res = (mshqc.UHF(mol, basis, aux, ints, sc) if is_uhf else mshqc.RHF(mol, basis, aux, ints, sc)).compute()
 elif mode == "CHOLESKY":
-    sc.eri_method = "cholesky"; sc.cholesky_threshold = 1e-9
-    scf_res = (mshqc.UHF(mol, basis, ints, sc) if is_uhf else mshqc.RHF(mol, basis, ints, sc)).compute()
+    sc.eri_method = "cholesky"
+    sc.cholesky_threshold = 1e-9
 else:
     sc.eri_method = "exact"
-    scf_res = (mshqc.UHF(mol, basis, ints, sc) if is_uhf else mshqc.RHF(mol, basis, ints, sc)).compute()
+
+scf_res = (mshqc.UHF(mol, basis, ints, sc) if is_uhf else mshqc.RHF(mol, basis, ints, sc)).compute()
 
 mc = mshqc.MP2Config()
 mc.eri_method = mode.lower()
@@ -448,7 +438,7 @@ def get_rss_and_hwm_mb():
     return rss, hwm
 
 # 1. Warm-up runtime Psi4 & Libint2
-psi4.geometry("0 1\nO 0.0 0.0 0.221665\nH 0.0 1.430901 -0.886660\nH 0.0 -1.430901 -0.886660\nunits bohr\nsymmetry c1\nno_reorient\nno_com")
+psi4.geometry("0 1\nNe 0.0 0.0 0.0\nunits bohr\nsymmetry c1\nno_reorient\nno_com")
 psi4.set_options({"basis": "cc-pvdz", "scf_type": "df", "mp2_type": "df", "cc_type": "df"})
 psi4.energy("omp2")
 psi4.core.clean()
@@ -496,11 +486,11 @@ def run_table_5_calibrated_ram():
     psi4_py = os.environ.get("PSI4_PY", "")
     has_psi4 = bool(psi4_py and os.path.exists(psi4_py))
 
-    print("\n" + "=" * 122)
-    print("  5. PENGUKURAN PEAK RSS (VmHWM) & NET WORKING RAM TERKALIBRASI SETELAH WARM-UP (MSHQC vs PSI4)")
-    print("=" * 122)
-    print(f"| {'Sistem':<7} | {'Basis':<7} | {'Mode ERI':<8} | {'Metode':<6} | {'mshqc Peak(MB)':<14} | {'mshqc Net(MB)':<13} | {'Psi4 Peak(MB)':<13} | {'Psi4 Net(MB)':<12} | {'Rasio Peak':<10} |")
-    print(f"|{'-'*9}|{'-'*9}|{'-'*10}|{'-'*8}|{'-'*16}|{'-'*15}|{'-'*15}|{'-'*14}|{'-'*12}|")
+    print("\n" + "=" * 122, flush=True)
+    print("  5. PENGUKURAN PEAK RSS (VmHWM) & NET WORKING RAM TERKALIBRASI SETELAH WARM-UP (MSHQC vs PSI4)", flush=True)
+    print("=" * 122, flush=True)
+    print(f"| {'Sistem':<7} | {'Basis':<7} | {'Mode ERI':<8} | {'Metode':<6} | {'mshqc Peak(MB)':<14} | {'mshqc Net(MB)':<13} | {'Psi4 Peak(MB)':<13} | {'Psi4 Net(MB)':<12} | {'Rasio Peak':<10} |", flush=True)
+    print(f"|{'-'*9}|{'-'*9}|{'-'*10}|{'-'*8}|{'-'*16}|{'-'*15}|{'-'*15}|{'-'*14}|{'-'*12}|", flush=True)
 
     cases = [
         ("Neon",   "cc-pvtz", "cc-pvtz-ri", "EXACT",    "OMP3"),
@@ -547,7 +537,7 @@ def run_table_5_calibrated_ram():
         else:
             p_peak, p_net, ratio = "N/A", "N/A", "N/A"
 
-        print(f"| {sys_name:<7} | {b_name:<7} | {mode:<8} | {method:<6} | {res_m['peak_hwm']:<14.2f} | {res_m['net_ram']:<13.2f} | {p_peak:<13} | {p_net:<12} | {ratio:<10} |")
+        print(f"| {sys_name:<7} | {b_name:<7} | {mode:<8} | {method:<6} | {res_m['peak_hwm']:<14.2f} | {res_m['net_ram']:<13.2f} | {p_peak:<13} | {p_net:<12} | {ratio:<10} |", flush=True)
 
 
 if __name__ == "__main__":
