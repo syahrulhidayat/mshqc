@@ -132,9 +132,10 @@ jobs:
       # =========================================================================
       - name: Install Built Wheel and Run Benchmarks
         run: |
+          export PYTHONUNBUFFERED=1
           python -m pip install release/*.whl
-          python tests/test_mshqc2.py
-          python tests/test_bab4_benchmark.py
+          stdbuf -oL -eL python -u tests/test_mshqc2.py
+          stdbuf -oL -eL python -u tests/test_bab4_benchmark.py
 
       # =========================================================================
       # 7. UPLOAD WHEEL KE GITHUB RELEASES
