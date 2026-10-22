@@ -315,7 +315,7 @@ def run_table_4_finite_difference():
     print("=" * 105, flush=True)
 
     for sys_name in ["Neon", "H2O", "Lithium", "Carbon", "Oxygen"]:
-        print(f"\n>>> Sistem: {sys_name} <<<", flush=True)
+        print(f"\n>>> Sistem: {sys_name} (OMP2 & OMP3 Finite-Difference Check) <<<", flush=True)
         mol = build_mol(sys_name)
         basis = mshqc.BasisSet("cc-pvtz", mol)
         ints = build_ints(mol, basis, "EXACT")
@@ -323,17 +323,17 @@ def run_table_4_finite_difference():
 
         cfg = mshqc.MP2Config()
         cfg.eri_method = "exact"
-        cfg.opt_method = "soscf"
         cfg.max_iterations = 1
         cfg.print_level = 3
 
+        print(f"  [4A] Menjalankan Finite-Difference Check OMP2 untuk {sys_name}...", flush=True)
         omp2 = mshqc.OMP2(mol, basis, ints, scf_res, cfg)
         omp2.compute()
 
+        print(f"  [4B] Menjalankan Finite-Difference Check OMP3 untuk {sys_name}...", flush=True)
         omp3 = mshqc.OMP3(mol, basis, ints, scf_res, cfg)
-        omp3.compute_omp3()
+        omp3.compute() 
         gc.collect()
-
 
 # ==============================================================================
 # 5. PENGUKURAN PEAK RAM AKTUAL TERKALIBRASI (SUBPROCESS ISOLATED)
@@ -416,7 +416,7 @@ mc.print_level = 0
 if payload["method"] == "OMP2":
     mshqc.OMP2(mol, basis, ints, scf_res, mc).compute()
 else:
-    mshqc.OMP3(mol, basis, ints, scf_res, mc).compute_omp3()
+    mshqc.OMP3(mol, basis, ints, scf_res, mc).compute() 
 
 curr_rss, peak_hwm = get_rss_and_hwm_mb()
 net_ram = max(curr_rss - base_rss, peak_hwm - base_hwm, 0.10)
