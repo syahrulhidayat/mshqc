@@ -357,7 +357,7 @@ def run_table_4_finite_difference():
         cfg = mshqc.MP2Config()
         cfg.eri_method = "exact"
         cfg.max_iterations = 1
-        cfg.print_level = 3
+        cfg.print_level = 1
 
         print(f"  [4A] Menjalankan Finite-Difference Check OMP2 untuk {sys_name}...", flush=True)
         omp2 = mshqc.OMP2(mol, basis, ints, scf_res, cfg)
