@@ -2012,6 +2012,10 @@ MP3Result OMP3::compute_omp3() {
     res3.e_mp3 = e_mp3_tot_;
     res3.e_corr_total = res3.e_mp2 + res3.e_mp3;
     res3.e_total = res3.e_hf + res3.e_corr_total;
+    res3.C_alpha = res2.C_alpha;
+    res3.C_beta = res2.C_beta;
+    res3.n_occ_alpha = na_;
+    res3.n_occ_beta = nb_;
 
     return res3;
 }
