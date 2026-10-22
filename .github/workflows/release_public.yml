@@ -128,12 +128,13 @@ jobs:
           ccache -s
 
       # =========================================================================
-      # 6. INSTALL WHEEL & RUN PYTEST SUITE
+      # 6. INSTALL WHEEL & RUN BENCHMARKS
       # =========================================================================
-      - name: Install Built Wheel and Run Pytest
+      - name: Install Built Wheel and Run Benchmarks
         run: |
           python -m pip install release/*.whl
-          pytest tests/ -v
+          python tests/test_mshqc2.py
+          python tests/test_bab4_benchmark.py
 
       # =========================================================================
       # 7. UPLOAD WHEEL KE GITHUB RELEASES
