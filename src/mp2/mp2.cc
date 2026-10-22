@@ -754,6 +754,7 @@ void OMP2::transform_3center_mo_cholesky() {
 
 double OMP2::execute_micro_iterations() {
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
+    double old_energy = e_ss_ + e_os_;
     scf_.C_alpha = C_a_current_;
     scf_.C_beta  = C_b_current_;
     scf_.P_alpha = scf_.C_alpha.leftCols(na_) * scf_.C_alpha.leftCols(na_).transpose();
@@ -769,8 +770,11 @@ double OMP2::execute_micro_iterations() {
         if (!is_restricted && nb_ > 0) {
             scf_.irreps_beta.assign(nbf_, 0);
         }       
+        
+     
         transform_3center_mo_cholesky();
         compute_t2_and_energy_cholesky();
+        
     } else {
         transform_integrals(); 
         compute_t2_amplitudes();
@@ -783,7 +787,7 @@ double OMP2::execute_micro_iterations() {
     } else if (is_restricted && nb_ > 0) {
         G_oo_beta_ = G_oo_alpha_; 
     }
-    return get_correlation_energy();
+    return (e_ss_ + e_os_) - old_energy;
 }
 
 void OMP2::execute_macro_iterations(DIIS& diis_a, DIIS& diis_b, int macro_iter) {
@@ -849,15 +853,15 @@ MP2Result OMP2::compute() {
     DIIS diis_alpha(6);
     DIIS diis_beta(6);
 
-    const bool is_omp3_instance = (dynamic_cast<const OMP3*>(this) != nullptr);
-    const char* method_tag = is_omp3_instance ? "OMP3" : "OMP2";
+    const bool is_omp2_instance = (typeid(*this) == typeid(OMP2));
+    const char* method_tag = is_omp2_instance ? "OMP2" : "OMP3";
 
-    if (omp_get_thread_num() == 0 && config_.print_level > 0) {
+    if (omp_get_thread_num() == 0) {
         std::cout << "\n========================================================\n";
-        if (is_omp3_instance) {
-            std::cout << "      Orbital-Optimized MP3 (OMP3)\n";
-        } else {
+        if (is_omp2_instance) {
             std::cout << "      Orbital-Optimized MP2 (OMP2)\n";
+        } else {
+            std::cout << "      Orbital-Optimized MP3 (OMP3)\n";
         }
         std::cout << "      Trust-Region SOSCF (Approximate Hessian)\n";
         std::cout << "========================================================\n";
@@ -888,14 +892,9 @@ MP2Result OMP2::compute() {
             U(i_target, na_ + a_target) = t; U(na_ + a_target, i_target) = -t;
             
             C_a_current_ = C_a_orig * U;
-            if (!is_restricted && nb_ > 0) C_b_current_ = C_b_orig * U;
-            else if (nb_ > 0) C_b_current_ = C_a_current_;
+            if (nb_ > 0) C_b_current_ = C_b_orig * U;
             
-            double e_corr_rot = execute_micro_iterations();
-            double e_scf_rot = 0.5 * (scf_.P_alpha.cwiseProduct(H_core_ + scf_.F_alpha).sum() + 
-                                      scf_.P_beta.cwiseProduct(H_core_ + scf_.F_beta).sum()) 
-                               + mol_.nuclear_repulsion_energy();
-            return e_scf_rot + e_corr_rot; 
+            return (scf_.energy_total + execute_micro_iterations()); 
         };
 
         double E_plus = calc_tot(theta);
@@ -923,8 +922,8 @@ MP2Result OMP2::compute() {
                               scf_.P_beta.cwiseProduct(H_core_ + F_ao_b).sum()) 
                        + mol_.nuclear_repulsion_energy();
 
-        double e_corr = get_correlation_energy(); 
-        double e_tot = e_scf + e_corr;
+        double e_mp2_corr = get_correlation_energy(); 
+        double e_tot = e_scf + e_mp2_corr;
 
         if (macro_iter > 0 && !step_rejected) {
             double actual_change = e_tot - e_total_last;
@@ -935,9 +934,7 @@ MP2Result OMP2::compute() {
                 C_b_current_ = C_b_last;
                 trust_radius *= 0.25; 
                 if (trust_radius <= 1e-5) {
-                    if (omp_get_thread_num() == 0 && config_.print_level > 0) {
-                        std::cout << "  [" << method_tag << "] Trust radius minimum tercapai.\n";
-                    }
+                    if (omp_get_thread_num() == 0) std::cout << "  [" << method_tag << "] Trust radius minimum tercapai.\n";
                     is_converged = true;
                     break; 
                 }
@@ -954,9 +951,7 @@ MP2Result OMP2::compute() {
                 else if (rho < 0.25) trust_radius *= 0.5;
                 
                 if (trust_radius <= 1e-5) {
-                    if (omp_get_thread_num() == 0 && config_.print_level > 0) {
-                        std::cout << "  [" << method_tag << "] Trust radius minimum tercapai.\n";
-                    }
+                    if (omp_get_thread_num() == 0) std::cout << "  [" << method_tag << "] Trust radius minimum tercapai.\n";
                     is_converged = true;
                     break;
                 }
@@ -964,7 +959,7 @@ MP2Result OMP2::compute() {
         }
         step_rejected = false;
 
-        if (e_tot < e_total_best) { e_total_best = e_tot; e_corr_best = e_corr; }
+        if (e_tot < e_total_best) { e_total_best = e_tot; e_corr_best = e_mp2_corr; }
         
         double delta_e = (macro_iter > 0) ? std::abs(e_tot - e_total_last) : 1e99;
         e_total_last = e_tot;
@@ -974,10 +969,10 @@ MP2Result OMP2::compute() {
         execute_macro_iterations(diis_alpha, diis_beta, macro_iter);
         double grad_norm = orbital_gradient_.norm();
 
-        if (omp_get_thread_num() == 0 && config_.print_level > 0) {
+        if (omp_get_thread_num() == 0) {
             std::cout << std::setw(4) << macro_iter << "    " 
                       << std::fixed << std::setprecision(8) << e_tot << "    "
-                      << std::setprecision(8) << e_corr << "    " 
+                      << std::setprecision(8) << e_mp2_corr << "    " 
                       << std::scientific << std::setprecision(2) << grad_norm << "\n";
         }
 
