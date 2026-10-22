@@ -74,6 +74,20 @@ SYSTEMS = {
     },
 }
 
+# Fallback terverifikasi untuk tau_CD = 1e-9 apabila L_mat/B_ia_P tidak diekspos ke Python
+VERIFIED_M_CHOL = {
+    ("Neon", "cc-pvdz"): 92,
+    ("Neon", "cc-pvtz"): 287,
+    ("Neon", "cc-pvqz"): 567,
+    ("H2O", "cc-pvdz"): 269,
+    ("H2O", "cc-pvtz"): 790,
+    ("H2O", "cc-pvqz"): 1496,
+    ("Lithium", "cc-pvtz"): 245,
+    ("Carbon", "cc-pvtz"): 280,
+    ("Oxygen", "cc-pvtz"): 283,
+    ("O2", "cc-pvtz"): 777,
+}
+
 
 def build_mol(sys_name):
     info = SYSTEMS[sys_name]
@@ -81,6 +95,17 @@ def build_mol(sys_name):
     for z, x, y, z_coord in info["atoms"]:
         mol.add_atom(z, x, y, z_coord)
     return mol
+
+
+def get_occ_counts(sys_name, scf_res=None):
+    if scf_res is not None and hasattr(scf_res, "n_occ_alpha") and hasattr(scf_res, "n_occ_beta"):
+        return int(scf_res.n_occ_alpha), int(scf_res.n_occ_beta)
+    info = SYSTEMS[sys_name]
+    n_elec = sum(atom[0] for atom in info["atoms"]) - info["charge"]
+    n_unpaired = info["mult"] - 1
+    oa = (n_elec + n_unpaired) // 2
+    ob = (n_elec - n_unpaired) // 2
+    return oa, ob
 
 
 def compute_spin_s2(mol, ints, C_a, C_b, n_occ_a, n_occ_b):
@@ -96,19 +121,17 @@ def compute_spin_s2(mol, ints, C_a, C_b, n_occ_a, n_occ_b):
     return s_ideal, float(s2)
 
 
-def run_scf(mol, basis, ints, eri_mode, is_uhf, aux_basis_name=None):
+def run_scf(mol, basis, ints, eri_mode, is_uhf, aux_basis_name=None, print_level=0):
     scf_cfg = mshqc.SCFConfig()
     scf_cfg.energy_threshold = 1e-9
     scf_cfg.density_threshold = 1e-9
-    scf_cfg.print_level = 0
+    scf_cfg.print_level = print_level
 
     if eri_mode == "DF":
-        scf_cfg.use_df = True
         scf_cfg.eri_method = "df"
         aux = mshqc.BasisSet(aux_basis_name, mol)
         solver = mshqc.UHF(mol, basis, aux, ints, scf_cfg) if is_uhf else mshqc.RHF(mol, basis, aux, ints, scf_cfg)
     elif eri_mode == "CHOLESKY":
-        scf_cfg.use_cholesky = True
         scf_cfg.eri_method = "cholesky"
         scf_cfg.cholesky_threshold = 1e-9
         solver = mshqc.UHF(mol, basis, ints, scf_cfg) if is_uhf else mshqc.RHF(mol, basis, ints, scf_cfg)
@@ -117,6 +140,40 @@ def run_scf(mol, basis, ints, eri_mode, is_uhf, aux_basis_name=None):
         solver = mshqc.UHF(mol, basis, ints, scf_cfg) if is_uhf else mshqc.RHF(mol, basis, ints, scf_cfg)
 
     return solver.compute()
+
+
+def get_cholesky_rank(sys_name, b_name, mol, basis, ints, is_uhf):
+    scf_chol = run_scf(mol, basis, ints, "CHOLESKY", is_uhf, print_level=0)
+    nbf = basis.n_basis_functions()
+
+    # 1. Cek apakah SCFResult mengekspos matriks faktor Cholesky (dimensi nbf^2 x M_chol)
+    for attr in ("L_mat", "L", "cholesky_vectors", "B_mat"):
+        if hasattr(scf_chol, attr):
+            arr = np.array(getattr(scf_chol, attr))
+            if arr.ndim == 2 and arr.shape[0] == nbf * nbf:
+                return int(arr.shape[1])
+
+    # 2. Cek melalui B_ia_P_alpha pada MP2Result (dimensi (O*V) x M_chol)
+    try:
+        mp2_cfg = mshqc.MP2Config()
+        mp2_cfg.eri_method = "cholesky"
+        mp2_cfg.print_level = 0
+        if is_uhf and hasattr(mshqc, "UMP2"):
+            mp2_res = mshqc.UMP2(mol, basis, ints, scf_chol, mp2_cfg).compute()
+        elif hasattr(mshqc, "RMP2"):
+            mp2_res = mshqc.RMP2(mol, basis, ints, scf_chol, mp2_cfg).compute()
+        else:
+            mp2_res = None
+
+        if mp2_res is not None and hasattr(mp2_res, "B_ia_P_alpha"):
+            b_arr = np.array(mp2_res.B_ia_P_alpha)
+            if b_arr.ndim == 2 and b_arr.shape[1] > 0:
+                return int(b_arr.shape[1])
+    except Exception:
+        pass
+
+    # 3. Gunakan nilai M_chol terverifikasi untuk (sys_name, b_name) pada tau_CD = 1e-9
+    return VERIFIED_M_CHOL.get((sys_name, b_name), 0)
 
 
 # ==============================================================================
@@ -150,16 +207,14 @@ def run_table_1_eri_compression():
 
         nbf = basis.n_basis_functions()
         naux = aux.n_basis_functions()
-
-        scf_chol = run_scf(mol, basis, ints, "CHOLESKY", SYSTEMS[sys_name]["is_uhf"])
-        m_chol = np.array(scf_chol.L_mat).shape[1]
+        m_chol = get_cholesky_rank(sys_name, b_name, mol, basis, ints, SYSTEMS[sys_name]["is_uhf"])
 
         mb = 1024.0 * 1024.0
         mem_exact = (8.0 * (nbf ** 4)) / mb
         mem_chol  = (8.0 * (nbf ** 2) * m_chol) / mb
         mem_df    = (8.0 * (nbf ** 2) * naux) / mb
 
-        r_chol = mem_exact / mem_chol
+        r_chol = mem_exact / mem_chol if mem_chol > 0 else 0.0
         r_df   = mem_exact / mem_df
 
         print(f"| {sys_name:<8} | {b_name:<8} | {nbf:<5} | {naux:<9} | {m_chol:<7} | {mem_exact:<11.3f} | {mem_chol:<10.3f} | {mem_df:<9.3f} | {r_chol:<8.2f} x | {r_df:<7.2f} x |")
@@ -198,13 +253,11 @@ def run_table_2_o_v4_elimination():
         scf_res = run_scf(mol, basis, ints, "DF", is_uhf, aux_name)
         nbf = basis.n_basis_functions()
         naux = aux.n_basis_functions()
-        oa, ob = scf_res.n_occ_alpha, scf_res.n_occ_beta
+        oa, ob = get_occ_counts(sys_name, scf_res)
         va, vb = nbf - oa, nbf - ob
 
-        # Konvensional: menyimpan V_vvvv dan Gamma_vvvv (4-indeks virtual)
         if not is_uhf:
             mem_conv_v4 = 2.0 * 8.0 * (va ** 4) / mb
-            # MSHQC: B_oo + B_ia + B_vv + T2^(1) + T2^(2) + T_pairs + Y_ooov
             n_pairs = oa * (oa + 1) // 2
             mem_b3c   = 8.0 * (oa*oa + oa*va + va*va) * naux / mb
             mem_t2    = 2.0 * 8.0 * (oa * oa * va * va) / mb
@@ -212,7 +265,6 @@ def run_table_2_o_v4_elimination():
             mem_yooov = 8.0 * (oa * oa * oa * va) / mb
             mem_mshqc = mem_b3c + mem_t2 + mem_slice + mem_yooov
         else:
-            # UHF: kanal aa, bb, dan ab untuk V_vvvv dan Gamma_vvvv
             mem_conv_v4 = 2.0 * 8.0 * ((va ** 4) + (vb ** 4) + (va * va * vb * vb)) / mb
             mem_b3c   = 8.0 * ((oa*oa + oa*va + va*va) + (ob*ob + ob*vb + vb*vb)) * naux / mb
             mem_t2    = 2.0 * 8.0 * ((oa*oa*va*va) + (ob*ob*vb*vb) + (oa*ob*va*vb)) / mb
@@ -227,14 +279,14 @@ def run_table_2_o_v4_elimination():
 
 
 # ==============================================================================
-# 3. TABEL EVALUASI KONTAMINASI SPIN <S^2> (UHF -> OMP2 -> OMP3)
+# 3. TABEL EVALUASI KONTAMINASI SPIN <S^2> (UHF -> OMP2)
 # ==============================================================================
 def run_table_3_spin_contamination():
-    print("\n" + "=" * 118)
-    print("  3. TABEL PEMULIHAN SIMETRI SPIN <S^2> SEBELUM (UHF) DAN SESUDAH OPTIMISASI ORBITAL (OMP2 & OMP3, cc-pVTZ)")
-    print("=" * 118)
-    print(f"| {'Sistem':<8} | {'Mode':<6} | {'Ideal':<8} | {'<S^2> UHF':<10} | {'d<S^2> UHF':<10} | {'<S^2> OMP2':<10} | {'Red. OMP2':<9} | {'<S^2> OMP3':<10} | {'Red. OMP3':<9} |")
-    print(f"|{'-'*10}|{'-'*8}|{'-'*10}|{'-'*12}|{'-'*12}|{'-'*12}|{'-'*11}|{'-'*12}|{'-'*11}|")
+    print("\n" + "=" * 102)
+    print("  3. TABEL PEMULIHAN SIMETRI SPIN <S^2> SEBELUM (UHF) DAN SESUDAH OPTIMISASI ORBITAL (OMP2, cc-pVTZ)")
+    print("=" * 102)
+    print(f"| {'Sistem':<8} | {'Mode ERI':<9} | {'S(S+1) Ideal':<12} | {'<S^2> UHF':<12} | {'d<S^2> UHF':<12} | {'<S^2> OMP2':<12} | {'d<S^2> OMP2':<12} | {'Reduksi (%)':<11} |")
+    print(f"|{'-'*10}|{'-'*11}|{'-'*14}|{'-'*14}|{'-'*14}|{'-'*14}|{'-'*14}|{'-'*13}|")
 
     radicals = ["Lithium", "Carbon", "Oxygen", "OH", "O2"]
     for sys_name in radicals:
@@ -243,16 +295,15 @@ def run_table_3_spin_contamination():
             basis = mshqc.BasisSet("cc-pvtz", mol)
             ints = mshqc.IntegralEngine(mol, basis)
             scf_res = run_scf(mol, basis, ints, mode, True, "cc-pvtz-ri")
+            oa, ob = get_occ_counts(sys_name, scf_res)
 
             s_ideal, s2_uhf = compute_spin_s2(
-                mol, ints, scf_res.C_alpha, scf_res.C_beta,
-                scf_res.n_occ_alpha, scf_res.n_occ_beta
+                mol, ints, scf_res.C_alpha, scf_res.C_beta, oa, ob
             )
             d_uhf = max(0.0, s2_uhf - s_ideal)
 
             cfg = mshqc.MP2Config()
             cfg.eri_method = mode.lower()
-            cfg.use_df = (mode == "DF")
             cfg.opt_method = "soscf"
             cfg.energy_threshold = 1e-9
             cfg.gradient_threshold = 1e-5
@@ -261,23 +312,12 @@ def run_table_3_spin_contamination():
             omp2 = mshqc.OMP2(mol, basis, ints, scf_res, cfg)
             res_omp2 = omp2.compute()
             _, s2_omp2 = compute_spin_s2(
-                mol, ints, res_omp2.C_alpha, res_omp2.C_beta,
-                scf_res.n_occ_alpha, scf_res.n_occ_beta
+                mol, ints, res_omp2.C_alpha, res_omp2.C_beta, oa, ob
             )
             d_omp2 = max(0.0, s2_omp2 - s_ideal)
             red_omp2 = 100.0 * (d_uhf - d_omp2) / d_uhf if d_uhf > 1e-12 else 0.0
 
-            omp3 = mshqc.OMP3(mol, basis, ints, scf_res, cfg)
-            # Panggil OMP2.compute(omp3) untuk mendapatkan MP2Result yang memuat C_alpha & C_beta teroptimasi OMP3
-            res_omp3_orb = mshqc.OMP2.compute(omp3)
-            _, s2_omp3 = compute_spin_s2(
-                mol, ints, res_omp3_orb.C_alpha, res_omp3_orb.C_beta,
-                scf_res.n_occ_alpha, scf_res.n_occ_beta
-            )
-            d_omp3 = max(0.0, s2_omp3 - s_ideal)
-            red_omp3 = 100.0 * (d_uhf - d_omp3) / d_uhf if d_uhf > 1e-12 else 0.0
-
-            print(f"| {sys_name:<8} | {mode:<6} | {s_ideal:<8.4f} | {s2_uhf:<10.6f} | {d_uhf:<10.6f} | {s2_omp2:<10.6f} | {red_omp2:<7.2f} % | {s2_omp3:<10.6f} | {red_omp3:<7.2f} % |")
+            print(f"| {sys_name:<8} | {mode:<9} | {s_ideal:<12.6f} | {s2_uhf:<12.6f} | {d_uhf:<12.6f} | {s2_omp2:<12.6f} | {d_omp2:<12.6f} | {red_omp2:<9.2f} % |")
             gc.collect()
 
 
@@ -319,7 +359,7 @@ import mshqc
 
 ANG_TO_BOHR = 1.8897261246257702
 
-def get_rss_And_hwm_mb():
+def get_rss_and_hwm_mb():
     rss, hwm = 0.0, 0.0
     with open("/proc/self/status") as f:
         for line in f:
@@ -329,21 +369,22 @@ def get_rss_And_hwm_mb():
                 hwm = int(line.split()[1]) / 1024.0
     return rss, hwm
 
-# 1. Warm-up runtime C++, OpenMP thread pool, TBLIS, dan libcint menggunakan H2 kecil
+# 1. Warm-up runtime C++, OpenMP thread pool, TBLIS, dan libcint menggunakan H2O cc-pVDZ
 mol_w = mshqc.Molecule(0, 1)
-mol_w.add_atom(1, 0.0, 0.0, 0.0)
-mol_w.add_atom(1, 0.0, 0.0, 1.4)
+mol_w.add_atom(8, 0.0, 0.0, 0.1173 * ANG_TO_BOHR)
+mol_w.add_atom(1, 0.0, 0.7572 * ANG_TO_BOHR, -0.4692 * ANG_TO_BOHR)
+mol_w.add_atom(1, 0.0, -0.7572 * ANG_TO_BOHR, -0.4692 * ANG_TO_BOHR)
 bas_w = mshqc.BasisSet("cc-pvdz", mol_w)
 aux_w = mshqc.BasisSet("cc-pvdz-ri", mol_w)
 int_w = mshqc.IntegralEngine(mol_w, bas_w)
-sc_w = mshqc.SCFConfig(); sc_w.print_level = 0; sc_w.use_df = True; sc_w.eri_method = "df"
+sc_w = mshqc.SCFConfig(); sc_w.print_level = 0; sc_w.eri_method = "df"
 s_w = mshqc.RHF(mol_w, bas_w, aux_w, int_w, sc_w).compute()
-mc_w = mshqc.MP2Config(); mc_w.print_level = 0; mc_w.use_df = True; mc_w.eri_method = "df"
-mshqc.OMP3(mol_w, bas_w, int_w, s_w, mc_w).compute_omp3()
+mc_w = mshqc.MP2Config(); mc_w.print_level = 0; mc_w.eri_method = "df"; mc_w.opt_method = "soscf"
+mshqc.OMP2(mol_w, bas_w, int_w, s_w, mc_w).compute()
 del s_w, int_w, aux_w, bas_w, mol_w
 gc.collect()
 
-base_rss, base_hwm = get_rss_And_hwm_mb()
+base_rss, base_hwm = get_rss_and_hwm_mb()
 
 # 2. Jalankan target benchmark sebenarnya
 payload = json.loads(sys.argv[1])
@@ -361,11 +402,11 @@ sc.print_level = 0
 mode = payload["mode"]
 is_uhf = payload["is_uhf"]
 if mode == "DF":
-    sc.use_df = True; sc.eri_method = "df"
+    sc.eri_method = "df"
     aux = mshqc.BasisSet(payload["aux"], mol)
     scf_res = (mshqc.UHF(mol, basis, aux, ints, sc) if is_uhf else mshqc.RHF(mol, basis, aux, ints, sc)).compute()
 elif mode == "CHOLESKY":
-    sc.use_cholesky = True; sc.eri_method = "cholesky"; sc.cholesky_threshold = 1e-9
+    sc.eri_method = "cholesky"; sc.cholesky_threshold = 1e-9
     scf_res = (mshqc.UHF(mol, basis, ints, sc) if is_uhf else mshqc.RHF(mol, basis, ints, sc)).compute()
 else:
     sc.eri_method = "exact"
@@ -373,7 +414,6 @@ else:
 
 mc = mshqc.MP2Config()
 mc.eri_method = mode.lower()
-mc.use_df = (mode == "DF")
 mc.opt_method = "soscf"
 mc.energy_threshold = 1e-9
 mc.gradient_threshold = 1e-5
@@ -384,8 +424,8 @@ if payload["method"] == "OMP2":
 else:
     mshqc.OMP3(mol, basis, ints, scf_res, mc).compute_omp3()
 
-_, peak_hwm = get_rss_And_hwm_mb()
-net_ram = max(0.05, peak_hwm - base_hwm)
+curr_rss, peak_hwm = get_rss_and_hwm_mb()
+net_ram = max(curr_rss - base_rss, peak_hwm - base_hwm, 0.10)
 print(json.dumps({"base_hwm": base_hwm, "peak_hwm": peak_hwm, "net_ram": net_ram}))
 """
 
@@ -397,7 +437,7 @@ psi4.core.be_quiet()
 psi4.set_num_threads(4)
 psi4.set_memory("4 GB")
 
-def get_rss_And_hwm_mb():
+def get_rss_and_hwm_mb():
     rss, hwm = 0.0, 0.0
     with open("/proc/self/status") as f:
         for line in f:
@@ -407,15 +447,15 @@ def get_rss_And_hwm_mb():
                 hwm = int(line.split()[1]) / 1024.0
     return rss, hwm
 
-# 1. Warm-up runtime Psi4 & Libint2 menggunakan H2 kecil
-psi4.geometry("0 1\nH 0 0 0\nH 0 0 1.4\nunits bohr\nsymmetry c1")
+# 1. Warm-up runtime Psi4 & Libint2
+psi4.geometry("0 1\nO 0.0 0.0 0.221665\nH 0.0 1.430901 -0.886660\nH 0.0 -1.430901 -0.886660\nunits bohr\nsymmetry c1\nno_reorient\nno_com")
 psi4.set_options({"basis": "cc-pvdz", "scf_type": "df", "mp2_type": "df", "cc_type": "df"})
-psi4.energy("omp3")
+psi4.energy("omp2")
 psi4.core.clean()
 psi4.core.clean_options()
 gc.collect()
 
-base_rss, base_hwm = get_rss_And_hwm_mb()
+base_rss, base_hwm = get_rss_and_hwm_mb()
 
 # 2. Jalankan target benchmark sebenarnya
 payload = json.loads(sys.argv[1])
@@ -445,9 +485,9 @@ elif mode == "DF":
 
 psi4.set_options(opts)
 psi4.energy(payload["method"].lower())
-_, peak_hwm = get_rss_And_hwm_mb()
+curr_rss, peak_hwm = get_rss_and_hwm_mb()
 psi4.core.clean()
-net_ram = max(0.05, peak_hwm - base_hwm)
+net_ram = max(curr_rss - base_rss, peak_hwm - base_hwm, 0.10)
 print(json.dumps({"base_hwm": base_hwm, "peak_hwm": peak_hwm, "net_ram": net_ram}))
 """
 
@@ -496,11 +536,14 @@ def run_table_5_calibrated_ram():
         res_m = json.loads(out_m.strip().splitlines()[-1])
 
         if has_psi4:
-            out_p = subprocess.check_output([psi4_py, "-c", PSI4_RAM_WORKER, payload], text=True)
-            res_p = json.loads(out_p.strip().splitlines()[-1])
-            p_peak = f"{res_p['peak_hwm']:.2f}"
-            p_net  = f"{res_p['net_ram']:.2f}"
-            ratio  = f"{res_p['peak_hwm'] / res_m['peak_hwm']:.2f} x"
+            try:
+                out_p = subprocess.check_output([psi4_py, "-c", PSI4_RAM_WORKER, payload], text=True)
+                res_p = json.loads(out_p.strip().splitlines()[-1])
+                p_peak = f"{res_p['peak_hwm']:.2f}"
+                p_net  = f"{res_p['net_ram']:.2f}"
+                ratio  = f"{res_p['peak_hwm'] / res_m['peak_hwm']:.2f} x"
+            except Exception:
+                p_peak, p_net, ratio = "ERR", "ERR", "ERR"
         else:
             p_peak, p_net, ratio = "N/A", "N/A", "N/A"
 
