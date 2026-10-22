@@ -119,6 +119,19 @@ def compute_spin_s2(mol, ints, C_a, C_b, n_occ_a, n_occ_b):
     return s_ideal, float(s2)
 
 
+def build_ints(mol, basis, eri_mode, aux_basis_name=None):
+    if eri_mode == "DF" and aux_basis_name is not None:
+        aux = mshqc.BasisSet(aux_basis_name, mol)
+        try:
+            return mshqc.IntegralEngine(mol, basis, aux)
+        except TypeError:
+            ints = mshqc.IntegralEngine(mol, basis)
+            if hasattr(ints, "set_aux_basis"):
+                ints.set_aux_basis(aux)
+            return ints
+    return mshqc.IntegralEngine(mol, basis)
+
+
 def run_scf(mol, basis, ints, eri_mode, is_uhf, aux_basis_name=None, print_level=0):
     scf_cfg = mshqc.SCFConfig()
     scf_cfg.energy_threshold = 1e-9
@@ -127,10 +140,6 @@ def run_scf(mol, basis, ints, eri_mode, is_uhf, aux_basis_name=None, print_level
 
     if eri_mode == "DF":
         scf_cfg.eri_method = "df"
-        if aux_basis_name is not None:
-            for attr in ("aux_basis", "df_basis", "aux_basis_name"):
-                if hasattr(scf_cfg, attr):
-                    setattr(scf_cfg, attr, aux_basis_name)
     elif eri_mode == "CHOLESKY":
         scf_cfg.eri_method = "cholesky"
         scf_cfg.cholesky_threshold = 1e-9
@@ -142,33 +151,15 @@ def run_scf(mol, basis, ints, eri_mode, is_uhf, aux_basis_name=None, print_level
 
 
 def get_cholesky_rank(sys_name, b_name, mol, basis, ints, is_uhf):
-    scf_chol = run_scf(mol, basis, ints, "CHOLESKY", is_uhf, print_level=0)
-    nbf = basis.n_basis_functions()
-
-    for attr in ("L_mat", "L", "cholesky_vectors", "B_mat"):
-        if hasattr(scf_chol, attr):
-            arr = np.array(getattr(scf_chol, attr))
-            if arr.ndim == 2 and arr.shape[0] == nbf * nbf:
-                return int(arr.shape[1])
-
-    try:
-        mp2_cfg = mshqc.MP2Config()
-        mp2_cfg.eri_method = "cholesky"
-        mp2_cfg.print_level = 0
-        if is_uhf and hasattr(mshqc, "UMP2"):
-            mp2_res = mshqc.UMP2(mol, basis, ints, scf_chol, mp2_cfg).compute()
-        elif hasattr(mshqc, "RMP2"):
-            mp2_res = mshqc.RMP2(mol, basis, ints, scf_chol, mp2_cfg).compute()
-        else:
-            mp2_res = None
-
-        if mp2_res is not None and hasattr(mp2_res, "B_ia_P_alpha"):
-            b_arr = np.array(mp2_res.B_ia_P_alpha)
-            if b_arr.ndim == 2 and b_arr.shape[1] > 0:
-                return int(b_arr.shape[1])
-    except Exception:
-        pass
-
+    if hasattr(ints, "compute_cholesky"):
+        try:
+            ints.compute_cholesky(1e-9)
+            if hasattr(ints, "get_cholesky_vectors"):
+                vecs = ints.get_cholesky_vectors()
+                if len(vecs) > 0:
+                    return len(vecs)
+        except Exception:
+            pass
     return VERIFIED_M_CHOL.get((sys_name, b_name), 0)
 
 
@@ -287,7 +278,7 @@ def run_table_3_spin_contamination():
         for mode in ["EXACT", "DF"]:
             mol = build_mol(sys_name)
             basis = mshqc.BasisSet("cc-pvtz", mol)
-            ints = mshqc.IntegralEngine(mol, basis)
+            ints = build_ints(mol, basis, mode, "cc-pvtz-ri")
             scf_res = run_scf(mol, basis, ints, mode, True, "cc-pvtz-ri")
             oa, ob = get_occ_counts(sys_name, scf_res)
 
@@ -327,7 +318,7 @@ def run_table_4_finite_difference():
         print(f"\n>>> Sistem: {sys_name} <<<", flush=True)
         mol = build_mol(sys_name)
         basis = mshqc.BasisSet("cc-pvtz", mol)
-        ints = mshqc.IntegralEngine(mol, basis)
+        ints = build_ints(mol, basis, "EXACT")
         scf_res = run_scf(mol, basis, ints, "EXACT", SYSTEMS[sys_name]["is_uhf"])
 
         cfg = mshqc.MP2Config()
@@ -363,11 +354,23 @@ def get_rss_and_hwm_mb():
                 hwm = int(line.split()[1]) / 1024.0
     return rss, hwm
 
+def make_ints(mol, basis, mode, aux_name):
+    if mode == "DF":
+        aux = mshqc.BasisSet(aux_name, mol)
+        try:
+            return mshqc.IntegralEngine(mol, basis, aux)
+        except TypeError:
+            ints = mshqc.IntegralEngine(mol, basis)
+            if hasattr(ints, "set_aux_basis"):
+                ints.set_aux_basis(aux)
+            return ints
+    return mshqc.IntegralEngine(mol, basis)
+
 # 1. Warm-up runtime C++, OpenMP thread pool, TBLIS, dan libcint menggunakan Neon cc-pVDZ
 mol_w = mshqc.Molecule(0, 1)
 mol_w.add_atom(10, 0.0, 0.0, 0.0)
 bas_w = mshqc.BasisSet("cc-pvdz", mol_w)
-int_w = mshqc.IntegralEngine(mol_w, bas_w)
+int_w = make_ints(mol_w, bas_w, "DF", "cc-pvdz-ri")
 sc_w = mshqc.SCFConfig(); sc_w.print_level = 0; sc_w.eri_method = "df"
 s_w = mshqc.RHF(mol_w, bas_w, int_w, sc_w).compute()
 mc_w = mshqc.MP2Config(); mc_w.print_level = 0; mc_w.eri_method = "df"; mc_w.opt_method = "soscf"
@@ -383,15 +386,16 @@ mol = mshqc.Molecule(payload["charge"], payload["mult"])
 for z, x, y, zc in payload["atoms"]:
     mol.add_atom(z, x, y, zc)
 
+mode = payload["mode"]
+is_uhf = payload["is_uhf"]
 basis = mshqc.BasisSet(payload["basis"], mol)
-ints = mshqc.IntegralEngine(mol, basis)
+ints = make_ints(mol, basis, mode, payload["aux"])
+
 sc = mshqc.SCFConfig()
 sc.energy_threshold = 1e-9
 sc.density_threshold = 1e-9
 sc.print_level = 0
 
-mode = payload["mode"]
-is_uhf = payload["is_uhf"]
 if mode == "DF":
     sc.eri_method = "df"
 elif mode == "CHOLESKY":
@@ -483,7 +487,7 @@ print(json.dumps({"base_hwm": base_hwm, "peak_hwm": peak_hwm, "net_ram": net_ram
 
 
 def run_table_5_calibrated_ram():
-    psi4_py = os.environ.get("PSI4_PY", "")
+    psi4_py = os.environ.get("PSI4_PY") or os.environ.get("PSI4_PYTHON") or ""
     has_psi4 = bool(psi4_py and os.path.exists(psi4_py))
 
     print("\n" + "=" * 122, flush=True)
