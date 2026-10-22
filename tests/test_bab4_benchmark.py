@@ -4,15 +4,19 @@ Benchmark & Validasi Empiris Bab IV Skripsi (MSHQC vs Psi4)
 Mencakup:
 1. Kompresi Tensor ERI & Peringkat Cholesky Aktual (Exact vs Cholesky vs DF)
 2. Bukti Eliminasi Hambatan Memori O(V^4) pada OMP3 (MO Tensor Breakdown)
-3. Evaluasi Reduksi Kontaminasi Spin <S^2> (UHF vs OMP2)
-4. Uji Konsistensi Gradien Analitik vs Finite-Difference (OMP2 & OMP3)
-5. Pengukuran Peak RSS (VmHWM) & Net Working RAM Terkalibrasi (mshqc vs Psi4)
+3. Evaluasi Reduksi Kontaminasi Spin <S^2> (UHF vs OMP2 vs OMP3)
+4. Verifikasi Gradien Analitik vs Finite-Difference & Jejak Iterasi TR-SOSCF
+5. Profil Konvergensi Iterasi (N_iter) & Energi Relaksasi Orbital (dE_OO)
+6. Pengukuran Peak RSS (VmHWM) & Net Working RAM Terkalibrasi (mshqc vs Psi4)
 """
 
 import os
+import re
 import gc
 import sys
+import time
 import json
+import tempfile
 import subprocess
 from contextlib import contextmanager
 import numpy as np
@@ -102,6 +106,64 @@ def suppress_stdout():
         os.dup2(old_stdout_fd, 1)
         os.close(devnull_fd)
         os.close(old_stdout_fd)
+
+
+@contextmanager
+def capture_c_stdout():
+    """Menangkap stdout level C++ (fd 1) ke dalam buffer string untuk ekstraksi iterasi & log."""
+    sys.stdout.flush()
+    old_stdout_fd = os.dup(1)
+    tmp = tempfile.TemporaryFile(mode="w+b")
+    try:
+        os.dup2(tmp.fileno(), 1)
+        yield tmp
+    finally:
+        sys.stdout.flush()
+        os.dup2(old_stdout_fd, 1)
+        os.close(old_stdout_fd)
+
+
+def read_captured(tmp_file):
+    tmp_file.seek(0)
+    return tmp_file.read().decode("utf-8", errors="replace")
+
+
+def extract_iter_info(res_obj, captured_text=""):
+    """Mengambil jumlah iterasi dan norm gradien akhir dari objek hasil atau log C++."""
+    n_iter = None
+    final_grad = None
+
+    for attr in ("n_iterations", "iterations", "num_iterations", "n_iter"):
+        if hasattr(res_obj, attr):
+            val = getattr(res_obj, attr)
+            if isinstance(val, int) and val > 0:
+                n_iter = val
+                break
+
+    for attr in ("gradient_norm", "rms_gradient", "grad_norm", "final_grad_norm"):
+        if hasattr(res_obj, attr):
+            val = getattr(res_obj, attr)
+            if isinstance(val, (float, int)):
+                final_grad = float(val)
+                break
+
+    # Parsing baris tabel iterasi C++: misal "   8    -128.81022310    -0.27836146    4.12e-06"
+    iter_rows = re.findall(
+        r"^\s*(\d+)\s+(-?\d+\.\d+)\s+(-?\d+\.\d+)\s+([0-9.eE+-]+)",
+        captured_text,
+        re.MULTILINE,
+    )
+    if iter_rows:
+        last_it, _, _, last_g = iter_rows[-1]
+        if n_iter is None:
+            n_iter = int(last_it)
+        if final_grad is None:
+            try:
+                final_grad = float(last_g)
+            except ValueError:
+                pass
+
+    return (n_iter if n_iter is not None else 0), (final_grad if final_grad is not None else 0.0), iter_rows
 
 
 def build_mol(sys_name):
@@ -290,92 +352,197 @@ def run_table_2_o_v4_elimination():
 
 
 # ==============================================================================
-# 3. TABEL EVALUASI KONTAMINASI SPIN <S^2> (UHF -> OMP2)
+# 3. TABEL EVALUASI KONTAMINASI SPIN <S^2> (UHF -> OMP2 & OMP3)
 # ==============================================================================
 def run_table_3_spin_contamination():
     radicals = ["Lithium", "Carbon", "Oxygen", "OH", "O2"]
     rows = []
     for sys_name in radicals:
         for mode in ["EXACT", "DF"]:
+            mol = build_mol(sys_name)
+            basis = mshqc.BasisSet("cc-pvtz", mol)
+            ints = build_ints(mol, basis, mode, "cc-pvtz-ri")
+
             with suppress_stdout():
-                mol = build_mol(sys_name)
-                basis = mshqc.BasisSet("cc-pvtz", mol)
-                ints = build_ints(mol, basis, mode, "cc-pvtz-ri")
                 scf_res = run_scf(mol, basis, ints, mode, True, "cc-pvtz-ri", print_level=0)
-                oa, ob = get_occ_counts(sys_name, scf_res)
+            oa, ob = get_occ_counts(sys_name, scf_res)
 
-                s_ideal, s2_uhf = compute_spin_s2(
-                    mol, ints, scf_res.C_alpha, scf_res.C_beta, oa, ob
-                )
-                d_uhf = max(0.0, s2_uhf - s_ideal)
+            s_ideal, s2_uhf = compute_spin_s2(
+                mol, ints, scf_res.C_alpha, scf_res.C_beta, oa, ob
+            )
+            d_uhf = max(0.0, s2_uhf - s_ideal)
 
-                cfg = mshqc.MP2Config()
-                cfg.eri_method = mode.lower()
-                cfg.energy_threshold = 1e-9
-                cfg.gradient_threshold = 1e-5
-                cfg.print_level = 0
+            cfg = mshqc.MP2Config()
+            cfg.eri_method = mode.lower()
+            cfg.energy_threshold = 1e-9
+            cfg.gradient_threshold = 1e-5
+            cfg.max_iterations = 50
+            cfg.print_level = 1
 
+            with capture_c_stdout() as cap2:
                 omp2 = mshqc.OMP2(mol, basis, ints, scf_res, cfg)
                 res_omp2 = omp2.compute()
-                _, s2_omp2 = compute_spin_s2(
-                    mol, ints, res_omp2.C_alpha, res_omp2.C_beta, oa, ob
-                )
-                d_omp2 = max(0.0, s2_omp2 - s_ideal)
-                red_omp2 = 100.0 * (d_uhf - d_omp2) / d_uhf if d_uhf > 1e-12 else 0.0
+            txt2 = read_captured(cap2)
+            it_omp2, _, _ = extract_iter_info(res_omp2, txt2)
+
+            _, s2_omp2 = compute_spin_s2(
+                mol, ints, res_omp2.C_alpha, res_omp2.C_beta, oa, ob
+            )
+            d_omp2 = max(0.0, s2_omp2 - s_ideal)
+            red_omp2 = 100.0 * (d_uhf - d_omp2) / d_uhf if d_uhf > 1e-12 else 0.0
+
+            with capture_c_stdout() as cap3:
+                omp3 = mshqc.OMP3(mol, basis, ints, scf_res, cfg)
+                res_omp3 = run_omp3_calc(omp3)
+            txt3 = read_captured(cap3)
+            it_omp3, _, _ = extract_iter_info(res_omp3, txt3)
+
+            _, s2_omp3 = compute_spin_s2(
+                mol, ints, res_omp3.C_alpha, res_omp3.C_beta, oa, ob
+            )
+            d_omp3 = max(0.0, s2_omp3 - s_ideal)
+            red_omp3 = 100.0 * (d_uhf - d_omp3) / d_uhf if d_uhf > 1e-12 else 0.0
 
             rows.append(
-                f"| {sys_name:<8} | {mode:<9} | {s_ideal:<12.6f} | {s2_uhf:<12.6f} | {d_uhf:<12.6f} | {s2_omp2:<12.6f} | {d_omp2:<12.6f} | {red_omp2:<9.2f} % |"
+                f"| {sys_name:<7} | {mode:<5} | {s_ideal:<6.2f} | {s2_uhf:<10.6f} | {s2_omp2:<10.6f} ({it_omp2:>2} it) | {red_omp2:>6.2f} % | {s2_omp3:<10.6f} ({it_omp3:>2} it) | {red_omp3:>6.2f} % |"
             )
             gc.collect()
 
-    print("\n" + "=" * 102, flush=True)
-    print("  3. TABEL PEMULIHAN SIMETRI SPIN <S^2> SEBELUM (UHF) DAN SESUDAH OPTIMISASI ORBITAL (OMP2, cc-pVTZ)", flush=True)
-    print("=" * 102, flush=True)
-    print(f"| {'Sistem':<8} | {'Mode ERI':<9} | {'S(S+1) Ideal':<12} | {'<S^2> UHF':<12} | {'d<S^2> UHF':<12} | {'<S^2> OMP2':<12} | {'d<S^2> OMP2':<12} | {'Reduksi (%)':<11} |", flush=True)
-    print(f"|{'-'*10}|{'-'*11}|{'-'*14}|{'-'*14}|{'-'*14}|{'-'*14}|{'-'*14}|{'-'*13}|", flush=True)
+    print("\n" + "=" * 116, flush=True)
+    print("  3. TABEL PEMULIHAN SIMETRI SPIN <S^2> SEBELUM (UHF) DAN SESUDAH OPTIMISASI ORBITAL (OMP2 & OMP3, cc-pVTZ)", flush=True)
+    print("=" * 116, flush=True)
+    print(f"| {'Sistem':<7} | {'Mode':<5} | {'Ideal':<6} | {'<S^2> UHF':<10} | {'<S^2> OMP2 (Iter)':<18} | {'Red OMP2':<8} | {'<S^2> OMP3 (Iter)':<18} | {'Red OMP3':<8} |", flush=True)
+    print(f"|{'-'*9}|{'-'*7}|{'-'*8}|{'-'*12}|{'-'*20}|{'-'*10}|{'-'*20}|{'-'*10}|", flush=True)
     for r in rows:
         print(r, flush=True)
 
 
 # ==============================================================================
-# 4. UJI FINITE-DIFFERENCE vs GRADIEN ANALITIK (OMP2 & OMP3)
+# 4. JEJAK KONVERGENSI ITERASI TR-SOSCF & VERIFIKASI GRADIEN (OMP2 & OMP3)
 # ==============================================================================
-def run_table_4_finite_difference():
-    print("\n" + "=" * 105, flush=True)
-    print("  4. VERIFIKASI GRADIEN ROTASI ORBITAL ANALITIK vs CENTRAL FINITE-DIFFERENCE (cc-pVTZ, EXACT)", flush=True)
-    print("=" * 105, flush=True)
+def run_table_4_iteration_trace_and_fd():
+    print("\n" + "=" * 108, flush=True)
+    print("  4. JEJAK ITERASI PENUH TRUST-REGION SOSCF & VERIFIKASI GRADIEN (cc-pVTZ, EXACT & DF)", flush=True)
+    print("=" * 108, flush=True)
 
-    for sys_name in ["Neon", "H2O", "Lithium", "Carbon", "Oxygen"]:
-        print(f"\n>>> Sistem: {sys_name} (OMP2 & OMP3 Finite-Difference Check) <<<", flush=True)
+    # 4A. Tampilkan log iterasi penuh untuk 2 sistem representatif (H2O RHF & Oxygen UHF)
+    for sys_name, mode in [("H2O", "DF"), ("Oxygen", "DF")]:
+        print(f"\n>>> Log Iterasi Lengkap TR-SOSCF: {sys_name} (cc-pVTZ, Mode={mode}) <<<", flush=True)
         mol = build_mol(sys_name)
         basis = mshqc.BasisSet("cc-pvtz", mol)
-        ints = build_ints(mol, basis, "EXACT")
-        
+        ints = build_ints(mol, basis, mode, "cc-pvtz-ri")
+
         with suppress_stdout():
-            scf_res = run_scf(mol, basis, ints, "EXACT", SYSTEMS[sys_name]["is_uhf"])
+            scf_res = run_scf(mol, basis, ints, mode, SYSTEMS[sys_name]["is_uhf"], "cc-pvtz-ri", print_level=0)
 
         cfg = mshqc.MP2Config()
-        cfg.eri_method = "exact"
-        cfg.max_iterations = 1
-        cfg.print_level = 1
+        cfg.eri_method = mode.lower()
+        cfg.energy_threshold = 1e-9
+        cfg.gradient_threshold = 1e-5
+        cfg.max_iterations = 50
+        cfg.print_level = 1  # Menampilkan seluruh iterasi 0..N hingga konvergen
 
-        print(f"  [4A] Menjalankan Finite-Difference Check OMP2 untuk {sys_name}...", flush=True)
+        print(f"  [OMP2 - {sys_name}]", flush=True)
         omp2 = mshqc.OMP2(mol, basis, ints, scf_res, cfg)
         omp2.compute()
 
-        print(f"  [4B] Menjalankan Finite-Difference Check OMP3 untuk {sys_name}...", flush=True)
+        print(f"\n  [OMP3 - {sys_name}]", flush=True)
         omp3 = mshqc.OMP3(mol, basis, ints, scf_res, cfg)
         run_omp3_calc(omp3)
         gc.collect()
 
+    # 4B. Jika print_level = 2 memicu Finite-Difference Check di C++ pada iterasi ke-1, jalankan secara terpisah:
+    print("\n>>> Uji Verifikasi Finite-Difference (print_level=2, max_iterations=1) <<<", flush=True)
+    for sys_name in ["Neon", "H2O", "Lithium", "Carbon", "Oxygen"]:
+        mol = build_mol(sys_name)
+        basis = mshqc.BasisSet("cc-pvtz", mol)
+        ints = build_ints(mol, basis, "EXACT")
+        with suppress_stdout():
+            scf_res = run_scf(mol, basis, ints, "EXACT", SYSTEMS[sys_name]["is_uhf"])
+
+        cfg_fd = mshqc.MP2Config()
+        cfg_fd.eri_method = "exact"
+        cfg_fd.max_iterations = 1
+        cfg_fd.print_level = 2
+
+        with capture_c_stdout() as cap_fd2:
+            omp2 = mshqc.OMP2(mol, basis, ints, scf_res, cfg_fd)
+            res2 = omp2.compute()
+        log_fd2 = read_captured(cap_fd2)
+
+        with capture_c_stdout() as cap_fd3:
+            omp3 = mshqc.OMP3(mol, basis, ints, scf_res, cfg_fd)
+            res3 = run_omp3_calc(omp3)
+        log_fd3 = read_captured(cap_fd3)
+
+        _, g0_omp2, rows2 = extract_iter_info(res2, log_fd2)
+        _, g0_omp3, rows3 = extract_iter_info(res3, log_fd3)
+        e0_omp2 = float(rows2[0][1]) if rows2 else getattr(res2, "total_energy", 0.0)
+        e0_omp3 = float(rows3[0][1]) if rows3 else getattr(res3, "total_energy", 0.0)
+
+        print(f"  * {sys_name:<8} | Iter-0 OMP2: E = {e0_omp2:>14.8f} Ha, ||g_0|| = {g0_omp2:.3e} | Iter-0 OMP3: E = {e0_omp3:>14.8f} Ha, ||g_0|| = {g0_omp3:.3e}", flush=True)
+        # Jika ada baris "Finite" atau "FD" di output C++, tampilkan langsung
+        for line in (log_fd2 + "\n" + log_fd3).splitlines():
+            if any(k in line.lower() for k in ("finite", "fd ", "analytic", "max diff", "rms diff")):
+                print(f"    -> {line.strip()}", flush=True)
+        gc.collect()
+
+
 # ==============================================================================
-# 5. PENGUKURAN PEAK RAM AKTUAL TERKALIBRASI (SUBPROCESS ISOLATED)
+# 5. TABEL PROFIL KONVERGENSI ITERASI (N_iter) & ENERGI RELAKSASI ORBITAL (dE_OO)
+# ==============================================================================
+def run_table_5_convergence_and_relaxation():
+    print("\n" + "=" * 126, flush=True)
+    print("  5. TABEL PROFIL KONVERGENSI TR-SOSCF (N_iter) & EFEK RELAKSASI ORBITAL dE_OO (cc-pVTZ / cc-pVTZ-RI)", flush=True)
+    print("=" * 126, flush=True)
+    print(f"| {'Sistem':<7} | {'Mode ERI':<8} | {'E_MP2 (Ha)':<14} | {'E_OMP2 (Ha)':<14} | {'dE_OO MP2(mHa)':<14} | {'It_OMP2':<7} | {'E_MP3 (Ha)':<14} | {'E_OMP3 (Ha)':<14} | {'dE_OO MP3(mHa)':<14} | {'It_OMP3':<7} |", flush=True)
+    print(f"|{'-'*9}|{'-'*10}|{'-'*16}|{'-'*16}|{'-'*16}|{'-'*9}|{'-'*16}|{'-'*16}|{'-'*16}|{'-'*9}|", flush=True)
+
+    systems_list = ["Neon", "H2O", "Lithium", "Carbon", "Oxygen", "OH", "O2"]
+    for sys_name in systems_list:
+        for mode in ["EXACT", "CHOLESKY", "DF"]:
+            mol = build_mol(sys_name)
+            basis = mshqc.BasisSet("cc-pvtz", mol)
+            ints = build_ints(mol, basis, mode, "cc-pvtz-ri")
+
+            with suppress_stdout():
+                scf_res = run_scf(mol, basis, ints, mode, SYSTEMS[sys_name]["is_uhf"], "cc-pvtz-ri", print_level=0)
+
+            cfg = mshqc.MP2Config()
+            cfg.eri_method = mode.lower()
+            cfg.energy_threshold = 1e-9
+            cfg.gradient_threshold = 1e-5
+            cfg.max_iterations = 50
+            cfg.print_level = 1
+
+            with capture_c_stdout() as cap2:
+                omp2 = mshqc.OMP2(mol, basis, ints, scf_res, cfg)
+                res2 = omp2.compute()
+            txt2 = read_captured(cap2)
+            it2, _, rows2 = extract_iter_info(res2, txt2)
+            e_mp2  = float(rows2[0][1]) if rows2 else getattr(res2, "mp2_energy", 0.0)
+            e_omp2 = float(rows2[-1][1]) if rows2 else getattr(res2, "total_energy", 0.0)
+            de_oo2 = (e_omp2 - e_mp2) * 1000.0  # dalam mHa
+
+            with capture_c_stdout() as cap3:
+                omp3 = mshqc.OMP3(mol, basis, ints, scf_res, cfg)
+                res3 = run_omp3_calc(omp3)
+            txt3 = read_captured(cap3)
+            it3, _, rows3 = extract_iter_info(res3, txt3)
+            e_mp3  = float(rows3[0][1]) if rows3 else getattr(res3, "mp3_energy", 0.0)
+            e_omp3 = float(rows3[-1][1]) if rows3 else getattr(res3, "total_energy", 0.0)
+            de_oo3 = (e_omp3 - e_mp3) * 1000.0  # dalam mHa
+
+            print(f"| {sys_name:<7} | {mode:<8} | {e_mp2:<14.8f} | {e_omp2:<14.8f} | {de_oo2:<14.4f} | {it2:<7} | {e_mp3:<14.8f} | {e_omp3:<14.8f} | {de_oo3:<14.4f} | {it3:<7} |", flush=True)
+            gc.collect()
+
+
+# ==============================================================================
+# 6. PENGUKURAN PEAK RAM AKTUAL TERKALIBRASI (SUBPROCESS ISOLATED)
 # ==============================================================================
 MSHQC_RAM_WORKER = r"""
 import sys, gc, json, os
 import mshqc
-
-ANG_TO_BOHR = 1.8897261246257702
 
 def get_rss_and_hwm_mb():
     rss, hwm = 0.0, 0.0
@@ -406,13 +573,11 @@ def exec_omp3(omp3_obj):
         return omp3_obj.compute_omp3()
     return mshqc.OMP2.compute(omp3_obj)
 
-# Bungkam stdout murni selama eksekusi
 old_stdout_fd = os.dup(1)
 devnull_fd = os.open(os.devnull, os.O_WRONLY)
 os.dup2(devnull_fd, 1)
 
 try:
-    # 1. Warm-up runtime C++, OpenMP thread pool, TBLIS, dan libcint menggunakan Neon cc-pVDZ
     mol_w = mshqc.Molecule(0, 1)
     mol_w.add_atom(10, 0.0, 0.0, 0.0)
     bas_w = mshqc.BasisSet("cc-pvdz", mol_w)
@@ -426,7 +591,6 @@ try:
 
     base_rss, base_hwm = get_rss_and_hwm_mb()
 
-    # 2. Jalankan target benchmark sebenarnya
     payload = json.loads(sys.argv[1])
     mol = mshqc.Molecule(payload["charge"], payload["mult"])
     for z, x, y, zc in payload["atoms"]:
@@ -456,6 +620,7 @@ try:
     mc.eri_method = mode.lower()
     mc.energy_threshold = 1e-9
     mc.gradient_threshold = 1e-5
+    mc.max_iterations = 50
     mc.print_level = 0
 
     if payload["method"] == "OMP2":
@@ -467,7 +632,6 @@ try:
     net_ram = max(curr_rss - base_rss, peak_hwm - base_hwm, 0.10)
     result_str = json.dumps({"base_hwm": base_hwm, "peak_hwm": peak_hwm, "net_ram": net_ram})
 finally:
-    # Kembalikan stdout dan cetak hasil JSON dengan aman
     os.dup2(old_stdout_fd, 1)
     os.close(devnull_fd)
     os.close(old_stdout_fd)
@@ -493,7 +657,6 @@ def get_rss_and_hwm_mb():
                 hwm = int(line.split()[1]) / 1024.0
     return rss, hwm
 
-# 1. Warm-up runtime Psi4 & Libint2
 psi4.geometry("0 1\nNe 0.0 0.0 0.0\nunits bohr\nsymmetry c1\nno_reorient\nno_com")
 psi4.set_options({"basis": "cc-pvdz", "scf_type": "df", "mp2_type": "df", "cc_type": "df"})
 psi4.energy("omp2")
@@ -503,7 +666,6 @@ gc.collect()
 
 base_rss, base_hwm = get_rss_and_hwm_mb()
 
-# 2. Jalankan target benchmark sebenarnya
 payload = json.loads(sys.argv[1])
 psi4.geometry(payload["psi4_geom"])
 mode = payload["mode"]
@@ -537,6 +699,7 @@ net_ram = max(curr_rss - base_rss, peak_hwm - base_hwm, 0.10)
 print(json.dumps({"base_hwm": base_hwm, "peak_hwm": peak_hwm, "net_ram": net_ram}))
 """
 
+
 def extract_json_safe(output_str):
     for line in reversed(output_str.splitlines()):
         line = line.strip()
@@ -544,12 +707,13 @@ def extract_json_safe(output_str):
             return json.loads(line)
     raise ValueError("Valid JSON not found in output: " + output_str)
 
-def run_table_5_calibrated_ram():
+
+def run_table_6_calibrated_ram():
     psi4_py = os.environ.get("PSI4_PY") or os.environ.get("PSI4_PYTHON") or ""
     has_psi4 = bool(psi4_py and os.path.exists(psi4_py))
 
     print("\n" + "=" * 122, flush=True)
-    print("  5. PENGUKURAN PEAK RSS (VmHWM) & NET WORKING RAM TERKALIBRASI SETELAH WARM-UP (MSHQC vs PSI4)", flush=True)
+    print("  6. PENGUKURAN PEAK RSS (VmHWM) & NET WORKING RAM TERKALIBRASI SETELAH WARM-UP (MSHQC vs PSI4)", flush=True)
     print("=" * 122, flush=True)
     print(f"| {'Sistem':<7} | {'Basis':<7} | {'Mode ERI':<8} | {'Metode':<6} | {'mshqc Peak(MB)':<14} | {'mshqc Net(MB)':<13} | {'Psi4 Peak(MB)':<13} | {'Psi4 Net(MB)':<12} | {'Rasio Peak':<10} |", flush=True)
     print(f"|{'-'*9}|{'-'*9}|{'-'*10}|{'-'*8}|{'-'*16}|{'-'*15}|{'-'*15}|{'-'*14}|{'-'*12}|", flush=True)
@@ -606,5 +770,6 @@ if __name__ == "__main__":
     run_table_1_eri_compression()
     run_table_2_o_v4_elimination()
     run_table_3_spin_contamination()
-    run_table_4_finite_difference()
-    run_table_5_calibrated_ram()
+    run_table_4_iteration_trace_and_fd()
+    run_table_5_convergence_and_relaxation()
+    run_table_6_calibrated_ram()
