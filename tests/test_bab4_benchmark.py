@@ -2,11 +2,11 @@
 """
 Benchmark & Validasi Empiris Bab IV Skripsi (MSHQC vs Psi4)
 Mencakup:
-  1. Kompresi Tensor ERI & Peringkat Cholesky Aktual (Exact vs Cholesky vs DF)
-  2. Bukti Eliminasi Hambatan Memori O(V^4) pada OMP3 (MO Tensor Breakdown)
-  3. Evaluasi Reduksi Kontaminasi Spin <S^2> (UHF vs OMP2)
-  4. Uji Konsistensi Gradien Analitik vs Finite-Difference (OMP2 & OMP3)
-  5. Pengukuran Peak RSS (VmHWM) & Net Working RAM Terkalibrasi (mshqc vs Psi4)
+1. Kompresi Tensor ERI & Peringkat Cholesky Aktual (Exact vs Cholesky vs DF)
+2. Bukti Eliminasi Hambatan Memori O(V^4) pada OMP3 (MO Tensor Breakdown)
+3. Evaluasi Reduksi Kontaminasi Spin <S^2> (UHF vs OMP2)
+4. Uji Konsistensi Gradien Analitik vs Finite-Difference (OMP2 & OMP3)
+5. Pengukuran Peak RSS (VmHWM) & Net Working RAM Terkalibrasi (mshqc vs Psi4)
 """
 
 import os
@@ -14,6 +14,7 @@ import gc
 import sys
 import json
 import subprocess
+from contextlib import contextmanager
 import numpy as np
 import mshqc
 
@@ -87,6 +88,22 @@ VERIFIED_M_CHOL = {
 }
 
 
+@contextmanager
+def suppress_stdout():
+    """Membungkam stdout C++ / Python."""
+    sys.stdout.flush()
+    old_stdout_fd = os.dup(1)
+    devnull_fd = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(devnull_fd, 1)
+        yield
+    finally:
+        sys.stdout.flush()
+        os.dup2(old_stdout_fd, 1)
+        os.close(devnull_fd)
+        os.close(old_stdout_fd)
+
+
 def build_mol(sys_name):
     info = SYSTEMS[sys_name]
     mol = mshqc.Molecule(info["charge"], info["mult"])
@@ -150,6 +167,14 @@ def run_scf(mol, basis, ints, eri_mode, is_uhf, aux_basis_name=None, print_level
     return solver.compute()
 
 
+def run_omp3_calc(omp3_obj):
+    if hasattr(omp3_obj, "compute"):
+        return omp3_obj.compute()
+    if hasattr(omp3_obj, "compute_omp3"):
+        return omp3_obj.compute_omp3()
+    return mshqc.OMP2.compute(omp3_obj)
+
+
 def get_cholesky_rank(sys_name, b_name, mol, basis, ints, is_uhf):
     if hasattr(ints, "compute_cholesky"):
         try:
@@ -194,7 +219,8 @@ def run_table_1_eri_compression():
 
         nbf = basis.n_basis_functions()
         naux = aux.n_basis_functions()
-        m_chol = get_cholesky_rank(sys_name, b_name, mol, basis, ints, SYSTEMS[sys_name]["is_uhf"])
+        with suppress_stdout():
+            m_chol = get_cholesky_rank(sys_name, b_name, mol, basis, ints, SYSTEMS[sys_name]["is_uhf"])
 
         mb = 1024.0 * 1024.0
         mem_exact = (8.0 * (nbf ** 4)) / mb
@@ -267,43 +293,48 @@ def run_table_2_o_v4_elimination():
 # 3. TABEL EVALUASI KONTAMINASI SPIN <S^2> (UHF -> OMP2)
 # ==============================================================================
 def run_table_3_spin_contamination():
+    radicals = ["Lithium", "Carbon", "Oxygen", "OH", "O2"]
+    rows = []
+    for sys_name in radicals:
+        for mode in ["EXACT", "DF"]:
+            with suppress_stdout():
+                mol = build_mol(sys_name)
+                basis = mshqc.BasisSet("cc-pvtz", mol)
+                ints = build_ints(mol, basis, mode, "cc-pvtz-ri")
+                scf_res = run_scf(mol, basis, ints, mode, True, "cc-pvtz-ri", print_level=0)
+                oa, ob = get_occ_counts(sys_name, scf_res)
+
+                s_ideal, s2_uhf = compute_spin_s2(
+                    mol, ints, scf_res.C_alpha, scf_res.C_beta, oa, ob
+                )
+                d_uhf = max(0.0, s2_uhf - s_ideal)
+
+                cfg = mshqc.MP2Config()
+                cfg.eri_method = mode.lower()
+                cfg.energy_threshold = 1e-9
+                cfg.gradient_threshold = 1e-5
+                cfg.print_level = 0
+
+                omp2 = mshqc.OMP2(mol, basis, ints, scf_res, cfg)
+                res_omp2 = omp2.compute()
+                _, s2_omp2 = compute_spin_s2(
+                    mol, ints, res_omp2.C_alpha, res_omp2.C_beta, oa, ob
+                )
+                d_omp2 = max(0.0, s2_omp2 - s_ideal)
+                red_omp2 = 100.0 * (d_uhf - d_omp2) / d_uhf if d_uhf > 1e-12 else 0.0
+
+            rows.append(
+                f"| {sys_name:<8} | {mode:<9} | {s_ideal:<12.6f} | {s2_uhf:<12.6f} | {d_uhf:<12.6f} | {s2_omp2:<12.6f} | {d_omp2:<12.6f} | {red_omp2:<9.2f} % |"
+            )
+            gc.collect()
+
     print("\n" + "=" * 102, flush=True)
     print("  3. TABEL PEMULIHAN SIMETRI SPIN <S^2> SEBELUM (UHF) DAN SESUDAH OPTIMISASI ORBITAL (OMP2, cc-pVTZ)", flush=True)
     print("=" * 102, flush=True)
     print(f"| {'Sistem':<8} | {'Mode ERI':<9} | {'S(S+1) Ideal':<12} | {'<S^2> UHF':<12} | {'d<S^2> UHF':<12} | {'<S^2> OMP2':<12} | {'d<S^2> OMP2':<12} | {'Reduksi (%)':<11} |", flush=True)
     print(f"|{'-'*10}|{'-'*11}|{'-'*14}|{'-'*14}|{'-'*14}|{'-'*14}|{'-'*14}|{'-'*13}|", flush=True)
-
-    radicals = ["Lithium", "Carbon", "Oxygen", "OH", "O2"]
-    for sys_name in radicals:
-        for mode in ["EXACT", "DF"]:
-            mol = build_mol(sys_name)
-            basis = mshqc.BasisSet("cc-pvtz", mol)
-            ints = build_ints(mol, basis, mode, "cc-pvtz-ri")
-            scf_res = run_scf(mol, basis, ints, mode, True, "cc-pvtz-ri")
-            oa, ob = get_occ_counts(sys_name, scf_res)
-
-            s_ideal, s2_uhf = compute_spin_s2(
-                mol, ints, scf_res.C_alpha, scf_res.C_beta, oa, ob
-            )
-            d_uhf = max(0.0, s2_uhf - s_ideal)
-
-            cfg = mshqc.MP2Config()
-            cfg.eri_method = mode.lower()
-            cfg.opt_method = "soscf"
-            cfg.energy_threshold = 1e-9
-            cfg.gradient_threshold = 1e-5
-            cfg.print_level = 0
-
-            omp2 = mshqc.OMP2(mol, basis, ints, scf_res, cfg)
-            res_omp2 = omp2.compute()
-            _, s2_omp2 = compute_spin_s2(
-                mol, ints, res_omp2.C_alpha, res_omp2.C_beta, oa, ob
-            )
-            d_omp2 = max(0.0, s2_omp2 - s_ideal)
-            red_omp2 = 100.0 * (d_uhf - d_omp2) / d_uhf if d_uhf > 1e-12 else 0.0
-
-            print(f"| {sys_name:<8} | {mode:<9} | {s_ideal:<12.6f} | {s2_uhf:<12.6f} | {d_uhf:<12.6f} | {s2_omp2:<12.6f} | {d_omp2:<12.6f} | {red_omp2:<9.2f} % |", flush=True)
-            gc.collect()
+    for r in rows:
+        print(r, flush=True)
 
 
 # ==============================================================================
@@ -319,7 +350,9 @@ def run_table_4_finite_difference():
         mol = build_mol(sys_name)
         basis = mshqc.BasisSet("cc-pvtz", mol)
         ints = build_ints(mol, basis, "EXACT")
-        scf_res = run_scf(mol, basis, ints, "EXACT", SYSTEMS[sys_name]["is_uhf"])
+        
+        with suppress_stdout():
+            scf_res = run_scf(mol, basis, ints, "EXACT", SYSTEMS[sys_name]["is_uhf"])
 
         cfg = mshqc.MP2Config()
         cfg.eri_method = "exact"
@@ -332,14 +365,14 @@ def run_table_4_finite_difference():
 
         print(f"  [4B] Menjalankan Finite-Difference Check OMP3 untuk {sys_name}...", flush=True)
         omp3 = mshqc.OMP3(mol, basis, ints, scf_res, cfg)
-        omp3.compute() 
+        run_omp3_calc(omp3)
         gc.collect()
 
 # ==============================================================================
 # 5. PENGUKURAN PEAK RAM AKTUAL TERKALIBRASI (SUBPROCESS ISOLATED)
 # ==============================================================================
 MSHQC_RAM_WORKER = r"""
-import sys, gc, json
+import sys, gc, json, os
 import mshqc
 
 ANG_TO_BOHR = 1.8897261246257702
@@ -366,61 +399,80 @@ def make_ints(mol, basis, mode, aux_name):
             return ints
     return mshqc.IntegralEngine(mol, basis)
 
-# 1. Warm-up runtime C++, OpenMP thread pool, TBLIS, dan libcint menggunakan Neon cc-pVDZ
-mol_w = mshqc.Molecule(0, 1)
-mol_w.add_atom(10, 0.0, 0.0, 0.0)
-bas_w = mshqc.BasisSet("cc-pvdz", mol_w)
-int_w = make_ints(mol_w, bas_w, "DF", "cc-pvdz-ri")
-sc_w = mshqc.SCFConfig(); sc_w.print_level = 0; sc_w.eri_method = "df"
-s_w = mshqc.RHF(mol_w, bas_w, int_w, sc_w).compute()
-mc_w = mshqc.MP2Config(); mc_w.print_level = 0; mc_w.eri_method = "df"; mc_w.opt_method = "soscf"
-mshqc.OMP2(mol_w, bas_w, int_w, s_w, mc_w).compute()
-del s_w, int_w, bas_w, mol_w
-gc.collect()
+def exec_omp3(omp3_obj):
+    if hasattr(omp3_obj, "compute"):
+        return omp3_obj.compute()
+    if hasattr(omp3_obj, "compute_omp3"):
+        return omp3_obj.compute_omp3()
+    return mshqc.OMP2.compute(omp3_obj)
 
-base_rss, base_hwm = get_rss_and_hwm_mb()
+# Bungkam stdout murni selama eksekusi
+old_stdout_fd = os.dup(1)
+devnull_fd = os.open(os.devnull, os.O_WRONLY)
+os.dup2(devnull_fd, 1)
 
-# 2. Jalankan target benchmark sebenarnya
-payload = json.loads(sys.argv[1])
-mol = mshqc.Molecule(payload["charge"], payload["mult"])
-for z, x, y, zc in payload["atoms"]:
-    mol.add_atom(z, x, y, zc)
+try:
+    # 1. Warm-up runtime C++, OpenMP thread pool, TBLIS, dan libcint menggunakan Neon cc-pVDZ
+    mol_w = mshqc.Molecule(0, 1)
+    mol_w.add_atom(10, 0.0, 0.0, 0.0)
+    bas_w = mshqc.BasisSet("cc-pvdz", mol_w)
+    int_w = make_ints(mol_w, bas_w, "DF", "cc-pvdz-ri")
+    sc_w = mshqc.SCFConfig(); sc_w.print_level = 0; sc_w.eri_method = "df"
+    s_w = mshqc.RHF(mol_w, bas_w, int_w, sc_w).compute()
+    mc_w = mshqc.MP2Config(); mc_w.print_level = 0; mc_w.eri_method = "df"
+    mshqc.OMP2(mol_w, bas_w, int_w, s_w, mc_w).compute()
+    del s_w, int_w, bas_w, mol_w
+    gc.collect()
 
-mode = payload["mode"]
-is_uhf = payload["is_uhf"]
-basis = mshqc.BasisSet(payload["basis"], mol)
-ints = make_ints(mol, basis, mode, payload["aux"])
+    base_rss, base_hwm = get_rss_and_hwm_mb()
 
-sc = mshqc.SCFConfig()
-sc.energy_threshold = 1e-9
-sc.density_threshold = 1e-9
-sc.print_level = 0
+    # 2. Jalankan target benchmark sebenarnya
+    payload = json.loads(sys.argv[1])
+    mol = mshqc.Molecule(payload["charge"], payload["mult"])
+    for z, x, y, zc in payload["atoms"]:
+        mol.add_atom(z, x, y, zc)
 
-if mode == "DF":
-    sc.eri_method = "df"
-elif mode == "CHOLESKY":
-    sc.eri_method = "cholesky"
-    sc.cholesky_threshold = 1e-9
-else:
-    sc.eri_method = "exact"
+    mode = payload["mode"]
+    is_uhf = payload["is_uhf"]
+    basis = mshqc.BasisSet(payload["basis"], mol)
+    ints = make_ints(mol, basis, mode, payload["aux"])
 
-scf_res = (mshqc.UHF(mol, basis, ints, sc) if is_uhf else mshqc.RHF(mol, basis, ints, sc)).compute()
+    sc = mshqc.SCFConfig()
+    sc.energy_threshold = 1e-9
+    sc.density_threshold = 1e-9
+    sc.print_level = 0
 
-mc = mshqc.MP2Config()
-mc.eri_method = mode.lower()
-mc.opt_method = "soscf"
-mc.energy_threshold = 1e-9
-mc.gradient_threshold = 1e-5
-mc.print_level = 0
+    if mode == "DF":
+        sc.eri_method = "df"
+    elif mode == "CHOLESKY":
+        sc.eri_method = "cholesky"
+        sc.cholesky_threshold = 1e-9
+    else:
+        sc.eri_method = "exact"
 
-if payload["method"] == "OMP2":
-    mshqc.OMP2(mol, basis, ints, scf_res, mc).compute()
-else:
-    mshqc.OMP3(mol, basis, ints, scf_res, mc).compute() 
+    scf_res = (mshqc.UHF(mol, basis, ints, sc) if is_uhf else mshqc.RHF(mol, basis, ints, sc)).compute()
 
-curr_rss, peak_hwm = get_rss_and_hwm_mb()
-net_ram = max(curr_rss - base_rss, peak_hwm - base_hwm, 0.10)
-print(json.dumps({"base_hwm": base_hwm, "peak_hwm": peak_hwm, "net_ram": net_ram}))
+    mc = mshqc.MP2Config()
+    mc.eri_method = mode.lower()
+    mc.energy_threshold = 1e-9
+    mc.gradient_threshold = 1e-5
+    mc.print_level = 0
+
+    if payload["method"] == "OMP2":
+        mshqc.OMP2(mol, basis, ints, scf_res, mc).compute()
+    else:
+        exec_omp3(mshqc.OMP3(mol, basis, ints, scf_res, mc))
+
+    curr_rss, peak_hwm = get_rss_and_hwm_mb()
+    net_ram = max(curr_rss - base_rss, peak_hwm - base_hwm, 0.10)
+    result_str = json.dumps({"base_hwm": base_hwm, "peak_hwm": peak_hwm, "net_ram": net_ram})
+finally:
+    # Kembalikan stdout dan cetak hasil JSON dengan aman
+    os.dup2(old_stdout_fd, 1)
+    os.close(devnull_fd)
+    os.close(old_stdout_fd)
+
+print(result_str)
 """
 
 PSI4_RAM_WORKER = r"""
@@ -485,6 +537,12 @@ net_ram = max(curr_rss - base_rss, peak_hwm - base_hwm, 0.10)
 print(json.dumps({"base_hwm": base_hwm, "peak_hwm": peak_hwm, "net_ram": net_ram}))
 """
 
+def extract_json_safe(output_str):
+    for line in reversed(output_str.splitlines()):
+        line = line.strip()
+        if line.startswith("{") and line.endswith("}"):
+            return json.loads(line)
+    raise ValueError("Valid JSON not found in output: " + output_str)
 
 def run_table_5_calibrated_ram():
     psi4_py = os.environ.get("PSI4_PY") or os.environ.get("PSI4_PYTHON") or ""
@@ -527,12 +585,12 @@ def run_table_5_calibrated_ram():
         })
 
         out_m = subprocess.check_output([sys.executable, "-c", MSHQC_RAM_WORKER, payload], text=True)
-        res_m = json.loads(out_m.strip().splitlines()[-1])
+        res_m = extract_json_safe(out_m)
 
         if has_psi4:
             try:
                 out_p = subprocess.check_output([psi4_py, "-c", PSI4_RAM_WORKER, payload], text=True)
-                res_p = json.loads(out_p.strip().splitlines()[-1])
+                res_p = extract_json_safe(out_p)
                 p_peak = f"{res_p['peak_hwm']:.2f}"
                 p_net  = f"{res_p['net_ram']:.2f}"
                 ratio  = f"{res_p['peak_hwm'] / res_m['peak_hwm']:.2f} x"
