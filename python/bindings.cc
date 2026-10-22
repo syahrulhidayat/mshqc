@@ -631,7 +631,11 @@ NB_MODULE(_mshqc, m) {
         .def_prop_ro("energy_mp2_corr", [](const MP3Result& r) { return r.e_mp2; })
         .def_prop_ro("energy_mp3_corr", [](const MP3Result& r) { return r.e_mp3; })
         .def_rw("converged", &MP3Result::converged)
-        .def_rw("iterations", &MP3Result::iterations);
+        .def_rw("iterations", &MP3Result::iterations)
+        .def_rw("C_alpha", &MP3Result::C_alpha)
+        .def_rw("C_beta", &MP3Result::C_beta)
+        .def_rw("n_occ_alpha", &MP3Result::n_occ_alpha)
+        .def_rw("n_occ_beta", &MP3Result::n_occ_beta);
 
     nb::class_<RMP3>(m, "RMP3")
         .def(nb::init<const SCFResult&, const MP2Result&, const MP2Config&, std::shared_ptr<IntegralEngine>>(),
