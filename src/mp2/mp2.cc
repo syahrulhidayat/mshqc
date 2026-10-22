@@ -22,6 +22,7 @@
 #include "mshqc/mp2/mp2.h"
 #include "mshqc/integrals/eri_transformer.h"
 #include "mshqc/gradient/optimizer.h"
+#include "mshqc/mp3/omp3.h"
 #include <unsupported/Eigen/MatrixFunctions>
 #include <iostream>
 #include <iomanip>
