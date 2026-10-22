@@ -50,7 +50,7 @@ struct MP2Config {
     std::string aux_basis_name = "";
     double df_threshold = 1e-9;
     double cholesky_threshold = 1e-9;
-    std::string opt_method = "lbfgs"; 
+    std::string opt_method = "soscf"; 
 
 
     int max_iterations = 50;
