@@ -524,32 +524,68 @@ def canonicalize_uhf_from_orbitals(mol, ints, scf_res, Ca_init, Cb_init, eri_mod
     return scf_res
 
 
-def run_scf_ground_state(sys_name, mol, basis, ints, eri_mode, is_uhf, psi4_db=None):
+def solve_uhf_clean_mshqc(mol, basis, ints, eri_mode, na, nb, max_iter=100, tol=1e-9):
     """
-    Menjalankan SCF mshqc dan memastikan radikal diatomik (OH, O2) berada pada
-    keadaan dasar UHF sejati (bukan keadaan tereksitasi/metastabil) untuk perbandingan
-    apple-to-apple MP2/MP3/OMP2/OMP3 terhadap Psi4.
+    Menstabilkan referensi UHF murni di dalam basis AO mshqc (libcint)
+    menggunakan Fock builder internal mshqc (via OMP2 0-iterasi).
     """
-    scf_res = run_scf_raw(mol, basis, ints, eri_mode, is_uhf, "cc-pvtz-ri", print_level=0)
-    if sys_name in ("OH", "O2") and psi4_db is not None:
-        key = f"{sys_name}|{eri_mode}"
-        mats = psi4_db.get(key, {}).get("SCF_MATS")
-        if mats is not None:
-            scf_res.C_alpha = np.array(mats["Ca"], dtype=float)
-            scf_res.C_beta = np.array(mats["Cb"], dtype=float)
-            scf_res.P_alpha = np.array(mats["Da"], dtype=float)
-            scf_res.P_beta = np.array(mats["Db"], dtype=float)
-            scf_res.F_alpha = np.array(mats["Fa"], dtype=float)
-            scf_res.F_beta = np.array(mats["Fb"], dtype=float)
-            scf_res.orbital_energies_alpha = np.array(mats["ea"], dtype=float)
-            scf_res.orbital_energies_beta = np.array(mats["eb"], dtype=float)
-            scf_res.energy_total = float(psi4_db[key]["SCF"]["e"])
-            return scf_res
-    if sys_name == "OH" and eri_mode in ("CHOLESKY", "DF"):
-        scf_ex = run_scf_raw(mol, basis, ints, "EXACT", True, "cc-pvtz-ri", print_level=0)
-        return canonicalize_uhf_from_orbitals(mol, ints, scf_res, scf_ex.C_alpha, scf_ex.C_beta, eri_mode)
-    return scf_res
+    S = np.array(ints.compute_overlap())
+    H = np.array(ints.compute_kinetic()) + np.array(ints.compute_nuclear())
+    nbf = S.shape[0]
 
+    # Orthogonalizer kanonik S^(-1/2)
+    evals, evecs = scipy.linalg.eigh(S)
+    X = evecs @ np.diag(1.0 / np.sqrt(evals)) @ evecs.T
+
+    # Jalankan run_scf_raw untuk menginisialisasi struktur SCFResult & L_mat C++
+    scf_res = run_scf_raw(mol, basis, ints, eri_mode, True, "cc-pvtz-ri", print_level=0)
+
+    # Bangun tebakan awal SAD yang menghormati struktur shell (S, P, D, F) di basis mshqc
+    P_sad = np.zeros((nbf, nbf))
+    shell_map = basis.shell_to_basis_function_map()
+    aufbau = [(0, 2.0), (0, 2.0), (1, 6.0), (0, 2.0), (1, 6.0), (0, 2.0), (2, 10.0), (1, 6.0)]
+
+    for atom_idx in range(mol.n_atoms()):
+        Z = mol.atom(atom_idx).atomic_number
+        rem = float(Z)
+        occ_by_l = {0: [], 1: [], 2: [], 3: []}
+        for l_val, cap in aufbau:
+            if rem <= 0:
+                break
+            fill = min(rem, cap)
+            occ_by_l[l_val].append(fill)
+            rem -= fill
+
+        shells_by_l = {0: [], 1: [], 2: [], 3: []}
+        for s_idx in range(basis.n_shells()):
+            sh = basis.shell(s_idx)
+            if sh.center == atom_idx:
+                l_val = int(sh.angular_momentum)
+                if l_val in shells_by_l:
+                    shells_by_l[l_val].append(shell_map[s_idx])
+
+        for l_val, occ_list in occ_by_l.items():
+            deg = 2 * l_val + 1
+            cand = shells_by_l[l_val]
+            for k, occ in enumerate(occ_list):
+                if k < len(cand):
+                    off = cand[k]
+                    for m in range(deg):
+                        P_sad[off + m, off + m] = occ / deg
+
+    # Evaluasi Fock awal dari P_sad secara spin-averaged melalui C++ build_fock_fast
+    # dengan menyiapkan orbital orthogonal dummy yang menghasilkan P_sad
+    cfg_zero = make_mp2_config(eri_mode, "cc-pvtz-ri", print_level=0, max_iterations=0)
+
+    def eval_fock_and_diag(Ca, Cb):
+        scf_res.C_alpha = Ca
+        scf_res.C_beta = Cb
+        scf_res.P_alpha = Ca[:, :na] @ Ca[:, :na].T
+        scf_res.P_beta = Cb[:, :nb] @ Cb[:, :nb].T if nb > 0 else np.zeros_like(S)
+        with suppress_stdout():
+            res0 = mshqc.OMP2(mol, basis, ints, scf_res, cfg_zero).compute()
+        # Rekonstruksi F_a dan F_b dari pseudocanonical blocks atau gunakan Fock AO
+        return scf_res
 
 # ==============================================================================
 # 1. TABEL KOMPRESI TENSOR ERI AO & VEKTOR CHOLESKY AKTUAL
