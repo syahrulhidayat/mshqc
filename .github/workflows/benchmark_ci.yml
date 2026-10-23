@@ -9,7 +9,7 @@ on:
 
 jobs:
   apple_to_apple_benchmark:
-    name: Run Pytest & 60-Run Benchmark (mshqc Wheel vs Psi4)
+    name: Build mshqc from Source & Run Benchmark Suite (mshqc vs Psi4)
     runs-on: ubuntu-latest
     env:
       OMP_NUM_THREADS: "4"
@@ -22,17 +22,79 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.12 (for precompiled mshqc PyPI wheel)
+      - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Install Precompiled mshqc Wheel from PyPI (No C++ Recompile)
+      - name: Cache Static C/C++ Dependencies (libcint & TBLIS)
+        id: cache-deps
+        uses: actions/cache@v4
+        with:
+          path: /tmp/mshqc_deps
+          key: ubuntu-latest-deps-libcint-v6.1.2-tblis-v1.2.0
+
+      - name: Install System Libraries & Build libcint + TBLIS (if not cached)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake ninja-build git wget \
+            libeigen3-dev libhdf5-dev gfortran libquadmath0 libatomic1
+
+          # Symlink HDF5 serial Ubuntu ke /usr/local/lib agar CMakeLists.txt langsung menemukannya
+          sudo mkdir -p /usr/local/lib /usr/local/include
+          if [ -f "/usr/lib/x86_64-linux-gnu/hdf5/serial/libhdf5.so" ]; then
+            sudo ln -sf /usr/lib/x86_64-linux-gnu/hdf5/serial/libhdf5.so /usr/local/lib/libhdf5.so
+            sudo ln -sf /usr/lib/x86_64-linux-gnu/hdf5/serial/libhdf5_cpp.so /usr/local/lib/libhdf5_cpp.so
+          fi
+
+          if [ -f "/tmp/mshqc_deps/lib/libtblis.a" ] || [ -f "/tmp/mshqc_deps/lib64/libtblis.a" ]; then
+            echo "Restoring cached libcint & TBLIS to /usr/local..."
+            sudo cp -rn /tmp/mshqc_deps/* /usr/local/
+            sudo ldconfig
+          else
+            mkdir -p /tmp/mshqc_deps
+
+            # 1. Build libcint v6.1.2
+            git clone --depth 1 -b v6.1.2 https://github.com/sunqm/libcint.git /tmp/libcint
+            mkdir -p /tmp/libcint/build && cd /tmp/libcint/build
+            export CFLAGS="-O3 -fPIC -mavx2 -mfma -mno-avx512f -funroll-loops -fno-math-errno -Wno-incompatible-pointer-types -std=gnu17"
+            cmake -DCMAKE_INSTALL_PREFIX=/usr/local \
+                  -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+                  -DCMAKE_C_FLAGS="$CFLAGS" \
+                  -DENABLE_EXAMPLE=0 -DENABLE_TEST=0 -DBUILD_SHARED_LIBS=OFF ..
+            make -j$(nproc)
+            sudo make install
+
+            # 2. Build TBLIS v1.2.0
+            git clone --depth 1 -b v1.2.0 https://github.com/devinamatthews/tblis.git /tmp/tblis
+            cd /tmp/tblis && git submodule update --init --recursive
+            sed -i 's/SIGSTKSZ/8192/g' src/external/catch/catch.hpp
+            sed -i '1i #include <limits>' src/external/marray/include/short_vector.hpp
+            sed -i '1i #include <limits>' src/external/marray/include/range.hpp
+            sed -i '1i #include <limits>' src/external/thread.h 2>/dev/null || true
+            sed -i '1i #include <limits>' src/util/thread.h 2>/dev/null || true
+            export CFLAGS="-O3 -fPIC -mno-avx512f -mno-avx512vl -mno-avx512dq -mno-avx512bw -mno-avx512cd -Wno-incompatible-pointer-types -std=gnu17"
+            export CXXFLAGS="-O3 -fPIC -mno-avx512f -mno-avx512vl -mno-avx512dq -mno-avx512bw -mno-avx512cd -Wno-incompatible-pointer-types -std=gnu++17"
+            ./configure --prefix=/usr/local --enable-static --disable-shared --with-pic --without-hwloc \
+                        --enable-config=haswell,zen,core2,sandybridge,bulldozer,piledriver,excavator,reference \
+                        CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS" LIBS="-latomic"
+            make -j$(nproc)
+            sudo make install
+
+            sudo ldconfig
+            cp -r /usr/local/include /usr/local/lib* /tmp/mshqc_deps/ 2>/dev/null || true
+          fi
+
+      - name: Compile and Install mshqc from Current Commit (No PyPI Download)
         run: |
           python3 -m venv /tmp/mshqc_venv
-          /tmp/mshqc_venv/bin/pip install --upgrade pip
-          /tmp/mshqc_venv/bin/pip uninstall -y mshqc || true
-          /tmp/mshqc_venv/bin/pip install mshqc --no-cache-dir pytest
+          /tmp/mshqc_venv/bin/pip install --upgrade pip setuptools wheel nanobind cmake ninja \
+            mkl mkl-devel mkl-include numpy scipy pytest
+
+          export CMAKE_PREFIX_PATH="/usr/local"
+          export TBLIS_DIR="/usr/local"
+          export CMAKE_BUILD_PARALLEL_LEVEL="4"
+          /tmp/mshqc_venv/bin/pip install . --no-build-isolation --no-cache-dir -v
 
       - name: Run Automated Pytest Validation Suite (tests/test_mshqc.py)
         run: |
@@ -70,6 +132,10 @@ jobs:
           export PSI4_PYTHON="$PSI4_PY"
           /tmp/mshqc_venv/bin/python -u tests/test_bab4_benchmark.py | tee test_bab4_benchmark.txt
           cp test_bab4_benchmark.txt bab4_extra_bench.txt
+
+      - name: test_universal validation
+        run: |
+          /tmp/mshqc_venv/bin/python tests/test_universal_validation.py | tee test_universal_validation.txt
 
       - name: Upload Benchmark Logs & Comparison Table as Artifacts
         uses: actions/upload-artifact@v4

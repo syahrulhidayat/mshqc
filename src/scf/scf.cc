@@ -295,30 +295,35 @@ SCFResult BaseSCF::compute() {
         }
         energy_ = compute_energy(); 
         
-        Eigen::MatrixXd F_eff_a, F_eff_b;
-        Eigen::MatrixXd FPS_a = F_alpha_ * P_alpha_ * S_;
-        Eigen::MatrixXd err_a = FPS_a - FPS_a.transpose();
-        diis_a.add_iteration(F_alpha_, err_a, P_alpha_);
-        F_eff_a = (iter_scf_ <= 1) ? (0.7 * F_alpha_ + 0.3 * H_) : diis_a.extrapolate();
+        Eigen::MatrixXd F_eff_a = F_alpha_;
+        Eigen::MatrixXd F_eff_b = F_beta_;
 
-        if (is_uhf) {
-            Eigen::MatrixXd FPS_b = F_beta_ * P_beta_ * S_;
-            Eigen::MatrixXd err_b = FPS_b - FPS_b.transpose();
-            diis_b.add_iteration(F_beta_, err_b, P_beta_);
-            F_eff_b = (iter_scf_ <= 1) ? (0.7 * F_beta_ + 0.3 * H_) : diis_b.extrapolate();
+        // Hanya masukkan ke subruang DIIS mulai iterasi ke-2 (setelah P_alpha_ idempoten dari MO)
+        if (iter_scf_ > 1) {
+            Eigen::MatrixXd FPS_a = F_alpha_ * P_alpha_ * S_;
+            Eigen::MatrixXd err_a = FPS_a - FPS_a.transpose();
+            diis_a.add_iteration(F_alpha_, err_a, P_alpha_);
+            F_eff_a = diis_a.extrapolate();
+
+            if (is_uhf) {
+                Eigen::MatrixXd FPS_b = F_beta_ * P_beta_ * S_;
+                Eigen::MatrixXd err_b = FPS_b - FPS_b.transpose();
+                diis_b.add_iteration(F_beta_, err_b, P_beta_);
+                F_eff_b = diis_b.extrapolate();
+            }
         }
 
         solve_fock(F_eff_a, C_alpha_, eps_alpha_);
-        occ_numbers_alpha_ = smear_electrons(eps_alpha_, n_alpha_);
         if (is_uhf) {
             solve_fock(F_eff_b, C_beta_, eps_beta_);
-            occ_numbers_beta_ = smear_electrons(eps_beta_, n_beta_);
         } else {
             C_beta_ = C_alpha_;
             eps_beta_ = eps_alpha_;
-            occ_numbers_beta_ = occ_numbers_alpha_;
         }
 
+        // Gunakan okupansi integer murni untuk determinan tunggal RHF/UHF
+        occ_numbers_alpha_.resize(0);
+        occ_numbers_beta_.resize(0);
         update_densities(); 
         
         double dE = std::abs(energy_ - energy_old_);
@@ -398,29 +403,27 @@ RHF::RHF(const Molecule& mol, const BasisSet& basis, std::shared_ptr<IntegralEng
 void RHF::initial_guess() {
     if (config_.print_level > 0) std::cout << "  [RHF] Generating Initial Guess... ";
     Eigen::MatrixXd P_sad = SADGuess::build(mol_, basis_);
-    if (P_sad.rows() > 0 && P_sad.norm() > 1e-6) {
+    if (P_sad.rows() == nbasis_ && P_sad.norm() > 1e-6) {
         if (config_.print_level > 0) std::cout << "Using SAD.\n";
-        P_alpha_ = 0.5 * P_sad; 
-        P_beta_ = P_alpha_;
-        
-        
-        
-        
-        solve_fock(H_, C_alpha_, eps_alpha_);
-        C_beta_ = C_alpha_; 
-        eps_beta_ = eps_alpha_;
-        occ_numbers_alpha_ = smear_electrons(eps_alpha_, n_alpha_);
-        occ_numbers_beta_  = occ_numbers_alpha_;
-        
-
-        energy_ = 0.0; return; 
+        P_alpha_ = 0.5 * P_sad;
+        P_beta_  = P_alpha_;
+        C_alpha_.resize(0, 0);
+        C_beta_.resize(0, 0);
+        energy_ = 0.0;
+        return;
     }
     if (config_.print_level > 0) std::cout << "Using GWH.\n";
     Eigen::MatrixXd F_gwh = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-    for (int i = 0; i < nbasis_; ++i) for (int j = 0; j < nbasis_; ++j) F_gwh(i, j) = (i == j) ? H_(i, j) : 0.5 * 1.75 * S_(i, j) * (H_(i, i) + H_(j, j));
-    solve_fock(F_gwh, C_alpha_, eps_alpha_); 
-    occ_numbers_alpha_ = smear_electrons(eps_alpha_, n_alpha_); 
-    update_densities(); 
+    for (int i = 0; i < nbasis_; ++i)
+        for (int j = 0; j < nbasis_; ++j)
+            F_gwh(i, j) = (i == j) ? H_(i, j) : 0.5 * 1.75 * S_(i, j) * (H_(i, i) + H_(j, j));
+    solve_fock(F_gwh, C_alpha_, eps_alpha_);
+    C_beta_ = C_alpha_;
+    eps_beta_ = eps_alpha_;
+    occ_numbers_alpha_.resize(0);
+    update_densities();
+    C_alpha_.resize(0, 0);
+    C_beta_.resize(0, 0);
     energy_ = 0.0;
 }
 
@@ -912,22 +915,31 @@ ROHF::ROHF(const Molecule& mol, const BasisSet& basis, std::shared_ptr<IntegralE
 void ROHF::initial_guess() {
     if (config_.print_level > 0) std::cout << "  [ROHF] Generating Initial Guess... ";
     Eigen::MatrixXd P_sad = SADGuess::build(mol_, basis_);
-    if (P_sad.rows() > 0 && P_sad.norm() > 1e-6) {
+    if (P_sad.rows() == nbasis_ && P_sad.norm() > 1e-6) {
         if (config_.print_level > 0) std::cout << "Using SAD.\n";
-        P_alpha_ = 0.5 * P_sad; 
-        P_beta_  = 0.5 * P_sad; 
-        
-        solve_fock(H_, C_alpha_, eps_alpha_);
-        C_beta_ = C_alpha_; 
-        eps_beta_ = eps_alpha_;
-        occ_numbers_alpha_ = smear_electrons(eps_alpha_, n_alpha_); 
-        occ_numbers_beta_  = smear_electrons(eps_beta_, n_beta_);
-        energy_ = 0.0; return; 
+        double n_tot = static_cast<double>(n_alpha_ + n_beta_);
+        double frac_a = (n_tot > 0.0) ? (static_cast<double>(n_alpha_) / n_tot) : 0.5;
+        double frac_b = (n_tot > 0.0) ? (static_cast<double>(n_beta_)  / n_tot) : 0.5;
+        P_alpha_ = frac_a * P_sad;
+        P_beta_  = frac_b * P_sad;
+        C_alpha_.resize(0, 0);
+        C_beta_.resize(0, 0);
+        energy_ = 0.0;
+        return;
     }
     Eigen::MatrixXd F_gwh = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-    for (int i = 0; i < nbasis_; ++i) for (int j = 0; j < nbasis_; ++j) F_gwh(i, j) = (i == j) ? H_(i, j) : 0.5 * 1.75 * S_(i, j) * (H_(i, i) + H_(j, j));
-    solve_fock(F_gwh, C_alpha_, eps_alpha_); C_beta_ = C_alpha_; eps_beta_ = eps_alpha_;
-    occ_numbers_alpha_ = smear_electrons(eps_alpha_, n_alpha_); occ_numbers_beta_  = smear_electrons(eps_beta_, n_beta_); update_densities(); energy_ = 0.0;
+    for (int i = 0; i < nbasis_; ++i)
+        for (int j = 0; j < nbasis_; ++j)
+            F_gwh(i, j) = (i == j) ? H_(i, j) : 0.5 * 1.75 * S_(i, j) * (H_(i, i) + H_(j, j));
+    solve_fock(F_gwh, C_alpha_, eps_alpha_);
+    C_beta_ = C_alpha_;
+    eps_beta_ = eps_alpha_;
+    occ_numbers_alpha_.resize(0);
+    occ_numbers_beta_.resize(0);
+    update_densities();
+    C_alpha_.resize(0, 0);
+    C_beta_.resize(0, 0);
+    energy_ = 0.0;
 }
 
 void ROHF::update_densities() {
@@ -1178,6 +1190,12 @@ SCFResult ROHF::compute() {
         if (symmetrizer_) { symmetrizer_->symmetrize(F_alpha_); symmetrizer_->symmetrize(F_beta_); }
         energy_ = compute_energy();
         
+        
+        if (C_alpha_.rows() != nbasis_) {
+            solve_fock(0.5 * (F_alpha_ + F_beta_), C_alpha_, eps_alpha_);
+            C_beta_ = C_alpha_;
+            eps_beta_ = eps_alpha_;
+        }
         Eigen::MatrixXd Fa_mo = C_alpha_.transpose() * F_alpha_ * C_alpha_; Eigen::MatrixXd Fb_mo = C_alpha_.transpose() * F_beta_  * C_alpha_;
         Eigen::MatrixXd F_uni = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
         int n_c = n_beta_; int n_o = n_alpha_ - n_beta_; int n_v = nbasis_ - n_alpha_; double shift_o = 0.5; double shift_v = 1.0; 

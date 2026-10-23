@@ -21,6 +21,8 @@
 #include "mshqc/symmetry/salc_builder.h"
 #include "mshqc/mp2/mp2.h"
 #include "mshqc/integrals/eri_transformer.h"
+#include "mshqc/integrals/df_eri.h"
+#include "mshqc/integrals/cholesky_eri.h"
 #include "mshqc/gradient/optimizer.h"
 #include <unsupported/Eigen/MatrixFunctions>
 #include <iostream>
@@ -51,6 +53,23 @@ BaseMP2::BaseMP2(const Molecule& mol, const BasisSet& basis,
         config_.use_df = true;
     } else if (!config_.use_df && config_.eri_method != "cholesky") {
         config_.eri_method = "exact"; 
+    }
+
+    // Auto-build L_mat jika scf_ belum memiliki faktor 3-indeks yang sesuai
+    if (config_.use_df && scf_.L_mat.rows() != nbf_ * nbf_) {
+        std::string aux_name = config_.aux_basis_name.empty() ? (basis_.name() + "-RI") : config_.aux_basis_name;
+        BasisSet aux_basis(aux_name, mol_);
+        BasisSet combined = basis_;
+        combined.append(aux_basis);
+        auto df_ints = std::make_shared<IntegralEngine>(mol_, combined);
+        integrals::DensityFittingERI df_eng(basis_, aux_basis, df_ints, config_.df_threshold);
+        df_eng.compute(false);
+        scf_.L_mat = df_eng.get_B_mat();
+    } else if (config_.eri_method == "cholesky" && !config_.use_df && scf_.L_mat.rows() != nbf_ * nbf_) {
+        integrals::CholeskyERI chol_eng(basis_, integrals_);
+        chol_eng.set_threshold(config_.cholesky_threshold);
+        chol_eng.compute();
+        scf_.L_mat = chol_eng.get_L_mat();
     }
 }
 BaseMP2::~BaseMP2() = default;
@@ -989,6 +1008,23 @@ MP2Result OMP2::compute() {
         else scf_.P_beta = scf_.P_alpha;
 
         macro_iter++;
+    }
+
+    // Jika max_iterations <= 0, tetap jalankan 1 kali micro-iteration (pseudocanonicalize + evaluasi energi)
+    if (config_.max_iterations <= 0) {
+        scf_.C_alpha = C_a_current_;
+        scf_.C_beta  = C_b_current_;
+        execute_micro_iterations();
+        const Eigen::MatrixXd& F_ao_a = scf_.F_alpha;
+        const Eigen::MatrixXd& F_ao_b = scf_.F_beta;
+        double e_scf = 0.5 * (scf_.P_alpha.cwiseProduct(H_core_ + F_ao_a).sum() + 
+                              scf_.P_beta.cwiseProduct(H_core_ + F_ao_b).sum()) 
+                       + mol_.nuclear_repulsion_energy();
+        e_corr_best = get_correlation_energy();
+        e_total_best = e_scf + e_corr_best;
+        C_a_last = scf_.C_alpha;
+        C_b_last = scf_.C_beta;
+        is_converged = true;
     }
 
     MP2Result res;

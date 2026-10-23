@@ -523,70 +523,13 @@ def canonicalize_uhf_from_orbitals(mol, ints, scf_res, Ca_init, Cb_init, eri_mod
     scf_res.energy_total = e_tot
     return scf_res
 
-
-def solve_uhf_clean_mshqc(mol, basis, ints, eri_mode, na, nb, max_iter=100, tol=1e-9):
-    """
-    Menstabilkan referensi UHF murni di dalam basis AO mshqc (libcint)
-    menggunakan Fock builder internal mshqc (via OMP2 0-iterasi).
-    """
-    S = np.array(ints.compute_overlap())
-    H = np.array(ints.compute_kinetic()) + np.array(ints.compute_nuclear())
-    nbf = S.shape[0]
-
-    # Orthogonalizer kanonik S^(-1/2)
-    evals, evecs = scipy.linalg.eigh(S)
-    X = evecs @ np.diag(1.0 / np.sqrt(evals)) @ evecs.T
-
-    # Jalankan run_scf_raw untuk menginisialisasi struktur SCFResult & L_mat C++
-    scf_res = run_scf_raw(mol, basis, ints, eri_mode, True, "cc-pvtz-ri", print_level=0)
-
-    # Bangun tebakan awal SAD yang menghormati struktur shell (S, P, D, F) di basis mshqc
-    P_sad = np.zeros((nbf, nbf))
-    shell_map = basis.shell_to_basis_function_map()
-    aufbau = [(0, 2.0), (0, 2.0), (1, 6.0), (0, 2.0), (1, 6.0), (0, 2.0), (2, 10.0), (1, 6.0)]
-
-    for atom_idx in range(mol.n_atoms()):
-        Z = mol.atom(atom_idx).atomic_number
-        rem = float(Z)
-        occ_by_l = {0: [], 1: [], 2: [], 3: []}
-        for l_val, cap in aufbau:
-            if rem <= 0:
-                break
-            fill = min(rem, cap)
-            occ_by_l[l_val].append(fill)
-            rem -= fill
-
-        shells_by_l = {0: [], 1: [], 2: [], 3: []}
-        for s_idx in range(basis.n_shells()):
-            sh = basis.shell(s_idx)
-            if sh.center == atom_idx:
-                l_val = int(sh.angular_momentum)
-                if l_val in shells_by_l:
-                    shells_by_l[l_val].append(shell_map[s_idx])
-
-        for l_val, occ_list in occ_by_l.items():
-            deg = 2 * l_val + 1
-            cand = shells_by_l[l_val]
-            for k, occ in enumerate(occ_list):
-                if k < len(cand):
-                    off = cand[k]
-                    for m in range(deg):
-                        P_sad[off + m, off + m] = occ / deg
-
-    # Evaluasi Fock awal dari P_sad secara spin-averaged melalui C++ build_fock_fast
-    # dengan menyiapkan orbital orthogonal dummy yang menghasilkan P_sad
-    cfg_zero = make_mp2_config(eri_mode, "cc-pvtz-ri", print_level=0, max_iterations=0)
-
-    def eval_fock_and_diag(Ca, Cb):
-        scf_res.C_alpha = Ca
-        scf_res.C_beta = Cb
-        scf_res.P_alpha = Ca[:, :na] @ Ca[:, :na].T
-        scf_res.P_beta = Cb[:, :nb] @ Cb[:, :nb].T if nb > 0 else np.zeros_like(S)
-        with suppress_stdout():
-            res0 = mshqc.OMP2(mol, basis, ints, scf_res, cfg_zero).compute()
-        # Rekonstruksi F_a dan F_b dari pseudocanonical blocks atau gunakan Fock AO
-        return scf_res
-
+def run_scf_ground_state(
+    sys_name, mol, basis, ints, eri_mode, is_uhf, psi4_db=None
+):
+  """Menjalankan SCF murni menggunakan engine C++ mshqc (tanpa menyalin matriks Psi4)."""
+  return run_scf_raw(
+      mol, basis, ints, eri_mode, is_uhf, "cc-pvtz-ri", print_level=0
+  )
 # ==============================================================================
 # 1. TABEL KOMPRESI TENSOR ERI AO & VEKTOR CHOLESKY AKTUAL
 # ==============================================================================
