@@ -76,11 +76,14 @@ void FockBuilder::compute(const Eigen::MatrixXd& P_alpha,
     double dP_max = dP_a.cwiseAbs().maxCoeff();
     if (!is_rhf) dP_max = std::max(dP_max, dP_b.cwiseAbs().maxCoeff());
 
-    if (dP_max < 1e-12) {
+    if (dP_max < 1e-15) {
         F_alpha = H_core_ + G_alpha_accum_;
         if (!is_rhf) F_beta  = H_core_ + G_beta_accum_;
         return;
     }
+
+    P_alpha_old_ = P_alpha; 
+    if (!is_rhf) P_beta_old_ = P_beta;
 
     int nshells = basis_.n_shells();
     double schwarz_max = schwarz_.maxCoeff();

@@ -47,7 +47,7 @@ UNIVERSAL_SYSTEMS = {
                       ("O", 0.0, 0.0,  0.5754 * ANG_TO_BOHR)], "charge": 0, "mult": 2},
 }
 
-def test_system(name, spec, basis_name="cc-pVDZ", eri_mode="df"):
+def test_system(name, spec, basis_name="cc-pVTZ", eri_mode="df"):
     mol = mshqc.Molecule(spec["charge"], spec["mult"])
     for sym, x, y, z in spec["atoms"]:
         mol.add_atom(sym, x, y, z, units="bohr")
@@ -78,4 +78,4 @@ def test_system(name, spec, basis_name="cc-pVDZ", eri_mode="df"):
 if __name__ == "__main__":
     for sys_name, spec in UNIVERSAL_SYSTEMS.items():
         for mode in ["exact", "cholesky", "df"]:
-            test_system(sys_name, spec, basis_name="cc-pVDZ", eri_mode=mode)
+            test_system(sys_name, spec, basis_name="cc-pVTZ", eri_mode=mode)
