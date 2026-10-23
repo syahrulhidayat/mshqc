@@ -996,7 +996,7 @@ MP2Result OMP2::compute() {
         }
 
         if (macro_iter > 0 && grad_norm < grad_thresh_ && delta_e < conv_thresh_) {
-            if (!is_restricted && grad_norm > 1e-8) {
+            if (!is_restricted && orbital_gradient_.lpNorm<Eigen::Infinity>() > 1.5e-6) {
                 Eigen::VectorXd polish_step = compute_soscf_step(trust_radius, expected_change);
                 apply_orbital_rotation(polish_step);
                 C_a_last = C_a_current_;
