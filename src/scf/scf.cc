@@ -332,7 +332,9 @@ SCFResult BaseSCF::compute() {
             : (P_alpha_ - Pa_snapshot).norm();
         
         if (config_.print_level > 0) printf(" %4d %18.10f %10.2e %10.2e\n", iter_scf_, energy(), dE, dP);
-        if (dE < config_.energy_threshold && dP < config_.density_threshold) {
+        double e_tol = is_uhf ? std::min(config_.energy_threshold, 1e-12) : config_.energy_threshold;
+        double p_tol = is_uhf ? std::min(config_.density_threshold, 1e-10) : config_.density_threshold;
+        if (iter_scf_ > 1 && dE < e_tol && dP < p_tol) {
             converged = true;
             break;
         }
@@ -351,11 +353,12 @@ SCFResult BaseSCF::compute() {
         }
         energy_ = compute_energy();
         solve_fock(F_alpha_, C_alpha_, eps_alpha_);
-        occ_numbers_alpha_ = smear_electrons(eps_alpha_, n_alpha_);
         if (is_uhf) {
             solve_fock(F_beta_, C_beta_, eps_beta_);
-            occ_numbers_beta_ = smear_electrons(eps_beta_, n_beta_);
+            occ_numbers_alpha_.resize(0);
+            occ_numbers_beta_.resize(0);
         } else {
+            occ_numbers_alpha_ = smear_electrons(eps_alpha_, n_alpha_);
             C_beta_ = C_alpha_;
             eps_beta_ = eps_alpha_;
             occ_numbers_beta_ = occ_numbers_alpha_;
@@ -378,18 +381,13 @@ SCFResult BaseSCF::compute() {
         io.read_slice_4d("df_tensor", {0, 0, 0, 0}, {(long)n_aux, (long)nbasis_, (long)nbasis_, 1}, L_mat_.data());
     }
 
-   
-    
     SCFResult r; r.energy_total = energy(); r.iterations = iter_scf_; r.converged = converged;
     r.C_alpha = C_alpha_; r.C_beta = C_beta_; r.P_alpha = P_alpha_; r.P_beta = P_beta_;
     r.F_alpha = F_alpha_; r.F_beta = F_beta_; r.orbital_energies_alpha = eps_alpha_; r.orbital_energies_beta = eps_beta_;
     r.irreps_alpha = irreps_a; r.irreps_beta = irreps_b; r.n_occ_alpha = n_alpha_; r.n_occ_beta = n_beta_;
     r.L_mat = L_mat_;
     print_final(r); return r;
-
 }
-
-
 
 
 RHF::RHF(const Molecule& mol, const BasisSet& basis, std::shared_ptr<IntegralEngine> integrals, std::shared_ptr<PointGroup> pg, std::shared_ptr<PetiteList> pl, const SCFConfig& config)
@@ -620,7 +618,7 @@ void UHF::build_fock_matrix() {
         Eigen::MatrixXd dPb = (iter_scf_ == 1) ? P_beta_  : (P_beta_ - P_beta_old_);
         Eigen::MatrixXd dP_tot = dPa + dPb;
 
-        if (dP_tot.cwiseAbs().maxCoeff() < 1e-11) {
+        if (dP_tot.cwiseAbs().maxCoeff() < 1e-14) {
             if (C_alpha_.rows() != nbasis_) { F_alpha_ = H_ + G_accum_a_; F_beta_  = H_ + G_accum_b_; }
         } else {
             bool use_mo_alg = (C_alpha_.rows() == nbasis_) && (C_beta_.rows() == nbasis_);
@@ -735,19 +733,31 @@ void UHF::build_fock_matrix() {
                 G_accum_a_ += (dJ_mat - dKa_acc); G_accum_b_ += (dJ_mat - dKb_acc);
                 F_alpha_ = H_ + G_accum_a_; F_beta_  = H_ + G_accum_b_;
             }
+            P_alpha_old_ = P_alpha_;
+            P_beta_old_  = P_beta_;
         }
     } else if (config_.scf_type == "incore") {
-        Eigen::MatrixXd dPa, dPb;
-        if (iter_scf_ == 1) {
-            dPa = P_alpha_;
-            dPb = P_beta_;
-        } else {
-            dPa = (P_alpha_ - P_alpha_old_).eval();
-            dPb = (P_beta_ - P_beta_old_).eval();
-        }
-        double max_dP = std::max(dPa.cwiseAbs().maxCoeff(), dPb.cwiseAbs().maxCoeff()); 
+        Eigen::MatrixXd P_tot = P_alpha_ + P_beta_;
+        Eigen::MatrixXd Pa_k = (iter_scf_ == 1 && C_alpha_.rows() == nbasis_ && n_alpha_ > 0)
+            ? (C_alpha_.leftCols(n_alpha_) * C_alpha_.leftCols(n_alpha_).transpose()).eval()
+            : P_alpha_;
+        Eigen::MatrixXd Pb_k = (iter_scf_ == 1 && C_beta_.rows() == nbasis_ && n_beta_ > 0)
+            ? (C_beta_.leftCols(n_beta_) * C_beta_.leftCols(n_beta_).transpose()).eval()
+            : P_beta_;
 
-        if (max_dP < 1e-12) {
+        Eigen::MatrixXd dP_tot, dPa, dPb;
+        if (iter_scf_ == 1) {
+            dP_tot = P_tot;
+            dPa    = Pa_k;
+            dPb    = Pb_k;
+        } else {
+            dP_tot = (P_tot - G_J_accum_a_).eval();
+            dPa    = (Pa_k - P_alpha_old_).eval();
+            dPb    = (Pb_k - P_beta_old_).eval();
+        }
+        double max_dP = std::max({dP_tot.cwiseAbs().maxCoeff(), dPa.cwiseAbs().maxCoeff(), dPb.cwiseAbs().maxCoeff()}); 
+
+        if (max_dP < 1e-14) {
             F_alpha_ = H_ + G_accum_a_;
             F_beta_  = H_ + G_accum_b_;
         } else {
@@ -787,8 +797,8 @@ void UHF::build_fock_matrix() {
                                     if (std::abs(val) < 1e-12) continue;
 
                                     double v = val * fac;
-                                    double pt_ls = dPa(lam, sig) + dPb(lam, sig);
-                                    double pt_mn = dPa(mu, nu) + dPb(mu, nu);
+                                    double pt_ls = dP_tot(lam, sig);
+                                    double pt_mn = dP_tot(mu, nu);
                                     double v2 = v * 2.0;
 
                                     Ga_local(mu, nu) += v2 * pt_ls; Gb_local(mu, nu) += v2 * pt_ls;
@@ -821,11 +831,14 @@ void UHF::build_fock_matrix() {
             G_accum_b_ += dGb;
             F_alpha_ = H_ + G_accum_a_; 
             F_beta_  = H_ + G_accum_b_;
+            G_J_accum_a_ = P_tot;
+            P_alpha_old_ = Pa_k;
+            P_beta_old_  = Pb_k;
         }
     } else {
         fock_engine_->compute(P_alpha_, P_beta_, F_alpha_, F_beta_); 
+        P_alpha_old_ = P_alpha_; P_beta_old_  = P_beta_; 
     }
-    P_alpha_old_ = P_alpha_; P_beta_old_  = P_beta_; 
 }
 
 double RHF::compute_energy() { return P_alpha_.cwiseProduct(H_ + F_alpha_).sum(); }
