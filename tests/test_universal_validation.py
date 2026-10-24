@@ -2,13 +2,13 @@
 """
 Universal Validation Suite for MSHQC vs Psi4
 Covers:
-1. Period 1-3 Atoms (H to Ar, Z=1..18) & Period 4 Representatives (K, Ca, Mn, Zn, Ga..Kr)
+1. Period 1-3 Atoms (H to Ar, Z=1..18) & Period 4 Representatives (K, Ca, Mn, Zn, As, Kr)
 2. Comprehensive Molecular Taxonomy:
    - 1D Diatomics (Single & Triple bonds: H2, LiH, HF, HCl, N2, CO)
-   - 2D Planar & Carbonyl/Linear Polyatomics (H2O, H2S, HCN, H2CO)
-   - 3D Non-Planar Molecules (NH3, PH3, CH4)
-   - Charged Species / Cations & Anions (H3O+, NH4+, OH-, CN-)
-   - Open-Shell Radicals & Biradicals (OH, SH, NH2, CH3, CH2_triplet, NH, O2, S2, NO, CN)
+   - 2D Planar & Linear Polyatomics (H2O, H2S)
+   - 3D Non-Planar Molecules (NH3, CH4)
+   - Charged Species / Cations & Anions (H3O+, OH-)
+   - Open-Shell Radicals & Biradicals (OH, SH, NH2, CH3, CH2_triplet, NH, O2)
 3. Multi-Mode ERI (EXACT, CHOLESKY, DF) and Multi-Basis (cc-pVDZ, cc-pVTZ, def2-TZVP)
    across HF, MP2, MP3, OMP2, OMP3, and <S^2>.
 """
@@ -27,7 +27,6 @@ ANG_TO_BOHR = 1.8897259886
 CC_PVTZ_SUPPORTED_Z = set(range(1, 19)) | {20} | set(range(31, 37))
 
 # Format: "Nama": (charge, mult, n_alpha, n_beta, [(Z, sym, x_bohr, y_bohr, z_bohr), ...], tier)
-# tier: "standard" (dijalankan default di CI) atau "full" (audit lengkap seluruh atom & molekul)
 SYSTEMS = {
     # =========================================================================
     # 1. ATOM PERIODE 1 & 2 (Z = 1..10)
@@ -341,18 +340,18 @@ def test_system(name, spec, basis_name="cc-pVTZ", eri_mode="EXACT", exact_ref_ca
     scf_cfg.print_level = 0
 
     if is_closed:
-        scf = mshqc.RHF(mol, basis, integrals, None, None, scf_cfg)
+        scf = mshqc.RHF(mol, basis, integrals, scf_cfg)
     else:
-        scf = mshqc.UHF(mol, basis, integrals, None, None, na, nb, scf_cfg)
+        scf = mshqc.UHF(mol, basis, integrals, na, nb, scf_cfg)
 
     scf_res = scf.compute()
     if not scf_res.converged:
         scf_cfg.max_iterations = 250
         scf_cfg.density_threshold = 1e-6
         scf = (
-            mshqc.RHF(mol, basis, integrals, None, None, scf_cfg)
+            mshqc.RHF(mol, basis, integrals, scf_cfg)
             if is_closed
-            else mshqc.UHF(mol, basis, integrals, None, None, na, nb, scf_cfg)
+            else mshqc.UHF(mol, basis, integrals, na, nb, scf_cfg)
         )
         scf_res = scf.compute()
 

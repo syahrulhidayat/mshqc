@@ -128,9 +128,17 @@ Eigen::MatrixXd DIIS::extrapolate() {
     // 1. Siapkan Sistem Linear Pulay
     // Ambil sub-matriks B yang relevan (n x n) dari cache
     Eigen::MatrixXd A(n + 1, n + 1);
-    
-    // Copy blok error overlap dari cache B_matrix
-    A.topLeftCorner(n, n) = B_matrix_.topLeftCorner(n, n);
+    Eigen::MatrixXd B_sub = B_matrix_.topLeftCorner(n, n);
+
+    // Normalisasi skala B_sub saat error sudah kecil (< 1e-3) agar singular values
+    // tidak terpotong oleh threshold 1e-12 di solve_svd() pada konvergensi ketat
+    double max_diag = B_sub.diagonal().cwiseAbs().maxCoeff();
+    if (max_diag > 0.0 && max_diag < 1e-6) {
+        B_sub /= max_diag;
+    }
+
+    // Copy blok error overlap yang sudah dinormalisasi
+    A.topLeftCorner(n, n) = B_sub;
     
     // Set border Lagrange Multiplier (-1 di pinggir, 0 di pojok)
     A.col(n).head(n).setConstant(-1.0);
