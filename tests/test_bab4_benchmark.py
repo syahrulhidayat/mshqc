@@ -188,8 +188,9 @@ def build_ints(mol, basis):
 
 def make_scf_config(eri_mode, aux_basis_name="", print_level=0):
     scf_cfg = mshqc.SCFConfig()
-    scf_cfg.energy_threshold = 1e-9
-    scf_cfg.density_threshold = 1e-9
+    scf_cfg.scf_type = "incore"
+    scf_cfg.energy_threshold = 1e-11
+    scf_cfg.density_threshold = 1e-10
     scf_cfg.print_level = print_level
     if eri_mode == "DF":
         scf_cfg.eri_method = "df"
@@ -207,7 +208,7 @@ def make_scf_config(eri_mode, aux_basis_name="", print_level=0):
 def make_mp2_config(eri_mode, aux_basis_name="", print_level=0, max_iterations=50):
     cfg = mshqc.MP2Config()
     cfg.energy_threshold = 1e-9
-    cfg.gradient_threshold = 1e-5
+    cfg.gradient_threshold = 1e-6
     cfg.max_iterations = max_iterations
     cfg.print_level = print_level
     if eri_mode == "DF":
@@ -321,18 +322,18 @@ for item in payload["tasks"]:
     opts = {
         "basis": basis_name,
         "reference": ref,
-        "e_convergence": 1e-9,
-        "d_convergence": 1e-9,
+        "e_convergence": 1e-11,
+        "d_convergence": 1e-10,
         "scf_type": scf_type,
         "mp2_type": corr_type,
         "mp_type": corr_type,
         "cc_type": corr_type,
         "freeze_core": "false",
-        "r_convergence": 1e-5,
-        "rms_mograd_convergence": 1e-5,
-        "max_mograd_convergence": 1e-4,
-        "maxiter": 100,
-        "mo_maxiter": 50,
+        "r_convergence": 1e-7,
+        "rms_mograd_convergence": 1e-7,
+        "max_mograd_convergence": 1e-6,
+        "maxiter": 150,
+        "mo_maxiter": 100,
         "read_scf_3index": False,
     }
     if eri_mode == "df":

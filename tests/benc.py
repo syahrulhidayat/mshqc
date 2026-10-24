@@ -102,9 +102,9 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
         "mp_type": corr_type,
         "cc_type": corr_type,
         "freeze_core": "false",
-        "r_convergence": 1e-5,
-        "rms_mograd_convergence": 1e-5,
-        "max_mograd_convergence": 1e-4,
+        "r_convergence": 1e-7,
+        "rms_mograd_convergence": 1e-7,
+        "max_mograd_convergence": 1e-6,
         "read_scf_3index": False,
     }
 
