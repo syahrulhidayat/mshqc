@@ -752,13 +752,6 @@ def run_table_5_head_to_head_and_relaxation(psi4_db):
                 t0 = time.perf_counter()
                 scf_res = run_scf_ground_state(sys_name, mol, basis, ints, mode, is_uhf, psi4_db)
                 t_scf = time.perf_counter() - t0
-                if is_uhf and "SCF_MATS" in p_entry:
-                    oa, ob = get_occ_counts(sys_name, scf_res)
-                    _, s2_mshqc = compute_spin_s2(mol, ints, scf_res.C_alpha, scf_res.C_beta, oa, ob)
-                    p_s2 = p_entry.get("SCF", {}).get("s2", s2_mshqc)
-                    p_e  = p_entry.get("SCF", {}).get("e", scf_res.energy_total)
-                    if abs(scf_res.energy_total - p_e) > 1e-8 or abs(s2_mshqc - p_s2) > 1e-8:
-                        scf_res = canonicalize_uhf_from_orbitals(mol, ints, scf_res, p_entry["SCF_MATS"]["Ca"], p_entry["SCF_MATS"]["Cb"], mode)
                 e_scf = scf_res.energy_total
 
                 cfg = make_mp2_config(mode, "cc-pvtz-ri", print_level=0, max_iterations=50)
