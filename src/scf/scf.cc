@@ -909,23 +909,36 @@ UHF::UHF(const Molecule& mol, const BasisSet& basis, std::shared_ptr<IntegralEng
 void UHF::initial_guess() {
     if (config_.print_level > 0) std::cout << "  [UHF] Generating Initial Guess... ";
     Eigen::MatrixXd P_sad = SADGuess::build(mol_, basis_);
+    
     if (P_sad.rows() > 0 && P_sad.norm() > 1e-6) {
         P_alpha_ = 0.5 * P_sad;
         P_beta_  = 0.5 * P_sad;
         
-        // KODE YANG DIHAPUS: Blok P_alpha_(i, i) *= 1.1; 
-        
+        // PEMECAH SIMETRI SPIN AMAN (Trace Conserving)
+        if (n_alpha_ != n_beta_) {
+            for (int i = 0; i < nbasis_; ++i) {
+                if (i % 2 == 0) {
+                    P_alpha_(i, i) += 0.02;
+                    P_beta_(i, i)  -= 0.02;
+                } else {
+                    P_alpha_(i, i) -= 0.02;
+                    P_beta_(i, i)  += 0.02;
+                }
+            }
+        }
+
         if (mol_.n_atoms() == 1) {
             solve_fock(H_, C_alpha_, eps_alpha_);
-            solve_fock(H_, C_beta_, eps_beta_); 
+            solve_fock(H_, C_beta_, eps_beta_);
             occ_numbers_alpha_ = smear_electrons(eps_alpha_, n_alpha_);
             occ_numbers_beta_  = smear_electrons(eps_beta_, n_beta_);
         } else {
             C_alpha_.resize(0, 0);
             C_beta_.resize(0, 0);
         }
+
         energy_ = 0.0;
-        return; 
+        return;
     }
 
     if (config_.print_level > 0) std::cout << "Using GWH.\n";

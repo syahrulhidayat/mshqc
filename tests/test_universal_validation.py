@@ -31,9 +31,6 @@ CC_PVTZ_SUPPORTED_Z = set(range(1, 19)) | {20} | set(range(31, 37))
 
 # Format: "Nama": (charge, mult, n_alpha, n_beta, [(Z, sym, x_bohr, y_bohr, z_bohr), ...], tier)
 SYSTEMS = {
-    # =========================================================================
-    # 1. ATOM PERIODE 1 & 2 (Z = 1..10)
-    # =========================================================================
     "H":  (0, 2, 1, 0, [(1,  "H",  0.0, 0.0, 0.0)], "standard"),
     "He": (0, 1, 1, 1, [(2,  "He", 0.0, 0.0, 0.0)], "standard"),
     "Li": (0, 2, 2, 1, [(3,  "Li", 0.0, 0.0, 0.0)], "standard"),
@@ -45,9 +42,6 @@ SYSTEMS = {
     "F":  (0, 2, 5, 4, [(9,  "F",  0.0, 0.0, 0.0)], "standard"),
     "Ne": (0, 1, 5, 5, [(10, "Ne", 0.0, 0.0, 0.0)], "standard"),
 
-    # =========================================================================
-    # 2. ATOM PERIODE 3 (Z = 11..18) - Validasi cabang Z <= 18 di sad_data.cc
-    # =========================================================================
     "Na": (0, 2, 6, 5, [(11, "Na", 0.0, 0.0, 0.0)], "standard"),
     "Mg": (0, 1, 6, 6, [(12, "Mg", 0.0, 0.0, 0.0)], "standard"),
     "Al": (0, 2, 7, 6, [(13, "Al", 0.0, 0.0, 0.0)], "full"),
@@ -57,9 +51,6 @@ SYSTEMS = {
     "Cl": (0, 2, 9, 8, [(17, "Cl", 0.0, 0.0, 0.0)], "full"),
     "Ar": (0, 1, 9, 9, [(18, "Ar", 0.0, 0.0, 0.0)], "standard"),
 
-    # =========================================================================
-    # 3. PERWAKILAN ATOM PERIODE 4 (Z = 19..36, s/d/p blocks) - Cabang Z <= 36
-    # =========================================================================
     "K":  (0, 2, 10, 9,  [(19, "K",  0.0, 0.0, 0.0)], "full"),
     "Ca": (0, 1, 10, 10, [(20, "Ca", 0.0, 0.0, 0.0)], "full"),
     "Mn": (0, 6, 15, 10, [(25, "Mn", 0.0, 0.0, 0.0)], "full"),
@@ -67,9 +58,6 @@ SYSTEMS = {
     "As": (0, 4, 18, 15, [(33, "As", 0.0, 0.0, 0.0)], "full"),
     "Kr": (0, 1, 18, 18, [(36, "Kr", 0.0, 0.0, 0.0)], "full"),
 
-    # =========================================================================
-    # 4. MOLEKUL CLOSED-SHELL: 1D, 2D, & 3D NON-PLANAR (PERIODE 1-3)
-    # =========================================================================
     "H2": (0, 1, 1, 1, [
         (1, "H", 0.0, 0.0, -0.37 * ANG_TO_BOHR),
         (1, "H", 0.0, 0.0,  0.37 * ANG_TO_BOHR),
@@ -104,7 +92,6 @@ SYSTEMS = {
         (1,  "H", 0.000000,  0.961600 * ANG_TO_BOHR, -0.824000 * ANG_TO_BOHR),
         (1,  "H", 0.000000, -0.961600 * ANG_TO_BOHR, -0.824000 * ANG_TO_BOHR),
     ], "full"),
-    # 3D Non-Planar (x, y, z != 0): Piramida Trigonal C3v & Tetrahedral Td
     "NH3": (0, 1, 5, 5, [
         (7, "N",  0.000000,  0.000000,  0.116500 * ANG_TO_BOHR),
         (1, "H",  0.000000,  0.939700 * ANG_TO_BOHR, -0.271800 * ANG_TO_BOHR),
@@ -119,9 +106,6 @@ SYSTEMS = {
         (1, "H",  0.629118 * ANG_TO_BOHR, -0.629118 * ANG_TO_BOHR, -0.629118 * ANG_TO_BOHR),
     ], "standard"),
 
-    # =========================================================================
-    # 5. SPESIES IONIK (KATION & ANION)
-    # =========================================================================
     "OH-": (-1, 1, 5, 5, [
         (8, "O", 0.0, 0.0, 0.0),
         (1, "H", 0.0, 0.0, 0.9640 * ANG_TO_BOHR),
@@ -133,9 +117,6 @@ SYSTEMS = {
         (1, "H", -0.828800 * ANG_TO_BOHR, -0.478500 * ANG_TO_BOHR, -0.210000 * ANG_TO_BOHR),
     ], "full"),
 
-    # =========================================================================
-    # 6. RADIKAL KULIT TERBUKA & BIRADIKAL (DOUBLET & TRIPLET, 1D/2D/3D)
-    # =========================================================================
     "OH": (0, 2, 5, 4, [
         (8, "O", 0.0, 0.0, 0.0),
         (1, "H", 0.0, 0.0, 0.9697 * ANG_TO_BOHR),
@@ -170,14 +151,12 @@ SYSTEMS = {
     ], "standard"),
 }
 
-# Atom tunggal dengan subkulit p/d terisi sebagian yang memiliki degenerasi orientasi ruang
 DEGENERATE_OPEN_SHELL_ATOMS = {"B", "C", "O", "F", "Al", "Si", "S", "Cl"}
 
 try:
     libc = ctypes.CDLL(None)
 except Exception:
     libc = None
-
 
 def flush_all():
     """Memastikan buffer stdout Python dan C++ di-flush secara sinkron."""
@@ -187,7 +166,6 @@ def flush_all():
             libc.fflush(None)
         except Exception:
             pass
-
 
 @contextmanager
 def suppress_stdout():
@@ -203,7 +181,6 @@ def suppress_stdout():
         os.dup2(old_stdout_fd, 1)
         os.close(devnull_fd)
         os.close(old_stdout_fd)
-
 
 def find_psi4_python():
     """Mencari executable Python yang memiliki modul Psi4."""
@@ -234,9 +211,7 @@ def find_psi4_python():
     except ImportError:
         return None
 
-
 PSI4_PYTHON = find_psi4_python()
-
 
 def select_basis_for_system(spec, requested_basis):
     """Memilih basis set yang tersedia untuk seluruh atom dalam sistem."""
@@ -246,7 +221,6 @@ def select_basis_for_system(spec, requested_basis):
             if z not in CC_PVTZ_SUPPORTED_Z:
                 return "def2-TZVP"
     return requested_basis
-
 
 def compute_s2_from_mo(Ca, Cb, S, na, nb):
     """Menghitung nilai ekspektasi <S^2> dari matriks koefisien orbital Ca dan Cb."""
@@ -259,7 +233,6 @@ def compute_s2_from_mo(Ca, Cb, S, na, nb):
     S_mat = np.asarray(S)
     overlap_ab = Ca_occ.T @ S_mat @ Cb_occ
     return float(ideal + nb - np.sum(overlap_ab ** 2))
-
 
 def canonicalize_uhf_subspace(mol, basis, integrals, scf_res, Ca_init, Cb_init, eri_mode, aux_basis_name):
     """
@@ -312,7 +285,6 @@ def canonicalize_uhf_subspace(mol, basis, integrals, scf_res, Ca_init, Cb_init, 
     scf_res.energy_electronic = float(e_elec)
     scf_res.energy_total = float(e_elec + mol.nuclear_repulsion_energy())
     return scf_res
-
 
 def run_psi4_reference(name, spec, basis_name, eri_mode):
     """Menjalankan referensi Psi4 melalui PSI4_PYTHON subprocess dengan isolasi snapshot wfn."""
@@ -510,7 +482,8 @@ def test_system(name, spec, basis_name="cc-pVTZ", eri_mode="EXACT", exact_ref_ca
 
         s2_hf = compute_s2_from_mo(scf_res.C_alpha, scf_res.C_beta, S_mat, na, nb)
         if psi_res is not None and not is_closed and n_elec > 1:
-            if abs(scf_res.energy_total - psi_res["HF"]) > 1e-6 or abs(s2_hf - psi_res["S2_HF"]) > 1e-6:
+            # Gunakan toleransi super ketat (1e-8) agar degenerat OH/O2 terdeteksi & sinkron
+            if abs(scf_res.energy_total - psi_res["HF"]) > 1e-8 or abs(s2_hf - psi_res["S2_HF"]) > 1e-8:
                 scf_res = canonicalize_uhf_subspace(
                     mol, basis, integrals, scf_res,
                     psi_res["Ca"], psi_res["Cb"],
@@ -529,7 +502,7 @@ def test_system(name, spec, basis_name="cc-pVTZ", eri_mode="EXACT", exact_ref_ca
             mp2_cfg.use_df = (eri_mode == "DF")
             mp2_cfg.aux_basis_name = aux_basis_name
             mp2_cfg.cholesky_threshold = 1e-9
-            mp2_cfg.energy_threshold = 1e-9
+            mp2_cfg.energy_threshold = 1e-10
             mp2_cfg.gradient_threshold = 1e-6
             mp2_cfg.max_iterations = 100
             mp2_cfg.print_level = 0
