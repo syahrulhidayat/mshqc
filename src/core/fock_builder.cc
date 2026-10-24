@@ -148,7 +148,7 @@ void FockBuilder::compute(const Eigen::MatrixXd& P_alpha,
                     for (int m = 0; m < dM; ++m) {
                         int mu = offM + m;
                         double val = *I_ptr++; 
-                        if (std::abs(val) < 1e-12) continue;
+                        if (std::abs(val) < 1e-14) continue;
 
                         double v = val * fac;
                         double pt_ls = dP_a(lam, sig) + dP_b(lam, sig);
@@ -202,7 +202,7 @@ void FockBuilder::compute(const Eigen::MatrixXd& P_alpha,
                     for (int m = 0; m < dM; ++m) {
                         int mu = offM + m;
                         double val = *I_ptr++; 
-                        if (std::abs(val) < 1e-12) continue;
+                        if (std::abs(val) < 1e-14) continue;
 
                         double v = val * fac;
                         double v2 = v * 2.0;

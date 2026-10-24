@@ -89,71 +89,71 @@ void DIIS::add_iteration(const Eigen::MatrixXd& F,
 }
 
 // -----------------------------------------------------------------------------
-// SVD SOLVER (Stability King)
+// SVD SOLVER (Relative Threshold for Equilibrated Pulay System)
 // -----------------------------------------------------------------------------
 Eigen::VectorXd DIIS::solve_svd(const Eigen::MatrixXd& A) {
-    // Lakukan JacobiSVD (Sangat robust untuk matriks singular)
-    // ComputeThinU | ComputeThinV cukup karena matriks A kecil dan square
     Eigen::JacobiSVD<Eigen::MatrixXd> svd(A, Eigen::ComputeThinU | Eigen::ComputeThinV);
-    
-    // Filter nilai singular yang terlalu kecil (Noise removal)
-    double threshold = 1e-12;
-    
+
     int n = A.rows();
     Eigen::VectorXd singular_values = svd.singularValues();
+    double max_sv = (singular_values.size() > 0) ? singular_values(0) : 1.0;
+    double threshold = 1e-14 * max_sv;
+
     Eigen::MatrixXd S_inv = Eigen::MatrixXd::Zero(n, n);
-    
     for (int i = 0; i < n; ++i) {
         if (singular_values(i) > threshold) {
             S_inv(i, i) = 1.0 / singular_values(i);
         } else {
-            S_inv(i, i) = 0.0; // Truncate noise / Linear Dependency
+            S_inv(i, i) = 0.0;
         }
     }
 
-    // RHS Vector: [0, 0, ..., -1] (Lagrange multiplier constraint)
     Eigen::VectorXd rhs = Eigen::VectorXd::Zero(n);
     rhs(n - 1) = -1.0;
 
-    // Solve: x = V * S^-1 * U^T * b
     return svd.matrixV() * S_inv * svd.matrixU().transpose() * rhs;
 }
 
 Eigen::MatrixXd DIIS::extrapolate() {
     int n = fock_history_.size();
-    
-    // Jika history terlalu sedikit, belum bisa ekstrapolasi
     if (n < 2) return fock_history_.back();
 
-    // 1. Siapkan Sistem Linear Pulay
-    // Ambil sub-matriks B yang relevan (n x n) dari cache
-    Eigen::MatrixXd A(n + 1, n + 1);
     Eigen::MatrixXd B_sub = B_matrix_.topLeftCorner(n, n);
+    Eigen::VectorXd diag = B_sub.diagonal();
 
-    // Normalisasi skala B_sub saat error sudah kecil (< 1e-3) agar singular values
-    // tidak terpotong oleh threshold 1e-12 di solve_svd() pada konvergensi ketat
-    double max_diag = B_sub.diagonal().cwiseAbs().maxCoeff();
-    if (max_diag > 0.0 && max_diag < 1e-6) {
-        B_sub /= max_diag;
+    // Jika error terakhir sudah mencapai nol mesin, langsung gunakan Fock terakhir
+    if (diag(n - 1) <= 1e-30) {
+        return fock_history_.back();
     }
 
-    // Copy blok error overlap yang sudah dinormalisasi
-    A.topLeftCorner(n, n) = B_sub;
-    
-    // Set border Lagrange Multiplier (-1 di pinggir, 0 di pojok)
-    A.col(n).head(n).setConstant(-1.0);
-    A.row(n).head(n).setConstant(-1.0);
+    // Penyeimbangan diagonal (Diagonal Equilibration) setara Psi4 DIISManager:
+    // d_i = sqrt(B_ii) = ||e_i||, sehingga matriks korelasi C_ij = B_ij / (d_i * d_j)
+    // selalu memiliki diagonal 1.0 dan bebas dari pemotongan SVD saat ||e_i|| < 1e-6.
+    Eigen::VectorXd d = diag.cwiseMax(1e-30).cwiseSqrt();
+    double d_min = d.minCoeff();
+    Eigen::VectorXd w = d_min * d.cwiseInverse();
+
+    Eigen::MatrixXd A = Eigen::MatrixXd::Zero(n + 1, n + 1);
+    for (int i = 0; i < n; ++i) {
+        for (int j = 0; j < n; ++j) {
+            A(i, j) = B_sub(i, j) / (d(i) * d(j));
+        }
+        A(i, n) = -w(i);
+        A(n, i) = -w(i);
+    }
     A(n, n) = 0.0;
 
-    // 2. Selesaikan dengan SVD
-    Eigen::VectorXd coeffs_full = solve_svd(A);
-    
-    // Ambil n koefisien pertama (abaikan lagrange multiplier di akhir)
-    Eigen::VectorXd coeffs = coeffs_full.head(n);
+    Eigen::VectorXd coeffs_tilde = solve_svd(A).head(n);
+    Eigen::VectorXd coeffs = coeffs_tilde.cwiseProduct(w);
+    double sum_c = coeffs.sum();
+    if (std::abs(sum_c) > 1e-15) {
+        coeffs /= sum_c;
+    } else {
+        coeffs.setZero();
+        coeffs(n - 1) = 1.0;
+    }
 
-    // 3. Konstruksi Fock Matrix Baru: F_new = sum(c_i * F_i)
     Eigen::MatrixXd F_ext = Eigen::MatrixXd::Zero(fock_history_[0].rows(), fock_history_[0].cols());
-    
     for (int i = 0; i < n; i++) {
         F_ext += coeffs(i) * fock_history_[i];
     }

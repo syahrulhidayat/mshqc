@@ -978,7 +978,8 @@ MP2Result OMP2::compute() {
         }
         step_rejected = false;
 
-        if (e_tot < e_total_best) { e_total_best = e_tot; e_corr_best = e_mp2_corr; }
+        e_total_best = e_tot;
+        e_corr_best = e_mp2_corr;
         
         double delta_e = (macro_iter > 0) ? std::abs(e_tot - e_total_last) : 1e99;
         e_total_last = e_tot;
@@ -996,25 +997,11 @@ MP2Result OMP2::compute() {
         }
 
         if (macro_iter > 0 && grad_norm < grad_thresh_ && delta_e < conv_thresh_) {
-            if (grad_norm > 1.0e-7) {
+            if (!is_restricted && grad_norm > 1.0e-7) {
                 Eigen::VectorXd polish_step = compute_soscf_step(trust_radius, expected_change);
                 apply_orbital_rotation(polish_step);
-                scf_.C_alpha = C_a_current_;
-                scf_.C_beta  = C_b_current_;
-                execute_micro_iterations();
-                const Eigen::MatrixXd& F_ao_a_pol = scf_.F_alpha;
-                const Eigen::MatrixXd& F_ao_b_pol = scf_.F_beta;
-                double e_scf_pol = 0.5 * (scf_.P_alpha.cwiseProduct(H_core_ + F_ao_a_pol).sum() +
-                                          scf_.P_beta.cwiseProduct(H_core_ + F_ao_b_pol).sum())
-                                   + mol_.nuclear_repulsion_energy();
-                double e_corr_pol = get_correlation_energy();
-                double e_tot_pol = e_scf_pol + e_corr_pol;
-                if (e_tot_pol <= e_total_best + 1e-10) {
-                    e_total_best = e_tot_pol;
-                    e_corr_best = e_corr_pol;
-                    C_a_last = scf_.C_alpha;
-                    C_b_last = scf_.C_beta;
-                }
+                C_a_last = C_a_current_;
+                C_b_last = C_b_current_;
             }
             is_converged = true;
             break;
