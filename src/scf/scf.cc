@@ -909,23 +909,11 @@ UHF::UHF(const Molecule& mol, const BasisSet& basis, std::shared_ptr<IntegralEng
 void UHF::initial_guess() {
     if (config_.print_level > 0) std::cout << "  [UHF] Generating Initial Guess... ";
     Eigen::MatrixXd P_sad = SADGuess::build(mol_, basis_);
-    
     if (P_sad.rows() > 0 && P_sad.norm() > 1e-6) {
         P_alpha_ = 0.5 * P_sad;
         P_beta_  = 0.5 * P_sad;
         
-        // PEMECAH SIMETRI SPIN AMAN (Trace Conserving)
-        if (n_alpha_ != n_beta_) {
-            for (int i = 0; i < nbasis_; ++i) {
-                if (i % 2 == 0) {
-                    P_alpha_(i, i) += 0.02;
-                    P_beta_(i, i)  -= 0.02;
-                } else {
-                    P_alpha_(i, i) -= 0.02;
-                    P_beta_(i, i)  += 0.02;
-                }
-            }
-        }
+        // Baris P_alpha_(i,i) *= 1.1 SUDAH DIHAPUS SEPENUHNYA
 
         if (mol_.n_atoms() == 1) {
             solve_fock(H_, C_alpha_, eps_alpha_);
