@@ -87,7 +87,7 @@ void FockBuilder::compute(const Eigen::MatrixXd& P_alpha,
 
     int nshells = basis_.n_shells();
     double schwarz_max = schwarz_.maxCoeff();
-    double threshold = 1e-11; 
+    double threshold = 1e-13;
 
     std::vector<int> shell_offsets(nshells);
     std::vector<int> shell_sizes(nshells);

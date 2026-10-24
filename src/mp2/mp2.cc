@@ -547,12 +547,12 @@ void OMP2::init_fast_integrals() {
                 if (std::abs(vK) > sparse_threshold) {
                     kv.push_back(vK);
                     ki.push_back(density_idx);
+                    max_val_row = std::max(max_val_row, std::abs(vK));
                 }
             }
         }
-        double s_val = std::sqrt(max_val_row);
-        schwarz_(mu, nu) = s_val;
-        schwarz_(nu, mu) = s_val;
+        schwarz_(mu, nu) = max_val_row;
+        schwarz_(nu, mu) = max_val_row;
     }
 
     for (int r = 0; r < n_rows; ++r) {
@@ -996,11 +996,25 @@ MP2Result OMP2::compute() {
         }
 
         if (macro_iter > 0 && grad_norm < grad_thresh_ && delta_e < conv_thresh_) {
-            if (!is_restricted && grad_norm > 3.0e-6) {
+            if (grad_norm > 1.0e-7) {
                 Eigen::VectorXd polish_step = compute_soscf_step(trust_radius, expected_change);
                 apply_orbital_rotation(polish_step);
-                C_a_last = C_a_current_;
-                C_b_last = C_b_current_;
+                scf_.C_alpha = C_a_current_;
+                scf_.C_beta  = C_b_current_;
+                execute_micro_iterations();
+                const Eigen::MatrixXd& F_ao_a_pol = scf_.F_alpha;
+                const Eigen::MatrixXd& F_ao_b_pol = scf_.F_beta;
+                double e_scf_pol = 0.5 * (scf_.P_alpha.cwiseProduct(H_core_ + F_ao_a_pol).sum() +
+                                          scf_.P_beta.cwiseProduct(H_core_ + F_ao_b_pol).sum())
+                                   + mol_.nuclear_repulsion_energy();
+                double e_corr_pol = get_correlation_energy();
+                double e_tot_pol = e_scf_pol + e_corr_pol;
+                if (e_tot_pol <= e_total_best + 1e-10) {
+                    e_total_best = e_tot_pol;
+                    e_corr_best = e_corr_pol;
+                    C_a_last = scf_.C_alpha;
+                    C_b_last = scf_.C_beta;
+                }
             }
             is_converged = true;
             break;

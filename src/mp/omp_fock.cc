@@ -106,8 +106,8 @@ void OMP2::build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_
 
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     Eigen::MatrixXd P_tot = P_a + P_b;
-    double max_P = P_tot.cwiseAbs().maxCoeff(); 
-    double threshold = 1e-9;
+    double max_P = std::max({P_tot.cwiseAbs().maxCoeff(), P_a.cwiseAbs().maxCoeff(), P_b.cwiseAbs().maxCoeff()});
+    double threshold = 1e-12;
     const double* __restrict__ p_dtot = P_tot.data();
     const double* __restrict__ p_da   = P_a.data();
     const double* __restrict__ p_db   = P_b.data();

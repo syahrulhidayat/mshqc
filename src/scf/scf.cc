@@ -341,11 +341,14 @@ SCFResult BaseSCF::compute() {
     }
 
     // Sinkronisasi kanonikal akhir: bangun Fock murni dari densitas terkonvergensi & diagonalisasi tanpa DIIS
+    int final_iter = iter_scf_;
     if (converged) {
         if (symmetrizer_) {
             symmetrizer_->symmetrize(P_alpha_);
             if (is_uhf) symmetrizer_->symmetrize(P_beta_);
         }
+        if (fock_engine_) fock_engine_->reset();
+        iter_scf_ = 1; // Paksa evaluasi Fock penuh (non-inkremental) bebas drift numerik
         build_fock_matrix();
         if (symmetrizer_) {
             symmetrizer_->symmetrize(F_alpha_);
@@ -381,7 +384,7 @@ SCFResult BaseSCF::compute() {
         io.read_slice_4d("df_tensor", {0, 0, 0, 0}, {(long)n_aux, (long)nbasis_, (long)nbasis_, 1}, L_mat_.data());
     }
 
-    SCFResult r; r.energy_total = energy(); r.iterations = iter_scf_; r.converged = converged;
+    SCFResult r; r.energy_total = energy(); r.iterations = final_iter; r.converged = converged;
     r.C_alpha = C_alpha_; r.C_beta = C_beta_; r.P_alpha = P_alpha_; r.P_beta = P_beta_;
     r.F_alpha = F_alpha_; r.F_beta = F_beta_; r.orbital_energies_alpha = eps_alpha_; r.orbital_energies_beta = eps_beta_;
     r.irreps_alpha = irreps_a; r.irreps_beta = irreps_b; r.n_occ_alpha = n_alpha_; r.n_occ_beta = n_beta_;
@@ -436,6 +439,10 @@ void RHF::update_densities() {
 }
 
 void RHF::build_fock_matrix() {
+    if (iter_scf_ == 1) {
+        G_accum_.setZero();
+        G_J_accum_.setZero();
+    }
     if (config_.eri_method == "cholesky" || config_.use_df) {
         Eigen::MatrixXd dP = (iter_scf_ == 1) ? P_alpha_ : (P_alpha_ - P_old_); 
         if (dP.cwiseAbs().maxCoeff() < 1e-11) {
@@ -613,6 +620,12 @@ void RHF::build_fock_matrix() {
 
 
 void UHF::build_fock_matrix() { 
+    if (iter_scf_ == 1) {
+        G_accum_a_.setZero();
+        G_accum_b_.setZero();
+        G_J_accum_a_.setZero();
+        G_J_accum_b_.setZero();
+    }
     if (config_.eri_method == "cholesky" || config_.use_df) {
         Eigen::MatrixXd dPa = (iter_scf_ == 1) ? P_alpha_ : (P_alpha_ - P_alpha_old_);
         Eigen::MatrixXd dPb = (iter_scf_ == 1) ? P_beta_  : (P_beta_ - P_beta_old_);
@@ -865,30 +878,31 @@ UHF::UHF(const Molecule& mol, const BasisSet& basis, std::shared_ptr<IntegralEng
 void UHF::initial_guess() {
     if (config_.print_level > 0) std::cout << "  [UHF] Generating Initial Guess... ";
     Eigen::MatrixXd P_sad = SADGuess::build(mol_, basis_);
-    if (P_sad.rows() > 0 && P_sad.norm() > 1e-6) {
-        P_alpha_ = 0.5 * P_sad; 
-        P_beta_  = 0.5 * P_sad; 
-        if (n_alpha_ != n_beta_) {
-            for (int i=0; i<nbasis_; ++i) if (i % 2 == 0) P_alpha_(i,i) *= 1.1; 
-        }
-        
-        if (mol_.n_atoms() == 1) {
-            solve_fock(H_, C_alpha_, eps_alpha_);
-            solve_fock(H_, C_beta_, eps_beta_); 
-            occ_numbers_alpha_ = smear_electrons(eps_alpha_, n_alpha_);
-            occ_numbers_beta_  = smear_electrons(eps_beta_, n_beta_);
-        } else {
-            C_alpha_.resize(0, 0);
-            C_beta_.resize(0, 0);
-        }
-        
-        energy_ = 0.0; return; 
+    if (P_sad.rows() == nbasis_ && P_sad.norm() > 1e-6) {
+        double n_tot = static_cast<double>(n_alpha_ + n_beta_);
+        double frac_a = (n_tot > 0.0) ? (static_cast<double>(n_alpha_) / n_tot) : 0.5;
+        double frac_b = (n_tot > 0.0) ? (static_cast<double>(n_beta_)  / n_tot) : 0.5;
+        P_alpha_ = frac_a * P_sad;
+        P_beta_  = frac_b * P_sad;
+        C_alpha_.resize(0, 0);
+        C_beta_.resize(0, 0);
+        energy_ = 0.0;
+        return;
     }
     if (config_.print_level > 0) std::cout << "Using GWH.\n";
     Eigen::MatrixXd F_gwh = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-    for (int i = 0; i < nbasis_; ++i) for (int j = 0; j < nbasis_; ++j) F_gwh(i, j) = (i == j) ? H_(i, j) : 0.5 * 1.75 * S_(i, j) * (H_(i, i) + H_(j, j));
-    solve_fock(F_gwh, C_alpha_, eps_alpha_); C_beta_ = C_alpha_; eps_beta_ = eps_alpha_;
-    occ_numbers_alpha_ = smear_electrons(eps_alpha_, n_alpha_); occ_numbers_beta_  = smear_electrons(eps_beta_, n_beta_); update_densities(); energy_ = 0.0;
+    for (int i = 0; i < nbasis_; ++i)
+        for (int j = 0; j < nbasis_; ++j)
+            F_gwh(i, j) = (i == j) ? H_(i, j) : 0.5 * 1.75 * S_(i, j) * (H_(i, i) + H_(j, j));
+    solve_fock(F_gwh, C_alpha_, eps_alpha_);
+    C_beta_ = C_alpha_;
+    eps_beta_ = eps_alpha_;
+    occ_numbers_alpha_.resize(0);
+    occ_numbers_beta_.resize(0);
+    update_densities();
+    C_alpha_.resize(0, 0);
+    C_beta_.resize(0, 0);
+    energy_ = 0.0;
 }
 
 void UHF::update_densities() {
@@ -975,6 +989,12 @@ void ROHF::update_densities() {
 
 
 void ROHF::build_fock_matrix() { 
+    if (iter_scf_ == 1) {
+        G_accum_a_.setZero();
+        G_accum_b_.setZero();
+        G_J_accum_a_.setZero();
+        G_J_accum_b_.setZero();
+    }
     if (config_.eri_method == "cholesky" || config_.use_df) {
         Eigen::MatrixXd dPa = (iter_scf_ == 1) ? P_alpha_ : (P_alpha_ - P_alpha_old_);
         Eigen::MatrixXd dPb = (iter_scf_ == 1) ? P_beta_  : (P_beta_ - P_beta_old_);
