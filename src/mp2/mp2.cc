@@ -581,7 +581,7 @@ void OMP2::transform_integrals() {
 
         g_aa_.clear(); g_bb_.clear(); g_ab_.clear();
 
-        if (config_.print_level >= 3) std::cout << "  [DEBUG] Memulai Transformasi Integral OOVV (Dense TBLIS)..." << std::endl;
+       
 
         auto dense_aa = integrals::ERITransformer::transform_custom(eri_ao, Ca_o, Ca_v, Ca_o, Ca_v, nbf_, na_, va_, na_, va_);
         g_aa_.allocate_block(0, 0, 0, 0, na_, va_, na_, va_);
