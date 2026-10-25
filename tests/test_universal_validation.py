@@ -480,6 +480,11 @@ def test_system(name, spec, basis_name="cc-pVTZ", eri_mode="EXACT", exact_ref_ca
 
         assert scf_res.converged, f"[{name} | {actual_basis} | {eri_mode}] SCF tidak konvergen!"
 
+        msh_res = {
+            "HF": scf_res.energy_total,
+            "S2_HF": compute_s2_from_mo(scf_res.C_alpha, scf_res.C_beta, S_mat, na, nb),
+        }
+
         s2_hf = compute_s2_from_mo(scf_res.C_alpha, scf_res.C_beta, S_mat, na, nb)
         if psi_res is not None and not is_closed and n_elec > 1:
             # Gunakan toleransi super ketat (1e-8) agar degenerat OH/O2 terdeteksi & sinkron
