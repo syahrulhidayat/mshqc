@@ -162,26 +162,37 @@ void DensityFittingERI::compute(bool save_hdf5) {
     }
     
     // =====================================================================
-    // 3. DEKOMPOSISI PIVOTED CHOLESKY
+    // 3. DEKOMPOSISI EIGEN METRIK SIMETRIS J^{-1/2} (IDENTIK DENGAN PSI4)
     // =====================================================================
-    CholeskyResult chol = compute_pivoted_cholesky(J_metric, 1e-14);
-    int n_aux_rank = chol.rank;
-    std::cout << "  Pivoted Cholesky Rank: " << n_aux_rank << " / " << n_aux_ << " (Removed Linear Dependencies)\n";
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(J_metric);
+    const Eigen::VectorXd& evals = es.eigenvalues();
+    const Eigen::MatrixXd& evecs = es.eigenvectors();
 
-    auto L_tri = chol.L.topLeftCorner(n_aux_rank, n_aux_rank).triangularView<Eigen::Lower>();
-
-    std::vector<int> inv_pivot(n_aux_);
-    for (int p = 0; p < n_aux_; ++p) {
-        inv_pivot[chol.pivot_map[p]] = p;
+    double eig_tol = std::max(1e-14, cutoff_);
+    int n_aux_rank = 0;
+    for (int i = 0; i < n_aux_; ++i) {
+        if (evals(i) >= eig_tol) n_aux_rank++;
     }
 
-    int n_pairs = n_primary_ * n_primary_;
-    B_mat_ = Eigen::MatrixXd::Zero(n_pairs, n_aux_);
+    Eigen::MatrixXd U_kept(n_aux_, n_aux_rank);
+    Eigen::VectorXd inv_sqrt_evals(n_aux_rank);
+    int col_idx = 0;
+    for (int i = 0; i < n_aux_; ++i) {
+        if (evals(i) >= eig_tol) {
+            U_kept.col(col_idx) = evecs.col(i);
+            inv_sqrt_evals(col_idx) = 1.0 / std::sqrt(evals(i));
+            col_idx++;
+        }
+    }
 
-    std::cout << "  Evaluating 3-Center Integrals and Pivoting...\n";
+    // Matriks simetris J^{-1/2} = U * Lambda^{-1/2} * U^T
+    Eigen::MatrixXd J_inv_sqrt = U_kept * inv_sqrt_evals.asDiagonal() * U_kept.transpose();
+
+    int n_pairs = n_primary_ * n_primary_;
+    Eigen::MatrixXd V_raw = Eigen::MatrixXd::Zero(n_pairs, n_aux_);
 
     // =====================================================================
-    // 4. EVALUASI INTEGRAL 3-PUSAT & ON-THE-FLY PIVOTING
+    // 4. EVALUASI INTEGRAL 3-PUSAT (TANPA PERMUTASI PIVOT)
     // =====================================================================
     #pragma omp parallel
     {
@@ -196,28 +207,27 @@ void DensityFittingERI::compute(bool save_hdf5) {
                 int dim_j = prim_sizes[j];
 
                 for (int R = 0; R < n_shells_aux; ++R) {
-                    int abs_R = n_shells_prim + R; 
+                    int abs_R = n_shells_prim + R;
                     int dim_R = aux_sizes[R];
                     int aux_start = aux_starts[R];
 
                     if (!integrals_->compute_3c2e_block_raw(i, j, abs_R, buffer.data())) continue;
 
                     for (int r = 0; r < dim_R; ++r) {
-                        int orig_P = aux_start + r;
-                        int new_P  = inv_pivot[orig_P];
+                        int P = aux_start + r;
 
                         for (int p_j = 0; p_j < dim_j; ++p_j) {
                             int base_r1 = bf_j_start + p_j;
                             int base_r2 = (bf_j_start + p_j) * n_primary_;
                             int buffer_offset = dim_i * (p_j + dim_j * r);
-                            
+
                             for (int p_i = 0; p_i < dim_i; ++p_i) {
                                 double val = buffer[p_i + buffer_offset];
                                 int r1 = (bf_i_start + p_i) * n_primary_ + base_r1;
                                 int r2 = base_r2 + (bf_i_start + p_i);
-                                
-                                B_mat_(r1, new_P) = val;
-                                if (r1 != r2) B_mat_(r2, new_P) = val;
+
+                                V_raw(r1, P) = val;
+                                if (r1 != r2) V_raw(r2, P) = val;
                             }
                         }
                     }
@@ -227,26 +237,22 @@ void DensityFittingERI::compute(bool save_hdf5) {
     }
 
     // =====================================================================
-    // 5. IN-PLACE TRIANGULAR SOLVE & I/O
+    // 5. KONTRAKSI BLAS-3 DGEMM: B = (mn|P) * J^{-1/2}_{PQ}
     // =====================================================================
-    auto V_rank = B_mat_.leftCols(n_aux_rank);
-    L_tri.solveInPlace(V_rank.transpose());
+    B_mat_.noalias() = V_raw * J_inv_sqrt;
 
     if (save_hdf5) {
-        std::cout << "  Writing Density Fitting Tensor to HDF5 (Out-of-Core)...\n";
         utils::HDF5TensorIO io("df_tensor.h5", utils::HDF5TensorIO::Mode::WRITE_TRUNCATE);
-        
-        std::array<long, 4> dims = {(long)n_aux_rank, (long)n_primary_, (long)n_primary_, 1};
+        std::array<long, 4> dims = {(long)n_aux_, (long)n_primary_, (long)n_primary_, 1};
         std::array<long, 4> chunks = {1, (long)n_primary_, (long)n_primary_, 1};
         io.create_dataset_4d("df_tensor", dims, chunks);
 
-        for (int P = 0; P < n_aux_rank; ++P) {
+        for (int P = 0; P < n_aux_; ++P) {
             std::array<long, 4> offset = {P, 0, 0, 0};
-            io.write_slice_4d("df_tensor", offset, chunks, V_rank.col(P).data());
+            io.write_slice_4d("df_tensor", offset, chunks, B_mat_.col(P).data());
         }
     }
 
-    B_mat_ = V_rank; 
     is_computed_ = true;
 }
 
