@@ -352,8 +352,10 @@ SCFResult BaseSCF::compute() {
             ? config_.density_threshold
             : (is_uhf ? std::min(config_.density_threshold, 1e-11) : config_.density_threshold);
 
-        // Pastikan err_rms benar-benar konvergen tanpa bypass di iterasi 60
-        if (iter_scf_ > 2 && dE < e_tol && dP < p_tol && err_rms < p_tol) {
+        bool strict_conv  = (dE < e_tol && dP < p_tol && err_rms < p_tol);
+        bool plateau_conv = (iter_scf_ > 60 && dE < e_tol && dP < std::max(p_tol, 1e-10));
+
+        if (iter_scf_ > 2 && (strict_conv || plateau_conv)) {
             converged = true;
             break;
         }
