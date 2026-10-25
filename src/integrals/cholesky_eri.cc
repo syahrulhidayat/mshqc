@@ -228,7 +228,7 @@ void CholeskyERI::decompose_direct() {
             shell_max[s1 * nshells + s2] = s_max;
             shell_max[s2 * nshells + s1] = s_max;
 
-            if (s_max > 1e-14) {
+            if (s_max > 1e-15) {
                 #pragma omp critical
                 valid_pairs.push_back({s1, s2});
             }
@@ -238,12 +238,11 @@ void CholeskyERI::decompose_direct() {
     int est_rank = std::min(npair, std::max(200, n_basis_ * 5));
     Eigen::MatrixXd L_store(npair, est_rank);
 
-    // Cutoff screening integral mentah diperketat agar tidak teramplifikasi oleh 1/sqrt(D_max)
-    const double screen_cutoff = std::min(1e-12, threshold_ * 1e-4);
+    // Cutoff screening diperketat ke 1e-15 agar tidak teramplifikasi oleh 1/sqrt(D_max)
+    const double screen_cutoff = std::min(1e-15, threshold_ * 1e-6);
 
     int iter = 0;
     while (true) {
-        // 1. Full Pivoted Cholesky: cari pivot maksimum di seluruh pasangan (1-center & 2-center)
         int pivot_idx = -1;
         double D_max = D.maxCoeff(&pivot_idx);
 
@@ -261,7 +260,6 @@ void CholeskyERI::decompose_direct() {
         int rel_p = p - shell_starts[sp];
         int rel_q = q - shell_starts[sq];
         int pair_pq = sp * (sp + 1) / 2 + sq;
-        double inv_sqrt = 1.0 / std::sqrt(D_max);
 
         Eigen::VectorXd col_buf = Eigen::VectorXd::Zero(npair);
         double pivot_schwarz = shell_max[sp * nshells + sq];
@@ -277,7 +275,6 @@ void CholeskyERI::decompose_direct() {
                 int s1 = valid_pairs[v].first;
                 int s2 = valid_pairs[v].second;
 
-                // 2. Gunakan screen_cutoff yang ketat agar presisi penuh terjaga
                 if (shell_max[s1 * nshells + s2] * pivot_schwarz < screen_cutoff) continue;
 
                 int pair_s = s1 * (s1 + 1) / 2 + s2;
@@ -317,10 +314,18 @@ void CholeskyERI::decompose_direct() {
             col_buf.noalias() -= L_prev * L_piv;
         }
 
+        // Gunakan diagonal residu aktual col_buf(pivot_idx) agar bebas cancellation drift
+        double exact_diag = col_buf(pivot_idx);
+        if (exact_diag < threshold_) {
+            D(p * n_basis_ + q) = 0.0;
+            D(q * n_basis_ + p) = 0.0;
+            continue;
+        }
+        double inv_sqrt = 1.0 / std::sqrt(exact_diag);
+
         L_store.col(iter) = col_buf * inv_sqrt;
         D.array() -= L_store.col(iter).array().square();
 
-        // 3. Eksplisit nolkan diagonal pivot & pasangan simetrisnya serta clamp nilai negatif
         D(p * n_basis_ + q) = 0.0;
         D(q * n_basis_ + p) = 0.0;
         D = D.cwiseMax(0.0);

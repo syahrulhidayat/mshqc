@@ -164,7 +164,7 @@ void DensityFittingERI::compute(bool save_hdf5) {
     // =====================================================================
     // 3. DEKOMPOSISI PIVOTED CHOLESKY
     // =====================================================================
-    CholeskyResult chol = compute_pivoted_cholesky(J_metric, 1e-10);
+    CholeskyResult chol = compute_pivoted_cholesky(J_metric, 1e-14);
     int n_aux_rank = chol.rank;
     std::cout << "  Pivoted Cholesky Rank: " << n_aux_rank << " / " << n_aux_ << " (Removed Linear Dependencies)\n";
 
