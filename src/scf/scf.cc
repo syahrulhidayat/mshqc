@@ -350,15 +350,16 @@ SCFResult BaseSCF::compute() {
             : (is_uhf ? std::min(config_.energy_threshold, 1e-12) : config_.energy_threshold);
         double p_tol = (config_.density_threshold > 1e-7)
             ? config_.density_threshold
-            : (is_uhf ? std::min(config_.density_threshold, 1e-10) : config_.density_threshold);
+            : (is_uhf ? std::min(config_.density_threshold, 1e-11) : config_.density_threshold);
 
-        if (iter_scf_ > 2 && dE < e_tol && dP < p_tol && (err_rms < p_tol || iter_scf_ > 60)) {
+        // Pastikan err_rms benar-benar konvergen tanpa bypass di iterasi 60
+        if (iter_scf_ > 2 && dE < e_tol && dP < p_tol && err_rms < p_tol) {
             converged = true;
             break;
         }
     }
 
-    // Sinkronisasi kanonikal akhir: bangun Fock murni dari densitas terkonvergensi & diagonalisasi tanpa DIIS
+    // Sinkronisasi kanonikal akhir: bangun Fock murni dari densitas terkonvergensi
     int final_iter = iter_scf_;
     if (converged) {
         if (symmetrizer_) {
@@ -366,7 +367,7 @@ SCFResult BaseSCF::compute() {
             if (is_uhf) symmetrizer_->symmetrize(P_beta_);
         }
         if (fock_engine_) fock_engine_->reset();
-        iter_scf_ = 1; // Paksa evaluasi Fock penuh (non-inkremental) bebas drift numerik
+        iter_scf_ = 1; // Evaluasi Fock penuh (non-inkremental) bebas drift numerik
         build_fock_matrix();
         if (symmetrizer_) {
             symmetrizer_->symmetrize(F_alpha_);
@@ -385,6 +386,16 @@ SCFResult BaseSCF::compute() {
             occ_numbers_beta_ = occ_numbers_alpha_;
         }
         update_densities();
+
+        // Bangun ulang Fock satu kali lagi agar F, C, eps, dan P 100% konsisten
+        if (fock_engine_) fock_engine_->reset();
+        iter_scf_ = 1;
+        build_fock_matrix();
+        if (symmetrizer_) {
+            symmetrizer_->symmetrize(F_alpha_);
+            if (is_uhf) symmetrizer_->symmetrize(F_beta_);
+        }
+        energy_ = compute_energy();
     }
 
     std::vector<int> irreps_a(nbasis_, 0), irreps_b(nbasis_, 0);
