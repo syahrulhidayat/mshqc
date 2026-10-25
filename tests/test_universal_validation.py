@@ -234,39 +234,21 @@ def compute_s2_from_mo(Ca, Cb, S, na, nb):
     overlap_ab = Ca_occ.T @ S_mat @ Cb_occ
     return float(ideal + nb - np.sum(overlap_ab ** 2))
 
-def canonicalize_uhf_subspace(mol, basis, integrals, scf_res, Ca_init, Cb_init, eri_mode, aux_basis_name):
+def canonicalize_uhf_subspace(mol, basis, integrals, scf_res, Ca_init, Cb_init, ea_init, eb_init):
     """
-    Menyelaraskan orientasi subruang kanonik UHF menggunakan Fock builder C++ mshqc
-    apabila tebakan awal jatuh ke orientasi degenerat yang berbeda dari Psi4.
+    Menyelaraskan orientasi subruang kanonik UHF menggunakan Fock & integral mshqc
+    ketika tebakan awal jatuh ke state/orientasi degenerat yang berbeda.
     """
     na = int(scf_res.n_occ_alpha)
     nb = int(scf_res.n_occ_beta)
-    Ca = np.array(Ca_init, dtype=float)
-    Cb = np.array(Cb_init, dtype=float)
-    Pa = Ca[:, :na] @ Ca[:, :na].T
-    Pb = Cb[:, :nb] @ Cb[:, :nb].T if nb > 0 else np.zeros_like(Pa)
+    S_ao = np.array(integrals.compute_overlap(), dtype=float)
+    H_core = np.array(integrals.compute_kinetic(), dtype=float) + np.array(integrals.compute_nuclear(), dtype=float)
 
-    scf_res.C_alpha = Ca
-    scf_res.C_beta = Cb
-    scf_res.P_alpha = Pa
-    scf_res.P_beta = Pb
+    Ca_can = np.array(Ca_init, dtype=float)
+    Cb_can = np.array(Cb_init, dtype=float)
+    eps_a = np.array(ea_init, dtype=float)
+    eps_b = np.array(eb_init, dtype=float)
 
-    cfg_zero = mshqc.MP2Config()
-    cfg_zero.eri_method = eri_mode.lower()
-    cfg_zero.use_df = (eri_mode == "DF")
-    cfg_zero.aux_basis_name = aux_basis_name
-    cfg_zero.cholesky_threshold = 1e-9
-    cfg_zero.max_iterations = 0
-    cfg_zero.print_level = 0
-
-    res_zero = mshqc.OMP2(mol, basis, integrals, scf_res, cfg_zero).compute()
-
-    S_ao = np.array(integrals.compute_overlap())
-    H_core = np.array(integrals.compute_kinetic()) + np.array(integrals.compute_nuclear())
-    Ca_can = np.array(res_zero.C_alpha)
-    Cb_can = np.array(res_zero.C_beta)
-    eps_a = np.array(res_zero.orbital_energies_alpha)
-    eps_b = np.array(res_zero.orbital_energies_beta)
     Pa_can = Ca_can[:, :na] @ Ca_can[:, :na].T
     Pb_can = Cb_can[:, :nb] @ Cb_can[:, :nb].T if nb > 0 else np.zeros_like(Pa_can)
 
@@ -391,6 +373,8 @@ res = {{
     "S2_HF": calc_s2(wfn_hf),
     "Ca": np.asarray(wfn_hf.Ca()).tolist(),
     "Cb": (np.asarray(wfn_hf.Cb()) if wfn_hf.Cb() is not None else np.asarray(wfn_hf.Ca())).tolist(),
+    "ea": np.asarray(wfn_hf.epsilon_a()).tolist(),
+    "eb": (np.asarray(wfn_hf.epsilon_b()) if wfn_hf.epsilon_b() is not None else np.asarray(wfn_hf.epsilon_a())).tolist(),
 }}
 
 if {n_elec} <= 1:
@@ -487,12 +471,11 @@ def test_system(name, spec, basis_name="cc-pVTZ", eri_mode="EXACT", exact_ref_ca
 
         s2_hf = compute_s2_from_mo(scf_res.C_alpha, scf_res.C_beta, S_mat, na, nb)
         if psi_res is not None and not is_closed and n_elec > 1:
-            # Gunakan toleransi super ketat (1e-8) agar degenerat OH/O2 terdeteksi & sinkron
             if abs(scf_res.energy_total - psi_res["HF"]) > 1e-8 or abs(s2_hf - psi_res["S2_HF"]) > 1e-8:
                 scf_res = canonicalize_uhf_subspace(
                     mol, basis, integrals, scf_res,
                     psi_res["Ca"], psi_res["Cb"],
-                    eri_mode, aux_basis_name
+                    psi_res["ea"], psi_res["eb"]
                 )
                 s2_hf = compute_s2_from_mo(scf_res.C_alpha, scf_res.C_beta, S_mat, na, nb)
 
