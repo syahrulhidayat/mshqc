@@ -247,10 +247,18 @@ def run_psi4_reference(name, spec, basis_name, eri_mode):
     n_elec = na + nb
 
     script = f"""
+import os
 import json
 import numpy as np
+
+os.environ.setdefault("OMP_NUM_THREADS", "4")
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+
 import psi4
 
+psi4.set_memory("4 GB")
+psi4.set_num_threads(int(os.environ.get("OMP_NUM_THREADS", "4")))
 psi4.core.be_quiet()
 psi4.core.clean()
 psi4.core.clean_options()
@@ -304,13 +312,13 @@ opts = {{
     "mp2_type": mp_type_map[eri_mode],
     "mp_type": mp_type_map[eri_mode],
     "cc_type": mp_type_map[eri_mode],
-    "e_convergence": 1e-9,
-    "d_convergence": 1e-9,
+    "e_convergence": 1e-12,
+    "d_convergence": 1e-11,
     "r_convergence": 1e-6,
     "rms_mograd_convergence": 1e-6,
-    "max_mograd_convergence": 1e-6,
+    "max_mograd_convergence": 1e-5,
     "freeze_core": False,
-    "maxiter": 150,
+    "maxiter": 200,
     "mo_maxiter": 50,
     "read_scf_3index": False,
 }}
@@ -364,6 +372,14 @@ else:
     res["MP3"] = float(psi4.energy("mp3", ref_wfn=wfn_hf, molecule=mol))
     psi4.core.clean()
     restore_wfn(wfn_hf, hf_snap)
+
+    # Gunakan threshold moderat apple-to-apple untuk iterasi makro OMP2 & OMP3
+    psi4.set_options({{
+        "e_convergence": 1e-9,
+        "r_convergence": 1e-6,
+        "rms_mograd_convergence": 1e-6,
+        "max_mograd_convergence": 1e-5,
+    }})
 
     e_omp2, wfn_omp2 = psi4.energy("omp2", ref_wfn=wfn_hf, molecule=mol, return_wfn=True)
     if np.isnan(float(e_omp2)):
@@ -424,7 +440,6 @@ def test_system(name, spec, basis_name="cc-pVTZ", eri_mode="EXACT", exact_ref_ca
         if eri_mode == "EXACT":
             psi_exact_cache[cache_key] = psi_res
         elif cache_key in psi_exact_cache and not is_closed and n_elec > 1:
-            # Modul dfocc Psi4 (CHOLESKY & DF) tidak memperbarui wfn.Ca()/Cb() setelah OMP2/OMP3
             for s2_key in ("S2_OMP2", "S2_OMP3"):
                 if abs(psi_res[s2_key] - psi_res["S2_HF"]) < 1e-11:
                     psi_res[s2_key] = psi_exact_cache[cache_key][s2_key]
@@ -445,7 +460,7 @@ def test_system(name, spec, basis_name="cc-pVTZ", eri_mode="EXACT", exact_ref_ca
         scf_cfg.aux_basis_name = aux_basis_name
         scf_cfg.cholesky_threshold = 1e-9
         scf_cfg.df_threshold = 1e-9
-        scf_cfg.max_iterations = 150
+        scf_cfg.max_iterations = 200
         scf_cfg.energy_threshold = 1e-9
         scf_cfg.density_threshold = 1e-9
         scf_cfg.print_level = 0
@@ -453,15 +468,15 @@ def test_system(name, spec, basis_name="cc-pVTZ", eri_mode="EXACT", exact_ref_ca
         if is_closed:
             scf = mshqc.RHF(mol, basis, integrals, scf_cfg)
         else:
-            scf = mshqc.UHF(mol, basis, integrals, scf_cfg)
+            scf = mshqc.UHF(mol, basis, integrals, na, nb, scf_cfg)
 
         scf_res = scf.compute()
         if not scf_res.converged:
-            scf_cfg.max_iterations = 300
+            scf_cfg.max_iterations = 400
             scf = (
                 mshqc.RHF(mol, basis, integrals, scf_cfg)
                 if is_closed
-                else mshqc.UHF(mol, basis, integrals, scf_cfg)
+                else mshqc.UHF(mol, basis, integrals, na, nb, scf_cfg)
             )
             scf_res = scf.compute()
 

@@ -185,11 +185,10 @@ def build_ints(mol, basis):
     with suppress_stdout():
         return mshqc.IntegralEngine(mol, basis)
 
-
 def make_scf_config(eri_mode, aux_basis_name="", print_level=0):
     scf_cfg = mshqc.SCFConfig()
     scf_cfg.scf_type = "incore"
-    scf_cfg.max_iterations = 150
+    scf_cfg.max_iterations = 200
     scf_cfg.energy_threshold = 1e-9
     scf_cfg.density_threshold = 1e-9
     scf_cfg.df_threshold = 1e-9
@@ -227,9 +226,16 @@ def make_mp2_config(eri_mode, aux_basis_name="", print_level=0, max_iterations=5
 
 
 def run_scf_raw(mol, basis, ints, eri_mode, is_uhf, aux_basis_name="", print_level=0):
-    """Menjalankan SCF bawaan mshqc secara langsung."""
+    """Menjalankan SCF bawaan mshqc secara langsung dalam kerangka C1 setara Psi4."""
     scf_cfg = make_scf_config(eri_mode, aux_basis_name, print_level)
-    solver = mshqc.UHF(mol, basis, ints, scf_cfg) if is_uhf else mshqc.RHF(mol, basis, ints, scf_cfg)
+    if is_uhf:
+        n_elec = mol.n_electrons()
+        n_unp = mol.multiplicity() - 1
+        na = (n_elec + n_unp) // 2
+        nb = (n_elec - n_unp) // 2
+        solver = mshqc.UHF(mol, basis, ints, na, nb, scf_cfg)
+    else:
+        solver = mshqc.RHF(mol, basis, ints, scf_cfg)
     return solver.compute()
 
 
@@ -240,10 +246,12 @@ PSI4_BATCH_WORKER = r"""
 import os, sys, time, json, re, tempfile
 import numpy as np
 
-os.environ.setdefault("OMP_NUM_THREADS", "6")
+os.environ.setdefault("OMP_NUM_THREADS", "4")
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
 
 import psi4
-psi4.set_num_threads(int(os.environ.get("OMP_NUM_THREADS", "6")))
+psi4.set_num_threads(int(os.environ.get("OMP_NUM_THREADS", "4")))
 psi4.set_memory("8 GB")
 
 Z_TO_SYM = {1: "H", 3: "Li", 6: "C", 8: "O", 10: "Ne"}
@@ -329,8 +337,8 @@ for item in payload["tasks"]:
     opts = {
         "basis": basis_name,
         "reference": ref,
-        "e_convergence": 1e-9,
-        "d_convergence": 1e-9,
+        "e_convergence": 1e-12 if is_uhf else 1e-10,
+        "d_convergence": 1e-11 if is_uhf else 1e-10,
         "scf_type": scf_type,
         "mp2_type": corr_type,
         "mp_type": corr_type,
@@ -338,8 +346,8 @@ for item in payload["tasks"]:
         "freeze_core": "false",
         "r_convergence": 1e-6,
         "rms_mograd_convergence": 1e-5,
-        "max_mograd_convergence": 1e-5,
-        "maxiter": 150,
+        "max_mograd_convergence": 1e-4,
+        "maxiter": 200,
         "mo_maxiter": 50,
         "read_scf_3index": False,
     }
@@ -388,6 +396,14 @@ for item in payload["tasks"]:
         pass
     psi4.core.clean()
     restore_wfn(scf_wfn, hf_snap)
+
+    # Setel toleransi OMP2 & OMP3 secara apple-to-apple (e=1e-9, rms_grad=1e-5)
+    psi4.set_options({
+        "e_convergence": 1e-9,
+        "r_convergence": 1e-6,
+        "rms_mograd_convergence": 1e-5,
+        "max_mograd_convergence": 1e-4,
+    })
 
     # OMP2
     try:
