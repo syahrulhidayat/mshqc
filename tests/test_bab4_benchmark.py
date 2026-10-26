@@ -227,7 +227,7 @@ def make_mp2_config(eri_mode, aux_basis_name="", print_level=0, max_iterations=5
 
 
 def run_scf_raw(mol, basis, ints, eri_mode, is_uhf, aux_basis_name="", print_level=0):
-    """Menjalankan SCF bawaan mshqc secara langsung dalam kerangka C1 setara Psi4."""
+    """Menjalankan SCF bawaan mshqc secara langsung."""
     scf_cfg = make_scf_config(eri_mode, aux_basis_name, print_level)
     if is_uhf:
         n_elec = mol.n_electrons()
@@ -241,7 +241,7 @@ def run_scf_raw(mol, basis, ints, eri_mode, is_uhf, aux_basis_name="", print_lev
 
 
 # ==============================================================================
-# WORKER SUBPROCESS PSI4 (UNTUK ENERGI, ITERASI, WAKTU, & <S^2> APPLE-TO-APPLE)
+# WORKER SUBPROCESS PSI4 (UNTUK ENERGI, ITERASI, WAKTU, & <S^2> BEST-VS-BEST)
 # ==============================================================================
 PSI4_BATCH_WORKER = r"""
 import os, sys, time, json, re, tempfile
@@ -321,8 +321,10 @@ for item in payload["tasks"]:
     psi4.core.clean_options()
     psi4.core.set_output_file(tmp_log, False)
 
-    # Gunakan symmetry c1, no_reorient, dan no_com secara konsisten (apple-to-apple dengan mshqc)
-    lines = [f"{chg} {mult}", "units bohr", "symmetry c1", "no_reorient", "no_com"]
+    # Biarkan Psi4 memakai simetri grup titik penuh pada mode EXACT (kecuali OH & O2)
+    lines = [f"{chg} {mult}", "units bohr"]
+    if eri_mode in ["df", "cholesky"] or sys_name in ["OH", "O2"]:
+        lines.append("symmetry c1")
     for z, x, y, zc in item["atoms"]:
         lines.append(f"{Z_TO_SYM[z]} {x:.12f} {y:.12f} {zc:.12f}")
     mol = psi4.geometry("\n".join(lines))
@@ -932,12 +934,15 @@ gc.collect()
 
 base_rss, base_hwm = get_rss_and_hwm_mb()
 payload = json.loads(sys.argv[1])
-lines = [f"{payload['charge']} {payload['mult']}", "units bohr", "symmetry c1", "no_reorient", "no_com"]
+mode = payload["mode"].lower()
+sys_name = payload.get("sys", "")
+lines = [f"{payload['charge']} {payload['mult']}", "units bohr"]
+if mode in ["df", "cholesky"] or sys_name in ["OH", "O2"]:
+    lines.append("symmetry c1")
 for z, x, y, zc in payload["atoms"]:
     lines.append(f"{Z_TO_SYM[z]} {x:.12f} {y:.12f} {zc:.12f}")
 mol = psi4.geometry("\n".join(lines))
 
-mode = payload["mode"].lower()
 if mode == "exact":
     scf_t, corr_t = "pk", "conv"
 elif mode == "cholesky":
@@ -1008,7 +1013,7 @@ def run_table_6_calibrated_ram():
     for sys_name, b_name, aux_name, mode, method in cases:
         info = SYSTEMS[sys_name]
         payload = json.dumps({
-            "atoms": info["atoms"], "charge": info["charge"], "mult": info["mult"],
+            "sys": sys_name, "atoms": info["atoms"], "charge": info["charge"], "mult": info["mult"],
             "is_uhf": info["is_uhf"], "basis": b_name, "aux": aux_name, "mode": mode, "method": method
         })
         try:

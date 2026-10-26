@@ -9,7 +9,7 @@ Covers:
    - 3D Non-Planar Molecules (NH3, CH4)
    - Charged Species / Cations & Anions (H3O+, OH-)
    - Open-Shell Radicals & Biradicals (OH, SH, NH2, CH3, CH2_triplet, NH, O2)
-3. Multi-Mode ERI (EXACT, CHOLESKY, DF) and Multi-Basis (cc-pVDZ def2-TZVP)
+3. Multi-Mode ERI (EXACT, CHOLESKY, DF) and Multi-Basis (cc-pVDZ, cc-pVTZ, def2-TZVP)
    across HF, MP2, MP3, OMP2, OMP3, and <S^2>.
 """
 
@@ -26,8 +26,8 @@ import mshqc
 
 ANG_TO_BOHR = 1.8897261246257702
 
-# Unsur yang didukung oleh cc-pVDZ & cc-pVDZ-ri di data/basis/
-CC_PVTZ_SUPPORTED_Z = set(range(1, 19)) | {20} | set(range(31, 37))
+# Unsur yang didukung oleh cc-pVDZ/cc-pVTZ & cc-pVDZ-ri/cc-pVTZ-ri di data/basis/
+CC_PV_SUPPORTED_Z = set(range(1, 19)) | {20} | set(range(31, 37))
 
 # Format: "Nama": (charge, mult, n_alpha, n_beta, [(Z, sym, x_bohr, y_bohr, z_bohr), ...], tier)
 SYSTEMS = {
@@ -223,8 +223,8 @@ def select_basis_for_system(spec, requested_basis):
     _, _, _, _, atoms, _ = spec
     if requested_basis.lower().startswith("cc-pv"):
         for z, _, _, _, _ in atoms:
-            if z not in CC_PVTZ_SUPPORTED_Z:
-                return "cc-pVDZ"
+            if z not in CC_PV_SUPPORTED_Z:
+                return "def2-SVP" if "dz" in requested_basis.lower() else "def2-TZVP"
     return requested_basis
 
 
@@ -387,20 +387,19 @@ else:
         "max_mograd_convergence": 1e-5,
     }})
 
-    wfn_hf_conv_cache = None
-    conv_snap_cache = None
+    conv_cache = {{"wfn": None, "snap": None}}
 
     def get_conv_wfn():
-        nonlocal wfn_hf_conv_cache, conv_snap_cache
-        if wfn_hf_conv_cache is None:
+        if conv_cache["wfn"] is None:
             psi4.core.clean()
             psi4.set_options({{
                 "scf_type": "pk",
                 "e_convergence": 1e-11,
                 "d_convergence": 1e-10,
             }})
-            _, wfn_hf_conv_cache = psi4.energy("scf", molecule=mol, return_wfn=True)
-            conv_snap_cache = snapshot_wfn(wfn_hf_conv_cache)
+            _, wfn_c = psi4.energy("scf", molecule=mol, return_wfn=True)
+            conv_cache["wfn"] = wfn_c
+            conv_cache["snap"] = snapshot_wfn(wfn_c)
             psi4.set_options({{
                 "e_convergence": 1e-9,
                 "r_convergence": 1e-6,
@@ -409,8 +408,8 @@ else:
             }})
         else:
             psi4.core.clean()
-            restore_wfn(wfn_hf_conv_cache, conv_snap_cache)
-        return wfn_hf_conv_cache
+            restore_wfn(conv_cache["wfn"], conv_cache["snap"])
+        return conv_cache["wfn"]
 
     # --- OMP2 ---
     try:
@@ -650,7 +649,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--basis",
         default="cc-pVDZ",
-        help="Basis set utama (default: cc-pVDZ; otomatis fallback ke def2-TZVP untuk unsur Z=19, 21-30)",
+        help="Basis set utama (default: cc-pVDZ; otomatis fallback ke def2-SVP/def2-TZVP untuk unsur Z=19, 21-30)",
     )
     args = parser.parse_args()
 
@@ -674,14 +673,15 @@ if __name__ == "__main__":
                 exact_ref_cache=exact_cache, psi_exact_cache=psi_exact_cache
             )
 
-    print("\n>>> Menguji Cabang SAD Double-Zeta (Basis: cc-pVDZ) pada Perwakilan Kulit Tertutup & Terbuka <<<", flush=True)
-    dz_cache = {}
-    psi_dz_cache = {}
-    for mode in ["EXACT", "DF"]:
-        for sys_name in ["Ne", "H2O", "OH", "NH3"]:
-            test_system(
-                sys_name, SYSTEMS[sys_name], basis_name="cc-pVDZ", eri_mode=mode,
-                exact_ref_cache=dz_cache, psi_exact_cache=psi_dz_cache
-            )
+    if args.basis.lower() != "cc-pvdz":
+        print("\n>>> Menguji Cabang SAD Double-Zeta (Basis: cc-pVDZ) pada Perwakilan Kulit Tertutup & Terbuka <<<", flush=True)
+        dz_cache = {}
+        psi_dz_cache = {}
+        for mode in ["EXACT", "DF"]:
+            for sys_name in ["Ne", "H2O", "OH", "NH3"]:
+                test_system(
+                    sys_name, SYSTEMS[sys_name], basis_name="cc-pVDZ", eri_mode=mode,
+                    exact_ref_cache=dz_cache, psi_exact_cache=psi_dz_cache
+                )
 
     print("\n[SUCCESS] Seluruh atom dan taksonomi molekul lulus validasi secara akurat dan persis!", flush=True)

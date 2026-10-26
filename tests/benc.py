@@ -19,7 +19,7 @@ psi4.set_memory("8 GB")
 psi4.core.be_quiet()
 
 # ==============================================================================
-# 2. KONFIGURASI GLOBAL PSI4 (APPLE-TO-APPLE DENGAN MSHQC)
+# 2. KONFIGURASI GLOBAL PSI4 (BEST-VS-BEST APPLE-TO-APPLE DENGAN MSHQC)
 # ==============================================================================
 BASIS_NAME = "cc-pVTZ"
 AUX_BASIS  = "cc-pVTZ-RI"
@@ -44,9 +44,11 @@ SYSTEMS = [
 RESULTS_DB = []
 
 
-def build_psi4_mol(atoms, chg, mult):
-    """Membangun objek molekul Psi4 dalam satuan Bohr dan kerangka C1 setara mshqc."""
-    lines = [f"{chg} {mult}", "units bohr", "symmetry c1", "no_reorient", "no_com"]
+def build_psi4_mol(atoms, chg, mult, eri_mode="exact"):
+    """Membangun objek molekul Psi4 dengan mengizinkan simetri grup titik asli pada mode EXACT."""
+    lines = [f"{chg} {mult}", "units bohr"]
+    if eri_mode in ["df", "cholesky"]:
+        lines.append("symmetry c1")
     for z, x, y, z_c in atoms:
         lines.append(f"{Z_TO_SYM[z]} {x:.12f} {y:.12f} {z_c:.12f}")
     return psi4.geometry("\n".join(lines))
@@ -85,7 +87,7 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
     psi4.core.clean()
     psi4.core.clean_options()
 
-    mol = build_psi4_mol(atoms, chg, mult)
+    mol = build_psi4_mol(atoms, chg, mult, eri_mode)
 
     if eri_mode == "exact":
         scf_type, corr_type = "pk", "conv"
