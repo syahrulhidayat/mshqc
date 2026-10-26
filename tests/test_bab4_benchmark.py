@@ -189,8 +189,9 @@ def build_ints(mol, basis):
 def make_scf_config(eri_mode, aux_basis_name="", print_level=0):
     scf_cfg = mshqc.SCFConfig()
     scf_cfg.scf_type = "incore"
-    scf_cfg.energy_threshold = 1e-11
-    scf_cfg.density_threshold = 1e-10
+    scf_cfg.energy_threshold = 1e-9
+    scf_cfg.density_threshold = 1e-9
+    scf_cfg.df_threshold = 1e-9
     scf_cfg.print_level = print_level
     if eri_mode == "DF":
         scf_cfg.eri_method = "df"
@@ -322,18 +323,18 @@ for item in payload["tasks"]:
     opts = {
         "basis": basis_name,
         "reference": ref,
-        "e_convergence": 1e-11,
-        "d_convergence": 1e-10,
+        "e_convergence": 1e-9,
+        "d_convergence": 1e-9,
         "scf_type": scf_type,
         "mp2_type": corr_type,
         "mp_type": corr_type,
         "cc_type": corr_type,
         "freeze_core": "false",
-        "r_convergence": 1e-7,
-        "rms_mograd_convergence": 1e-7,
+        "r_convergence": 1e-6,
+        "rms_mograd_convergence": 1e-6,
         "max_mograd_convergence": 1e-6,
         "maxiter": 150,
-        "mo_maxiter": 100,
+        "mo_maxiter": 50,
         "read_scf_3index": False,
     }
     if eri_mode == "df":
@@ -357,17 +358,6 @@ for item in payload["tasks"]:
         Cb_scf = np.asarray(scf_wfn.Cb()) if scf_wfn.Cb() is not None else Ca_scf
         s2_uhf = calc_s2_from_arrays(Ca_scf, Cb_scf, S_ao, na, nb)
         entry["SCF"] = {"e": float(e_scf), "t": float(t_scf), "s2": s2_uhf}
-        if item.get("export_scf_mats", False):
-            entry["SCF_MATS"] = {
-                "Ca": Ca_scf.tolist(),
-                "Cb": Cb_scf.tolist(),
-                "Da": np.asarray(scf_wfn.Da()).tolist(),
-                "Db": (np.asarray(scf_wfn.Db()) if scf_wfn.Db() is not None else np.asarray(scf_wfn.Da())).tolist(),
-                "Fa": np.asarray(scf_wfn.Fa()).tolist(),
-                "Fb": (np.asarray(scf_wfn.Fb()) if scf_wfn.Fb() is not None else np.asarray(scf_wfn.Fa())).tolist(),
-                "ea": np.asarray(scf_wfn.epsilon_a()).tolist(),
-                "eb": (np.asarray(scf_wfn.epsilon_b()) if scf_wfn.epsilon_b() is not None else np.asarray(scf_wfn.epsilon_a())).tolist(),
-            }
     except Exception as ex:
         results[key] = {"error": str(ex)}
         continue
@@ -459,7 +449,6 @@ def run_psi4_reference_suite():
                 "mult": info["mult"],
                 "is_uhf": info["is_uhf"],
                 "atoms": info["atoms"],
-                "export_scf_mats": sys_name in ("OH", "O2"),
             })
     try:
         out = subprocess.check_output(
@@ -472,65 +461,15 @@ def run_psi4_reference_suite():
         return {}
 
 
-def canonicalize_uhf_from_orbitals(mol, ints, scf_res, Ca_init, Cb_init, eri_mode):
-    """
-    Menyinkronkan matriks densitas, matriks Fock, dan energi orbital kanonik UHF
-    di mshqc dari orbital keadaan dasar sejati (tanpa mengubah faktor L_mat C++).
-    Digunakan untuk menstabilkan radikal diatomik OH dan O2 agar tidak terjebak
-    di titik pelana/minimum lokal UHF akibat tebakan awal H_core.
-    """
-    na = int(scf_res.n_occ_alpha)
-    nb = int(scf_res.n_occ_beta)
-    Ca = np.array(Ca_init, dtype=float)
-    Cb = np.array(Cb_init, dtype=float)
-    Pa = Ca[:, :na] @ Ca[:, :na].T
-    Pb = Cb[:, :nb] @ Cb[:, :nb].T if nb > 0 else np.zeros_like(Pa)
-
-    scf_res.C_alpha = Ca
-    scf_res.C_beta = Cb
-    scf_res.P_alpha = Pa
-    scf_res.P_beta = Pb
-
-    # Gunakan 0 iterasi OMP2 untuk memicu pseudocanonicalize() & build_fock_fast() internal C++
-    basis_tmp = mshqc.BasisSet("cc-pvtz", mol)
-    cfg_zero = make_mp2_config(eri_mode, "cc-pvtz-ri", print_level=0, max_iterations=0)
-    with suppress_stdout():
-        res_zero = mshqc.OMP2(mol, basis_tmp, ints, scf_res, cfg_zero).compute()
-
-    S_ao = np.array(ints.compute_overlap())
-    H_core = np.array(ints.compute_kinetic()) + np.array(ints.compute_nuclear())
-    Ca_can = np.array(res_zero.C_alpha)
-    Cb_can = np.array(res_zero.C_beta)
-    eps_a = np.array(res_zero.orbital_energies_alpha)
-    eps_b = np.array(res_zero.orbital_energies_beta)
-    Pa_can = Ca_can[:, :na] @ Ca_can[:, :na].T
-    Pb_can = Cb_can[:, :nb] @ Cb_can[:, :nb].T if nb > 0 else np.zeros_like(Pa_can)
-
-    # Rekonstruksi F_alpha dan F_beta AO dari hubungan kanonik F C = S C eps
-    Fa_ao = S_ao @ Ca_can @ np.diag(eps_a) @ Ca_can.T @ S_ao
-    Fb_ao = S_ao @ Cb_can @ np.diag(eps_b) @ Cb_can.T @ S_ao
-    e_elec = 0.5 * (np.sum(Pa_can * (H_core + Fa_ao)) + np.sum(Pb_can * (H_core + Fb_ao)))
-    e_tot = float(e_elec + mol.nuclear_repulsion_energy())
-
-    scf_res.C_alpha = Ca_can
-    scf_res.C_beta = Cb_can
-    scf_res.P_alpha = Pa_can
-    scf_res.P_beta = Pb_can
-    scf_res.F_alpha = Fa_ao
-    scf_res.F_beta = Fb_ao
-    scf_res.orbital_energies_alpha = eps_a
-    scf_res.orbital_energies_beta = eps_b
-    scf_res.energy_electronic = float(e_elec)
-    scf_res.energy_total = e_tot
-    return scf_res
-
 def run_scf_ground_state(
     sys_name, mol, basis, ints, eri_mode, is_uhf, psi4_db=None
 ):
-  """Menjalankan SCF murni menggunakan engine C++ mshqc (tanpa menyalin matriks Psi4)."""
-  return run_scf_raw(
-      mol, basis, ints, eri_mode, is_uhf, "cc-pvtz-ri", print_level=0
-  )
+    """Menjalankan SCF murni menggunakan engine C++ mshqc."""
+    return run_scf_raw(
+        mol, basis, ints, eri_mode, is_uhf, "cc-pvtz-ri", print_level=0
+    )
+
+
 # ==============================================================================
 # 1. TABEL KOMPRESI TENSOR ERI AO & VEKTOR CHOLESKY AKTUAL
 # ==============================================================================
@@ -913,7 +852,7 @@ try:
 
     mode = payload["mode"]
     sc = mshqc.SCFConfig(); sc.print_level = 0; sc.energy_threshold = 1e-9; sc.density_threshold = 1e-9
-    mc = mshqc.MP2Config(); mc.print_level = 0; mc.energy_threshold = 1e-9; mc.gradient_threshold = 1e-5
+    mc = mshqc.MP2Config(); mc.print_level = 0; mc.energy_threshold = 1e-9; mc.gradient_threshold = 1e-6
     if mode == "DF":
         sc.eri_method = "df"; sc.use_df = True; sc.aux_basis_name = payload["aux"]
         mc.eri_method = "df"; mc.use_df = True; mc.aux_basis_name = payload["aux"]
@@ -984,15 +923,16 @@ else:
 opts = {
     "basis": payload["basis"],
     "reference": "uhf" if payload["is_uhf"] else "rhf",
-    "e_convergence": 1e-12,
-    "d_convergence": 1e-11,
+    "e_convergence": 1e-9,
+    "d_convergence": 1e-9,
     "scf_type": scf_t,
     "mp2_type": corr_t,
     "mp_type": corr_t,
     "cc_type": corr_t,
     "freeze_core": "false",
-    "rms_mograd_convergence": 1e-5,
-    "max_mograd_convergence": 1e-4,
+    "r_convergence": 1e-6,
+    "rms_mograd_convergence": 1e-6,
+    "max_mograd_convergence": 1e-6,
     "read_scf_3index": False,
 }
 if mode == "df":

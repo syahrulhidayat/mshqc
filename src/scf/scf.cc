@@ -30,18 +30,15 @@
 #include <numeric>
 #include <chrono>
 #include <omp.h>
-#include "mshqc/utils/hdf5_io.h" 
-#include <tblis/tblis.h>         
-#include <memory>                
+#include "mshqc/utils/hdf5_io.h"
+#include <tblis/tblis.h>
+#include <memory>
 #include <vector>
 #ifdef I
 #undef I
 #endif
 
 namespace mshqc {
-
-
-
 
 BaseSCF::BaseSCF(const Molecule& mol, const BasisSet& basis,
                  std::shared_ptr<IntegralEngine> integrals,
@@ -52,7 +49,7 @@ BaseSCF::BaseSCF(const Molecule& mol, const BasisSet& basis,
     : mol_(mol), basis_(basis), integrals_(integrals),
       pg_(pg), pl_(pl), config_(config),
       nbasis_(basis.n_basis_functions()),
-      n_alpha_(n_alpha), n_beta_(n_beta) 
+      n_alpha_(n_alpha), n_beta_(n_beta)
 {
     if (pg_ && pl_) symmetrizer_ = std::make_unique<BasisSymmetrizer>(basis_, *pg_, *pl_);
 
@@ -60,27 +57,26 @@ BaseSCF::BaseSCF(const Molecule& mol, const BasisSet& basis,
     shell_starts_.resize(nshells);
     shell_sizes_.resize(nshells);
     int offset = 0;
-    for(int i = 0; i < nshells; ++i) {
+    for (int i = 0; i < nshells; ++i) {
         shell_starts_[i] = offset;
         shell_sizes_[i] = basis_.shell(i).n_functions();
         offset += shell_sizes_[i];
     }
 
     if (config_.use_df) {
-        BasisSet aux_basis(config_.aux_basis_name, mol_); 
+        BasisSet aux_basis(config_.aux_basis_name, mol_);
         BasisSet combined_basis = basis_;
         combined_basis.append(aux_basis);
         auto df_integrals = std::make_shared<IntegralEngine>(mol_, combined_basis);
         auto df_engine = std::make_shared<integrals::DensityFittingERI>(basis_, aux_basis, df_integrals, config_.df_threshold);
-        
+
         bool use_disk = (config_.scf_type != "incore");
-        df_engine->compute(use_disk); // Hanya tulis HDF5 jika BUKAN incore!
-        
+        df_engine->compute(use_disk);
+
         if (!use_disk) {
-            // Langsung salin dari RAM tanpa menyentuh SSD/HDF5 sama sekali!
             this->L_mat_ = df_engine->get_B_mat();
         } else {
-            this->L_mat_.resize(0, df_engine->get_B_mat().cols()); 
+            this->L_mat_.resize(0, df_engine->get_B_mat().cols());
         }
     }
 }
@@ -96,7 +92,8 @@ void BaseSCF::init_integrals() {
     if (symmetrizer_) {
         SalcBuilder salc(symmetrizer_.get());
         auto salc_data = salc.build_salc(S_);
-        X_ = salc_data.first; salc_irreps_ = salc_data.second; 
+        X_ = salc_data.first;
+        salc_irreps_ = salc_data.second;
     } else {
         Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(S_);
         X_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
@@ -106,20 +103,20 @@ void BaseSCF::init_integrals() {
                 X_ += val * es.eigenvectors().col(i) * es.eigenvectors().col(i).transpose();
             }
         }
-        salc_irreps_.assign(nbasis_, 0); 
+        salc_irreps_.assign(nbasis_, 0);
     }
     if (config_.print_level > 0) std::cout << "Done.\n";
 
     schwarz_ = precompute_shell_schwarz();
 
-    if (config_.eri_method == "cholesky" && !config_.use_df) init_integrals_cholesky();                   
+    if (config_.eri_method == "cholesky" && !config_.use_df) init_integrals_cholesky();
     else if (config_.scf_type == "incore") init_integrals_incore();
 
     auto t_end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> elapsed = t_end - t_start;
     if (config_.print_level > 0) {
         std::string mode_str = (config_.scf_type == "incore") ? "In-Core" : "Direct";
-        std::cout << "  [SCF] Initialization Done. Mode: " << mode_str << " (" 
+        std::cout << "  [SCF] Initialization Done. Mode: " << mode_str << " ("
                   << std::fixed << std::setprecision(3) << elapsed.count() << "s)\n";
     }
 }
@@ -127,7 +124,7 @@ void BaseSCF::init_integrals() {
 Eigen::MatrixXd BaseSCF::precompute_shell_schwarz() {
     int nshells = basis_.n_shells();
     Eigen::MatrixXd Q = Eigen::MatrixXd::Zero(nshells, nshells);
-    
+
     #pragma omp parallel
     {
         std::vector<double> buf(10000);
@@ -154,12 +151,11 @@ void BaseSCF::init_integrals_incore() {
 
     incore_quartets_.clear();
     incore_eri_pool_.clear();
-    
+
     double shell_cutoff = 1e-12;
 
     if (pl_ && pl_->get_unique_quartets().empty()) pl_->build();
 
-    // 1. Kumpulkan metadata kuartet signifikan & hitung prefix-sum offset secara deterministik
     size_t total_ints = 0;
     auto register_quartet = [&](int M, int N, int P, int Q, double weight) {
         if (schwarz_(M, N) * schwarz_(P, Q) < shell_cutoff) return;
@@ -186,7 +182,6 @@ void BaseSCF::init_integrals_incore() {
         }
     }
 
-    // 2. Alokasi tunggal (Zero Reallocation) & Evaluasi ERI Paralel Tanpa Lock
     incore_eri_pool_.resize(total_ints, 0.0);
 
     #pragma omp parallel for schedule(dynamic, 16)
@@ -198,32 +193,36 @@ void BaseSCF::init_integrals_incore() {
     }
 
     if (config_.print_level > 0) {
-        std::cout << "Done. (Quartets: " << incore_quartets_.size() 
+        std::cout << "Done. (Quartets: " << incore_quartets_.size()
                   << " | RAM: " << (incore_eri_pool_.size() * 8.0 / (1024.0 * 1024.0)) << " MB)\n";
     }
 }
+
 void BaseSCF::init_integrals_cholesky() {
     if (config_.print_level > 0) std::cout << "  [SCF] Decomposing Integrals (Cholesky)... " << std::flush;
     internal_cholesky_ = std::make_unique<integrals::CholeskyERI>(basis_, integrals_);
     internal_cholesky_->set_threshold(config_.cholesky_threshold);
-    internal_cholesky_->compute(); 
-    
-    
+    internal_cholesky_->compute();
+
     L_mat_ = internal_cholesky_->get_L_mat();
-    
+
     if (config_.print_level > 0) std::cout << " Done. Rank: " << L_mat_.cols() << "\n";
 }
 
 Eigen::VectorXd BaseSCF::smear_electrons(const Eigen::VectorXd& eps, int target_electrons) {
     Eigen::VectorXd occ = Eigen::VectorXd::Zero(nbasis_);
-    int electrons_left = target_electrons; double degen_tol = 1e-4; int i = 0;
+    int electrons_left = target_electrons;
+    double degen_tol = 1e-4;
+    int i = 0;
     while (i < nbasis_ && electrons_left > 0) {
-        int degen_count = 1; double current_e = eps(i);
+        int degen_count = 1;
+        double current_e = eps(i);
         while (i + degen_count < nbasis_ && std::abs(eps(i + degen_count) - current_e) < degen_tol) degen_count++;
-        int electrons_to_fill = std::min(electrons_left, degen_count); 
+        int electrons_to_fill = std::min(electrons_left, degen_count);
         double fraction = (double)electrons_to_fill / (double)degen_count;
         for (int k = 0; k < degen_count; ++k) occ(i + k) = fraction;
-        electrons_left -= electrons_to_fill; i += degen_count;
+        electrons_left -= electrons_to_fill;
+        i += degen_count;
     }
     return occ;
 }
@@ -231,23 +230,33 @@ Eigen::VectorXd BaseSCF::smear_electrons(const Eigen::VectorXd& eps, int target_
 void BaseSCF::solve_fock(const Eigen::MatrixXd& F, Eigen::MatrixXd& C, Eigen::VectorXd& eps) {
     Eigen::MatrixXd Fp = X_.transpose() * F * X_;
     if (symmetrizer_ && !salc_irreps_.empty()) {
-        Eigen::MatrixXd C_salc = Eigen::MatrixXd::Zero(nbasis_, nbasis_); eps.resize(nbasis_);
+        Eigen::MatrixXd C_salc = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+        eps.resize(nbasis_);
         int start_idx = 0;
         while (start_idx < nbasis_) {
-            int current_irrep = salc_irreps_[start_idx]; int size = 0;
+            int current_irrep = salc_irreps_[start_idx];
+            int size = 0;
             while (start_idx + size < nbasis_ && salc_irreps_[start_idx + size] == current_irrep) size++;
             Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(Fp.block(start_idx, start_idx, size, size));
-            C_salc.block(start_idx, start_idx, size, size) = es.eigenvectors(); eps.segment(start_idx, size) = es.eigenvalues();
+            C_salc.block(start_idx, start_idx, size, size) = es.eigenvectors();
+            eps.segment(start_idx, size) = es.eigenvalues();
             start_idx += size;
         }
         std::vector<std::pair<double, int>> sort_data(nbasis_);
         for (int i = 0; i < nbasis_; ++i) sort_data[i] = {eps(i), i};
         std::sort(sort_data.begin(), sort_data.end());
-        Eigen::MatrixXd C_sorted(nbasis_, nbasis_); Eigen::VectorXd eps_sorted(nbasis_);
-        for (int i = 0; i < nbasis_; ++i) { C_sorted.col(i) = C_salc.col(sort_data[i].second); eps_sorted(i) = sort_data[i].first; }
-        C.noalias() = X_ * C_sorted; eps = eps_sorted;
+        Eigen::MatrixXd C_sorted(nbasis_, nbasis_);
+        Eigen::VectorXd eps_sorted(nbasis_);
+        for (int i = 0; i < nbasis_; ++i) {
+            C_sorted.col(i) = C_salc.col(sort_data[i].second);
+            eps_sorted(i) = sort_data[i].first;
+        }
+        C.noalias() = X_ * C_sorted;
+        eps = eps_sorted;
     } else {
-        Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(Fp); eps = es.eigenvalues(); C.noalias() = X_ * es.eigenvectors();
+        Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(Fp);
+        eps = es.eigenvalues();
+        C.noalias() = X_ * es.eigenvectors();
     }
 }
 
@@ -305,7 +314,6 @@ SCFResult BaseSCF::compute() {
         Eigen::MatrixXd F_eff_b = F_beta_;
         double err_rms = 0.0;
 
-        // Hanya masukkan ke subruang DIIS mulai iterasi ke-2 (setelah P_alpha_ idempoten dari MO)
         if (iter_scf_ > 1) {
             Eigen::MatrixXd FPS_a = F_alpha_ * P_alpha_ * S_;
             Eigen::MatrixXd err_a = X_.transpose() * (FPS_a - FPS_a.transpose()) * X_;
@@ -331,7 +339,6 @@ SCFResult BaseSCF::compute() {
             eps_beta_ = eps_alpha_;
         }
 
-        // Gunakan okupansi integer murni untuk determinan tunggal RHF/UHF
         occ_numbers_alpha_.resize(0);
         occ_numbers_beta_.resize(0);
         update_densities();
@@ -353,7 +360,7 @@ SCFResult BaseSCF::compute() {
             : (is_uhf ? std::min(config_.density_threshold, 1e-11) : config_.density_threshold);
 
         bool strict_conv  = (dE < e_tol && dP < p_tol && err_rms < p_tol);
-        bool plateau_conv = (iter_scf_ > 60 && dE < e_tol && dP < std::max(p_tol, 1e-10));
+        bool plateau_conv = (iter_scf_ > 120 && dE < e_tol && dP < std::max(p_tol, 1e-10));
 
         if (iter_scf_ > 2 && (strict_conv || plateau_conv)) {
             converged = true;
@@ -361,8 +368,8 @@ SCFResult BaseSCF::compute() {
         }
     }
 
-    // Verifikasi keadaan dasar UHF terhadap jebakan simetri subruang awal (misal NH2 2A1 -> 2B1)
-    if (is_uhf && mol_.n_atoms() > 1 && n_beta_ > 0) {
+    // Verifikasi keadaan dasar UHF khusus radikal poliatomik (mol_.n_atoms() > 2, misal NH2 2A1 -> 2B1)
+    if (is_uhf && mol_.n_atoms() > 2 && n_beta_ > 0) {
         double best_energy = energy_;
         bool best_conv = converged;
         int best_iter = iter_scf_;
@@ -400,7 +407,6 @@ SCFResult BaseSCF::compute() {
                 }
                 energy_ = compute_energy();
 
-                // Hentikan lebih awal jika kandidat jelas menaikkan energi
                 if (iter_scf_ >= 3 && energy_ > best_energy + 0.05) {
                     break;
                 }
@@ -439,7 +445,7 @@ SCFResult BaseSCF::compute() {
                     : std::min(config_.density_threshold, 1e-11);
 
                 bool strict_conv  = (dE < e_tol && dP < p_tol && err_rms < p_tol);
-                bool plateau_conv = (iter_scf_ > 60 && dE < e_tol && dP < std::max(p_tol, 1e-10));
+                bool plateau_conv = (iter_scf_ > 120 && dE < e_tol && dP < std::max(p_tol, 1e-10));
 
                 if (iter_scf_ > 2 && (strict_conv || plateau_conv)) {
                     trial_conv = true;
@@ -464,7 +470,6 @@ SCFResult BaseSCF::compute() {
             return false;
         };
 
-        // Identifikasi orbital virtual beta yang berkorespondensi dengan SOMO alpha
         Eigen::MatrixXd S_Ca_occ = S_ * best_Ca.leftCols(n_alpha_);
         std::vector<int> somo_beta_indices;
         for (int a = n_beta_; a < nbasis_; ++a) {
@@ -474,7 +479,6 @@ SCFResult BaseSCF::compute() {
             }
         }
 
-        // Uji pertukaran HOMO-beta (dan HOMO-1-beta jika dekat) dengan kandidat SOMO virtual beta
         for (int a_idx : somo_beta_indices) {
             for (int i_off = 1; i_off <= std::min(2, n_beta_); ++i_off) {
                 int i_idx = n_beta_ - i_off;
@@ -508,7 +512,7 @@ SCFResult BaseSCF::compute() {
             if (is_uhf) symmetrizer_->symmetrize(P_beta_);
         }
         if (fock_engine_) fock_engine_->reset();
-        iter_scf_ = 1; // Evaluasi Fock penuh (non-inkremental) bebas drift numerik
+        iter_scf_ = 1;
         build_fock_matrix();
         if (symmetrizer_) {
             symmetrizer_->symmetrize(F_alpha_);
@@ -528,7 +532,6 @@ SCFResult BaseSCF::compute() {
         }
         update_densities();
 
-        // Bangun ulang Fock satu kali lagi agar F, C, eps, dan P 100% konsisten
         if (fock_engine_) fock_engine_->reset();
         iter_scf_ = 1;
         build_fock_matrix();
@@ -575,12 +578,11 @@ SCFResult BaseSCF::compute() {
     return r;
 }
 
-
 RHF::RHF(const Molecule& mol, const BasisSet& basis, std::shared_ptr<IntegralEngine> integrals, std::shared_ptr<PointGroup> pg, std::shared_ptr<PetiteList> pl, const SCFConfig& config)
     : BaseSCF(mol, basis, integrals, pg, pl, mol.n_electrons() / 2, mol.n_electrons() / 2, config) {
     if (mol.n_electrons() % 2 != 0) throw std::runtime_error("CRITICAL: RHF requires an even number of electrons.");
-    G_J_accum_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_); 
-    G_accum_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_); 
+    G_J_accum_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+    G_accum_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
     P_old_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
 }
 
@@ -618,7 +620,7 @@ void RHF::update_densities() {
     } else {
         if (n_alpha_ > 0) P_alpha_ = C_alpha_.leftCols(n_alpha_) * C_alpha_.leftCols(n_alpha_).transpose();
     }
-    P_beta_ = P_alpha_; 
+    P_beta_ = P_alpha_;
 }
 
 void RHF::build_fock_matrix() {
@@ -627,49 +629,44 @@ void RHF::build_fock_matrix() {
         G_J_accum_.setZero();
     }
     if (config_.eri_method == "cholesky" || config_.use_df) {
-        Eigen::MatrixXd dP = (iter_scf_ == 1) ? P_alpha_ : (P_alpha_ - P_old_); 
+        Eigen::MatrixXd dP = (iter_scf_ == 1) ? P_alpha_ : (P_alpha_ - P_old_);
         if (dP.cwiseAbs().maxCoeff() < 1e-11) {
             if (C_alpha_.rows() != nbasis_) F_alpha_ = H_ + G_accum_;
         } else {
             bool use_mo_alg = (C_alpha_.rows() == nbasis_) && (C_alpha_.cols() == nbasis_);
             Eigen::MatrixXd dJ_mat = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-            Eigen::MatrixXd dK_acc = Eigen::MatrixXd::Zero(nbasis_, nbasis_); 
-            
-            int n_chol = L_mat_.cols(); 
+            Eigen::MatrixXd dK_acc = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+
+            int n_chol = L_mat_.cols();
             bool is_ooc = (L_mat_.rows() == 0 && n_chol > 0);
-            
+
             std::unique_ptr<utils::HDF5TensorIO> io = nullptr;
             if (is_ooc) io = std::make_unique<utils::HDF5TensorIO>("df_tensor.h5", utils::HDF5TensorIO::Mode::READ_ONLY);
-            
-            int chunk_size = is_ooc ? 128 : n_chol; 
-            
-            // [FAST BLAS RE-USE VECTOR] Memetakan densitas menjadi vektor 1D
+
+            int chunk_size = is_ooc ? 128 : n_chol;
             Eigen::Map<const Eigen::VectorXd> dP_flat(dP.data(), nbasis_ * nbasis_);
 
-            // Jika In-Core, jalankan operasi BLAS sekaligus untuk efisiensi L3 Cache maksimum
             if (!is_ooc) {
-                Eigen::VectorXd X_J = L_mat_.transpose() * dP_flat; 
-                Eigen::VectorXd J_flat = L_mat_ * X_J;                 
+                Eigen::VectorXd X_J = L_mat_.transpose() * dP_flat;
+                Eigen::VectorXd J_flat = L_mat_ * X_J;
                 dJ_mat = Eigen::Map<Eigen::MatrixXd>(J_flat.data(), nbasis_, nbasis_);
             }
-            
+
             for (int K_start = 0; K_start < n_chol; K_start += chunk_size) {
                 int K_end = std::min(n_chol, K_start + chunk_size);
                 int k_size = K_end - K_start;
-                
+
                 Eigen::MatrixXd L_chunk;
                 if (is_ooc) {
                     L_chunk.resize(nbasis_ * nbasis_, k_size);
                     io->read_slice_4d("df_tensor", {K_start, 0, 0, 0}, {k_size, (long)nbasis_, (long)nbasis_, 1}, L_chunk.data());
-                    
-                    // Operasi BLAS secara chunking untuk Out-Of-Core, memanfaatkan bandwidth lokal
+
                     Eigen::VectorXd X_J_chunk = L_chunk.transpose() * dP_flat;
                     Eigen::VectorXd J_flat_chunk = L_chunk * X_J_chunk;
                     dJ_mat += Eigen::Map<Eigen::MatrixXd>(J_flat_chunk.data(), nbasis_, nbasis_);
                 }
-                
+
                 if (use_mo_alg && n_alpha_ > 0) {
-                    // Algoritma basis-MO menggunakan TBLIS untuk matriks Exchange (K)
                     using tblis::len_type; using tblis::stride_type; using tblis::varray_view;
                     std::vector<len_type> len_L = { (len_type)nbasis_, (len_type)nbasis_, (len_type)k_size };
                     std::vector<stride_type> str_L = { 1, (stride_type)nbasis_, (stride_type)(nbasis_ * nbasis_) };
@@ -693,7 +690,6 @@ void RHF::build_fock_matrix() {
 
                     tblis::mult<double>(1.0, t_Ta, "miP", t_Ta, "niP", 1.0, t_K, "mn");
                 } else if (!use_mo_alg) {
-                    // TBLIS BLAS-3 AO Fallback untuk OMP2
                     using tblis::len_type; using tblis::stride_type; using tblis::varray_view;
                     std::vector<len_type> len_L = { (len_type)nbasis_, (len_type)nbasis_, (len_type)k_size };
                     std::vector<stride_type> str_L = { 1, (stride_type)nbasis_, (stride_type)(nbasis_ * nbasis_) };
@@ -716,12 +712,14 @@ void RHF::build_fock_matrix() {
 
                     tblis::mult<double>(1.0, t_T, "msP", t_L, "nsP", 1.0, t_K, "mn");
                 }
-            } 
+            }
 
             if (use_mo_alg) {
-                G_J_accum_ += 2.0 * dJ_mat; F_alpha_ = H_ + G_J_accum_ - dK_acc;
+                G_J_accum_ += 2.0 * dJ_mat;
+                F_alpha_ = H_ + G_J_accum_ - dK_acc;
             } else {
-                G_J_accum_ += 2.0 * dJ_mat; G_accum_ += (2.0 * dJ_mat - dK_acc); 
+                G_J_accum_ += 2.0 * dJ_mat;
+                G_accum_ += (2.0 * dJ_mat - dK_acc);
                 F_alpha_ = H_ + G_accum_;
             }
         }
@@ -732,7 +730,7 @@ void RHF::build_fock_matrix() {
         } else {
             dP = (P_alpha_ - P_old_).eval();
         }
-        
+
         if (dP.cwiseAbs().maxCoeff() < 1e-12) {
             F_alpha_ = H_ + G_accum_;
         } else {
@@ -770,8 +768,7 @@ void RHF::build_fock_matrix() {
                                     double v = val * fac;
                                     double v2 = v * 2.0;
 
-                                    // Faktor 2.0 karena P total = 2 * P_alpha pada RHF
-                                    double pt_ls = dP(lam, sig) * 2.0; 
+                                    double pt_ls = dP(lam, sig) * 2.0;
                                     double pt_mn = dP(mu, nu) * 2.0;
 
                                     G_local(mu, nu) += v2 * pt_ls; G_local(nu, mu) += v2 * pt_ls;
@@ -794,15 +791,14 @@ void RHF::build_fock_matrix() {
             F_alpha_ = H_ + G_accum_;
         }
     } else {
-        Eigen::MatrixXd P_empty, F_empty; 
+        Eigen::MatrixXd P_empty, F_empty;
         fock_engine_->compute(P_alpha_, P_empty, F_alpha_, F_empty);
     }
-    P_old_ = P_alpha_; 
+    P_old_ = P_alpha_;
     F_beta_ = F_alpha_;
 }
 
-
-void UHF::build_fock_matrix() { 
+void UHF::build_fock_matrix() {
     if (iter_scf_ == 1) {
         G_accum_a_.setZero();
         G_accum_b_.setZero();
@@ -815,30 +811,30 @@ void UHF::build_fock_matrix() {
         Eigen::MatrixXd J_mat = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
         Eigen::MatrixXd Ka_acc = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
         Eigen::MatrixXd Kb_acc = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-        
+
         int n_chol = L_mat_.cols();
         bool is_ooc = (L_mat_.rows() == 0 && n_chol > 0);
         std::unique_ptr<utils::HDF5TensorIO> io = nullptr;
         if (is_ooc) io = std::make_unique<utils::HDF5TensorIO>("df_tensor.h5", utils::HDF5TensorIO::Mode::READ_ONLY);
         int chunk_size = is_ooc ? 128 : n_chol;
-        
+
         Eigen::Map<const Eigen::VectorXd> P_tot_flat(P_tot.data(), nbasis_ * nbasis_);
 
         if (!is_ooc) {
-            Eigen::VectorXd X_J = L_mat_.transpose() * P_tot_flat; 
-            Eigen::VectorXd J_flat = L_mat_ * X_J;                 
+            Eigen::VectorXd X_J = L_mat_.transpose() * P_tot_flat;
+            Eigen::VectorXd J_flat = L_mat_ * X_J;
             J_mat = Eigen::Map<Eigen::MatrixXd>(J_flat.data(), nbasis_, nbasis_);
         }
-        
+
         for (int K_start = 0; K_start < n_chol; K_start += chunk_size) {
             int K_end = std::min(n_chol, K_start + chunk_size);
             int k_size = K_end - K_start;
-            
+
             Eigen::MatrixXd L_chunk;
             if (is_ooc) {
                 L_chunk.resize(nbasis_ * nbasis_, k_size);
                 io->read_slice_4d("df_tensor", {K_start, 0, 0, 0}, {k_size, (long)nbasis_, (long)nbasis_, 1}, L_chunk.data());
-                
+
                 Eigen::VectorXd X_J_chunk = L_chunk.transpose() * P_tot_flat;
                 Eigen::VectorXd J_flat_chunk = L_chunk * X_J_chunk;
                 J_mat += Eigen::Map<Eigen::MatrixXd>(J_flat_chunk.data(), nbasis_, nbasis_);
@@ -862,7 +858,7 @@ void UHF::build_fock_matrix() {
                     varray_view<double> t_Ta(len_Ta, Ta_buf.data(), str_Ta);
 
                     tblis::mult<double>(1.0, t_L, "mnP", t_Ca, "ni", 0.0, t_Ta, "miP");
-                    
+
                     std::vector<len_type> len_Ka = { (len_type)nbasis_, (len_type)nbasis_ };
                     std::vector<stride_type> str_Ka = { 1, (stride_type)nbasis_ };
                     varray_view<double> t_Ka(len_Ka, Ka_acc.data(), str_Ka);
@@ -881,7 +877,7 @@ void UHF::build_fock_matrix() {
                     varray_view<double> t_Tb(len_Tb, Tb_buf.data(), str_Tb);
 
                     tblis::mult<double>(1.0, t_L, "mnP", t_Cb, "ni", 0.0, t_Tb, "miP");
-                    
+
                     std::vector<len_type> len_Kb = { (len_type)nbasis_, (len_type)nbasis_ };
                     std::vector<stride_type> str_Kb = { 1, (stride_type)nbasis_ };
                     varray_view<double> t_Kb(len_Kb, Kb_acc.data(), str_Kb);
@@ -910,8 +906,8 @@ void UHF::build_fock_matrix() {
                 tblis::mult<double>(1.0, t_Ta, "msP", t_L, "nsP", 1.0, t_Ka, "mn");
                 tblis::mult<double>(1.0, t_Tb, "msP", t_L, "nsP", 1.0, t_Kb, "mn");
             }
-        } 
-        
+        }
+
         Eigen::MatrixXd Ga = 0.5 * ((J_mat - Ka_acc) + (J_mat - Ka_acc).transpose());
         Eigen::MatrixXd Gb = 0.5 * ((J_mat - Kb_acc) + (J_mat - Kb_acc).transpose());
         F_alpha_ = H_ + Ga;
@@ -937,7 +933,7 @@ void UHF::build_fock_matrix() {
             dPa    = (Pa_k - P_alpha_old_).eval();
             dPb    = (Pb_k - P_beta_old_).eval();
         }
-        double max_dP = std::max({dP_tot.cwiseAbs().maxCoeff(), dPa.cwiseAbs().maxCoeff(), dPb.cwiseAbs().maxCoeff()}); 
+        double max_dP = std::max({dP_tot.cwiseAbs().maxCoeff(), dPa.cwiseAbs().maxCoeff(), dPb.cwiseAbs().maxCoeff()});
 
         if (max_dP < 1e-14) {
             F_alpha_ = H_ + G_accum_a_;
@@ -950,7 +946,7 @@ void UHF::build_fock_matrix() {
             {
                 Eigen::MatrixXd Ga_local = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
                 Eigen::MatrixXd Gb_local = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-                
+
                 #pragma omp for schedule(static)
                 for (size_t i = 0; i < incore_quartets_.size(); ++i) {
                     const auto& cq = incore_quartets_[i];
@@ -1005,42 +1001,36 @@ void UHF::build_fock_matrix() {
                 #pragma omp critical
                 { dGa += Ga_local; dGb += Gb_local; }
             }
-            
+
             dGa = 0.5 * (dGa + dGa.transpose());
             dGb = 0.5 * (dGb + dGb.transpose());
-            
+
             G_accum_a_ += dGa;
             G_accum_b_ += dGb;
-            F_alpha_ = H_ + G_accum_a_; 
+            F_alpha_ = H_ + G_accum_a_;
             F_beta_  = H_ + G_accum_b_;
             G_J_accum_a_ = P_tot;
             P_alpha_old_ = Pa_k;
             P_beta_old_  = Pb_k;
         }
     } else {
-        fock_engine_->compute(P_alpha_, P_beta_, F_alpha_, F_beta_); 
-        P_alpha_old_ = P_alpha_; P_beta_old_  = P_beta_; 
+        fock_engine_->compute(P_alpha_, P_beta_, F_alpha_, F_beta_);
+        P_alpha_old_ = P_alpha_;
+        P_beta_old_  = P_beta_;
     }
 }
 
 double RHF::compute_energy() { return P_alpha_.cwiseProduct(H_ + F_alpha_).sum(); }
 
-
-
-
 UHF::UHF(const Molecule& mol, const BasisSet& basis, std::shared_ptr<IntegralEngine> integrals, std::shared_ptr<PointGroup> pg, std::shared_ptr<PetiteList> pl, int n_alpha, int n_beta, const SCFConfig& config)
     : BaseSCF(mol, basis, integrals, pg, pl, n_alpha, n_beta, config) {
     if (n_alpha < n_beta) throw std::runtime_error("UHF Error: High spin assumption violated.");
-    
-    G_accum_a_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_); 
+
+    G_accum_a_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
     G_accum_b_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-    
-    
     G_J_accum_a_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
     G_J_accum_b_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-    
-    
-    P_alpha_old_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_); 
+    P_alpha_old_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
     P_beta_old_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
 }
 
@@ -1049,11 +1039,8 @@ void UHF::initial_guess() {
     Eigen::MatrixXd P_sad = SADGuess::build(mol_, basis_);
     if (P_sad.rows() == nbasis_ && P_sad.norm() > 1e-6) {
         if (config_.print_level > 0) std::cout << "Using SAD.\n";
-        double n_tot = static_cast<double>(n_alpha_ + n_beta_);
-        double frac_a = (n_tot > 0.0) ? (static_cast<double>(n_alpha_) / n_tot) : 0.5;
-        double frac_b = (n_tot > 0.0) ? (static_cast<double>(n_beta_)  / n_tot) : 0.5;
-        P_alpha_ = frac_a * P_sad;
-        P_beta_  = frac_b * P_sad;
+        P_alpha_ = 0.5 * P_sad;
+        P_beta_  = 0.5 * P_sad;
 
         if (mol_.n_atoms() == 1) {
             solve_fock(H_, C_alpha_, eps_alpha_);
@@ -1086,12 +1073,9 @@ void UHF::initial_guess() {
 }
 
 void UHF::update_densities() {
-    
-    
-    P_alpha_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_); 
+    P_alpha_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
     P_beta_  = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
 
-    
     if (n_alpha_ > 0) {
         P_alpha_.noalias() = C_alpha_.leftCols(n_alpha_) * C_alpha_.leftCols(n_alpha_).transpose();
     }
@@ -1100,24 +1084,20 @@ void UHF::update_densities() {
     }
 }
 
-
 double UHF::compute_energy() { return 0.5 * (P_alpha_.cwiseProduct(H_ + F_alpha_).sum() + P_beta_.cwiseProduct(H_ + F_beta_).sum()); }
 
 double UHF::compute_s2(const Eigen::MatrixXd& Ca, const Eigen::MatrixXd& Cb, const Eigen::MatrixXd& S) {
     double sz = 0.5 * (n_alpha_ - n_beta_);
-    if(n_alpha_ == 0 || n_beta_ == 0) return sz * (sz + 1.0);
+    if (n_alpha_ == 0 || n_beta_ == 0) return sz * (sz + 1.0);
     return sz * (sz + 1.0) + n_beta_ - (Ca.leftCols(n_alpha_).transpose() * S * Cb.leftCols(n_beta_)).array().square().sum();
 }
-
-
-
 
 ROHF::ROHF(const Molecule& mol, const BasisSet& basis, std::shared_ptr<IntegralEngine> integrals, std::shared_ptr<PointGroup> pg, std::shared_ptr<PetiteList> pl, int n_alpha, int n_beta, const SCFConfig& config)
     : BaseSCF(mol, basis, integrals, pg, pl, n_alpha, n_beta, config) {
     if (n_alpha < n_beta) throw std::runtime_error("ROHF Error: Alpha must be >= Beta.");
-    G_accum_a_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_); 
-    G_accum_b_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_); 
-    P_alpha_old_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_); 
+    G_accum_a_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+    G_accum_b_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+    P_alpha_old_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
     P_beta_old_  = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
     G_J_accum_a_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
     G_J_accum_b_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
@@ -1154,7 +1134,8 @@ void ROHF::initial_guess() {
 }
 
 void ROHF::update_densities() {
-    P_alpha_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_); P_beta_  = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+    P_alpha_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+    P_beta_  = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
     if (occ_numbers_alpha_.size() == nbasis_) {
         for (int i = 0; i < nbasis_; ++i) {
             if (occ_numbers_alpha_(i) > 1e-12) P_alpha_ += occ_numbers_alpha_(i) * C_alpha_.col(i) * C_alpha_.col(i).transpose();
@@ -1166,9 +1147,7 @@ void ROHF::update_densities() {
     }
 }
 
-
-
-void ROHF::build_fock_matrix() { 
+void ROHF::build_fock_matrix() {
     if (iter_scf_ == 1) {
         G_accum_a_.setZero();
         G_accum_b_.setZero();
@@ -1181,39 +1160,36 @@ void ROHF::build_fock_matrix() {
         Eigen::MatrixXd dP_tot = dPa + dPb;
 
         if (dP_tot.cwiseAbs().maxCoeff() < 1e-11) {
-            if (C_alpha_.rows() != nbasis_) { F_alpha_ = H_ + G_accum_a_; F_beta_  = H_ + G_accum_b_; }
+            if (C_alpha_.rows() != nbasis_) { F_alpha_ = H_ + G_accum_a_; F_beta_ = H_ + G_accum_b_; }
         } else {
             bool use_mo_alg = (C_alpha_.rows() == nbasis_);
             Eigen::MatrixXd dJ_mat = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
             Eigen::MatrixXd dKa_acc = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
             Eigen::MatrixXd dKb_acc = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-            
+
             int n_chol = L_mat_.cols();
             bool is_ooc = (L_mat_.rows() == 0 && n_chol > 0);
             std::unique_ptr<utils::HDF5TensorIO> io = nullptr;
             if (is_ooc) io = std::make_unique<utils::HDF5TensorIO>("df_tensor.h5", utils::HDF5TensorIO::Mode::READ_ONLY);
             int chunk_size = is_ooc ? 128 : n_chol;
-            
-            // [FAST BLAS RE-USE VECTOR] Memetakan densitas menjadi vektor 1D
+
             Eigen::Map<const Eigen::VectorXd> dP_tot_flat(dP_tot.data(), nbasis_ * nbasis_);
 
-            // Jika In-Core, jalankan operasi BLAS sekaligus untuk efisiensi L3 Cache maksimum
             if (!is_ooc) {
-                Eigen::VectorXd X_J = L_mat_.transpose() * dP_tot_flat; 
-                Eigen::VectorXd J_flat = L_mat_ * X_J;                 
+                Eigen::VectorXd X_J = L_mat_.transpose() * dP_tot_flat;
+                Eigen::VectorXd J_flat = L_mat_ * X_J;
                 dJ_mat = Eigen::Map<Eigen::MatrixXd>(J_flat.data(), nbasis_, nbasis_);
             }
-            
+
             for (int K_start = 0; K_start < n_chol; K_start += chunk_size) {
                 int K_end = std::min(n_chol, K_start + chunk_size);
                 int k_size = K_end - K_start;
-                
+
                 Eigen::MatrixXd L_chunk;
                 if (is_ooc) {
                     L_chunk.resize(nbasis_ * nbasis_, k_size);
                     io->read_slice_4d("df_tensor", {K_start, 0, 0, 0}, {k_size, (long)nbasis_, (long)nbasis_, 1}, L_chunk.data());
-                    
-                    // Operasi BLAS secara chunking untuk Out-Of-Core, memanfaatkan bandwidth lokal
+
                     Eigen::VectorXd X_J_chunk = L_chunk.transpose() * dP_tot_flat;
                     Eigen::VectorXd J_flat_chunk = L_chunk * X_J_chunk;
                     dJ_mat += Eigen::Map<Eigen::MatrixXd>(J_flat_chunk.data(), nbasis_, nbasis_);
@@ -1237,7 +1213,7 @@ void ROHF::build_fock_matrix() {
                         varray_view<double> t_Ta(len_Ta, Ta_buf.data(), str_Ta);
 
                         tblis::mult<double>(1.0, t_L, "mnP", t_Ca, "ni", 0.0, t_Ta, "miP");
-                        
+
                         std::vector<len_type> len_Ka = { (len_type)nbasis_, (len_type)nbasis_ };
                         std::vector<stride_type> str_Ka = { 1, (stride_type)nbasis_ };
                         varray_view<double> t_Ka(len_Ka, dKa_acc.data(), str_Ka);
@@ -1245,7 +1221,7 @@ void ROHF::build_fock_matrix() {
                     }
 
                     if (n_beta_ > 0) {
-                        Eigen::MatrixXd Cb_occ = C_alpha_.leftCols(n_beta_); 
+                        Eigen::MatrixXd Cb_occ = C_alpha_.leftCols(n_beta_);
                         std::vector<len_type> len_Cb = { (len_type)nbasis_, (len_type)n_beta_ };
                         std::vector<stride_type> str_Cb = { 1, (stride_type)nbasis_ };
                         varray_view<double> t_Cb(len_Cb, Cb_occ.data(), str_Cb);
@@ -1256,14 +1232,13 @@ void ROHF::build_fock_matrix() {
                         varray_view<double> t_Tb(len_Tb, Tb_buf.data(), str_Tb);
 
                         tblis::mult<double>(1.0, t_L, "mnP", t_Cb, "ni", 0.0, t_Tb, "miP");
-                        
+
                         std::vector<len_type> len_Kb = { (len_type)nbasis_, (len_type)nbasis_ };
                         std::vector<stride_type> str_Kb = { 1, (stride_type)nbasis_ };
                         varray_view<double> t_Kb(len_Kb, dKb_acc.data(), str_Kb);
                         tblis::mult<double>(1.0, t_Tb, "miP", t_Tb, "niP", 1.0, t_Kb, "mn");
                     }
                 } else {
-                    // TBLIS BLAS-3 AO Fallback untuk OMP2 (Alpha & Beta)
                     using tblis::len_type; using tblis::stride_type; using tblis::varray_view;
                     std::vector<len_type> len_L = { (len_type)nbasis_, (len_type)nbasis_, (len_type)k_size };
                     std::vector<stride_type> str_L = { 1, (stride_type)nbasis_, (stride_type)(nbasis_ * nbasis_) };
@@ -1286,15 +1261,15 @@ void ROHF::build_fock_matrix() {
                     tblis::mult<double>(1.0, t_Ta, "msP", t_L, "nsP", 1.0, t_Ka, "mn");
                     tblis::mult<double>(1.0, t_Tb, "msP", t_L, "nsP", 1.0, t_Kb, "mn");
                 }
-            } 
-            
+            }
+
             if (use_mo_alg) {
                 G_J_accum_a_ += dJ_mat; G_J_accum_b_ += dJ_mat;
-                F_alpha_ = H_ + G_J_accum_a_ - dKa_acc; F_beta_  = H_ + G_J_accum_b_ - dKb_acc;
+                F_alpha_ = H_ + G_J_accum_a_ - dKa_acc; F_beta_ = H_ + G_J_accum_b_ - dKb_acc;
             } else {
-                G_J_accum_a_ += dJ_mat; G_J_accum_b_ += dJ_mat; 
+                G_J_accum_a_ += dJ_mat; G_J_accum_b_ += dJ_mat;
                 G_accum_a_ += (dJ_mat - dKa_acc); G_accum_b_ += (dJ_mat - dKb_acc);
-                F_alpha_ = H_ + G_accum_a_; F_beta_  = H_ + G_accum_b_;
+                F_alpha_ = H_ + G_accum_a_; F_beta_ = H_ + G_accum_b_;
             }
         }
     } else if (config_.scf_type == "incore") {
@@ -1306,7 +1281,7 @@ void ROHF::build_fock_matrix() {
             dPa = (P_alpha_ - P_alpha_old_).eval();
             dPb = (P_beta_ - P_beta_old_).eval();
         }
-        double max_dP = std::max(dPa.cwiseAbs().maxCoeff(), dPb.cwiseAbs().maxCoeff()); 
+        double max_dP = std::max(dPa.cwiseAbs().maxCoeff(), dPb.cwiseAbs().maxCoeff());
 
         if (max_dP < 1e-12) {
             F_alpha_ = H_ + G_accum_a_;
@@ -1319,7 +1294,7 @@ void ROHF::build_fock_matrix() {
             {
                 Eigen::MatrixXd Ga_local = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
                 Eigen::MatrixXd Gb_local = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-                
+
                 #pragma omp for schedule(static)
                 for (size_t i = 0; i < incore_quartets_.size(); ++i) {
                     const auto& cq = incore_quartets_[i];
@@ -1374,67 +1349,108 @@ void ROHF::build_fock_matrix() {
                 #pragma omp critical
                 { dGa += Ga_local; dGb += Gb_local; }
             }
-            
+
             dGa = 0.5 * (dGa + dGa.transpose());
             dGb = 0.5 * (dGb + dGb.transpose());
-            
+
             G_accum_a_ += dGa;
             G_accum_b_ += dGb;
-            F_alpha_ = H_ + G_accum_a_; 
+            F_alpha_ = H_ + G_accum_a_;
             F_beta_  = H_ + G_accum_b_;
         }
-    }else {
-        fock_engine_->compute(P_alpha_, P_beta_, F_alpha_, F_beta_); 
+    } else {
+        fock_engine_->compute(P_alpha_, P_beta_, F_alpha_, F_beta_);
     }
-    P_alpha_old_ = P_alpha_; P_beta_old_  = P_beta_; 
+    P_alpha_old_ = P_alpha_;
+    P_beta_old_  = P_beta_;
 }
+
 double ROHF::compute_energy() { return 0.5 * (P_alpha_.cwiseProduct(H_ + F_alpha_).sum() + P_beta_.cwiseProduct(H_ + F_beta_).sum()); }
 
 SCFResult ROHF::compute() {
     if (n_alpha_ == n_beta_) { RHF rhf_engine(mol_, basis_, integrals_, pg_, pl_, config_); return rhf_engine.compute(); }
-    init_integrals(); initial_guess(); 
-    if (config_.scf_type == "direct") { fock_engine_ = std::make_unique<FockBuilder>(integrals_, basis_, H_, schwarz_); if (pl_) fock_engine_->set_petite_list(pl_.get()); }
+    init_integrals();
+    initial_guess();
+    if (config_.scf_type == "direct") {
+        fock_engine_ = std::make_unique<FockBuilder>(integrals_, basis_, H_, schwarz_);
+        if (pl_) fock_engine_->set_petite_list(pl_.get());
+    }
 
-    DIIS diis(config_.diis_max_vectors); bool converged = false; double thresh = 1e-6;
+    DIIS diis(config_.diis_max_vectors);
+    bool converged = false;
+    double thresh = 1e-6;
     if (config_.print_level > 0) printf("\n Iter        Energy (Ha)        Delta E    Delta P\n");
 
     for (iter_scf_ = 1; iter_scf_ <= config_.max_iterations; iter_scf_++) {
-        energy_old_ = energy_; Eigen::MatrixXd P_tot_old = P_alpha_ + P_beta_;
-        if (iter_scf_ > 2) { double de = std::abs(energy_ - energy_old_); if (de < 1e-3) thresh = 1e-9; if (de < 1e-6) thresh = 1e-12; }
+        energy_old_ = energy_;
+        Eigen::MatrixXd P_tot_old = P_alpha_ + P_beta_;
+        if (iter_scf_ > 2) {
+            double de = std::abs(energy_ - energy_old_);
+            if (de < 1e-3) thresh = 1e-9;
+            if (de < 1e-6) thresh = 1e-12;
+        }
         if (symmetrizer_) { symmetrizer_->symmetrize(P_alpha_); symmetrizer_->symmetrize(P_beta_); }
 
         build_fock_matrix();
         if (symmetrizer_) { symmetrizer_->symmetrize(F_alpha_); symmetrizer_->symmetrize(F_beta_); }
         energy_ = compute_energy();
-        
-        
+
         if (C_alpha_.rows() != nbasis_) {
             solve_fock(0.5 * (F_alpha_ + F_beta_), C_alpha_, eps_alpha_);
             C_beta_ = C_alpha_;
             eps_beta_ = eps_alpha_;
         }
-        Eigen::MatrixXd Fa_mo = C_alpha_.transpose() * F_alpha_ * C_alpha_; Eigen::MatrixXd Fb_mo = C_alpha_.transpose() * F_beta_  * C_alpha_;
+        Eigen::MatrixXd Fa_mo = C_alpha_.transpose() * F_alpha_ * C_alpha_;
+        Eigen::MatrixXd Fb_mo = C_alpha_.transpose() * F_beta_  * C_alpha_;
         Eigen::MatrixXd F_uni = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-        int n_c = n_beta_; int n_o = n_alpha_ - n_beta_; int n_v = nbasis_ - n_alpha_; double shift_o = 0.5; double shift_v = 1.0; 
+        int n_c = n_beta_;
+        int n_o = n_alpha_ - n_beta_;
+        int n_v = nbasis_ - n_alpha_;
+        double shift_o = 0.5;
+        double shift_v = 1.0;
 
         if (n_c > 0) F_uni.topLeftCorner(n_c, n_c) = 0.5 * (Fa_mo.topLeftCorner(n_c, n_c) + Fb_mo.topLeftCorner(n_c, n_c));
-        if (n_o > 0) { F_uni.block(n_c, n_c, n_o, n_o) = Fa_mo.block(n_c, n_c, n_o, n_o); for(int i=0; i<n_o; ++i) F_uni(n_c+i, n_c+i) += shift_o; }
-        if (n_v > 0) { F_uni.bottomRightCorner(n_v, n_v) = 0.5 * (Fa_mo.bottomRightCorner(n_v, n_v) + Fb_mo.bottomRightCorner(n_v, n_v)); for(int i=0; i<n_v; ++i) F_uni(n_alpha_+i, n_alpha_+i) += shift_v; }
-        if (n_c > 0 && n_o > 0) { Eigen::MatrixXd blk = Fb_mo.block(0, n_c, n_c, n_o); F_uni.block(0, n_c, n_c, n_o) = blk; F_uni.block(n_c, 0, n_o, n_c) = blk.transpose(); }
-        if (n_c > 0 && n_v > 0) { Eigen::MatrixXd blk = 0.5 * (Fa_mo.block(0, n_alpha_, n_c, n_v) + Fb_mo.block(0, n_alpha_, n_c, n_v)); F_uni.block(0, n_alpha_, n_c, n_v) = blk; F_uni.block(n_alpha_, 0, n_v, n_c) = blk.transpose(); }
-        if (n_o > 0 && n_v > 0) { Eigen::MatrixXd blk = Fa_mo.block(n_c, n_alpha_, n_o, n_v); F_uni.block(n_c, n_alpha_, n_o, n_v) = blk; F_uni.block(n_alpha_, n_c, n_v, n_o) = blk.transpose(); }
+        if (n_o > 0) {
+            F_uni.block(n_c, n_c, n_o, n_o) = Fa_mo.block(n_c, n_c, n_o, n_o);
+            for (int i = 0; i < n_o; ++i) F_uni(n_c + i, n_c + i) += shift_o;
+        }
+        if (n_v > 0) {
+            F_uni.bottomRightCorner(n_v, n_v) = 0.5 * (Fa_mo.bottomRightCorner(n_v, n_v) + Fb_mo.bottomRightCorner(n_v, n_v));
+            for (int i = 0; i < n_v; ++i) F_uni(n_alpha_ + i, n_alpha_ + i) += shift_v;
+        }
+        if (n_c > 0 && n_o > 0) {
+            Eigen::MatrixXd blk = Fb_mo.block(0, n_c, n_c, n_o);
+            F_uni.block(0, n_c, n_c, n_o) = blk;
+            F_uni.block(n_c, 0, n_o, n_c) = blk.transpose();
+        }
+        if (n_c > 0 && n_v > 0) {
+            Eigen::MatrixXd blk = 0.5 * (Fa_mo.block(0, n_alpha_, n_c, n_v) + Fb_mo.block(0, n_alpha_, n_c, n_v));
+            F_uni.block(0, n_alpha_, n_c, n_v) = blk;
+            F_uni.block(n_alpha_, 0, n_v, n_c) = blk.transpose();
+        }
+        if (n_o > 0 && n_v > 0) {
+            Eigen::MatrixXd blk = Fa_mo.block(n_c, n_alpha_, n_o, n_v);
+            F_uni.block(n_c, n_alpha_, n_o, n_v) = blk;
+            F_uni.block(n_alpha_, n_c, n_v, n_o) = blk.transpose();
+        }
 
-        Eigen::MatrixXd SC = S_ * C_alpha_; Eigen::MatrixXd F_eff_ao = SC * F_uni * SC.transpose(); Eigen::MatrixXd FPS = F_eff_ao * P_alpha_ * S_; 
+        Eigen::MatrixXd SC = S_ * C_alpha_;
+        Eigen::MatrixXd F_eff_ao = SC * F_uni * SC.transpose();
+        Eigen::MatrixXd FPS = F_eff_ao * P_alpha_ * S_;
         diis.add_iteration(F_eff_ao, FPS - FPS.transpose(), P_alpha_);
-        solve_fock((iter_scf_ <= 1) ? 0.7 * F_eff_ao + 0.3 * H_ : diis.extrapolate(), C_alpha_, eps_alpha_); C_beta_ = C_alpha_; eps_beta_ = eps_alpha_;
-        occ_numbers_alpha_ = smear_electrons(eps_alpha_, n_alpha_); occ_numbers_beta_  = smear_electrons(eps_beta_, n_beta_); update_densities();
-        
-        double dE = std::abs(energy_ - energy_old_); double dP = ((P_alpha_ + P_beta_) - P_tot_old).norm() / nbasis_;
+        solve_fock((iter_scf_ <= 1) ? 0.7 * F_eff_ao + 0.3 * H_ : diis.extrapolate(), C_alpha_, eps_alpha_);
+        C_beta_ = C_alpha_;
+        eps_beta_ = eps_alpha_;
+        occ_numbers_alpha_ = smear_electrons(eps_alpha_, n_alpha_);
+        occ_numbers_beta_  = smear_electrons(eps_beta_, n_beta_);
+        update_densities();
+
+        double dE = std::abs(energy_ - energy_old_);
+        double dP = ((P_alpha_ + P_beta_) - P_tot_old).norm() / nbasis_;
         if (config_.print_level > 0) printf(" %4d %18.10f %10.2e %10.2e\n", iter_scf_, energy(), dE, dP);
         if (dE < config_.energy_threshold && dP < config_.density_threshold) { converged = true; break; }
     }
-    
-    
+
     if (config_.use_df && L_mat_.rows() == 0) {
         if (config_.print_level > 0) std::cout << "\n  [SCF] Reloading df_tensor.h5 to RAM for MP2 compatibility...\n";
         int n_aux = L_mat_.cols();
@@ -1442,13 +1458,25 @@ SCFResult ROHF::compute() {
         utils::HDF5TensorIO io("df_tensor.h5", utils::HDF5TensorIO::Mode::READ_ONLY);
         io.read_slice_4d("df_tensor", {0, 0, 0, 0}, {(long)n_aux, (long)nbasis_, (long)nbasis_, 1}, L_mat_.data());
     }
-    
-    SCFResult r; r.energy_total = energy(); r.iterations = iter_scf_; r.converged = converged;
-    r.C_alpha = C_alpha_; r.C_beta = C_beta_; r.P_alpha = P_alpha_; r.P_beta = P_beta_; r.F_alpha = F_alpha_; r.F_beta = F_beta_;
-    r.orbital_energies_alpha = eps_alpha_; r.orbital_energies_beta = eps_beta_; r.n_occ_alpha = n_alpha_; r.n_occ_beta = n_beta_; 
-    r.L_mat = L_mat_; 
-    
-    print_final(r); return r;
+
+    SCFResult r;
+    r.energy_total = energy();
+    r.iterations = iter_scf_;
+    r.converged = converged;
+    r.C_alpha = C_alpha_;
+    r.C_beta = C_beta_;
+    r.P_alpha = P_alpha_;
+    r.P_beta = P_beta_;
+    r.F_alpha = F_alpha_;
+    r.F_beta = F_beta_;
+    r.orbital_energies_alpha = eps_alpha_;
+    r.orbital_energies_beta = eps_beta_;
+    r.n_occ_alpha = n_alpha_;
+    r.n_occ_beta = n_beta_;
+    r.L_mat = L_mat_;
+
+    print_final(r);
+    return r;
 }
 
 } // namespace mshqc
