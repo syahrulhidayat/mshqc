@@ -1,98 +1,178 @@
 #!/usr/bin/env python3
+import os
+import sys
 import time
+import ctypes
+from contextlib import contextmanager
 import mshqc
 
-def run_benchmark():
-    print("==========================================================================================================")
-    print("  MSHQC BENCHMARK | COMPARISON: EXACT vs CHOLESKY vs DF (HF, MP2, MP3, OMP2, OMP3)")
-    print("  Base: cc-pVTZ | Aux Base: cc-pVTZ-RI | Chol Tol: 1e-09 | DF Tol: 1e-09")
-    print("==========================================================================================================")
+# =====================================================================
+# 1. KONFIGURASI HPC & LINGKUNGAN (Setara 6 Thread dengan Psi4)
+# =====================================================================
+os.environ.setdefault("OMP_NUM_THREADS", "6")
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ.setdefault("TBLIS_NUM_THREADS", "6")
 
-    systems = ["Neon", "H2O", "Lithium", "Carbon", "Oxygen"]
+ANG_TO_BOHR = 1.8897261246257702
+
+SYSTEMS = [
+    ("Neon",    [(10, 0.0, 0.0, 0.0)], 0, 1, "R"),
+    ("H2O",     [(8,  0.0, 0.0,  0.117300 * ANG_TO_BOHR),
+                 (1,  0.0,  0.757200 * ANG_TO_BOHR, -0.469200 * ANG_TO_BOHR),
+                 (1,  0.0, -0.757200 * ANG_TO_BOHR, -0.469200 * ANG_TO_BOHR)], 0, 1, "R"),
+    ("Lithium", [(3,  0.0, 0.0, 0.0)], 0, 2, "U"),
+    ("Carbon",  [(6,  0.0, 0.0, 0.0)], 0, 3, "U"),
+    ("Oxygen",  [(8,  0.0, 0.0, 0.0)], 0, 3, "U"),
+]
+
+try:
+    libc = ctypes.CDLL(None)
+except Exception:
+    libc = None
+
+
+def flush_all():
+    sys.stdout.flush()
+    if libc is not None:
+        try:
+            libc.fflush(None)
+        except Exception:
+            pass
+
+
+@contextmanager
+def suppress_stdout():
+    """Membungkam std::cout C++ saat timing agar setara dengan psi4.core.be_quiet()."""
+    flush_all()
+    old_stdout_fd = os.dup(1)
+    devnull_fd = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(devnull_fd, 1)
+        yield
+    finally:
+        flush_all()
+        os.dup2(old_stdout_fd, 1)
+        os.close(devnull_fd)
+        os.close(old_stdout_fd)
+
+
+def make_scf_config(mode):
+    cfg = mshqc.SCFConfig()
+    cfg.scf_type = "incore"
+    cfg.max_iterations = 200
+    cfg.energy_threshold = 1e-9
+    cfg.density_threshold = 1e-9
+    cfg.df_threshold = 1e-9
+    cfg.print_level = 0
+    if mode == "df":
+        cfg.eri_method = "df"
+        cfg.use_df = True
+        cfg.aux_basis_name = "cc-pvtz-ri"
+    elif mode == "cholesky":
+        cfg.eri_method = "cholesky"
+        cfg.cholesky_threshold = 1e-9
+    else:
+        cfg.eri_method = "exact"
+    return cfg
+
+
+def make_mp2_config(mode):
+    cfg = mshqc.MP2Config()
+    cfg.energy_threshold = 1e-9
+    cfg.gradient_threshold = 1e-5
+    cfg.max_iterations = 50
+    cfg.print_level = 0
+    if mode == "df":
+        cfg.eri_method = "df"
+        cfg.use_df = True
+        cfg.aux_basis_name = "cc-pvtz-ri"
+    elif mode == "cholesky":
+        cfg.eri_method = "cholesky"
+        cfg.cholesky_threshold = 1e-9
+    else:
+        cfg.eri_method = "exact"
+    return cfg
+
+
+def run_benchmark():
+    print("==========================================================================================================", flush=True)
+    print("  MSHQC BENCHMARK (APPLE-TO-APPLE) | COMPARISON: EXACT vs CHOLESKY vs DF (HF, MP2, MP3, OMP2, OMP3)", flush=True)
+    print("  Base: cc-pVTZ | Aux Base: cc-pVTZ-RI | Chol Tol: 1e-09 | E_conv: 1e-09 | Grad_conv: 1e-05", flush=True)
+    print("==========================================================================================================", flush=True)
+
     modes = ["exact", "cholesky", "df"]
-    
     results = []
 
-    for sys_name in systems:
+    for sys_name, atoms, chg, mult, ref_type in SYSTEMS:
         for mode in modes:
-            if sys_name == "Neon":
-                mol = mshqc.Molecule(charge=0, multiplicity=1)
-                mol.add_atom("Ne", 0.0, 0.0, 0.0, units="angstrom")
-                ref_type = "R"
-            elif sys_name == "H2O":
-                mol = mshqc.Molecule(charge=0, multiplicity=1)
-                mol.add_atom("O", 0.0, 0.0, 0.1173, units="angstrom")
-                mol.add_atom("H", 0.0, 0.7572, -0.4692, units="angstrom")
-                mol.add_atom("H", 0.0, -0.7572, -0.4692, units="angstrom")
-                ref_type = "R"
-            elif sys_name == "Lithium":
-                mol = mshqc.Molecule(charge=0, multiplicity=2)
-                mol.add_atom("Li", 0.0, 0.0, 0.0, units="angstrom")
-                ref_type = "U"
-            elif sys_name == "Carbon":
-                mol = mshqc.Molecule(charge=0, multiplicity=3)
-                mol.add_atom("C", 0.0, 0.0, 0.0, units="angstrom")
-                ref_type = "U"
-            elif sys_name == "Oxygen":
-                mol = mshqc.Molecule(charge=0, multiplicity=3)
-                mol.add_atom("O", 0.0, 0.0, 0.0, units="angstrom")
-                ref_type = "U"
+            print(f"Running: {sys_name:<9}-> {ref_type}HF, {ref_type}MP2, {ref_type}MP3, OMP2, & OMP3 (Integral: {mode.upper()})", flush=True)
 
-            print(f"Running: {sys_name:<9}-> {ref_type}HF, {ref_type}MP2, {ref_type}MP3, OMP2, & OMP3 (Integral: {mode.upper()})")
+            mol = mshqc.Molecule(chg, mult)
+            for z, x, y, zc in atoms:
+                mol.add_atom(z, x, y, zc)
 
-            basis = mshqc.BasisSet("cc-pVTZ", mol)
-            integrals = mshqc.IntegralEngine(mol, basis)
+            with suppress_stdout():
+                basis = mshqc.BasisSet("cc-pVTZ", mol)
+                integrals = mshqc.IntegralEngine(mol, basis)
+                scf_conf = make_scf_config(mode)
+                mp2_conf = make_mp2_config(mode)
 
-            # 1. HF
-            scf_conf = mshqc.SCFConfig(eri_method=mode, threshold=1e-9)
-            t0 = time.time()
-            if ref_type == "R":
-                scf_res = mshqc.RHF(mol, basis, integrals, scf_conf).compute()
-            else:
-                scf_res = mshqc.UHF(mol, basis, integrals, scf_conf).compute()
-            t_hf = time.time() - t0
-            results.append((sys_name, mode.upper(), f"{ref_type}HF", scf_res.energy_total, t_hf))
+                # 1. HF
+                t0 = time.perf_counter()
+                if ref_type == "R":
+                    scf_res = mshqc.RHF(mol, basis, integrals, scf_conf).compute()
+                else:
+                    n_elec = mol.n_electrons()
+                    n_unp = mol.multiplicity() - 1
+                    na = (n_elec + n_unp) // 2
+                    nb = (n_elec - n_unp) // 2
+                    scf_res = mshqc.UHF(mol, basis, integrals, na, nb, scf_conf).compute()
+                t_hf = time.perf_counter() - t0
+                results.append((sys_name, mode.upper(), f"{ref_type}HF", scf_res.energy_total, t_hf))
 
-            # 2. MP2
-            mp2_conf = mshqc.MP2Config(eri_method=mode, threshold=1e-9, gradient_threshold=1e-5)
-            t0 = time.time()
-            if ref_type == "R":
-                mp2_res = mshqc.RMP2(mol, basis, integrals, scf_res, mp2_conf).compute()
-            else:
-                mp2_res = mshqc.UMP2(mol, basis, integrals, scf_res, mp2_conf).compute()
-            t_mp2 = time.time() - t0
-            results.append((sys_name, mode.upper(), f"{ref_type}MP2", mp2_res.energy_total, t_mp2))
+                # 2. MP2
+                t0 = time.perf_counter()
+                if ref_type == "R":
+                    mp2_res = mshqc.RMP2(mol, basis, integrals, scf_res, mp2_conf).compute()
+                else:
+                    mp2_res = mshqc.UMP2(mol, basis, integrals, scf_res, mp2_conf).compute()
+                t_mp2 = time.perf_counter() - t0
+                results.append((sys_name, mode.upper(), f"{ref_type}MP2", mp2_res.energy_total, t_mp2))
 
-            # 3. MP3
-            t0 = time.time()
-            if ref_type == "R":
-                mp3_res = mshqc.RMP3(scf_res, mp2_res, mp2_conf, integrals).compute()
-            else:
-                mp3_res = mshqc.UMP3(scf_res, mp2_res, mp2_conf, integrals).compute()
-            t_mp3 = time.time() - t0
-            results.append((sys_name, mode.upper(), f"{ref_type}MP3", mp3_res.energy_total, t_mp3))
+                # 3. MP3
+                t0 = time.perf_counter()
+                if ref_type == "R":
+                    mp3_res = mshqc.RMP3(scf_res, mp2_res, mp2_conf, integrals).compute()
+                else:
+                    mp3_res = mshqc.UMP3(scf_res, mp2_res, mp2_conf, integrals).compute()
+                t_mp3 = time.perf_counter() - t0
+                e_mp3 = mp3_res.e_total if hasattr(mp3_res, "e_total") else mp3_res.energy_total
+                results.append((sys_name, mode.upper(), f"{ref_type}MP3", e_mp3, t_mp3))
 
-            # 4. OMP2
-            t0 = time.time()
-            omp2_res = mshqc.OMP2(mol, basis, integrals, scf_res, mp2_conf).compute()
-            t_omp2 = time.time() - t0
-            results.append((sys_name, mode.upper(), "OMP2", omp2_res.energy_total, t_omp2))
+                # 4. OMP2
+                t0 = time.perf_counter()
+                omp2_res = mshqc.OMP2(mol, basis, integrals, scf_res, mp2_conf).compute()
+                t_omp2 = time.perf_counter() - t0
+                results.append((sys_name, mode.upper(), "OMP2", omp2_res.energy_total, t_omp2))
 
-            # 5. OMP3
-            t0 = time.time()
-            omp3_res = mshqc.OMP3(mol, basis, integrals, scf_res, mp2_conf).compute()
-            t_omp3 = time.time() - t0
-            results.append((sys_name, mode.upper(), "OMP3", omp3_res.energy_total, t_omp3))
+                # 5. OMP3
+                t0 = time.perf_counter()
+                omp3_res = mshqc.OMP3(mol, basis, integrals, scf_res, mp2_conf).compute()
+                t_omp3 = time.perf_counter() - t0
+                e_omp3 = omp3_res.e_total if hasattr(omp3_res, "e_total") else omp3_res.energy_total
+                results.append((sys_name, mode.upper(), "OMP3", e_omp3, t_omp3))
 
-    print("\n===============================================================================")
-    print("                     MSHQC BENCHMARK FINAL RESULTS")
-    print("===============================================================================")
-    print("-" * 67)
-    print(f"| {'System':<8} | {'ERI Mode':<10} | {'Method':<8} | {'Energy (Ha)':<16} | {'Time (s)'} |")
-    print("-" * 67)
+    print("\n===============================================================================", flush=True)
+    print("                     MSHQC BENCHMARK FINAL RESULTS", flush=True)
+    print("===============================================================================", flush=True)
+    print("-" * 67, flush=True)
+    print(f"| {'System':<8} | {'ERI Mode':<10} | {'Method':<8} | {'Energy (Ha)':<16} | {'Time (s)'} |", flush=True)
+    print("-" * 67, flush=True)
     for r in results:
-        print(f"| {r[0]:<8} | {r[1]:<10} | {r[2]:<8} | {r[3]:<16.8f} | {r[4]:.3f}     |")
-    print("-" * 67)
+        print(f"| {r[0]:<8} | {r[1]:<10} | {r[2]:<8} | {r[3]:<16.8f} | {r[4]:<8.3f} |", flush=True)
+    print("-" * 67, flush=True)
+
 
 if __name__ == "__main__":
     run_benchmark()

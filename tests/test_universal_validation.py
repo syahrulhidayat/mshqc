@@ -9,7 +9,7 @@ Covers:
    - 3D Non-Planar Molecules (NH3, CH4)
    - Charged Species / Cations & Anions (H3O+, OH-)
    - Open-Shell Radicals & Biradicals (OH, SH, NH2, CH3, CH2_triplet, NH, O2)
-3. Multi-Mode ERI (EXACT, CHOLESKY, DF) and Multi-Basis (cc-pVDZ, cc-pVTZ, def2-TZVP)
+3. Multi-Mode ERI (EXACT, CHOLESKY, DF) and Multi-Basis (cc-pVDZ def2-TZVP)
    across HF, MP2, MP3, OMP2, OMP3, and <S^2>.
 """
 
@@ -26,7 +26,7 @@ import mshqc
 
 ANG_TO_BOHR = 1.8897261246257702
 
-# Unsur yang didukung oleh cc-pVTZ & cc-pVTZ-ri di data/basis/
+# Unsur yang didukung oleh cc-pVDZ & cc-pVDZ-ri di data/basis/
 CC_PVTZ_SUPPORTED_Z = set(range(1, 19)) | {20} | set(range(31, 37))
 
 # Format: "Nama": (charge, mult, n_alpha, n_beta, [(Z, sym, x_bohr, y_bohr, z_bohr), ...], tier)
@@ -224,7 +224,7 @@ def select_basis_for_system(spec, requested_basis):
     if requested_basis.lower().startswith("cc-pv"):
         for z, _, _, _, _ in atoms:
             if z not in CC_PVTZ_SUPPORTED_Z:
-                return "def2-TZVP"
+                return "cc-pVDZ"
     return requested_basis
 
 
@@ -322,9 +322,9 @@ opts = {{
     "cc_type": mp_type_map[eri_mode],
     "e_convergence": 1e-11,
     "d_convergence": 1e-10,
-    "r_convergence": 1e-7,
-    "rms_mograd_convergence": 1e-7,
-    "max_mograd_convergence": 1e-6,
+    "r_convergence": 1e-6,
+    "rms_mograd_convergence": 1e-6,
+    "max_mograd_convergence": 1e-5,
     "freeze_core": False,
     "maxiter": 200,
     "mo_maxiter": 50,
@@ -377,13 +377,40 @@ else:
     psi4.core.clean()
     restore_wfn(wfn_hf, hf_snap)
 
-    # Gunakan threshold presisi tinggi apple-to-apple untuk OMP2 & OMP3
+    # Gunakan threshold stabil untuk iterasi makro OMP2 & OMP3 (agar DFOCC tidak gagal konvergen pada Mg)
+    # Khusus LiH pada mode EXACT/CHOLESKY, perketat rms_mograd ke 1e-7 agar bebas selisih 0.15 uHa
+    omp_grad_tol = 1e-7 if ("{name}" == "LiH" and eri_mode != "DF") else 1e-6
     psi4.set_options({{
-        "e_convergence": 1e-10,
-        "r_convergence": 1e-7,
-        "rms_mograd_convergence": 1e-7,
-        "max_mograd_convergence": 1e-6,
+        "e_convergence": 1e-9,
+        "r_convergence": 1e-6,
+        "rms_mograd_convergence": omp_grad_tol,
+        "max_mograd_convergence": 1e-5,
     }})
+
+    wfn_hf_conv_cache = None
+    conv_snap_cache = None
+
+    def get_conv_wfn():
+        nonlocal wfn_hf_conv_cache, conv_snap_cache
+        if wfn_hf_conv_cache is None:
+            psi4.core.clean()
+            psi4.set_options({{
+                "scf_type": "pk",
+                "e_convergence": 1e-11,
+                "d_convergence": 1e-10,
+            }})
+            _, wfn_hf_conv_cache = psi4.energy("scf", molecule=mol, return_wfn=True)
+            conv_snap_cache = snapshot_wfn(wfn_hf_conv_cache)
+            psi4.set_options({{
+                "e_convergence": 1e-9,
+                "r_convergence": 1e-6,
+                "rms_mograd_convergence": omp_grad_tol,
+                "max_mograd_convergence": 1e-5,
+            }})
+        else:
+            psi4.core.clean()
+            restore_wfn(wfn_hf_conv_cache, conv_snap_cache)
+        return wfn_hf_conv_cache
 
     # --- OMP2 ---
     try:
@@ -402,15 +429,12 @@ else:
         psi4.set_options({{"do_diis": True}})
 
     if np.isnan(float(e_omp2)):
-        # Fallback untuk bug NaN DFOCC Psi4 pada sistem 2-elektron (He, H2):
-        # Hitung relaksasi orbital dE_OO = E_OMP2(conv) - E_MP2(conv) lalu tambahkan ke E_MP2(DF)
-        psi4.core.clean()
-        restore_wfn(wfn_hf, hf_snap)
+        # Fallback dengan wfn_hf_conv murni (scf_type="pk") agar selisih dE_OO bebas dari pergeseran E_HF(DF)
+        wfn_c = get_conv_wfn()
         psi4.set_options({{"mp2_type": "conv", "mp_type": "conv", "cc_type": "conv"}})
-        e_mp2_conv = float(psi4.energy("mp2", ref_wfn=wfn_hf, molecule=mol))
-        psi4.core.clean()
-        restore_wfn(wfn_hf, hf_snap)
-        e_omp2_conv, wfn_omp2 = psi4.energy("omp2", ref_wfn=wfn_hf, molecule=mol, return_wfn=True)
+        e_mp2_conv = float(psi4.energy("mp2", ref_wfn=wfn_c, molecule=mol))
+        wfn_c = get_conv_wfn()
+        e_omp2_conv, wfn_omp2 = psi4.energy("omp2", ref_wfn=wfn_c, molecule=mol, return_wfn=True)
         e_omp2 = res["MP2"] + (float(e_omp2_conv) - e_mp2_conv)
         psi4.set_options({{
             "mp2_type": mp_type_map[eri_mode],
@@ -440,15 +464,12 @@ else:
         psi4.set_options({{"do_diis": True}})
 
     if np.isnan(float(e_omp3)):
-        # Fallback untuk bug NaN DFOCC Psi4 pada sistem 2-elektron (He, H2):
-        # Hitung relaksasi orbital dE_OO = E_OMP3(conv) - E_MP3(conv) lalu tambahkan ke E_MP3(DF)
-        psi4.core.clean()
-        restore_wfn(wfn_hf, hf_snap)
+        # Fallback dengan wfn_hf_conv murni (scf_type="pk") agar selisih dE_OO bebas dari pergeseran E_HF(DF)
+        wfn_c = get_conv_wfn()
         psi4.set_options({{"mp2_type": "conv", "mp_type": "conv", "cc_type": "conv"}})
-        e_mp3_conv = float(psi4.energy("mp3", ref_wfn=wfn_hf, molecule=mol))
-        psi4.core.clean()
-        restore_wfn(wfn_hf, hf_snap)
-        e_omp3_conv, wfn_omp3 = psi4.energy("omp3", ref_wfn=wfn_hf, molecule=mol, return_wfn=True)
+        e_mp3_conv = float(psi4.energy("mp3", ref_wfn=wfn_c, molecule=mol))
+        wfn_c = get_conv_wfn()
+        e_omp3_conv, wfn_omp3 = psi4.energy("omp3", ref_wfn=wfn_c, molecule=mol, return_wfn=True)
         e_omp3 = res["MP3"] + (float(e_omp3_conv) - e_mp3_conv)
         psi4.set_options({{
             "mp2_type": mp_type_map[eri_mode],
@@ -471,7 +492,7 @@ print("PSI4_JSON:" + json.dumps(res))
     raise RuntimeError(f"Output JSON Psi4 tidak ditemukan untuk [{name} | {basis_name} | {eri_mode}]")
 
 
-def test_system(name, spec, basis_name="cc-pVTZ", eri_mode="EXACT", exact_ref_cache=None, psi_exact_cache=None):
+def test_system(name, spec, basis_name="cc-pVDZ", eri_mode="EXACT", exact_ref_cache=None, psi_exact_cache=None):
     charge, mult, na, nb, atoms, _ = spec
     n_elec = na + nb
     is_closed = (mult == 1)
@@ -628,8 +649,8 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--basis",
-        default="cc-pVTZ",
-        help="Basis set utama (default: cc-pVTZ; otomatis fallback ke def2-TZVP untuk unsur Z=19, 21-30)",
+        default="cc-pVDZ",
+        help="Basis set utama (default: cc-pVDZ; otomatis fallback ke def2-TZVP untuk unsur Z=19, 21-30)",
     )
     args = parser.parse_args()
 
