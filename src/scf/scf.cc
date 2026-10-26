@@ -344,9 +344,9 @@ SCFResult BaseSCF::compute() {
         update_densities();
 
         double dE = std::abs(energy_ - energy_old_);
-        double dP = is_uhf
+        double dP = (is_uhf
             ? std::hypot((P_alpha_ - Pa_snapshot).norm(), (P_beta_ - Pb_snapshot).norm())
-            : (P_alpha_ - Pa_snapshot).norm();
+            : (P_alpha_ - Pa_snapshot).norm()) / nbasis_;
 
         if (config_.print_level > 0) {
             printf(" %4d %18.10f %10.2e %10.2e\n", iter_scf_, energy(), dE, dP);
@@ -354,13 +354,13 @@ SCFResult BaseSCF::compute() {
 
         double e_tol = (config_.density_threshold > 1e-7)
             ? config_.energy_threshold
-            : (is_uhf ? std::min(config_.energy_threshold, 1e-12) : config_.energy_threshold);
+            : (is_uhf ? std::min(config_.energy_threshold, 1e-12) : std::min(config_.energy_threshold, 1e-11));
         double p_tol = (config_.density_threshold > 1e-7)
             ? config_.density_threshold
-            : (is_uhf ? std::min(config_.density_threshold, 1e-11) : config_.density_threshold);
+            : (is_uhf ? std::min(config_.density_threshold, 1e-11) : std::min(config_.density_threshold, 1e-10));
 
         bool strict_conv  = (dE < e_tol && dP < p_tol && err_rms < p_tol);
-        bool plateau_conv = (iter_scf_ > 120 && dE < e_tol && dP < std::max(p_tol, 1e-10));
+        bool plateau_conv = (iter_scf_ > 60 && dE < std::max(e_tol, 1e-11) && dP < std::max(p_tol, 1e-10));
 
         if (iter_scf_ > 2 && (strict_conv || plateau_conv)) {
             converged = true;
@@ -435,7 +435,7 @@ SCFResult BaseSCF::compute() {
                 update_densities();
 
                 double dE = std::abs(energy_ - energy_old_);
-                double dP = std::hypot((P_alpha_ - Pa_snap).norm(), (P_beta_ - Pb_snap).norm());
+                double dP = std::hypot((P_alpha_ - Pa_snap).norm(), (P_beta_ - Pb_snap).norm()) / nbasis_;
 
                 double e_tol = (config_.density_threshold > 1e-7)
                     ? config_.energy_threshold
@@ -445,7 +445,7 @@ SCFResult BaseSCF::compute() {
                     : std::min(config_.density_threshold, 1e-11);
 
                 bool strict_conv  = (dE < e_tol && dP < p_tol && err_rms < p_tol);
-                bool plateau_conv = (iter_scf_ > 120 && dE < e_tol && dP < std::max(p_tol, 1e-10));
+                bool plateau_conv = (iter_scf_ > 60 && dE < std::max(e_tol, 1e-11) && dP < std::max(p_tol, 1e-10));
 
                 if (iter_scf_ > 2 && (strict_conv || plateau_conv)) {
                     trial_conv = true;

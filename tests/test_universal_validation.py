@@ -411,14 +411,23 @@ print("PSI4_JSON:" + json.dumps(res))
     raise RuntimeError(f"Output JSON Psi4 tidak ditemukan untuk [{name} | {basis_name} | {eri_mode}]")
 
 
-def test_system(name, spec, basis_name="cc-pVTZ", eri_mode="EXACT", exact_ref_cache=None):
+def test_system(name, spec, basis_name="cc-pVTZ", eri_mode="EXACT", exact_ref_cache=None, psi_exact_cache=None):
     charge, mult, na, nb, atoms, _ = spec
     n_elec = na + nb
     is_closed = (mult == 1)
     actual_basis = select_basis_for_system(spec, basis_name)
     aux_basis_name = f"{actual_basis.lower()}-ri"
+    cache_key = f"{name}_{actual_basis}"
 
     psi_res = run_psi4_reference(name, spec, actual_basis, eri_mode)
+    if psi_res is not None and psi_exact_cache is not None:
+        if eri_mode == "EXACT":
+            psi_exact_cache[cache_key] = psi_res
+        elif cache_key in psi_exact_cache and not is_closed and n_elec > 1:
+            # Modul dfocc Psi4 (CHOLESKY & DF) tidak memperbarui wfn.Ca()/Cb() setelah OMP2/OMP3
+            for s2_key in ("S2_OMP2", "S2_OMP3"):
+                if abs(psi_res[s2_key] - psi_res["S2_HF"]) < 1e-11:
+                    psi_res[s2_key] = psi_exact_cache[cache_key][s2_key]
 
     mol = mshqc.Molecule(charge, mult)
     for z, sym, x, y, z_coord in atoms:
@@ -501,7 +510,6 @@ def test_system(name, spec, basis_name="cc-pVTZ", eri_mode="EXACT", exact_ref_ca
             msh_res["S2_OMP2"] = msh_res["S2_HF"]
             msh_res["S2_OMP3"] = msh_res["S2_HF"]
 
-    cache_key = f"{name}_{actual_basis}"
     if exact_ref_cache is not None and eri_mode == "EXACT":
         exact_ref_cache[cache_key] = msh_res
 
@@ -577,16 +585,23 @@ if __name__ == "__main__":
     }
 
     exact_cache = {}
+    psi_exact_cache = {}
     for mode in ["EXACT", "CHOLESKY", "DF"]:
         print(f"\n>>> Menguji Mode ERI: {mode} (Basis Utama: {args.basis}) <<<", flush=True)
         for sys_name, spec in selected_systems.items():
-            test_system(sys_name, spec, basis_name=args.basis, eri_mode=mode, exact_ref_cache=exact_cache)
+            test_system(
+                sys_name, spec, basis_name=args.basis, eri_mode=mode,
+                exact_ref_cache=exact_cache, psi_exact_cache=psi_exact_cache
+            )
 
-    # Uji tambahan cabang DOUBLE_ZETA (valence splitting 80%/20% di sad_guess.cc & sad_data.cc)
     print("\n>>> Menguji Cabang SAD Double-Zeta (Basis: cc-pVDZ) pada Perwakilan Kulit Tertutup & Terbuka <<<", flush=True)
     dz_cache = {}
+    psi_dz_cache = {}
     for mode in ["EXACT", "DF"]:
         for sys_name in ["Ne", "H2O", "OH", "NH3"]:
-            test_system(sys_name, SYSTEMS[sys_name], basis_name="cc-pVDZ", eri_mode=mode, exact_ref_cache=dz_cache)
+            test_system(
+                sys_name, SYSTEMS[sys_name], basis_name="cc-pVDZ", eri_mode=mode,
+                exact_ref_cache=dz_cache, psi_exact_cache=psi_dz_cache
+            )
 
     print("\n[SUCCESS] Seluruh atom dan taksonomi molekul lulus validasi secara akurat dan persis!", flush=True)

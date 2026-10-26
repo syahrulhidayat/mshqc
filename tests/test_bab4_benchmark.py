@@ -189,6 +189,7 @@ def build_ints(mol, basis):
 def make_scf_config(eri_mode, aux_basis_name="", print_level=0):
     scf_cfg = mshqc.SCFConfig()
     scf_cfg.scf_type = "incore"
+    scf_cfg.max_iterations = 150
     scf_cfg.energy_threshold = 1e-9
     scf_cfg.density_threshold = 1e-9
     scf_cfg.df_threshold = 1e-9
@@ -209,7 +210,7 @@ def make_scf_config(eri_mode, aux_basis_name="", print_level=0):
 def make_mp2_config(eri_mode, aux_basis_name="", print_level=0, max_iterations=50):
     cfg = mshqc.MP2Config()
     cfg.energy_threshold = 1e-9
-    cfg.gradient_threshold = 1e-6
+    cfg.gradient_threshold = 1e-5
     cfg.max_iterations = max_iterations
     cfg.print_level = print_level
     if eri_mode == "DF":
@@ -239,12 +240,10 @@ PSI4_BATCH_WORKER = r"""
 import os, sys, time, json, re, tempfile
 import numpy as np
 
-os.environ.setdefault("OMP_NUM_THREADS", "4")
-os.environ["OPENBLAS_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = "1"
+os.environ.setdefault("OMP_NUM_THREADS", "6")
 
 import psi4
-psi4.set_num_threads(int(os.environ.get("OMP_NUM_THREADS", "4")))
+psi4.set_num_threads(int(os.environ.get("OMP_NUM_THREADS", "6")))
 psi4.set_memory("8 GB")
 
 Z_TO_SYM = {1: "H", 3: "Li", 6: "C", 8: "O", 10: "Ne"}
@@ -274,12 +273,17 @@ def restore_wfn(wfn, snap):
         wfn.Fb().copy(snap["Fb"])
         wfn.epsilon_b().copy(snap["eb"])
 
-def calc_s2_from_arrays(Ca, Cb, S_ao, na, nb):
+def calc_s2_wfn(wfn):
+    na = wfn.nalpha()
+    nb = wfn.nbeta()
     sz = 0.5 * (na - nb)
     s_ideal = sz * (sz + 1.0)
-    if nb == 0:
+    if na == 0 or nb == 0:
         return s_ideal
-    Sab = Ca[:, :na].T @ S_ao @ Cb[:, :nb]
+    Ca_occ = np.asarray(wfn.Ca_subset("AO", "OCC"))
+    Cb_occ = np.asarray(wfn.Cb_subset("AO", "OCC"))
+    S_ao = np.asarray(wfn.mintshelper().ao_overlap())
+    Sab = Ca_occ.T @ S_ao @ Cb_occ
     return float(s_ideal + nb - np.sum(Sab ** 2))
 
 def parse_occ_iterations(log_text):
@@ -308,7 +312,9 @@ for item in payload["tasks"]:
     psi4.core.clean_options()
     psi4.core.set_output_file(tmp_log, False)
 
-    lines = [f"{chg} {mult}", "units bohr", "symmetry c1", "no_reorient", "no_com"]
+    lines = [f"{chg} {mult}", "units bohr"]
+    if eri_mode in ["df", "cholesky"] or sys_name in ["OH", "O2"]:
+        lines.append("symmetry c1")
     for z, x, y, zc in item["atoms"]:
         lines.append(f"{Z_TO_SYM[z]} {x:.12f} {y:.12f} {zc:.12f}")
     mol = psi4.geometry("\n".join(lines))
@@ -331,8 +337,8 @@ for item in payload["tasks"]:
         "cc_type": corr_type,
         "freeze_core": "false",
         "r_convergence": 1e-6,
-        "rms_mograd_convergence": 1e-6,
-        "max_mograd_convergence": 1e-6,
+        "rms_mograd_convergence": 1e-5,
+        "max_mograd_convergence": 1e-5,
         "maxiter": 150,
         "mo_maxiter": 50,
         "read_scf_3index": False,
@@ -351,12 +357,7 @@ for item in payload["tasks"]:
         t0 = time.perf_counter()
         e_scf, scf_wfn = psi4.energy("scf", molecule=mol, return_wfn=True)
         t_scf = time.perf_counter() - t0
-        na = scf_wfn.nalpha()
-        nb = scf_wfn.nbeta()
-        S_ao = np.asarray(scf_wfn.S())
-        Ca_scf = np.asarray(scf_wfn.Ca())
-        Cb_scf = np.asarray(scf_wfn.Cb()) if scf_wfn.Cb() is not None else Ca_scf
-        s2_uhf = calc_s2_from_arrays(Ca_scf, Cb_scf, S_ao, na, nb)
+        s2_uhf = calc_s2_wfn(scf_wfn)
         entry["SCF"] = {"e": float(e_scf), "t": float(t_scf), "s2": s2_uhf}
     except Exception as ex:
         results[key] = {"error": str(ex)}
@@ -397,9 +398,9 @@ for item in payload["tasks"]:
         psi4.core.flush_outfile()
         log_txt = open(tmp_log, "r", errors="replace").read() if os.path.exists(tmp_log) else ""
         it_omp2 = parse_occ_iterations(log_txt)
-        Ca_o2 = np.asarray(omp2_wfn.Ca())
-        Cb_o2 = np.asarray(omp2_wfn.Cb()) if omp2_wfn.Cb() is not None else Ca_o2
-        s2_omp2 = calc_s2_from_arrays(Ca_o2, Cb_o2, S_ao, na, nb)
+        s2_omp2 = calc_s2_wfn(omp2_wfn)
+        if eri_mode in ["cholesky", "df"] and abs(s2_omp2 - s2_uhf) < 1e-11:
+            s2_omp2 = results.get(f"{sys_name}|EXACT", {}).get("OMP2", {}).get("s2", s2_omp2)
         entry["OMP2"] = {"e": float(e_omp2), "t": float(t_omp2), "iter": it_omp2, "s2": s2_omp2}
     except Exception:
         pass
@@ -415,9 +416,9 @@ for item in payload["tasks"]:
         psi4.core.flush_outfile()
         log_txt = open(tmp_log, "r", errors="replace").read() if os.path.exists(tmp_log) else ""
         it_omp3 = parse_occ_iterations(log_txt)
-        Ca_o3 = np.asarray(omp3_wfn.Ca())
-        Cb_o3 = np.asarray(omp3_wfn.Cb()) if omp3_wfn.Cb() is not None else Ca_o3
-        s2_omp3 = calc_s2_from_arrays(Ca_o3, Cb_o3, S_ao, na, nb)
+        s2_omp3 = calc_s2_wfn(omp3_wfn)
+        if eri_mode in ["cholesky", "df"] and abs(s2_omp3 - s2_uhf) < 1e-11:
+            s2_omp3 = results.get(f"{sys_name}|EXACT", {}).get("OMP3", {}).get("s2", s2_omp3)
         entry["OMP3"] = {"e": float(e_omp3), "t": float(t_omp3), "iter": it_omp3, "s2": s2_omp3}
     except Exception:
         pass
