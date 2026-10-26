@@ -303,12 +303,12 @@ opts = {{
     "mp_type": mp_type_map[eri_mode],
     "cc_type": mp_type_map[eri_mode],
     "e_convergence": 1e-12,
-    "d_convergence": 1e-11,
-    "r_convergence": 1e-7,
+    "d_convergence": 1e-12,
+    "r_convergence": 1e-8,
     "rms_mograd_convergence": 1e-7,
     "max_mograd_convergence": 1e-7,
     "freeze_core": False,
-    "maxiter": 150,
+    "maxiter": 250,
     "mo_maxiter": 100,
     "read_scf_3index": False,
 }}
@@ -364,12 +364,36 @@ else:
     restore_wfn(wfn_hf, hf_snap)
 
     e_omp2, wfn_omp2 = psi4.energy("omp2", ref_wfn=wfn_hf, molecule=mol, return_wfn=True)
+    if np.isnan(float(e_omp2)):
+        psi4.core.clean()
+        restore_wfn(wfn_hf, hf_snap)
+        psi4.set_options({{"do_diis": False}})
+        e_omp2, wfn_omp2 = psi4.energy("omp2", ref_wfn=wfn_hf, molecule=mol, return_wfn=True)
+        psi4.set_options({{"do_diis": True}})
+    if np.isnan(float(e_omp2)):
+        psi4.core.clean()
+        restore_wfn(wfn_hf, hf_snap)
+        psi4.set_options({{"mp2_type": "conv", "mp_type": "conv"}})
+        e_omp2, wfn_omp2 = psi4.energy("omp2", ref_wfn=wfn_hf, molecule=mol, return_wfn=True)
+        psi4.set_options({{"mp2_type": mp_type_map[eri_mode], "mp_type": mp_type_map[eri_mode]}})
     res["OMP2"] = float(e_omp2)
     res["S2_OMP2"] = calc_s2(wfn_omp2)
     psi4.core.clean()
     restore_wfn(wfn_hf, hf_snap)
 
     e_omp3, wfn_omp3 = psi4.energy("omp3", ref_wfn=wfn_hf, molecule=mol, return_wfn=True)
+    if np.isnan(float(e_omp3)):
+        psi4.core.clean()
+        restore_wfn(wfn_hf, hf_snap)
+        psi4.set_options({{"do_diis": False}})
+        e_omp3, wfn_omp3 = psi4.energy("omp3", ref_wfn=wfn_hf, molecule=mol, return_wfn=True)
+        psi4.set_options({{"do_diis": True}})
+    if np.isnan(float(e_omp3)):
+        psi4.core.clean()
+        restore_wfn(wfn_hf, hf_snap)
+        psi4.set_options({{"mp2_type": "conv", "mp_type": "conv"}})
+        e_omp3, wfn_omp3 = psi4.energy("omp3", ref_wfn=wfn_hf, molecule=mol, return_wfn=True)
+        psi4.set_options({{"mp2_type": mp_type_map[eri_mode], "mp_type": mp_type_map[eri_mode]}})
     res["OMP3"] = float(e_omp3)
     res["S2_OMP3"] = calc_s2(wfn_omp3)
     psi4.core.clean()
@@ -409,9 +433,9 @@ def test_system(name, spec, basis_name="cc-pVTZ", eri_mode="EXACT", exact_ref_ca
         scf_cfg.use_df = (eri_mode == "DF")
         scf_cfg.aux_basis_name = aux_basis_name
         scf_cfg.cholesky_threshold = 1e-9
-        scf_cfg.max_iterations = 150
-        scf_cfg.energy_threshold = 1e-11
-        scf_cfg.density_threshold = 1e-10
+        scf_cfg.max_iterations = 300
+        scf_cfg.energy_threshold = 1e-12
+        scf_cfg.density_threshold = 1e-11
         scf_cfg.print_level = 0
 
         if is_closed:
@@ -421,8 +445,8 @@ def test_system(name, spec, basis_name="cc-pVTZ", eri_mode="EXACT", exact_ref_ca
 
         scf_res = scf.compute()
         if not scf_res.converged:
-            scf_cfg.max_iterations = 250
-            scf_cfg.density_threshold = 1e-6
+            scf_cfg.max_iterations = 500
+            scf_cfg.density_threshold = 1e-10
             scf = (
                 mshqc.RHF(mol, basis, integrals, scf_cfg)
                 if is_closed
