@@ -185,6 +185,7 @@ def build_ints(mol, basis):
     with suppress_stdout():
         return mshqc.IntegralEngine(mol, basis)
 
+
 def make_scf_config(eri_mode, aux_basis_name="", print_level=0):
     scf_cfg = mshqc.SCFConfig()
     scf_cfg.scf_type = "incore"
@@ -320,9 +321,8 @@ for item in payload["tasks"]:
     psi4.core.clean_options()
     psi4.core.set_output_file(tmp_log, False)
 
-    lines = [f"{chg} {mult}", "units bohr"]
-    if eri_mode in ["df", "cholesky"] or sys_name in ["OH", "O2"]:
-        lines.append("symmetry c1")
+    # Gunakan symmetry c1, no_reorient, dan no_com secara konsisten (apple-to-apple dengan mshqc)
+    lines = [f"{chg} {mult}", "units bohr", "symmetry c1", "no_reorient", "no_com"]
     for z, x, y, zc in item["atoms"]:
         lines.append(f"{Z_TO_SYM[z]} {x:.12f} {y:.12f} {zc:.12f}")
     mol = psi4.geometry("\n".join(lines))
@@ -521,7 +521,7 @@ def run_table_1_eri_compression():
         mem_exact = (8.0 * (nbf ** 4)) / mb
         mem_chol  = (8.0 * (nbf ** 2) * m_chol) / mb
         mem_df    = (8.0 * (nbf ** 2) * naux) / mb
-        r_chol = mem_exact / mem_chol if mem_chol > 0 else 0.0
+        r_chol = mem_exact / mem_chol if m_chol > 0 else 0.0
         r_df   = mem_exact / mem_df
         print(f"| {sys_name:<8} | {b_name:<8} | {nbf:<5} | {naux:<9} | {m_chol:<7} | {mem_exact:<11.3f} | {mem_chol:<10.3f} | {mem_df:<9.3f} | {r_chol:<8.2f} x | {r_df:<7.2f} x |", flush=True)
 
@@ -869,7 +869,7 @@ try:
 
     mode = payload["mode"]
     sc = mshqc.SCFConfig(); sc.print_level = 0; sc.energy_threshold = 1e-9; sc.density_threshold = 1e-9
-    mc = mshqc.MP2Config(); mc.print_level = 0; mc.energy_threshold = 1e-9; mc.gradient_threshold = 1e-6
+    mc = mshqc.MP2Config(); mc.print_level = 0; mc.energy_threshold = 1e-9; mc.gradient_threshold = 1e-5
     if mode == "DF":
         sc.eri_method = "df"; sc.use_df = True; sc.aux_basis_name = payload["aux"]
         mc.eri_method = "df"; mc.use_df = True; mc.aux_basis_name = payload["aux"]
@@ -880,7 +880,15 @@ try:
         sc.eri_method = "exact"
         mc.eri_method = "exact"
 
-    scf_res = (mshqc.UHF(mol, basis, ints, sc) if payload["is_uhf"] else mshqc.RHF(mol, basis, ints, sc)).compute()
+    if payload["is_uhf"]:
+        n_elec = mol.n_electrons()
+        n_unp = mol.multiplicity() - 1
+        na = (n_elec + n_unp) // 2
+        nb = (n_elec - n_unp) // 2
+        scf_res = mshqc.UHF(mol, basis, ints, na, nb, sc).compute()
+    else:
+        scf_res = mshqc.RHF(mol, basis, ints, sc).compute()
+
     if payload["method"] == "OMP2":
         mshqc.OMP2(mol, basis, ints, scf_res, mc).compute()
     else:
@@ -948,8 +956,8 @@ opts = {
     "cc_type": corr_t,
     "freeze_core": "false",
     "r_convergence": 1e-6,
-    "rms_mograd_convergence": 1e-6,
-    "max_mograd_convergence": 1e-6,
+    "rms_mograd_convergence": 1e-5,
+    "max_mograd_convergence": 1e-4,
     "read_scf_3index": False,
 }
 if mode == "df":
