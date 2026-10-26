@@ -361,6 +361,145 @@ SCFResult BaseSCF::compute() {
         }
     }
 
+    // Verifikasi keadaan dasar UHF terhadap jebakan simetri subruang awal (misal NH2 2A1 -> 2B1)
+    if (is_uhf && mol_.n_atoms() > 1 && n_beta_ > 0) {
+        double best_energy = energy_;
+        bool best_conv = converged;
+        int best_iter = iter_scf_;
+        Eigen::MatrixXd best_Ca = C_alpha_, best_Cb = C_beta_;
+        Eigen::MatrixXd best_Pa = P_alpha_, best_Pb = P_beta_;
+        Eigen::MatrixXd best_Fa = F_alpha_, best_Fb = F_beta_;
+        Eigen::VectorXd best_ea = eps_alpha_, best_eb = eps_beta_;
+
+        auto run_candidate_scf = [&](const Eigen::MatrixXd& trial_Ca, const Eigen::MatrixXd& trial_Cb) {
+            C_alpha_ = trial_Ca;
+            C_beta_  = trial_Cb;
+            occ_numbers_alpha_.resize(0);
+            occ_numbers_beta_.resize(0);
+            update_densities();
+            if (fock_engine_) fock_engine_->reset();
+
+            DIIS trial_diis_a(config_.diis_max_vectors);
+            DIIS trial_diis_b(config_.diis_max_vectors);
+            bool trial_conv = false;
+            energy_ = 0.0;
+
+            for (iter_scf_ = 1; iter_scf_ <= config_.max_iterations; iter_scf_++) {
+                energy_old_ = energy_;
+                Eigen::MatrixXd Pa_snap = P_alpha_;
+                Eigen::MatrixXd Pb_snap = P_beta_;
+
+                if (symmetrizer_) {
+                    symmetrizer_->symmetrize(P_alpha_);
+                    symmetrizer_->symmetrize(P_beta_);
+                }
+                build_fock_matrix();
+                if (symmetrizer_) {
+                    symmetrizer_->symmetrize(F_alpha_);
+                    symmetrizer_->symmetrize(F_beta_);
+                }
+                energy_ = compute_energy();
+
+                // Hentikan lebih awal jika kandidat jelas menaikkan energi
+                if (iter_scf_ >= 3 && energy_ > best_energy + 0.05) {
+                    break;
+                }
+
+                Eigen::MatrixXd F_eff_a = F_alpha_;
+                Eigen::MatrixXd F_eff_b = F_beta_;
+                double err_rms = 0.0;
+
+                if (iter_scf_ > 1) {
+                    Eigen::MatrixXd FPS_a = F_alpha_ * P_alpha_ * S_;
+                    Eigen::MatrixXd err_a = X_.transpose() * (FPS_a - FPS_a.transpose()) * X_;
+                    trial_diis_a.add_iteration(F_alpha_, err_a, P_alpha_);
+                    F_eff_a = trial_diis_a.extrapolate();
+
+                    Eigen::MatrixXd FPS_b = F_beta_ * P_beta_ * S_;
+                    Eigen::MatrixXd err_b = X_.transpose() * (FPS_b - FPS_b.transpose()) * X_;
+                    trial_diis_b.add_iteration(F_beta_, err_b, P_beta_);
+                    F_eff_b = trial_diis_b.extrapolate();
+                    err_rms = std::hypot(err_a.norm(), err_b.norm()) / nbasis_;
+                }
+
+                solve_fock(F_eff_a, C_alpha_, eps_alpha_);
+                solve_fock(F_eff_b, C_beta_, eps_beta_);
+                occ_numbers_alpha_.resize(0);
+                occ_numbers_beta_.resize(0);
+                update_densities();
+
+                double dE = std::abs(energy_ - energy_old_);
+                double dP = std::hypot((P_alpha_ - Pa_snap).norm(), (P_beta_ - Pb_snap).norm());
+
+                double e_tol = (config_.density_threshold > 1e-7)
+                    ? config_.energy_threshold
+                    : std::min(config_.energy_threshold, 1e-12);
+                double p_tol = (config_.density_threshold > 1e-7)
+                    ? config_.density_threshold
+                    : std::min(config_.density_threshold, 1e-11);
+
+                bool strict_conv  = (dE < e_tol && dP < p_tol && err_rms < p_tol);
+                bool plateau_conv = (iter_scf_ > 60 && dE < e_tol && dP < std::max(p_tol, 1e-10));
+
+                if (iter_scf_ > 2 && (strict_conv || plateau_conv)) {
+                    trial_conv = true;
+                    break;
+                }
+            }
+
+            if (trial_conv && energy_ < best_energy - 1e-7) {
+                best_energy = energy_;
+                best_conv   = trial_conv;
+                best_iter   = iter_scf_;
+                best_Ca     = C_alpha_;
+                best_Cb     = C_beta_;
+                best_Pa     = P_alpha_;
+                best_Pb     = P_beta_;
+                best_Fa     = F_alpha_;
+                best_Fb     = F_beta_;
+                best_ea     = eps_alpha_;
+                best_eb     = eps_beta_;
+                return true;
+            }
+            return false;
+        };
+
+        // Identifikasi orbital virtual beta yang berkorespondensi dengan SOMO alpha
+        Eigen::MatrixXd S_Ca_occ = S_ * best_Ca.leftCols(n_alpha_);
+        std::vector<int> somo_beta_indices;
+        for (int a = n_beta_; a < nbasis_; ++a) {
+            double proj = (S_Ca_occ.transpose() * best_Cb.col(a)).squaredNorm();
+            if (proj > 0.4) {
+                somo_beta_indices.push_back(a);
+            }
+        }
+
+        // Uji pertukaran HOMO-beta (dan HOMO-1-beta jika dekat) dengan kandidat SOMO virtual beta
+        for (int a_idx : somo_beta_indices) {
+            for (int i_off = 1; i_off <= std::min(2, n_beta_); ++i_off) {
+                int i_idx = n_beta_ - i_off;
+                if (i_off == 2 && std::abs(best_eb(n_beta_ - 1) - best_eb(n_beta_ - 2)) > 0.25) continue;
+                Eigen::MatrixXd trial_Cb = best_Cb;
+                trial_Cb.col(i_idx).swap(trial_Cb.col(a_idx));
+                if (run_candidate_scf(best_Ca, trial_Cb)) {
+                    break;
+                }
+            }
+        }
+
+        energy_    = best_energy;
+        converged  = best_conv;
+        iter_scf_  = best_iter;
+        C_alpha_   = best_Ca;
+        C_beta_    = best_Cb;
+        P_alpha_   = best_Pa;
+        P_beta_    = best_Pb;
+        F_alpha_   = best_Fa;
+        F_beta_    = best_Fb;
+        eps_alpha_ = best_ea;
+        eps_beta_  = best_eb;
+    }
+
     // Sinkronisasi kanonikal akhir: bangun Fock murni dari densitas terkonvergensi
     int final_iter = iter_scf_;
     if (converged) {
@@ -908,11 +1047,13 @@ UHF::UHF(const Molecule& mol, const BasisSet& basis, std::shared_ptr<IntegralEng
 void UHF::initial_guess() {
     if (config_.print_level > 0) std::cout << "  [UHF] Generating Initial Guess... ";
     Eigen::MatrixXd P_sad = SADGuess::build(mol_, basis_);
-    if (P_sad.rows() > 0 && P_sad.norm() > 1e-6) {
-        P_alpha_ = 0.5 * P_sad;
-        P_beta_  = 0.5 * P_sad;
-        
-        // Baris P_alpha_(i,i) *= 1.1 SUDAH DIHAPUS SEPENUHNYA
+    if (P_sad.rows() == nbasis_ && P_sad.norm() > 1e-6) {
+        if (config_.print_level > 0) std::cout << "Using SAD.\n";
+        double n_tot = static_cast<double>(n_alpha_ + n_beta_);
+        double frac_a = (n_tot > 0.0) ? (static_cast<double>(n_alpha_) / n_tot) : 0.5;
+        double frac_b = (n_tot > 0.0) ? (static_cast<double>(n_beta_)  / n_tot) : 0.5;
+        P_alpha_ = frac_a * P_sad;
+        P_beta_  = frac_b * P_sad;
 
         if (mol_.n_atoms() == 1) {
             solve_fock(H_, C_alpha_, eps_alpha_);

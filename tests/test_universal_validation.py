@@ -233,41 +233,9 @@ def compute_s2_from_mo(Ca, Cb, S, na, nb):
     S_mat = np.asarray(S)
     overlap_ab = Ca_occ.T @ S_mat @ Cb_occ
     return float(ideal + nb - np.sum(overlap_ab ** 2))
-
-def canonicalize_uhf_subspace(mol, basis, integrals, scf_res, Ca_init, Cb_init, ea_init, eb_init):
-    """
-    Menyelaraskan orientasi subruang kanonik UHF menggunakan Fock & integral mshqc
-    ketika tebakan awal jatuh ke state/orientasi degenerat yang berbeda.
-    """
-    na = int(scf_res.n_occ_alpha)
-    nb = int(scf_res.n_occ_beta)
-    S_ao = np.array(integrals.compute_overlap(), dtype=float)
-    H_core = np.array(integrals.compute_kinetic(), dtype=float) + np.array(integrals.compute_nuclear(), dtype=float)
-
-    Ca_can = np.array(Ca_init, dtype=float)
-    Cb_can = np.array(Cb_init, dtype=float)
-    eps_a = np.array(ea_init, dtype=float)
-    eps_b = np.array(eb_init, dtype=float)
-
-    Pa_can = Ca_can[:, :na] @ Ca_can[:, :na].T
-    Pb_can = Cb_can[:, :nb] @ Cb_can[:, :nb].T if nb > 0 else np.zeros_like(Pa_can)
-
-    Fa_ao = S_ao @ Ca_can @ np.diag(eps_a) @ Ca_can.T @ S_ao
-    Fb_ao = S_ao @ Cb_can @ np.diag(eps_b) @ Cb_can.T @ S_ao if nb > 0 else Fa_ao
-    e_elec = 0.5 * (np.sum(Pa_can * (H_core + Fa_ao)) + np.sum(Pb_can * (H_core + Fb_ao)))
-
-    scf_res.C_alpha = Ca_can
-    scf_res.C_beta = Cb_can
-    scf_res.P_alpha = Pa_can
-    scf_res.P_beta = Pb_can
-    scf_res.F_alpha = Fa_ao
-    scf_res.F_beta = Fb_ao
-    scf_res.orbital_energies_alpha = eps_a
-    scf_res.orbital_energies_beta = eps_b
-    scf_res.energy_electronic = float(e_elec)
-    scf_res.energy_total = float(e_elec + mol.nuclear_repulsion_energy())
+def canonicalize_uhf_subspace(mol, basis, integrals, scf_res, *args, **kwargs):
+    """Mempertahankan ruang orbital UHF murni dalam urutan basis AO libcint mshqc."""
     return scf_res
-
 def run_psi4_reference(name, spec, basis_name, eri_mode):
     """Menjalankan referensi Psi4 melalui PSI4_PYTHON subprocess dengan isolasi snapshot wfn."""
     if not PSI4_PYTHON:
