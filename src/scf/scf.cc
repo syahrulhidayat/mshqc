@@ -908,13 +908,11 @@ UHF::UHF(const Molecule& mol, const BasisSet& basis, std::shared_ptr<IntegralEng
 void UHF::initial_guess() {
     if (config_.print_level > 0) std::cout << "  [UHF] Generating Initial Guess... ";
     Eigen::MatrixXd P_sad = SADGuess::build(mol_, basis_);
-    if (P_sad.rows() == nbasis_ && P_sad.norm() > 1e-6) {
-        if (config_.print_level > 0) std::cout << "Using SAD.\n";
-        double n_tot = static_cast<double>(n_alpha_ + n_beta_);
-        double frac_a = (n_tot > 0.0) ? (static_cast<double>(n_alpha_) / n_tot) : 0.5;
-        double frac_b = (n_tot > 0.0) ? (static_cast<double>(n_beta_)  / n_tot) : 0.5;
-        P_alpha_ = frac_a * P_sad;
-        P_beta_  = frac_b * P_sad;
+    if (P_sad.rows() > 0 && P_sad.norm() > 1e-6) {
+        P_alpha_ = 0.5 * P_sad;
+        P_beta_  = 0.5 * P_sad;
+        
+        // Baris P_alpha_(i,i) *= 1.1 SUDAH DIHAPUS SEPENUHNYA
 
         if (mol_.n_atoms() == 1) {
             solve_fock(H_, C_alpha_, eps_alpha_);
