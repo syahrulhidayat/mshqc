@@ -984,8 +984,8 @@ else:
 opts = {
     "basis": payload["basis"],
     "reference": "uhf" if payload["is_uhf"] else "rhf",
-    "e_convergence": 1e-9,
-    "d_convergence": 1e-9,
+    "e_convergence": 1e-12,
+    "d_convergence": 1e-11,
     "scf_type": scf_t,
     "mp2_type": corr_t,
     "mp_type": corr_t,
