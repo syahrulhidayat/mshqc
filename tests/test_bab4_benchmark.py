@@ -257,8 +257,9 @@ import numpy as np
 # Gunakan 6 thread penuh dan lepaskan throttling BLAS/MKL agar C_DGEMM Psi4 maksimal
 n_threads = int(os.environ.get("OMP_NUM_THREADS", "6"))
 os.environ["OMP_NUM_THREADS"] = str(n_threads)
-os.environ["OPENBLAS_NUM_THREADS"] = str(n_threads)
-os.environ["MKL_NUM_THREADS"] = str(n_threads)
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OMP_MAX_ACTIVE_LEVELS"] = "1"
 os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
 # Arahkan PSIO scratch Psi4 ke RAM disk (/dev/shm) jika tersedia agar bebas bottleneck I/O disk
@@ -356,8 +357,8 @@ for item in payload["tasks"]:
     opts = {
         "basis": basis_name,
         "reference": ref,
-        "e_convergence": 1e-12 if (is_uhf and sys_name in ["OH", "O2"]) else 1e-9,
-        "d_convergence": 1e-11 if (is_uhf and sys_name in ["OH", "O2"]) else 1e-9,
+        "e_convergence": 1e-9,
+        "d_convergence": 1e-9,
         "scf_type": scf_type,
         "mp2_type": corr_type,
         "mp_type": corr_type,
@@ -419,7 +420,7 @@ for item in payload["tasks"]:
     # Setel toleransi OMP2 & OMP3 secara apple-to-apple (e=1e-9, rms_grad=1e-5)
     psi4.set_options({
         "e_convergence": 1e-9,
-        "r_convergence": 1e-7 if eri_mode == "exact" else 1e-6,
+        "r_convergence": 1e-6,
         "rms_mograd_convergence": 1e-5,
         "max_mograd_convergence": 1e-4,
     })
@@ -931,8 +932,9 @@ PSI4_RAM_WORKER = r"""
 import sys, gc, json, os, tempfile
 n_threads = int(os.environ.get("OMP_NUM_THREADS", "6"))
 os.environ["OMP_NUM_THREADS"] = str(n_threads)
-os.environ["OPENBLAS_NUM_THREADS"] = str(n_threads)
-os.environ["MKL_NUM_THREADS"] = str(n_threads)
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OMP_MAX_ACTIVE_LEVELS"] = "1"
 shm_dir = "/dev/shm" if os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK) else tempfile.gettempdir()
 os.environ["PSI_SCRATCH"] = shm_dir
 import psi4
@@ -986,7 +988,7 @@ opts = {
     "mp_type": corr_t,
     "cc_type": corr_t,
     "freeze_core": "false",
-    "r_convergence": 1e-7 if mode == "exact" else 1e-6,
+    "r_convergence": 1e-6,
     "rms_mograd_convergence": 1e-5,
     "max_mograd_convergence": 1e-4,
     "read_scf_3index": False,

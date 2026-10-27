@@ -4,12 +4,13 @@ import time
 import tempfile
 
 # =====================================================================
-# 1. KONFIGURASI HPC & LINGKUNGAN (Full 6 Thread BLAS/OpenMP & RAM Scratch)
+# 1. KONFIGURASI HPC & LINGKUNGAN (6 Thread Murni Tanpa Nested Thrashing)
 # =====================================================================
 n_threads = int(os.environ.get("OMP_NUM_THREADS", "6"))
 os.environ["OMP_NUM_THREADS"] = str(n_threads)
-os.environ["OPENBLAS_NUM_THREADS"] = str(n_threads)
-os.environ["MKL_NUM_THREADS"] = str(n_threads)
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OMP_MAX_ACTIVE_LEVELS"] = "1"
 os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
 shm_dir = "/dev/shm" if os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK) else tempfile.gettempdir()
@@ -61,6 +62,7 @@ def build_psi4_mol(atoms, chg, mult, eri_mode="exact"):
 def snapshot_wfn(wfn):
     """Menyimpan salinan matriks orbital & Fock HF."""
     snap = {
+        "e": float(wfn.energy()),
         "Ca": wfn.Ca().clone(),
         "Da": wfn.Da().clone(),
         "Fa": wfn.Fa().clone(),
@@ -76,6 +78,7 @@ def snapshot_wfn(wfn):
 
 def restore_wfn(wfn, snap):
     """Mengembalikan matriks orbital & Fock HF murni."""
+    wfn.set_energy(snap["e"])
     wfn.Ca().copy(snap["Ca"])
     wfn.Da().copy(snap["Da"])
     wfn.Fa().copy(snap["Fa"])
@@ -110,7 +113,7 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
         "mp_type": corr_type,
         "cc_type": corr_type,
         "freeze_core": "false",
-        "r_convergence": 1e-7 if eri_mode == "exact" else 1e-6,
+        "r_convergence": 1e-6,
         "rms_mograd_convergence": 1e-5,
         "max_mograd_convergence": 1e-4,
         "maxiter": 200,
