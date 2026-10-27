@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-Benchmark & Validasi Empiris Bab IV Skripsi (MSHQC vs Psi4)
+Benchmark & Validasi Empiris Bab IV Skripsi (MSHQC vs Psi4) - Refactored High-Speed Suite
 Mencakup:
 1. Kompresi Tensor ERI AO & Peringkat Cholesky Aktual (mshqc vs Psi4, tau_CD = 1e-9)
 2. Bukti Eliminasi Hambatan Memori O(V^4) pada OMP3 (MO Tensor Breakdown)
 3. Evaluasi Reduksi Kontaminasi Spin <S^2> (UHF vs OMP2 vs OMP3: mshqc vs Psi4)
 4. Verifikasi Gradien Analitik vs Finite-Difference & Jejak Iterasi TR-SOSCF
 5A. Validasi Head-to-Head Metode yang Sama (HF, MP2, MP3, OMP2, OMP3: mshqc vs Psi4)
-5B. Profil Konvergensi Iterasi (N_iter: mshqc vs Psi4), Efek Relaksasi Orbital (dE_OO),
-    & Bukti Ketangguhan (Robustness) TR-SOSCF dari Referensi UHF Metastabil (OH & O2)
+5B. Profil Konvergensi Iterasi (N_iter: mshqc vs Psi4) & Efek Relaksasi Orbital (dE_OO)
+5C. Bukti Ketangguhan (Robustness) TR-SOSCF dari Referensi UHF Metastabil (OH & O2)
 6. Pengukuran Peak RSS (VmHWM) & Net Working RAM Terkalibrasi (mshqc vs Psi4)
 """
 
@@ -22,14 +22,15 @@ import json
 import subprocess
 from contextlib import contextmanager
 
-# Konfigurasi HPC untuk proses utama MSHQC (6 Thread OpenMP & TBLIS)
-os.environ.setdefault("OMP_NUM_THREADS", "6")
+# Konfigurasi HPC untuk proses utama MSHQC (OpenMP + TBLIS aktif, hindari nested BLAS)
+CPU_AVAIL = os.cpu_count() or 4
+N_THREADS = int(os.environ.get("OMP_NUM_THREADS", str(min(6, CPU_AVAIL))))
+os.environ["OMP_NUM_THREADS"] = str(N_THREADS)
+os.environ["TBLIS_NUM_THREADS"] = str(N_THREADS)
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
-os.environ.setdefault("TBLIS_NUM_THREADS", "6")
 
 import numpy as np
-import scipy.linalg
 import mshqc
 
 ANG_TO_BOHR = 1.8897261246257702
@@ -75,6 +76,9 @@ SYSTEMS = {
     },
 }
 
+ALL_SYSTEM_ORDER = ["Neon", "H2O", "Lithium", "Carbon", "Oxygen", "OH", "O2"]
+ERI_MODE_ORDER = ["EXACT", "CHOLESKY", "DF"]
+
 VERIFIED_M_CHOL = {
     ("Neon", "cc-pvdz"): 92,
     ("Neon", "cc-pvtz"): 287,
@@ -107,7 +111,7 @@ def flush_all():
 
 @contextmanager
 def suppress_stdout():
-    """Membungkam 100% C++ std::cout untuk mencegah tabrakan buffer teks."""
+    """Membungkam C++ std::cout saat timing agar setara dengan psi4.core.be_quiet()."""
     flush_all()
     old_stdout_fd = os.dup(1)
     devnull_fd = os.open(os.devnull, os.O_WRONLY)
@@ -234,7 +238,6 @@ def make_mp2_config(eri_mode, aux_basis_name="", print_level=0, max_iterations=5
 
 
 def run_scf_raw(mol, basis, ints, eri_mode, is_uhf, aux_basis_name="", print_level=0):
-    """Menjalankan SCF bawaan mshqc secara langsung."""
     scf_cfg = make_scf_config(eri_mode, aux_basis_name, print_level)
     if is_uhf:
         n_elec = mol.n_electrons()
@@ -248,21 +251,22 @@ def run_scf_raw(mol, basis, ints, eri_mode, is_uhf, aux_basis_name="", print_lev
 
 
 # ==============================================================================
-# WORKER SUBPROCESS PSI4 (FULL HPC, RAM-DISK SCRATCH, & BEST-VS-BEST SYMMETRY)
+# WORKER SUBPROCESS PSI4 (MULTI-THREADED BLAS, SYMMETRY, & 3-INDEX REUSE)
 # ==============================================================================
 PSI4_BATCH_WORKER = r"""
 import os, sys, time, json, re, tempfile
 import numpy as np
 
-# Gunakan 6 thread penuh dan lepaskan throttling BLAS/MKL agar C_DGEMM Psi4 maksimal
-n_threads = int(os.environ.get("OMP_NUM_THREADS", "6"))
+cpu_avail = os.cpu_count() or 4
+n_threads = int(os.environ.get("OMP_NUM_THREADS", str(min(6, cpu_avail))))
 os.environ["OMP_NUM_THREADS"] = str(n_threads)
-os.environ["OPENBLAS_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = str(n_threads)
+os.environ["MKL_NUM_THREADS"] = str(n_threads)
+os.environ["MKL_DYNAMIC"] = "FALSE"
+os.environ["OMP_NESTED"] = "FALSE"
 os.environ["OMP_MAX_ACTIVE_LEVELS"] = "1"
 os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
-# Arahkan PSIO scratch Psi4 ke RAM disk (/dev/shm) jika tersedia agar bebas bottleneck I/O disk
 shm_dir = "/dev/shm" if os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK) else tempfile.gettempdir()
 os.environ["PSI_SCRATCH"] = shm_dir
 
@@ -274,6 +278,7 @@ Z_TO_SYM = {1: "H", 3: "Li", 6: "C", 8: "O", 10: "Ne"}
 
 def snapshot_wfn(wfn):
     snap = {
+        "e": float(wfn.energy()),
         "Ca": wfn.Ca().clone(),
         "Da": wfn.Da().clone(),
         "Fa": wfn.Fa().clone(),
@@ -287,6 +292,7 @@ def snapshot_wfn(wfn):
     return snap
 
 def restore_wfn(wfn, snap):
+    wfn.set_energy(snap["e"])
     wfn.Ca().copy(snap["Ca"])
     wfn.Da().copy(snap["Da"])
     wfn.Fa().copy(snap["Fa"])
@@ -318,6 +324,27 @@ def parse_occ_iterations(log_text):
             iters = max(iters, int(m.group(1)))
     return iters
 
+def run_energy_with_fallback(method_name, scf_wfn, mol, eri_mode, return_wfn=False):
+    t0 = time.perf_counter()
+    try:
+        if return_wfn:
+            e_val, wfn_out = psi4.energy(method_name, ref_wfn=scf_wfn, molecule=mol, return_wfn=True)
+            return float(e_val), float(time.perf_counter() - t0), wfn_out
+        else:
+            e_val = psi4.energy(method_name, ref_wfn=scf_wfn, molecule=mol)
+            return float(e_val), float(time.perf_counter() - t0), None
+    except Exception:
+        if eri_mode in ["df", "cholesky"]:
+            psi4.set_options({"read_scf_3index": False})
+            t0 = time.perf_counter()
+            if return_wfn:
+                e_val, wfn_out = psi4.energy(method_name, ref_wfn=scf_wfn, molecule=mol, return_wfn=True)
+                return float(e_val), float(time.perf_counter() - t0), wfn_out
+            else:
+                e_val = psi4.energy(method_name, ref_wfn=scf_wfn, molecule=mol)
+                return float(e_val), float(time.perf_counter() - t0), None
+        raise
+
 payload = json.loads(sys.argv[1])
 results = {}
 tmp_log = os.path.join(shm_dir, f"psi4_bab4_{os.getpid()}.out")
@@ -336,12 +363,11 @@ for item in payload["tasks"]:
     psi4.core.clean_options()
     psi4.core.be_quiet()
 
-    # Konfigurasi Best-of-Psi4:
-    # - Atom tunggal pada mode EXACT menggunakan simetri D2h penuh (kecepatan maksimal).
-    # - Molekul poliatomik/diatomik (H2O, OH, O2) dan mode DF/CHOLESKY menggunakan symmetry c1
-    #   agar terhindar dari overhead sorting 64 sub-blok libdpd di disk.
+    # Konfigurasi Simetri Maksimal Psi4:
+    # - Mode EXACT pada Neon, H2O, Lithium, Carbon, Oxygen memakai simetri titik penuh (D2h / C2v).
+    # - Mode DF/CHOLESKY (dfocc) dan radikal diatomik metastabil (OH, O2) memakai symmetry c1.
     lines = [f"{chg} {mult}", "units bohr"]
-    if eri_mode in ["df", "cholesky"] or len(item["atoms"]) > 1:
+    if eri_mode in ["df", "cholesky"] or sys_name in ["OH", "O2"]:
         lines.append("symmetry c1")
     for z, x, y, zc in item["atoms"]:
         lines.append(f"{Z_TO_SYM[z]} {x:.12f} {y:.12f} {zc:.12f}")
@@ -364,12 +390,12 @@ for item in payload["tasks"]:
         "mp_type": corr_type,
         "cc_type": corr_type,
         "freeze_core": "false",
-        "r_convergence": 1e-7,
+        "r_convergence": 1e-5,
         "rms_mograd_convergence": 1e-5,
         "max_mograd_convergence": 1e-4,
         "maxiter": 200,
         "mo_maxiter": 50,
-        "read_scf_3index": False,
+        "read_scf_3index": (eri_mode in ["df", "cholesky"]),
     }
     if eri_mode == "df":
         opts.update({"df_basis_scf": aux_basis, "df_basis_mp2": aux_basis, "df_basis_cc": aux_basis})
@@ -389,48 +415,36 @@ for item in payload["tasks"]:
         entry["SCF"] = {"e": float(e_scf), "t": float(t_scf), "s2": s2_uhf}
     except Exception as ex:
         results[key] = {"error": str(ex)}
+        psi4.core.clean()
         continue
 
     hf_snap = snapshot_wfn(scf_wfn)
-    if eri_mode in ["cholesky", "df"]:
-        psi4.set_options({"scf_type": "pk", "read_scf_3index": False})
+    psi4.set_options({"e_convergence": 1e-8, "r_convergence": 1e-5})
 
     # MP2
     try:
-        t0 = time.perf_counter()
-        e_mp2 = psi4.energy("mp2", ref_wfn=scf_wfn, molecule=mol)
-        t_mp2 = time.perf_counter() - t0
-        entry["MP2"] = {"e": float(e_mp2), "t": float(t_mp2)}
+        e_mp2, t_mp2, _ = run_energy_with_fallback("mp2", scf_wfn, mol, eri_mode, False)
+        entry["MP2"] = {"e": e_mp2, "t": t_mp2}
     except Exception:
         pass
-    psi4.core.clean()
+    if eri_mode == "exact":
+        psi4.core.clean()
     restore_wfn(scf_wfn, hf_snap)
 
     # MP3
     try:
-        t0 = time.perf_counter()
-        e_mp3 = psi4.energy("mp3", ref_wfn=scf_wfn, molecule=mol)
-        t_mp3 = time.perf_counter() - t0
-        entry["MP3"] = {"e": float(e_mp3), "t": float(t_mp3)}
+        e_mp3, t_mp3, _ = run_energy_with_fallback("mp3", scf_wfn, mol, eri_mode, False)
+        entry["MP3"] = {"e": e_mp3, "t": t_mp3}
     except Exception:
         pass
-    psi4.core.clean()
+    if eri_mode == "exact":
+        psi4.core.clean()
     restore_wfn(scf_wfn, hf_snap)
-
-    # Setel toleransi OMP2 & OMP3 secara apple-to-apple (e=1e-9, rms_grad=1e-5)
-    psi4.set_options({
-        "e_convergence": 1e-9,
-        "r_convergence": 1e-6,
-        "rms_mograd_convergence": 1e-5,
-        "max_mograd_convergence": 1e-4,
-    })
 
     # OMP2
     try:
         psi4.core.set_output_file(tmp_log, False)
-        t0 = time.perf_counter()
-        e_omp2, omp2_wfn = psi4.energy("omp2", ref_wfn=scf_wfn, molecule=mol, return_wfn=True)
-        t_omp2 = time.perf_counter() - t0
+        e_omp2, t_omp2, omp2_wfn = run_energy_with_fallback("omp2", scf_wfn, mol, eri_mode, True)
         psi4.core.flush_outfile()
         psi4.core.be_quiet()
         log_txt = open(tmp_log, "r", errors="replace").read() if os.path.exists(tmp_log) else ""
@@ -438,18 +452,17 @@ for item in payload["tasks"]:
         s2_omp2 = calc_s2_wfn(omp2_wfn)
         if eri_mode in ["cholesky", "df"] and abs(s2_omp2 - s2_uhf) < 1e-11:
             s2_omp2 = results.get(f"{sys_name}|EXACT", {}).get("OMP2", {}).get("s2", s2_omp2)
-        entry["OMP2"] = {"e": float(e_omp2), "t": float(t_omp2), "iter": it_omp2, "s2": s2_omp2}
+        entry["OMP2"] = {"e": e_omp2, "t": t_omp2, "iter": it_omp2, "s2": s2_omp2}
     except Exception:
-        pass
-    psi4.core.clean()
+        psi4.core.be_quiet()
+    if eri_mode == "exact":
+        psi4.core.clean()
     restore_wfn(scf_wfn, hf_snap)
 
     # OMP3
     try:
         psi4.core.set_output_file(tmp_log, False)
-        t0 = time.perf_counter()
-        e_omp3, omp3_wfn = psi4.energy("omp3", ref_wfn=scf_wfn, molecule=mol, return_wfn=True)
-        t_omp3 = time.perf_counter() - t0
+        e_omp3, t_omp3, omp3_wfn = run_energy_with_fallback("omp3", scf_wfn, mol, eri_mode, True)
         psi4.core.flush_outfile()
         psi4.core.be_quiet()
         log_txt = open(tmp_log, "r", errors="replace").read() if os.path.exists(tmp_log) else ""
@@ -457,9 +470,10 @@ for item in payload["tasks"]:
         s2_omp3 = calc_s2_wfn(omp3_wfn)
         if eri_mode in ["cholesky", "df"] and abs(s2_omp3 - s2_uhf) < 1e-11:
             s2_omp3 = results.get(f"{sys_name}|EXACT", {}).get("OMP3", {}).get("s2", s2_omp3)
-        entry["OMP3"] = {"e": float(e_omp3), "t": float(t_omp3), "iter": it_omp3, "s2": s2_omp3}
+        entry["OMP3"] = {"e": e_omp3, "t": t_omp3, "iter": it_omp3, "s2": s2_omp3}
     except Exception:
-        pass
+        psi4.core.be_quiet()
+
     psi4.core.clean()
     results[key] = entry
 
@@ -474,11 +488,11 @@ print(json.dumps(results))
 
 
 def run_psi4_reference_suite():
-    """Menjalankan seluruh perhitungan referensi Psi4 secara batch untuk Bab IV."""
+    """Menjalankan seluruh perhitungan referensi Psi4 secara batch dengan optimasi penuh."""
     tasks = []
-    for sys_name in ["Neon", "H2O", "Lithium", "Carbon", "Oxygen", "OH", "O2"]:
+    for sys_name in ALL_SYSTEM_ORDER:
         info = SYSTEMS[sys_name]
-        for mode in ["EXACT", "CHOLESKY", "DF"]:
+        for mode in ERI_MODE_ORDER:
             tasks.append({
                 "sys": sys_name,
                 "mode": mode,
@@ -500,13 +514,64 @@ def run_psi4_reference_suite():
         return {}
 
 
-def run_scf_ground_state(
-    sys_name, mol, basis, ints, eri_mode, is_uhf, psi4_db=None
-):
-    """Menjalankan SCF murni menggunakan engine C++ mshqc."""
-    return run_scf_raw(
-        mol, basis, ints, eri_mode, is_uhf, "cc-pvtz-ri", print_level=0
-    )
+def run_mshqc_reference_suite():
+    """
+    Menjalankan seluruh perhitungan mshqc (7 sistem x 3 mode ERI x 5 metode) SATU KALI SAJA.
+    Hasilnya di-cache untuk Tabel 3, Tabel 5A, Tabel 5B, dan Tabel 5C tanpa redundansi.
+    """
+    mshqc_db = {}
+    for sys_name in ALL_SYSTEM_ORDER:
+        is_uhf = SYSTEMS[sys_name]["is_uhf"]
+        for mode in ERI_MODE_ORDER:
+            mol = build_mol(sys_name)
+            basis = mshqc.BasisSet("cc-pvtz", mol)
+            ints = build_ints(mol, basis)
+
+            with suppress_stdout():
+                t0 = time.perf_counter()
+                scf_res = run_scf_raw(mol, basis, ints, mode, is_uhf, "cc-pvtz-ri", print_level=0)
+                t_scf = time.perf_counter() - t0
+                e_scf = float(scf_res.energy_total)
+
+                oa, ob = get_occ_counts(sys_name, scf_res)
+                s_ideal, s2_uhf = compute_spin_s2(mol, ints, scf_res.C_alpha, scf_res.C_beta, oa, ob)
+
+                cfg = make_mp2_config(mode, "cc-pvtz-ri", print_level=0, max_iterations=50)
+
+                t0 = time.perf_counter()
+                mp2_solver = mshqc.UMP2(mol, basis, ints, scf_res, cfg) if is_uhf else mshqc.RMP2(mol, basis, ints, scf_res, cfg)
+                res_mp2 = mp2_solver.compute()
+                t_mp2 = time.perf_counter() - t0
+                e_mp2 = float(res_mp2.energy_total)
+
+                t0 = time.perf_counter()
+                mp3_solver = mshqc.UMP3(scf_res, res_mp2, cfg, ints) if is_uhf else mshqc.RMP3(scf_res, res_mp2, cfg, ints)
+                res_mp3 = mp3_solver.compute()
+                t_mp3 = time.perf_counter() - t0
+                e_mp3 = float(res_mp3.e_total if hasattr(res_mp3, "e_total") else res_mp3.energy_total)
+
+                t0 = time.perf_counter()
+                res_omp2 = mshqc.OMP2(mol, basis, ints, scf_res, cfg).compute()
+                t_omp2 = time.perf_counter() - t0
+                e_omp2 = float(res_omp2.energy_total)
+                _, s2_omp2 = compute_spin_s2(mol, ints, res_omp2.C_alpha, res_omp2.C_beta, oa, ob)
+
+                t0 = time.perf_counter()
+                res_omp3 = mshqc.OMP3(mol, basis, ints, scf_res, cfg).compute()
+                t_omp3 = time.perf_counter() - t0
+                e_omp3 = float(res_omp3.e_total if hasattr(res_omp3, "e_total") else res_omp3.energy_total)
+                _, s2_omp3 = compute_spin_s2(mol, ints, res_omp3.C_alpha, res_omp3.C_beta, oa, ob)
+
+            mshqc_db[f"{sys_name}|{mode}"] = {
+                "s_ideal": s_ideal,
+                "SCF":  {"e": e_scf,  "t": t_scf,  "s2": s2_uhf},
+                "MP2":  {"e": e_mp2,  "t": t_mp2},
+                "MP3":  {"e": e_mp3,  "t": t_mp3},
+                "OMP2": {"e": e_omp2, "t": t_omp2, "iter": int(res_omp2.iterations), "s2": s2_omp2},
+                "OMP3": {"e": e_omp3, "t": t_omp3, "iter": int(res_omp3.iterations), "s2": s2_omp3},
+            }
+            gc.collect()
+    return mshqc_db
 
 
 # ==============================================================================
@@ -598,9 +663,9 @@ def run_table_2_o_v4_elimination():
 
 
 # ==============================================================================
-# 3. TABEL EVALUASI KONTAMINASI SPIN <S^2> (MSHQC vs PSI4, UHF -> OMP2 & OMP3)
+# 3. TABEL EVALUASI KONTAMINASI SPIN <S^2> (DARI CACHE SINGLE-PASS)
 # ==============================================================================
-def run_table_3_spin_contamination(psi4_db):
+def run_table_3_spin_contamination(mshqc_db, psi4_db):
     print("\n" + "=" * 144, flush=True)
     print("  3. TABEL PEMULIHAN SIMETRI SPIN <S^2> SEBELUM (UHF) DAN SESUDAH OPTIMISASI ORBITAL: MSHQC vs PSI4 (cc-pVTZ)", flush=True)
     print("=" * 144, flush=True)
@@ -614,40 +679,33 @@ def run_table_3_spin_contamination(psi4_db):
 
     for sys_name in ["Lithium", "Carbon", "Oxygen", "OH", "O2"]:
         for mode in ["EXACT", "DF"]:
-            mol = build_mol(sys_name)
-            basis = mshqc.BasisSet("cc-pvtz", mol)
-            ints = build_ints(mol, basis)
+            m_entry = mshqc_db[f"{sys_name}|{mode}"]
             p_entry = psi4_db.get(f"{sys_name}|{mode}", {})
 
-            with suppress_stdout():
-                scf_res = run_scf_ground_state(sys_name, mol, basis, ints, mode, True, psi4_db)
-                oa, ob = get_occ_counts(sys_name, scf_res)
-                s_ideal, s2_uhf = compute_spin_s2(mol, ints, scf_res.C_alpha, scf_res.C_beta, oa, ob)
-                d_uhf = max(0.0, s2_uhf - s_ideal)
+            s_ideal = m_entry["s_ideal"]
+            s2_uhf  = m_entry["SCF"]["s2"]
+            s2_omp2 = m_entry["OMP2"]["s2"]
+            s2_omp3 = m_entry["OMP3"]["s2"]
+            it_omp2 = m_entry["OMP2"]["iter"]
+            it_omp3 = m_entry["OMP3"]["iter"]
 
-                cfg = make_mp2_config(mode, "cc-pvtz-ri", print_level=0, max_iterations=50)
+            d_uhf  = max(0.0, s2_uhf - s_ideal)
+            d_omp2 = max(0.0, s2_omp2 - s_ideal)
+            d_omp3 = max(0.0, s2_omp3 - s_ideal)
+            red_omp2 = 100.0 * (d_uhf - d_omp2) / d_uhf if d_uhf > 1e-12 else 0.0
+            red_omp3 = 100.0 * (d_uhf - d_omp3) / d_uhf if d_uhf > 1e-12 else 0.0
 
-                res_omp2 = mshqc.OMP2(mol, basis, ints, scf_res, cfg).compute()
-                _, s2_omp2 = compute_spin_s2(mol, ints, res_omp2.C_alpha, res_omp2.C_beta, oa, ob)
-                d_omp2 = max(0.0, s2_omp2 - s_ideal)
-                red_omp2 = 100.0 * (d_uhf - d_omp2) / d_uhf if d_uhf > 1e-12 else 0.0
-
-                res_omp3 = mshqc.OMP3(mol, basis, ints, scf_res, cfg).compute()
-                _, s2_omp3 = compute_spin_s2(mol, ints, res_omp3.C_alpha, res_omp3.C_beta, oa, ob)
-                d_omp3 = max(0.0, s2_omp3 - s_ideal)
-                red_omp3 = 100.0 * (d_uhf - d_omp3) / d_uhf if d_uhf > 1e-12 else 0.0
-
-            p_s2_uhf = p_entry.get("SCF", {}).get("s2", s2_uhf)
-            p_s2_o2 = p_entry.get("OMP2", {}).get("s2", s2_omp2)
-            p_it_o2 = p_entry.get("OMP2", {}).get("iter", 0)
-            p_s2_o3 = p_entry.get("OMP3", {}).get("s2", s2_omp3)
-            p_it_o3 = p_entry.get("OMP3", {}).get("iter", 0)
+            p_s2_uhf = p_entry.get("SCF",  {}).get("s2", s2_uhf)
+            p_s2_o2  = p_entry.get("OMP2", {}).get("s2", s2_omp2)
+            p_it_o2  = p_entry.get("OMP2", {}).get("iter", 0)
+            p_s2_o3  = p_entry.get("OMP3", {}).get("s2", s2_omp3)
+            p_it_o3  = p_entry.get("OMP3", {}).get("iter", 0)
 
             uhf_str = f"{s2_uhf:.6f} / {p_s2_uhf:.6f}"
             o2_str  = f"{s2_omp2:.6f} / {p_s2_o2:.6f}"
             o3_str  = f"{s2_omp3:.6f} / {p_s2_o3:.6f}"
-            it2_str = f"{res_omp2.iterations:>2} / {p_it_o2:>2} it"
-            it3_str = f"{res_omp3.iterations:>2} / {p_it_o3:>2} it"
+            it2_str = f"{it_omp2:>2} / {p_it_o2:>2} it"
+            it3_str = f"{it_omp3:>2} / {p_it_o3:>2} it"
 
             print(
                 f"| {sys_name:<7} | {mode:<5} | {s_ideal:<5.2f} | {uhf_str:<23} | "
@@ -698,10 +756,9 @@ def run_table_4_iteration_trace_and_fd():
 
 
 # ==============================================================================
-# 5A & 5B. PERBANDINGAN METODE YANG SAMA (MSHQC vs PSI4), PROFIL ITERASI,
-#          EFEK RELAKSASI ORBITAL dE_OO, & UJI KETANGGUHAN (OH & O2)
+# 5A, 5B, 5C. VALIDASI HEAD-TO-HEAD, PROFIL KONVERGENSI, & ROBUSTNESS
 # ==============================================================================
-def run_table_5_head_to_head_and_relaxation(psi4_db):
+def run_table_5_head_to_head_and_relaxation(mshqc_db, psi4_db):
     print("\n" + "=" * 124, flush=True)
     print("  5A. TABEL VALIDASI HEAD-TO-HEAD METODE YANG SAMA: MSHQC vs PSI4 (HF, MP2, MP3, OMP2, OMP3 | cc-pVTZ)", flush=True)
     print("=" * 124, flush=True)
@@ -714,57 +771,27 @@ def run_table_5_head_to_head_and_relaxation(psi4_db):
 
     relaxation_rows = []
 
-    for sys_name in ["Neon", "H2O", "Lithium", "Carbon", "Oxygen", "OH", "O2"]:
+    for sys_name in ALL_SYSTEM_ORDER:
         is_uhf = SYSTEMS[sys_name]["is_uhf"]
-        hf_lbl = "UHF" if is_uhf else "RHF"
+        hf_lbl  = "UHF"  if is_uhf else "RHF"
         mp2_lbl = "UMP2" if is_uhf else "RMP2"
         mp3_lbl = "UMP3" if is_uhf else "RMP3"
 
-        for mode in ["EXACT", "CHOLESKY", "DF"]:
-            mol = build_mol(sys_name)
-            basis = mshqc.BasisSet("cc-pvtz", mol)
-            ints = build_ints(mol, basis)
+        for mode in ERI_MODE_ORDER:
+            m_entry = mshqc_db[f"{sys_name}|{mode}"]
             p_entry = psi4_db.get(f"{sys_name}|{mode}", {})
 
-            with suppress_stdout():
-                t0 = time.perf_counter()
-                scf_res = run_scf_ground_state(sys_name, mol, basis, ints, mode, is_uhf, psi4_db)
-                t_scf = time.perf_counter() - t0
-                e_scf = scf_res.energy_total
-
-                cfg = make_mp2_config(mode, "cc-pvtz-ri", print_level=0, max_iterations=50)
-
-                t0 = time.perf_counter()
-                mp2_solver = mshqc.UMP2(mol, basis, ints, scf_res, cfg) if is_uhf else mshqc.RMP2(mol, basis, ints, scf_res, cfg)
-                res_mp2 = mp2_solver.compute()
-                t_mp2 = time.perf_counter() - t0
-                e_mp2 = res_mp2.energy_total
-
-                t0 = time.perf_counter()
-                mp3_solver = mshqc.UMP3(scf_res, res_mp2, cfg, ints) if is_uhf else mshqc.RMP3(scf_res, res_mp2, cfg, ints)
-                res_mp3 = mp3_solver.compute()
-                t_mp3 = time.perf_counter() - t0
-                e_mp3 = res_mp3.e_total
-
-                t0 = time.perf_counter()
-                res_omp2 = mshqc.OMP2(mol, basis, ints, scf_res, cfg).compute()
-                t_omp2 = time.perf_counter() - t0
-                e_omp2 = res_omp2.energy_total
-
-                t0 = time.perf_counter()
-                res_omp3 = mshqc.OMP3(mol, basis, ints, scf_res, cfg).compute()
-                t_omp3 = time.perf_counter() - t0
-                e_omp3 = res_omp3.e_total
-
             method_pairs = [
-                (hf_lbl,  "SCF",  e_scf,  t_scf),
-                (mp2_lbl, "MP2",  e_mp2,  t_mp2),
-                (mp3_lbl, "MP3",  e_mp3,  t_mp3),
-                ("OMP2",  "OMP2", e_omp2, t_omp2),
-                ("OMP3",  "OMP3", e_omp3, t_omp3),
+                (hf_lbl,  "SCF"),
+                (mp2_lbl, "MP2"),
+                (mp3_lbl, "MP3"),
+                ("OMP2",  "OMP2"),
+                ("OMP3",  "OMP3"),
             ]
-            for m_label, p_key, em, tm in method_pairs:
-                p_info = p_entry.get(p_key, {})
+            for m_label, key in method_pairs:
+                em = m_entry[key]["e"]
+                tm = m_entry[key]["t"]
+                p_info = p_entry.get(key, {})
                 ep = p_info.get("e", em)
                 tp = p_info.get("t", 0.0)
                 de_uha = abs(em - ep) * 1e6
@@ -774,6 +801,11 @@ def run_table_5_head_to_head_and_relaxation(psi4_db):
                     f"{ep:<16.8f} | {de_uha:<10.2f} | {tm:<9.3f} | {tp:<9.3f} | {sp:<7.2f} x |",
                     flush=True
                 )
+
+            e_mp2  = m_entry["MP2"]["e"]
+            e_mp3  = m_entry["MP3"]["e"]
+            e_omp2 = m_entry["OMP2"]["e"]
+            e_omp3 = m_entry["OMP3"]["e"]
 
             p_mp2_e  = p_entry.get("MP2",  {}).get("e", e_mp2)
             p_omp2_e = p_entry.get("OMP2", {}).get("e", e_omp2)
@@ -787,16 +819,15 @@ def run_table_5_head_to_head_and_relaxation(psi4_db):
                 "mode": mode,
                 "de_oo_mp2_m": (e_omp2 - e_mp2) * 1000.0,
                 "de_oo_mp2_p": (p_omp2_e - p_mp2_e) * 1000.0,
-                "it_omp2_m": res_omp2.iterations,
+                "it_omp2_m": m_entry["OMP2"]["iter"],
                 "it_omp2_p": p_omp2_i,
                 "diff_omp2_uha": abs(e_omp2 - p_omp2_e) * 1e6,
                 "de_oo_mp3_m": (e_omp3 - e_mp3) * 1000.0,
                 "de_oo_mp3_p": (p_omp3_e - p_mp3_e) * 1000.0,
-                "it_omp3_m": res_omp3.iterations,
+                "it_omp3_m": m_entry["OMP3"]["iter"],
                 "it_omp3_p": p_omp3_i,
                 "diff_omp3_uha": abs(e_omp3 - p_omp3_e) * 1e6,
             })
-            gc.collect()
 
     print("\n" + "=" * 146, flush=True)
     print("  5B. TABEL PROFIL KONVERGENSI (N_iter: MSHQC vs PSI4) & EFEK RELAKSASI ORBITAL dE_OO (mHa) PADA KEADAAN DASAR", flush=True)
@@ -829,40 +860,40 @@ def run_table_5_head_to_head_and_relaxation(psi4_db):
     )
     print(f"|{'-'*9}|{'-'*10}|{'-'*19}|{'-'*19}|{'-'*19}|{'-'*15}|{'-'*9}|{'-'*19}|{'-'*15}|{'-'*9}|", flush=True)
     for sys_name in ["OH", "O2"]:
-        for mode in ["EXACT", "CHOLESKY", "DF"]:
-            mol = build_mol(sys_name)
-            basis = mshqc.BasisSet("cc-pvtz", mol)
-            ints = build_ints(mol, basis)
+        for mode in ERI_MODE_ORDER:
+            m_entry = mshqc_db[f"{sys_name}|{mode}"]
             p_entry = psi4_db.get(f"{sys_name}|{mode}", {})
-            with suppress_stdout():
-                scf_raw = run_scf_raw(mol, basis, ints, mode, True, "cc-pvtz-ri", print_level=0)
-                cfg = make_mp2_config(mode, "cc-pvtz-ri", print_level=0, max_iterations=50)
-                res_mp2_raw = mshqc.UMP2(mol, basis, ints, scf_raw, cfg).compute()
-                res_omp2_rec = mshqc.OMP2(mol, basis, ints, scf_raw, cfg).compute()
-                res_omp3_rec = mshqc.OMP3(mol, basis, ints, scf_raw, cfg).compute()
 
-            p_omp2_e = p_entry.get("OMP2", {}).get("e", res_omp2_rec.energy_total)
-            p_omp3_e = p_entry.get("OMP3", {}).get("e", res_omp3_rec.e_total)
-            d_o2_uha = abs(res_omp2_rec.energy_total - p_omp2_e) * 1e6
-            d_o3_uha = abs(res_omp3_rec.e_total - p_omp3_e) * 1e6
+            e_mp2_raw  = m_entry["MP2"]["e"]
+            e_omp2_rec = m_entry["OMP2"]["e"]
+            e_omp3_rec = m_entry["OMP3"]["e"]
+            it_omp2    = m_entry["OMP2"]["iter"]
+            it_omp3    = m_entry["OMP3"]["iter"]
+
+            p_omp2_e = p_entry.get("OMP2", {}).get("e", e_omp2_rec)
+            p_omp3_e = p_entry.get("OMP3", {}).get("e", e_omp3_rec)
+            d_o2_uha = abs(e_omp2_rec - p_omp2_e) * 1e6
+            d_o3_uha = abs(e_omp3_rec - p_omp3_e) * 1e6
             print(
-                f"| {sys_name:<7} | {mode:<8} | {res_mp2_raw.energy_total:<17.8f} | "
-                f"{res_omp2_rec.energy_total:<17.8f} | {p_omp2_e:<17.8f} | {d_o2_uha:<13.2f} | "
-                f"{res_omp2_rec.iterations:<7} | {res_omp3_rec.e_total:<17.8f} | "
-                f"{d_o3_uha:<13.2f} | {res_omp3_rec.iterations:<7} |",
+                f"| {sys_name:<7} | {mode:<8} | {e_mp2_raw:<17.8f} | "
+                f"{e_omp2_rec:<17.8f} | {p_omp2_e:<17.8f} | {d_o2_uha:<13.2f} | "
+                f"{it_omp2:<7} | {e_omp3_rec:<17.8f} | "
+                f"{d_o3_uha:<13.2f} | {it_omp3:<7} |",
                 flush=True
             )
 
 
 # ==============================================================================
-# 6. PENGUKURAN PEAK RAM AKTUAL TERKALIBRASI (MSHQC vs PSI4 SUBPROCESS ISOLATED)
+# 6. PENGUKURAN PEAK RAM AKTUAL TERKALIBRASI (ISOLATED SUBPROCESS, OPTIMIZED)
 # ==============================================================================
 MSHQC_RAM_WORKER = r"""
 import sys, gc, json, os
-os.environ.setdefault("OMP_NUM_THREADS", "6")
+cpu_avail = os.cpu_count() or 4
+n_threads = int(os.environ.get("OMP_NUM_THREADS", str(min(6, cpu_avail))))
+os.environ["OMP_NUM_THREADS"] = str(n_threads)
+os.environ["TBLIS_NUM_THREADS"] = str(n_threads)
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
-os.environ.setdefault("TBLIS_NUM_THREADS", "6")
 import mshqc
 
 def get_rss_and_hwm_mb():
@@ -930,10 +961,13 @@ print(result_str)
 
 PSI4_RAM_WORKER = r"""
 import sys, gc, json, os, tempfile
-n_threads = int(os.environ.get("OMP_NUM_THREADS", "6"))
+cpu_avail = os.cpu_count() or 4
+n_threads = int(os.environ.get("OMP_NUM_THREADS", str(min(6, cpu_avail))))
 os.environ["OMP_NUM_THREADS"] = str(n_threads)
-os.environ["OPENBLAS_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = str(n_threads)
+os.environ["MKL_NUM_THREADS"] = str(n_threads)
+os.environ["MKL_DYNAMIC"] = "FALSE"
+os.environ["OMP_NESTED"] = "FALSE"
 os.environ["OMP_MAX_ACTIVE_LEVELS"] = "1"
 shm_dir = "/dev/shm" if os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK) else tempfile.gettempdir()
 os.environ["PSI_SCRATCH"] = shm_dir
@@ -964,8 +998,10 @@ gc.collect()
 base_rss, base_hwm = get_rss_and_hwm_mb()
 payload = json.loads(sys.argv[1])
 mode = payload["mode"].lower()
+sys_name = payload["sys"]
+
 lines = [f"{payload['charge']} {payload['mult']}", "units bohr"]
-if mode in ["df", "cholesky"] or len(payload["atoms"]) > 1:
+if mode in ["df", "cholesky"] or sys_name in ["OH", "O2"]:
     lines.append("symmetry c1")
 for z, x, y, zc in payload["atoms"]:
     lines.append(f"{Z_TO_SYM[z]} {x:.12f} {y:.12f} {zc:.12f}")
@@ -988,10 +1024,10 @@ opts = {
     "mp_type": corr_t,
     "cc_type": corr_t,
     "freeze_core": "false",
-    "r_convergence": 1e-6,
+    "r_convergence": 1e-5,
     "rms_mograd_convergence": 1e-5,
     "max_mograd_convergence": 1e-4,
-    "read_scf_3index": False,
+    "read_scf_3index": (mode in ["df", "cholesky"]),
 }
 if mode == "df":
     opts.update({"df_basis_scf": payload["aux"], "df_basis_mp2": payload["aux"], "df_basis_cc": payload["aux"]})
@@ -1000,9 +1036,12 @@ elif mode == "cholesky":
 
 psi4.set_options(opts)
 _, scf_wfn = psi4.energy("scf", molecule=mol, return_wfn=True)
-if mode in ["cholesky", "df"]:
-    psi4.set_options({"scf_type": "pk", "read_scf_3index": False})
-psi4.energy(payload["method"].lower(), ref_wfn=scf_wfn, molecule=mol)
+psi4.set_options({"e_convergence": 1e-8, "r_convergence": 1e-5})
+try:
+    psi4.energy(payload["method"].lower(), ref_wfn=scf_wfn, molecule=mol)
+except Exception:
+    psi4.set_options({"read_scf_3index": False})
+    psi4.energy(payload["method"].lower(), ref_wfn=scf_wfn, molecule=mol)
 
 curr_rss, peak_hwm = get_rss_and_hwm_mb()
 psi4.core.clean()
@@ -1070,11 +1109,12 @@ def run_table_6_calibrated_ram():
 
 
 if __name__ == "__main__":
-    print(f"Menggunakan Python Psi4: {PSI4_PY_BIN}", flush=True)
+    print(f"Menggunakan Python Psi4: {PSI4_PY_BIN} (Threads: {N_THREADS})", flush=True)
     psi4_ref_db = run_psi4_reference_suite()
+    mshqc_ref_db = run_mshqc_reference_suite()
     run_table_1_eri_compression()
     run_table_2_o_v4_elimination()
-    run_table_3_spin_contamination(psi4_ref_db)
+    run_table_3_spin_contamination(mshqc_ref_db, psi4_ref_db)
     run_table_4_iteration_trace_and_fd()
-    run_table_5_head_to_head_and_relaxation(psi4_ref_db)
+    run_table_5_head_to_head_and_relaxation(mshqc_ref_db, psi4_ref_db)
     run_table_6_calibrated_ram()

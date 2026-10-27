@@ -10,9 +10,15 @@ import mshqc
 # 1. KONFIGURASI HPC & LINGKUNGAN (Setara 6 Thread dengan Psi4)
 # =====================================================================
 os.environ.setdefault("OMP_NUM_THREADS", "6")
-os.environ["OPENBLAS_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = "1"
-os.environ.setdefault("TBLIS_NUM_THREADS", "6")
+cpu_avail = os.cpu_count() or 4
+n_threads = int(os.environ.get("OMP_NUM_THREADS", str(min(6, cpu_avail))))
+os.environ["OMP_NUM_THREADS"] = str(n_threads)
+os.environ["OPENBLAS_NUM_THREADS"] = str(n_threads)
+os.environ["MKL_NUM_THREADS"] = str(n_threads)
+os.environ["MKL_DYNAMIC"] = "FALSE"
+os.environ["OMP_NESTED"] = "FALSE"
+os.environ["OMP_MAX_ACTIVE_LEVELS"] = "1"
+os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
 ANG_TO_BOHR = 1.8897261246257702
 

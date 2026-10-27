@@ -4,12 +4,15 @@ import time
 import tempfile
 
 # =====================================================================
-# 1. KONFIGURASI HPC & LINGKUNGAN (6 Thread Murni Tanpa Nested Thrashing)
+# 1. KONFIGURASI HPC & LINGKUNGAN (Full Multi-Thread BLAS/OpenMP Psi4)
 # =====================================================================
-n_threads = int(os.environ.get("OMP_NUM_THREADS", "6"))
+cpu_avail = os.cpu_count() or 4
+n_threads = int(os.environ.get("OMP_NUM_THREADS", str(min(6, cpu_avail))))
 os.environ["OMP_NUM_THREADS"] = str(n_threads)
-os.environ["OPENBLAS_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = str(n_threads)
+os.environ["MKL_NUM_THREADS"] = str(n_threads)
+os.environ["MKL_DYNAMIC"] = "FALSE"
+os.environ["OMP_NESTED"] = "FALSE"
 os.environ["OMP_MAX_ACTIVE_LEVELS"] = "1"
 os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
@@ -18,7 +21,6 @@ os.environ["PSI_SCRATCH"] = shm_dir
 
 import psi4
 
-# Set thread & memori untuk Psi4 API
 psi4.set_num_threads(n_threads)
 psi4.set_memory("8 GB")
 psi4.core.be_quiet()
@@ -50,9 +52,13 @@ RESULTS_DB = []
 
 
 def build_psi4_mol(atoms, chg, mult, eri_mode="exact"):
-    """Membangun objek molekul Psi4 pada kekuatan maksimal (D2h untuk atom EXACT, C1 untuk molekul/DF/CD)."""
+    """
+    Membangun molekul Psi4 dengan optimasi simetri maksimal:
+    - Mode EXACT menggunakan simetri grup titik Abelian penuh (D2h untuk atom, C2v untuk H2O).
+    - Mode DF & CHOLESKY menggunakan symmetry c1 karena modul dfocc Psi4 hanya beroperasi pada C1.
+    """
     lines = [f"{chg} {mult}", "units bohr"]
-    if eri_mode in ["df", "cholesky"] or len(atoms) > 1:
+    if eri_mode in ["df", "cholesky"]:
         lines.append("symmetry c1")
     for z, x, y, z_c in atoms:
         lines.append(f"{Z_TO_SYM[z]} {x:.12f} {y:.12f} {z_c:.12f}")
@@ -60,7 +66,7 @@ def build_psi4_mol(atoms, chg, mult, eri_mode="exact"):
 
 
 def snapshot_wfn(wfn):
-    """Menyimpan salinan matriks orbital & Fock HF."""
+    """Menyimpan salinan matriks orbital & Fock HF di memori."""
     snap = {
         "e": float(wfn.energy()),
         "Ca": wfn.Ca().clone(),
@@ -77,7 +83,7 @@ def snapshot_wfn(wfn):
 
 
 def restore_wfn(wfn, snap):
-    """Mengembalikan matriks orbital & Fock HF murni."""
+    """Mengembalikan matriks orbital & Fock HF tanpa menghapus cache integral 3-indeks."""
     wfn.set_energy(snap["e"])
     wfn.Ca().copy(snap["Ca"])
     wfn.Da().copy(snap["Da"])
@@ -90,6 +96,29 @@ def restore_wfn(wfn, snap):
         wfn.epsilon_b().copy(snap["eb"])
 
 
+def run_post_hf_step(method_name, scf_wfn, mol, eri_mode):
+    """
+    Menjalankan metode post-HF dengan memanfaatkan reuse tensor 3-indeks SCF (File 97)
+    pada mode DF/CHOLESKY, disertai fallback otomatis jika PSIO membutuhkan regenerasi.
+    """
+    t0 = time.perf_counter()
+    try:
+        e_val = psi4.energy(method_name, ref_wfn=scf_wfn, molecule=mol)
+        t_val = time.perf_counter() - t0
+        return float(e_val), float(t_val)
+    except Exception:
+        if eri_mode in ["df", "cholesky"]:
+            psi4.set_options({"read_scf_3index": False})
+            t0 = time.perf_counter()
+            try:
+                e_val = psi4.energy(method_name, ref_wfn=scf_wfn, molecule=mol)
+                t_val = time.perf_counter() - t0
+                return float(e_val), float(t_val)
+            except Exception:
+                return None, 0.0
+        return None, 0.0
+
+
 def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
     psi4.core.clean()
     psi4.core.clean_options()
@@ -100,7 +129,7 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
         scf_type, corr_type = "pk", "conv"
     elif eri_mode == "cholesky":
         scf_type, corr_type = "cd", "cd"
-    elif eri_mode == "df":
+    else:
         scf_type, corr_type = "df", "df"
 
     opts = {
@@ -113,16 +142,20 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
         "mp_type": corr_type,
         "cc_type": corr_type,
         "freeze_core": "false",
-        "r_convergence": 1e-6,
+        "r_convergence": 1e-5,
         "rms_mograd_convergence": 1e-5,
         "max_mograd_convergence": 1e-4,
         "maxiter": 200,
         "mo_maxiter": 50,
-        "read_scf_3index": False,
+        "read_scf_3index": (eri_mode in ["df", "cholesky"]),
     }
 
     if eri_mode == "df":
-        opts.update({"df_basis_scf": AUX_BASIS, "df_basis_mp2": AUX_BASIS, "df_basis_cc": AUX_BASIS})
+        opts.update({
+            "df_basis_scf": AUX_BASIS,
+            "df_basis_mp2": AUX_BASIS,
+            "df_basis_cc": AUX_BASIS,
+        })
     elif eri_mode == "cholesky":
         opts["cholesky_tolerance"] = CHOLESKY_THRESH
 
@@ -135,52 +168,36 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
         t_scf = time.perf_counter() - t0_scf
     except Exception as e:
         print(f"  [!] SCF gagal untuk {sys_name} ({eri_mode.upper()}): {e}", flush=True)
+        psi4.core.clean()
         return None, 0.0, None, None, 0.0, None, 0.0, None, 0.0, None, 0.0
 
     hf_snap = snapshot_wfn(scf_wfn)
 
-    if eri_mode in ["cholesky", "df"]:
-        psi4.set_options({"scf_type": "pk", "read_scf_3index": False})
+    # Gunakan e_convergence 1e-8 untuk koridor korelasi/OO agar konvergensi gradien 1e-5 setara mshqc
+    psi4.set_options({"e_convergence": 1e-8, "r_convergence": 1e-5})
 
     # --- 2. MP2 ---
     mp2_label = "RMP2" if ref == "rhf" else "UMP2"
-    t0_mp2 = time.perf_counter()
-    try:
-        e_mp2 = psi4.energy("mp2", ref_wfn=scf_wfn, molecule=mol)
-        t_mp2 = time.perf_counter() - t0_mp2
-    except Exception:
-        e_mp2, t_mp2 = None, 0.0
-    psi4.core.clean()
+    e_mp2, t_mp2 = run_post_hf_step("mp2", scf_wfn, mol, eri_mode)
+    if eri_mode == "exact":
+        psi4.core.clean()
     restore_wfn(scf_wfn, hf_snap)
 
     # --- 3. MP3 ---
     mp3_label = "RMP3" if ref == "rhf" else "UMP3"
-    t0_mp3 = time.perf_counter()
-    try:
-        e_mp3 = psi4.energy("mp3", ref_wfn=scf_wfn, molecule=mol)
-        t_mp3 = time.perf_counter() - t0_mp3
-    except Exception:
-        e_mp3, t_mp3 = None, 0.0
-    psi4.core.clean()
+    e_mp3, t_mp3 = run_post_hf_step("mp3", scf_wfn, mol, eri_mode)
+    if eri_mode == "exact":
+        psi4.core.clean()
     restore_wfn(scf_wfn, hf_snap)
 
     # --- 4. OMP2 ---
-    t0_omp2 = time.perf_counter()
-    try:
-        e_omp2 = psi4.energy("omp2", ref_wfn=scf_wfn, molecule=mol)
-        t_omp2 = time.perf_counter() - t0_omp2
-    except Exception:
-        e_omp2, t_omp2 = None, 0.0
-    psi4.core.clean()
+    e_omp2, t_omp2 = run_post_hf_step("omp2", scf_wfn, mol, eri_mode)
+    if eri_mode == "exact":
+        psi4.core.clean()
     restore_wfn(scf_wfn, hf_snap)
 
     # --- 5. OMP3 ---
-    t0_omp3 = time.perf_counter()
-    try:
-        e_omp3 = psi4.energy("omp3", ref_wfn=scf_wfn, molecule=mol)
-        t_omp3 = time.perf_counter() - t0_omp3
-    except Exception:
-        e_omp3, t_omp3 = None, 0.0
+    e_omp3, t_omp3 = run_post_hf_step("omp3", scf_wfn, mol, eri_mode)
     psi4.core.clean()
 
     return e_scf, t_scf, mp2_label, e_mp2, t_mp2, mp3_label, e_mp3, t_mp3, e_omp2, t_omp2, e_omp3, t_omp3
@@ -189,7 +206,7 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
 def main():
     print("==========================================================================================================", flush=True)
     print("  PSI4 BENCHMARK (APPLE-TO-APPLE) | EXACT vs CHOLESKY vs DF (HF, MP2, MP3, OMP2, OMP3)", flush=True)
-    print(f"  Basis: {BASIS_NAME} | Aux Basis: {AUX_BASIS} | Chol Tol: {CHOLESKY_THRESH} | E_conv: 1e-09 | Grad_conv: 1e-05", flush=True)
+    print(f"  Basis: {BASIS_NAME} | Aux Basis: {AUX_BASIS} | Chol Tol: {CHOLESKY_THRESH} | Threads: {n_threads} | Grad_conv: 1e-05", flush=True)
     print("==========================================================================================================", flush=True)
 
     for sys_name, atoms, chg, mult, ref in SYSTEMS:
