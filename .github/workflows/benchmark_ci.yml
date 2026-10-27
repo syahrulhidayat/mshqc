@@ -1,4 +1,4 @@
-name: Validation & Benchmark Suite (mshqc vs Psi4).
+name: Validation & Benchmark Suite (mshqc vs Psi4)
 
 on:
   push:
@@ -21,6 +21,17 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: false
+          docker-images: false
+          swap-storage: false
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
@@ -87,22 +98,22 @@ jobs:
 
       - name: Compile and Install mshqc from Current Commit (No PyPI Download)
         run: |
-          python3 -m venv /tmp/mshqc_venv
-          /tmp/mshqc_venv/bin/pip install --upgrade pip setuptools wheel nanobind cmake ninja \
+          python3 -m venv ${{ github.workspace }}/mshqc_venv
+          ${{ github.workspace }}/mshqc_venv/bin/pip install --upgrade pip setuptools wheel nanobind cmake ninja \
             mkl mkl-devel mkl-include numpy scipy pytest
 
           export CMAKE_PREFIX_PATH="/usr/local"
           export TBLIS_DIR="/usr/local"
           export CMAKE_BUILD_PARALLEL_LEVEL="4"
-          /tmp/mshqc_venv/bin/pip install . --no-build-isolation --no-cache-dir -v
+          ${{ github.workspace }}/mshqc_venv/bin/pip install . --no-build-isolation --no-cache-dir -v
 
       - name: Run Automated Pytest Validation Suite (tests/test_mshqc.py)
         run: |
-          /tmp/mshqc_venv/bin/pytest tests/test_mshqc.py -v -s
+          ${{ github.workspace }}/mshqc_venv/bin/pytest tests/test_mshqc.py -v -s
 
       - name: Run Full 60-Run mshqc Benchmark (tests/test_mshqc2.py)
         run: |
-          /tmp/mshqc_venv/bin/python tests/test_mshqc2.py | tee mshqc_bench.txt
+          ${{ github.workspace }}/mshqc_venv/bin/python tests/test_mshqc2.py | tee mshqc_bench.txt
 
       - name: Set up Micromamba & Install Psi4 (conda-forge)
         uses: mamba-org/setup-micromamba@v2
@@ -123,19 +134,19 @@ jobs:
 
       - name: Generate Head-to-Head Comparison Table (mshqc vs Psi4)
         run: |
-          /tmp/mshqc_venv/bin/python tests/compare_mshqc_psi4.py mshqc_bench.txt psi4_bench.txt
+          ${{ github.workspace }}/mshqc_venv/bin/python tests/compare_mshqc_psi4.py mshqc_bench.txt psi4_bench.txt
 
       - name: Run Extra Chapter 4 Benchmarks (RAM, S2, FD Gradient)
         shell: bash -el {0}
         run: |
           export PSI4_PY=$(micromamba run -n psi4_env which python)
           export PSI4_PYTHON="$PSI4_PY"
-          /tmp/mshqc_venv/bin/python -u tests/test_bab4_benchmark.py | tee test_bab4_benchmark.txt
+          ${{ github.workspace }}/mshqc_venv/bin/python -u tests/test_bab4_benchmark.py | tee test_bab4_benchmark.txt
           cp test_bab4_benchmark.txt bab4_extra_bench.txt
 
       - name: test_universal validation
         run: |
-          /tmp/mshqc_venv/bin/python tests/test_universal_validation.py | tee test_universal_validation.txt
+          ${{ github.workspace }}/mshqc_venv/bin/python tests/test_universal_validation.py | tee test_universal_validation.txt
 
       - name: Upload Benchmark Logs & Comparison Table as Artifacts
         uses: actions/upload-artifact@v4
@@ -147,3 +158,4 @@ jobs:
             comparison_summary.md
             test_bab4_benchmark.txt
             bab4_extra_bench.txt
+            test_universal_validation.txt
