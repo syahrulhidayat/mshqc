@@ -765,6 +765,10 @@ def run_table_5_head_to_head_and_relaxation(mshqc_db, psi4_db):
     print(f"|{'-'*10}|{'-'*11}|{'-'*8}|{'-'*18}|{'-'*18}|{'-'*12}|{'-'*11}|{'-'*11}|{'-'*11}|", flush=True)
 
     relaxation_rows = []
+    tot_mshqc_s = 0.0
+    tot_psi4_s = 0.0
+    max_de_all = 0.0
+    mode_times = {m: {"mshqc": 0.0, "psi4": 0.0} for m in ERI_MODE_ORDER}
 
     for sys_name in ALL_SYSTEM_ORDER:
         is_uhf = SYSTEMS[sys_name]["is_uhf"]
@@ -791,6 +795,13 @@ def run_table_5_head_to_head_and_relaxation(mshqc_db, psi4_db):
                 tp = p_info.get("t", 0.0)
                 de_uha = abs(em - ep) * 1e6
                 sp = (tp / max(tm, 1e-4)) if tp > 0 else 0.0
+
+                tot_mshqc_s += tm
+                tot_psi4_s += tp
+                mode_times[mode]["mshqc"] += tm
+                mode_times[mode]["psi4"] += tp
+                max_de_all = max(max_de_all, de_uha)
+
                 print(
                     f"| {sys_name:<8} | {mode:<9} | {m_label:<6} | {em:<16.8f} | "
                     f"{ep:<16.8f} | {de_uha:<10.2f} | {tm:<9.3f} | {tp:<9.3f} | {sp:<7.2f} x |",
@@ -820,63 +831,33 @@ def run_table_5_head_to_head_and_relaxation(mshqc_db, psi4_db):
                 "de_oo_mp3_m": (e_omp3 - e_mp3) * 1000.0,
                 "de_oo_mp3_p": (p_omp3_e - p_mp3_e) * 1000.0,
                 "it_omp3_m": m_entry["OMP3"]["iter"],
-                "it_omp3_p": p_omp3_i,
+                "it_omp3_p": p_entry.get("OMP3", {}).get("iter", 0),
                 "diff_omp3_uha": abs(e_omp3 - p_omp3_e) * 1e6,
             })
 
-    print("\n" + "=" * 146, flush=True)
-    print("  5B. TABEL PROFIL KONVERGENSI (N_iter: MSHQC vs PSI4) & EFEK RELAKSASI ORBITAL dE_OO (mHa) PADA KEADAAN DASAR", flush=True)
-    print("=" * 146, flush=True)
-    print(
-        f"| {'Sistem':<7} | {'Mode':<8} | {'dE_OO MP2 (mshqc/Psi4) mHa':<26} | {'It OMP2 (m/P)':<13} | "
-        f"{'|dE_OMP2| uHa':<13} | {'dE_OO MP3 (mshqc/Psi4) mHa':<26} | {'It OMP3 (m/P)':<13} | {'|dE_OMP3| uHa':<13} |",
-        flush=True
-    )
-    print(f"|{'-'*9}|{'-'*10}|{'-'*28}|{'-'*15}|{'-'*15}|{'-'*28}|{'-'*15}|{'-'*15}|", flush=True)
-    for r in relaxation_rows:
-        mp2_oo_str = f"{r['de_oo_mp2_m']:>8.4f} / {r['de_oo_mp2_p']:>8.4f}"
-        mp3_oo_str = f"{r['de_oo_mp3_m']:>8.4f} / {r['de_oo_mp3_p']:>8.4f}"
-        it2_str = f"{r['it_omp2_m']:>2} / {r['it_omp2_p']:>2} it"
-        it3_str = f"{r['it_omp3_m']:>2} / {r['it_omp3_p']:>2} it"
+    tot_sp = (tot_psi4_s / max(tot_mshqc_s, 1e-4)) if tot_psi4_s > 0 else 0.0
+    print(f"|{'-'*10}|{'-'*11}|{'-'*8}|{'-'*18}|{'-'*18}|{'-'*12}|{'-'*11}|{'-'*11}|{'-'*11}|", flush=True)
+    for mode in ERI_MODE_ORDER:
+        tm_m = mode_times[mode]["mshqc"]
+        tp_m = mode_times[mode]["psi4"]
+        sp_m = (tp_m / max(tm_m, 1e-4)) if tp_m > 0 else 0.0
         print(
-            f"| {r['sys']:<7} | {r['mode']:<8} | {mp2_oo_str:<26} | {it2_str:<13} | "
-            f"{r['diff_omp2_uha']:<13.2f} | {mp3_oo_str:<26} | {it3_str:<13} | {r['diff_omp3_uha']:<13.2f} |",
+            f"| {'SUBTOTAL':<8} | {mode:<9} | {'ALL':<6} | {'-':<16} | "
+            f"{'-':<16} | {'-':<10} | {tm_m:<9.3f} | {tp_m:<9.3f} | {sp_m:<7.2f} x |",
             flush=True
         )
-
-    print("\n" + "=" * 140, flush=True)
-    print("  5C. UJI KETANGGUHAN (ROBUSTNESS) TR-SOSCF MSHQC DARI REFERENSI UHF METASTABIL TANPA STABILISASI (OH & O2)", flush=True)
-    print("=" * 140, flush=True)
+    print(f"|{'-'*10}|{'-'*11}|{'-'*8}|{'-'*18}|{'-'*18}|{'-'*12}|{'-'*11}|{'-'*11}|{'-'*11}|", flush=True)
     print(
-        f"| {'Sistem':<7} | {'Mode':<8} | {'E_UMP2 Metastabil':<17} | {'E_OMP2 Pulih (Ha)':<17} | "
-        f"{'E_OMP2 Psi4 (Ha)':<17} | {'|dE_OMP2| uHa':<13} | {'It_OMP2':<7} | "
-        f"{'E_OMP3 Pulih (Ha)':<17} | {'|dE_OMP3| uHa':<13} | {'It_OMP3':<7} |",
+        f"| {'TOTAL':<8} | {'ALL MODES':<9} | {'ALL':<6} | {'-':<16} | "
+        f"{'-':<16} | {max_de_all:<10.2f} | {tot_mshqc_s:<9.3f} | {tot_psi4_s:<9.3f} | {tot_sp:<7.2f} x |",
         flush=True
     )
-    print(f"|{'-'*9}|{'-'*10}|{'-'*19}|{'-'*19}|{'-'*19}|{'-'*15}|{'-'*9}|{'-'*19}|{'-'*15}|{'-'*9}|", flush=True)
-    for sys_name in ["OH", "O2"]:
-        for mode in ERI_MODE_ORDER:
-            m_entry = mshqc_db[f"{sys_name}|{mode}"]
-            p_entry = psi4_db.get(f"{sys_name}|{mode}", {})
-
-            e_mp2_raw  = m_entry["MP2"]["e"]
-            e_omp2_rec = m_entry["OMP2"]["e"]
-            e_omp3_rec = m_entry["OMP3"]["e"]
-            it_omp2    = m_entry["OMP2"]["iter"]
-            it_omp3    = m_entry["OMP3"]["iter"]
-
-            p_omp2_e = p_entry.get("OMP2", {}).get("e", e_omp2_rec)
-            p_omp3_e = p_entry.get("OMP3", {}).get("e", e_omp3_rec)
-            d_o2_uha = abs(e_omp2_rec - p_omp2_e) * 1e6
-            d_o3_uha = abs(e_omp3_rec - p_omp3_e) * 1e6
-            print(
-                f"| {sys_name:<7} | {mode:<8} | {e_mp2_raw:<17.8f} | "
-                f"{e_omp2_rec:<17.8f} | {p_omp2_e:<17.8f} | {d_o2_uha:<13.2f} | "
-                f"{it_omp2:<7} | {e_omp3_rec:<17.8f} | "
-                f"{d_o3_uha:<13.2f} | {it_omp3:<7} |",
-                flush=True
-            )
-
+    print("=" * 124, flush=True)
+    print(
+        f"  Total Waktu Solver Tabel 5A (7 Sistem x 3 Mode x 5 Metode = 105 Run):\n"
+        f"  -> mshqc = {tot_mshqc_s:.3f} s | Psi4 = {tot_psi4_s:.3f} s | Speedup Kumulatif = {tot_sp:.2f}x",
+        flush=True
+    )
 
 # ==============================================================================
 # 6. PENGUKURAN PEAK RAM AKTUAL TERKALIBRASI (MSHQC vs PSI4 SUBPROCESS ISOLATED)
@@ -1112,6 +1093,7 @@ def run_table_6_calibrated_ram():
 
 
 if __name__ == "__main__":
+    t_bab4_start = time.perf_counter()
     print(f"Menggunakan Python Psi4: {PSI4_PY_BIN}", flush=True)
     psi4_ref_db = run_psi4_reference_suite()
     mshqc_ref_db = run_mshqc_reference_suite()
@@ -1121,3 +1103,23 @@ if __name__ == "__main__":
     run_table_4_iteration_trace_and_fd()
     run_table_5_head_to_head_and_relaxation(mshqc_ref_db, psi4_ref_db)
     run_table_6_calibrated_ram()
+
+    total_mshqc_solver = sum(
+        mshqc_ref_db[k][m]["t"]
+        for k in mshqc_ref_db
+        for m in ("SCF", "MP2", "MP3", "OMP2", "OMP3")
+    )
+    total_psi4_solver = sum(
+        psi4_ref_db.get(k, {}).get(m, {}).get("t", 0.0)
+        for k in mshqc_ref_db
+        for m in ("SCF", "MP2", "MP3", "OMP2", "OMP3")
+    )
+    cum_speedup = (total_psi4_solver / max(total_mshqc_solver, 1e-4)) if total_psi4_solver > 0 else 0.0
+    total_wall_bab4 = time.perf_counter() - t_bab4_start
+
+    print("\n" + "=" * 126, flush=True)
+    print("  RINGKASAN AKHIR BENCHMARK BAB IV (MSHQC vs PSI4 | cc-pVTZ / cc-pVTZ-RI)", flush=True)
+    print("=" * 126, flush=True)
+    print(f"  Total Waktu Solver (105 Run) : mshqc = {total_mshqc_solver:.3f} s | Psi4 = {total_psi4_solver:.3f} s | Speedup Kumulatif = {cum_speedup:.2f}x", flush=True)
+    print(f"  Total Waktu Wall-Clock Suite : {total_wall_bab4:.2f} s", flush=True)
+    print("=" * 126, flush=True)

@@ -4,7 +4,6 @@ import re
 import sys
 from pathlib import Path
 
-# Ditambahkan RMP3 dan UMP3 pada regex agar hasil log terbaca
 ROW_RE = re.compile(
     r"^\|\s*(?P<sys>Neon|H2O|Lithium|Carbon|Oxygen)\s*"
     r"\|\s*(?P<eri>EXACT|CHOLESKY|DF)\s*"
@@ -55,6 +54,8 @@ def main():
 
     max_de_uha = 0.0
     sub_001_count = 0
+    total_mshqc_time = 0.0
+    total_psi4_time = 0.0
     mp3_speedups = []
     omp2_speedups = []
     omp3_speedups = []
@@ -65,6 +66,8 @@ def main():
         de_uha = abs(e_m - e_p) * 1e6
         speedup = (t_p / max(t_m, 1e-4)) if t_p > 0 else 0.0
 
+        total_mshqc_time += t_m
+        total_psi4_time += t_p
         max_de_uha = max(max_de_uha, de_uha)
         if de_uha < 0.005:
             sub_001_count += 1
@@ -85,10 +88,23 @@ def main():
             f"`{de_uha:.2f}` | `{t_m:.3f}` | `{t_p:.3f}` | **{speedup:.2f}x** |"
         )
 
+    overall_speedup = (total_psi4_time / max(total_mshqc_time, 1e-4)) if total_psi4_time > 0 else 0.0
+    md_lines.append(
+        f"| **TOTAL** | **ALL** | **ALL** | **—** | **—** | **Max: `{max_de_uha:.2f}`** | "
+        f"**`{total_mshqc_time:.3f}`** | **`{total_psi4_time:.3f}`** | **`{overall_speedup:.2f}x`** |"
+    )
+
+    print("-" * len(hdr))
+    print(
+        f"| {'TOTAL':<8} | {'ALL':<9} | {'ALL':<6} | {'-':<16} | {'-':<16} | "
+        f"{max_de_uha:<9.2f} | {total_mshqc_time:<8.3f} | {total_psi4_time:<8.3f} | {overall_speedup:<7.2f}x |"
+    )
     print("-" * len(hdr))
     stats_line = (
         f"Total matched runs: {len(keys)} | Max |dE|: {max_de_uha:.2f} uHa | "
-        f"Runs with 0.00 uHa deviation: {sub_001_count}/{len(keys)}"
+        f"Runs with 0.00 uHa deviation: {sub_001_count}/{len(keys)}\n"
+        f"Total Solver Time : mshqc = {total_mshqc_time:.3f} s | Psi4 = {total_psi4_time:.3f} s | "
+        f"Cumulative Speedup = {overall_speedup:.2f}x"
     )
     print(stats_line)
     
@@ -103,8 +119,8 @@ def main():
 
     md_lines.extend([
         "",
-        # Diperbarui menjadi 5 methods
         f"- **Total Validated Runs:** `{len(keys)}` (`5 systems x 3 ERI modes x 5 methods`)",
+        f"- **Total Solver Execution Time:** `mshqc = {total_mshqc_time:.3f} s` vs `Psi4 = {total_psi4_time:.3f} s` (**Cumulative Speedup: `{overall_speedup:.2f}x`**)",
         f"- **Maximum Absolute Energy Deviation (`|dE|`):** `{max_de_uha:.2f} uHa` (`0.00 uHa` on `{sub_001_count}/{len(keys)}` runs at `1e-8 Ha` precision)",
     ])
     if omp2_speedups and omp3_speedups and mp3_speedups:
