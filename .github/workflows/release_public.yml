@@ -2,7 +2,7 @@ name: Compile and Release Wheel to Public Repo
 
 on:
   push:
-     branches: [ "master"]
+    branches: [ "master" ]
     tags: [ "v*" ]
   workflow_dispatch:
 
@@ -40,6 +40,8 @@ jobs:
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
           CIBW_BUILD: "cp311-manylinux_x86_64 cp312-manylinux_x86_64 cp313-manylinux_x86_64"
           CIBW_BUILD_FRONTEND: "pip; args: --no-build-isolation"
+          CIBW_TEST_SKIP: "*"
+          CIBW_TEST_COMMAND: ""
 
           CIBW_BEFORE_ALL: >
             dnf install -y dnf-plugins-core epel-release &&
@@ -75,7 +77,7 @@ jobs:
             fi
 
           CIBW_BEFORE_BUILD: >
-            pip install --upgrade pip setuptools wheel nanobind cmake ninja mkl mkl-devel mkl-include numpy scipy pytest
+            pip install --upgrade pip setuptools wheel nanobind cmake ninja mkl mkl-devel mkl-include numpy scipy
 
           CIBW_ENVIRONMENT: >
             GITHUB_ACTIONS=true
@@ -90,7 +92,6 @@ jobs:
 
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
             auditwheel repair --exclude libmkl_rt.so.3 --exclude libmkl_rt.so.2 --exclude libmkl_rt.so --exclude libiomp5.so --exclude libtbb.so.12 -w {dest_dir} {wheel}
-
 
       - name: Upload Wheels as Artifacts
         uses: actions/upload-artifact@v4

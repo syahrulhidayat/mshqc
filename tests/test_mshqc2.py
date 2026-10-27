@@ -4,27 +4,22 @@ import sys
 import time
 import ctypes
 from contextlib import contextmanager
-import mshqc
 
-# =====================================================================
-# 1. KONFIGURASI HPC & LINGKUNGAN (Apple-to-Apple N-Thread dengan Psi4)
-# =====================================================================
 try:
     os.sched_setaffinity(0, set(range(os.cpu_count() or 4)))
 except Exception:
     pass
 
-os.environ.setdefault("OMP_NUM_THREADS", "6")
 cpu_avail = os.cpu_count() or 4
 n_threads = int(os.environ.get("OMP_NUM_THREADS", str(min(6, cpu_avail))))
 os.environ["OMP_NUM_THREADS"] = str(n_threads)
-os.environ["TBLIS_NUM_THREADS"] = str(n_threads)
-os.environ["MKL_NUM_THREADS"] = str(n_threads)
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
-os.environ["MKL_DYNAMIC"] = "FALSE"
-os.environ["OMP_NESTED"] = "FALSE"
+os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["OMP_MAX_ACTIVE_LEVELS"] = "1"
+os.environ["TBLIS_NUM_THREADS"] = str(n_threads)
 os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
+
+import mshqc
 
 ANG_TO_BOHR = 1.8897261246257702
 
