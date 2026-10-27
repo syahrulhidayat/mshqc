@@ -1,20 +1,24 @@
 #!/usr/bin/env python3
 import os
 import time
+import tempfile
 
 # =====================================================================
-# 1. KONFIGURASI HPC & LINGKUNGAN (Setara 6 Thread dengan MSHQC)
+# 1. KONFIGURASI HPC & LINGKUNGAN (Full 6 Thread BLAS/OpenMP & RAM Scratch)
 # =====================================================================
-os.environ.setdefault("OMP_NUM_THREADS", "6")
-os.environ["OPENBLAS_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = "1"
-os.environ.setdefault("TBLIS_NUM_THREADS", "6")
+n_threads = int(os.environ.get("OMP_NUM_THREADS", "6"))
+os.environ["OMP_NUM_THREADS"] = str(n_threads)
+os.environ["OPENBLAS_NUM_THREADS"] = str(n_threads)
+os.environ["MKL_NUM_THREADS"] = str(n_threads)
 os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
+
+shm_dir = "/dev/shm" if os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK) else tempfile.gettempdir()
+os.environ["PSI_SCRATCH"] = shm_dir
 
 import psi4
 
 # Set thread & memori untuk Psi4 API
-psi4.set_num_threads(int(os.environ.get("OMP_NUM_THREADS", "6")))
+psi4.set_num_threads(n_threads)
 psi4.set_memory("8 GB")
 psi4.core.be_quiet()
 
@@ -45,9 +49,9 @@ RESULTS_DB = []
 
 
 def build_psi4_mol(atoms, chg, mult, eri_mode="exact"):
-    """Membangun objek molekul Psi4 dengan mengizinkan simetri grup titik asli pada mode EXACT."""
+    """Membangun objek molekul Psi4 pada kekuatan maksimal (D2h untuk atom EXACT, C1 untuk molekul/DF/CD)."""
     lines = [f"{chg} {mult}", "units bohr"]
-    if eri_mode in ["df", "cholesky"]:
+    if eri_mode in ["df", "cholesky"] or len(atoms) > 1:
         lines.append("symmetry c1")
     for z, x, y, z_c in atoms:
         lines.append(f"{Z_TO_SYM[z]} {x:.12f} {y:.12f} {z_c:.12f}")
@@ -96,18 +100,17 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
     elif eri_mode == "df":
         scf_type, corr_type = "df", "df"
 
-    is_uhf = (ref == "uhf")
     opts = {
         "basis": basis_name,
         "reference": ref,
-        "e_convergence": 1e-12 if is_uhf else 1e-10,
-        "d_convergence": 1e-11 if is_uhf else 1e-10,
+        "e_convergence": THRESHOLD,
+        "d_convergence": THRESHOLD,
         "scf_type": scf_type,
         "mp2_type": corr_type,
         "mp_type": corr_type,
         "cc_type": corr_type,
         "freeze_core": "false",
-        "r_convergence": 1e-6,
+        "r_convergence": 1e-7 if eri_mode == "exact" else 1e-6,
         "rms_mograd_convergence": 1e-5,
         "max_mograd_convergence": 1e-4,
         "maxiter": 200,
@@ -157,14 +160,6 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
         e_mp3, t_mp3 = None, 0.0
     psi4.core.clean()
     restore_wfn(scf_wfn, hf_snap)
-
-    # Setel toleransi OMP2 & OMP3 secara apple-to-apple (e=1e-9, rms_grad=1e-5)
-    psi4.set_options({
-        "e_convergence": THRESHOLD,
-        "r_convergence": 1e-6,
-        "rms_mograd_convergence": 1e-5,
-        "max_mograd_convergence": 1e-4,
-    })
 
     # --- 4. OMP2 ---
     t0_omp2 = time.perf_counter()

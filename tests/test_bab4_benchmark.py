@@ -21,6 +21,13 @@ import ctypes
 import json
 import subprocess
 from contextlib import contextmanager
+
+# Konfigurasi HPC untuk proses utama MSHQC (6 Thread OpenMP & TBLIS)
+os.environ.setdefault("OMP_NUM_THREADS", "6")
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ.setdefault("TBLIS_NUM_THREADS", "6")
+
 import numpy as np
 import scipy.linalg
 import mshqc
@@ -241,18 +248,25 @@ def run_scf_raw(mol, basis, ints, eri_mode, is_uhf, aux_basis_name="", print_lev
 
 
 # ==============================================================================
-# WORKER SUBPROCESS PSI4 (UNTUK ENERGI, ITERASI, WAKTU, & <S^2> BEST-VS-BEST)
+# WORKER SUBPROCESS PSI4 (FULL HPC, RAM-DISK SCRATCH, & BEST-VS-BEST SYMMETRY)
 # ==============================================================================
 PSI4_BATCH_WORKER = r"""
 import os, sys, time, json, re, tempfile
 import numpy as np
 
-os.environ.setdefault("OMP_NUM_THREADS", "4")
-os.environ["OPENBLAS_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = "1"
+# Gunakan 6 thread penuh dan lepaskan throttling BLAS/MKL agar C_DGEMM Psi4 maksimal
+n_threads = int(os.environ.get("OMP_NUM_THREADS", "6"))
+os.environ["OMP_NUM_THREADS"] = str(n_threads)
+os.environ["OPENBLAS_NUM_THREADS"] = str(n_threads)
+os.environ["MKL_NUM_THREADS"] = str(n_threads)
+os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
+
+# Arahkan PSIO scratch Psi4 ke RAM disk (/dev/shm) jika tersedia agar bebas bottleneck I/O disk
+shm_dir = "/dev/shm" if os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK) else tempfile.gettempdir()
+os.environ["PSI_SCRATCH"] = shm_dir
 
 import psi4
-psi4.set_num_threads(int(os.environ.get("OMP_NUM_THREADS", "4")))
+psi4.set_num_threads(n_threads)
 psi4.set_memory("8 GB")
 
 Z_TO_SYM = {1: "H", 3: "Li", 6: "C", 8: "O", 10: "Ne"}
@@ -305,7 +319,7 @@ def parse_occ_iterations(log_text):
 
 payload = json.loads(sys.argv[1])
 results = {}
-tmp_log = os.path.join(tempfile.gettempdir(), f"psi4_bab4_{os.getpid()}.out")
+tmp_log = os.path.join(shm_dir, f"psi4_bab4_{os.getpid()}.out")
 
 for item in payload["tasks"]:
     sys_name = item["sys"]
@@ -319,11 +333,14 @@ for item in payload["tasks"]:
 
     psi4.core.clean()
     psi4.core.clean_options()
-    psi4.core.set_output_file(tmp_log, False)
+    psi4.core.be_quiet()
 
-    # Biarkan Psi4 memakai simetri grup titik penuh pada mode EXACT (kecuali OH & O2)
+    # Konfigurasi Best-of-Psi4:
+    # - Atom tunggal pada mode EXACT menggunakan simetri D2h penuh (kecepatan maksimal).
+    # - Molekul poliatomik/diatomik (H2O, OH, O2) dan mode DF/CHOLESKY menggunakan symmetry c1
+    #   agar terhindar dari overhead sorting 64 sub-blok libdpd di disk.
     lines = [f"{chg} {mult}", "units bohr"]
-    if eri_mode in ["df", "cholesky"] or sys_name in ["OH", "O2"]:
+    if eri_mode in ["df", "cholesky"] or len(item["atoms"]) > 1:
         lines.append("symmetry c1")
     for z, x, y, zc in item["atoms"]:
         lines.append(f"{Z_TO_SYM[z]} {x:.12f} {y:.12f} {zc:.12f}")
@@ -339,14 +356,14 @@ for item in payload["tasks"]:
     opts = {
         "basis": basis_name,
         "reference": ref,
-        "e_convergence": 1e-12 if is_uhf else 1e-10,
-        "d_convergence": 1e-11 if is_uhf else 1e-10,
+        "e_convergence": 1e-12 if (is_uhf and sys_name in ["OH", "O2"]) else 1e-9,
+        "d_convergence": 1e-11 if (is_uhf and sys_name in ["OH", "O2"]) else 1e-9,
         "scf_type": scf_type,
         "mp2_type": corr_type,
         "mp_type": corr_type,
         "cc_type": corr_type,
         "freeze_core": "false",
-        "r_convergence": 1e-6,
+        "r_convergence": 1e-7,
         "rms_mograd_convergence": 1e-5,
         "max_mograd_convergence": 1e-4,
         "maxiter": 200,
@@ -402,7 +419,7 @@ for item in payload["tasks"]:
     # Setel toleransi OMP2 & OMP3 secara apple-to-apple (e=1e-9, rms_grad=1e-5)
     psi4.set_options({
         "e_convergence": 1e-9,
-        "r_convergence": 1e-6,
+        "r_convergence": 1e-7 if eri_mode == "exact" else 1e-6,
         "rms_mograd_convergence": 1e-5,
         "max_mograd_convergence": 1e-4,
     })
@@ -414,6 +431,7 @@ for item in payload["tasks"]:
         e_omp2, omp2_wfn = psi4.energy("omp2", ref_wfn=scf_wfn, molecule=mol, return_wfn=True)
         t_omp2 = time.perf_counter() - t0
         psi4.core.flush_outfile()
+        psi4.core.be_quiet()
         log_txt = open(tmp_log, "r", errors="replace").read() if os.path.exists(tmp_log) else ""
         it_omp2 = parse_occ_iterations(log_txt)
         s2_omp2 = calc_s2_wfn(omp2_wfn)
@@ -432,6 +450,7 @@ for item in payload["tasks"]:
         e_omp3, omp3_wfn = psi4.energy("omp3", ref_wfn=scf_wfn, molecule=mol, return_wfn=True)
         t_omp3 = time.perf_counter() - t0
         psi4.core.flush_outfile()
+        psi4.core.be_quiet()
         log_txt = open(tmp_log, "r", errors="replace").read() if os.path.exists(tmp_log) else ""
         it_omp3 = parse_occ_iterations(log_txt)
         s2_omp3 = calc_s2_wfn(omp3_wfn)
@@ -838,7 +857,12 @@ def run_table_5_head_to_head_and_relaxation(psi4_db):
 # 6. PENGUKURAN PEAK RAM AKTUAL TERKALIBRASI (MSHQC vs PSI4 SUBPROCESS ISOLATED)
 # ==============================================================================
 MSHQC_RAM_WORKER = r"""
-import sys, gc, json, os, mshqc
+import sys, gc, json, os
+os.environ.setdefault("OMP_NUM_THREADS", "6")
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ.setdefault("TBLIS_NUM_THREADS", "6")
+import mshqc
 
 def get_rss_and_hwm_mb():
     rss, hwm = 0.0, 0.0
@@ -904,10 +928,13 @@ print(result_str)
 """
 
 PSI4_RAM_WORKER = r"""
-import sys, gc, json, os
-os.environ.setdefault("OMP_NUM_THREADS", "4")
-os.environ["OPENBLAS_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = "1"
+import sys, gc, json, os, tempfile
+n_threads = int(os.environ.get("OMP_NUM_THREADS", "6"))
+os.environ["OMP_NUM_THREADS"] = str(n_threads)
+os.environ["OPENBLAS_NUM_THREADS"] = str(n_threads)
+os.environ["MKL_NUM_THREADS"] = str(n_threads)
+shm_dir = "/dev/shm" if os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK) else tempfile.gettempdir()
+os.environ["PSI_SCRATCH"] = shm_dir
 import psi4
 
 Z_TO_SYM = {1: "H", 3: "Li", 6: "C", 8: "O", 10: "Ne"}
@@ -920,7 +947,7 @@ def get_rss_and_hwm_mb():
             elif line.startswith("VmHWM:"): hwm = int(line.split()[1]) / 1024.0
     return rss, hwm
 
-psi4.set_num_threads(int(os.environ.get("OMP_NUM_THREADS", "4")))
+psi4.set_num_threads(n_threads)
 psi4.set_memory("8 GB")
 psi4.core.be_quiet()
 
@@ -935,9 +962,8 @@ gc.collect()
 base_rss, base_hwm = get_rss_and_hwm_mb()
 payload = json.loads(sys.argv[1])
 mode = payload["mode"].lower()
-sys_name = payload.get("sys", "")
 lines = [f"{payload['charge']} {payload['mult']}", "units bohr"]
-if mode in ["df", "cholesky"] or sys_name in ["OH", "O2"]:
+if mode in ["df", "cholesky"] or len(payload["atoms"]) > 1:
     lines.append("symmetry c1")
 for z, x, y, zc in payload["atoms"]:
     lines.append(f"{Z_TO_SYM[z]} {x:.12f} {y:.12f} {zc:.12f}")
@@ -960,7 +986,7 @@ opts = {
     "mp_type": corr_t,
     "cc_type": corr_t,
     "freeze_core": "false",
-    "r_convergence": 1e-6,
+    "r_convergence": 1e-7 if mode == "exact" else 1e-6,
     "rms_mograd_convergence": 1e-5,
     "max_mograd_convergence": 1e-4,
     "read_scf_3index": False,
