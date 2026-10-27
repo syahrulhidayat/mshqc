@@ -42,11 +42,14 @@ jobs:
         id: cache-deps
         uses: actions/cache@v4
         with:
-          path: /tmp/mshqc_deps
-          key: ubuntu-latest-deps-libcint-v6.1.2-tblis-v1.2.0
+          path: ${{ github.workspace }}/mshqc_deps
+          key: ubuntu-latest-deps-libcint-v6.1.2-tblis-v1.2.0-v2
 
       - name: Install System Libraries & Build libcint + TBLIS (if not cached)
         run: |
+          mkdir -p ${{ github.workspace }}/scratch_tmp
+          export TMPDIR="${{ github.workspace }}/scratch_tmp"
+
           sudo apt-get update
           sudo apt-get install -y build-essential cmake ninja-build git wget \
             libeigen3-dev libhdf5-dev gfortran libquadmath0 libatomic1
@@ -58,16 +61,20 @@ jobs:
             sudo ln -sf /usr/lib/x86_64-linux-gnu/hdf5/serial/libhdf5_cpp.so /usr/local/lib/libhdf5_cpp.so
           fi
 
-          if [ -f "/tmp/mshqc_deps/lib/libtblis.a" ] || [ -f "/tmp/mshqc_deps/lib64/libtblis.a" ]; then
+          DEPS_CACHE="${{ github.workspace }}/mshqc_deps"
+          if ( [ -f "$DEPS_CACHE/lib/libtblis.a" ] || [ -f "$DEPS_CACHE/lib64/libtblis.a" ] ) && [ -f "$DEPS_CACHE/include/tblis/tblis.h" ]; then
             echo "Restoring cached libcint & TBLIS to /usr/local..."
-            sudo cp -rn /tmp/mshqc_deps/* /usr/local/
+            sudo cp -r "$DEPS_CACHE"/* /usr/local/
             sudo ldconfig
           else
-            mkdir -p /tmp/mshqc_deps
+            rm -rf "$DEPS_CACHE"
+            mkdir -p "$DEPS_CACHE"
+            DEPS_BUILD="${{ github.workspace }}/deps_build"
+            mkdir -p "$DEPS_BUILD"
 
-            # 1. Build libcint v6.1.2
-            git clone --depth 1 -b v6.1.2 https://github.com/sunqm/libcint.git /tmp/libcint
-            mkdir -p /tmp/libcint/build && cd /tmp/libcint/build
+            # 1. Build libcint v6.1.2 di SSD workspace (bukan /tmp)
+            git clone --depth 1 -b v6.1.2 https://github.com/sunqm/libcint.git "$DEPS_BUILD/libcint"
+            mkdir -p "$DEPS_BUILD/libcint/build" && cd "$DEPS_BUILD/libcint/build"
             export CFLAGS="-O3 -fPIC -mavx2 -mfma -mno-avx512f -funroll-loops -fno-math-errno -Wno-incompatible-pointer-types -std=gnu17"
             cmake -DCMAKE_INSTALL_PREFIX=/usr/local \
                   -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
@@ -76,9 +83,9 @@ jobs:
             make -j$(nproc)
             sudo make install
 
-            # 2. Build TBLIS v1.2.0
-            git clone --depth 1 -b v1.2.0 https://github.com/devinamatthews/tblis.git /tmp/tblis
-            cd /tmp/tblis && git submodule update --init --recursive
+            # 2. Build TBLIS v1.2.0 di SSD workspace (bukan /tmp)
+            git clone --depth 1 -b v1.2.0 https://github.com/devinamatthews/tblis.git "$DEPS_BUILD/tblis"
+            cd "$DEPS_BUILD/tblis" && git submodule update --init --recursive
             sed -i 's/SIGSTKSZ/8192/g' src/external/catch/catch.hpp
             sed -i '1i #include <limits>' src/external/marray/include/short_vector.hpp
             sed -i '1i #include <limits>' src/external/marray/include/range.hpp
@@ -93,23 +100,34 @@ jobs:
             sudo make install
 
             sudo ldconfig
-            cp -r /usr/local/include /usr/local/lib* /tmp/mshqc_deps/ 2>/dev/null || true
+            cd "${{ github.workspace }}"
+            rm -rf "$DEPS_BUILD"
+            cp -r /usr/local/include /usr/local/lib* "$DEPS_CACHE"/
           fi
+
+          # Verifikasi eksplisit agar pastikan header tblis.h dan libcint tersedia
+          test -f /usr/local/include/tblis/tblis.h
+          test -f /usr/local/include/cint.h
 
       - name: Compile and Install mshqc from Current Commit (No PyPI Download)
         run: |
+          mkdir -p ${{ github.workspace }}/scratch_tmp
+          export TMPDIR="${{ github.workspace }}/scratch_tmp"
+
           python3 -m venv ${{ github.workspace }}/mshqc_venv
           ${{ github.workspace }}/mshqc_venv/bin/pip install --upgrade pip setuptools wheel nanobind cmake ninja \
             mkl mkl-devel mkl-include numpy scipy pytest
 
-          # Buat direktori scratch di SSD (workspace) dan paksa C++ compiler menggunakannya
-          mkdir -p ${{ github.workspace }}/scratch_tmp
-          export TMPDIR="${{ github.workspace }}/scratch_tmp"
-
           export CMAKE_PREFIX_PATH="/usr/local"
           export TBLIS_DIR="/usr/local"
+          export TBLIS_ROOT="/usr/local"
+          export CINT_ROOT="/usr/local"
+          export CPLUS_INCLUDE_PATH="/usr/local/include:${CPLUS_INCLUDE_PATH:-}"
           export CMAKE_BUILD_PARALLEL_LEVEL="4"
           ${{ github.workspace }}/mshqc_venv/bin/pip install . --no-build-isolation --no-cache-dir -v
+
+          # Bersihkan folder cache & scratch sebelum menjalankan benchmark
+          rm -rf ${{ github.workspace }}/scratch_tmp
 
       - name: Run Automated Pytest Validation Suite (tests/test_mshqc.py)
         run: |
@@ -150,6 +168,8 @@ jobs:
 
       - name: test_universal validation
         run: |
+          export PSI4_PY=$(micromamba run -n psi4_env which python)
+          export PSI4_PYTHON="$PSI4_PY"
           ${{ github.workspace }}/mshqc_venv/bin/python tests/test_universal_validation.py | tee test_universal_validation.txt
 
       - name: Upload Benchmark Logs & Comparison Table as Artifacts
