@@ -49,41 +49,53 @@ void OMP2::build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_
 
         bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
         bool is_idempotent_pa = (&P_a == &scf_.P_alpha);
+        bool has_beta_unres = (!is_restricted && nb_ > 0);
 
         int max_threads = omp_get_max_threads();
         std::vector<Eigen::MatrixXd> Ka_tls(max_threads, Eigen::MatrixXd::Zero(nbf_, nbf_));
         std::vector<Eigen::MatrixXd> Kb_tls(is_restricted ? 0 : max_threads, Eigen::MatrixXd::Zero(nbf_, nbf_));
 
-        const Eigen::MatrixXd& Ca_o = scf_.C_alpha.leftCols(na_);
-        const Eigen::MatrixXd& Cb_o = scf_.C_beta.leftCols(nb_);
+        // Gabungkan Ca_o dan Cb_o atau P_a dan P_b agar matriks L_K cukup dibaca 1x dari cache per iterasi K
+        Eigen::MatrixXd Cab_o;
+        Eigen::MatrixXd Pab_full;
+        if (is_idempotent_pa) {
+            int n_tot_o = na_ + (has_beta_unres ? nb_ : 0);
+            Cab_o.resize(nbf_, n_tot_o);
+            if (na_ > 0) Cab_o.leftCols(na_) = scf_.C_alpha.leftCols(na_);
+            if (has_beta_unres) Cab_o.rightCols(nb_) = scf_.C_beta.leftCols(nb_);
+        } else if (has_beta_unres) {
+            Pab_full.resize(nbf_, 2 * nbf_);
+            Pab_full.leftCols(nbf_)  = P_a;
+            Pab_full.rightCols(nbf_) = P_b;
+        }
 
         #pragma omp parallel
         {
             int tid = omp_get_thread_num();
             Eigen::MatrixXd& Ka_priv = Ka_tls[tid];
-            Eigen::MatrixXd Ta_buf(nbf_, is_idempotent_pa ? na_ : nbf_);
-            Eigen::MatrixXd Tb_buf(nbf_, is_idempotent_pa ? nb_ : nbf_);
+            Eigen::MatrixXd Tab_buf(nbf_, is_idempotent_pa ? Cab_o.cols() : (has_beta_unres ? 2 * nbf_ : nbf_));
 
             #pragma omp for schedule(static) nowait
             for (int K = 0; K < n_chol; ++K) {
                 Eigen::Map<const Eigen::MatrixXd> L_K(scf_.L_mat.col(K).data(), nbf_, nbf_);
 
                 if (is_idempotent_pa) {
-                    Ta_buf.noalias() = L_K * Ca_o;
-                    Ka_priv.noalias() += Ta_buf * Ta_buf.transpose();
-
-                    if (!is_restricted && nb_ > 0) {
-                        Tb_buf.noalias() = L_K * Cb_o;
-                        Kb_tls[tid].noalias() += Tb_buf * Tb_buf.transpose();
+                    Tab_buf.noalias() = L_K * Cab_o;
+                    if (na_ > 0) {
+                        auto Ta = Tab_buf.leftCols(na_);
+                        Ka_priv.noalias() += Ta * Ta.transpose();
                     }
+                    if (has_beta_unres) {
+                        auto Tb = Tab_buf.rightCols(nb_);
+                        Kb_tls[tid].noalias() += Tb * Tb.transpose();
+                    }
+                } else if (has_beta_unres) {
+                    Tab_buf.noalias() = L_K * Pab_full;
+                    Ka_priv.noalias() += Tab_buf.leftCols(nbf_) * L_K;
+                    Kb_tls[tid].noalias() += Tab_buf.rightCols(nbf_) * L_K;
                 } else {
-                    Ta_buf.noalias() = L_K * P_a;
-                    Ka_priv.noalias() += Ta_buf * L_K.transpose();
-
-                    if (!is_restricted && nb_ > 0) {
-                        Tb_buf.noalias() = L_K * P_b;
-                        Kb_tls[tid].noalias() += Tb_buf * L_K.transpose();
-                    }
+                    Tab_buf.noalias() = L_K * P_a;
+                    Ka_priv.noalias() += Tab_buf * L_K;
                 }
             }
         }

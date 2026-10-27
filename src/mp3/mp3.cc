@@ -1203,21 +1203,13 @@ void OMP3::compute_mp3_correction() {
                 }
             }
 
-            #pragma omp parallel
-            {
-                std::vector<Eigen::MatrixXd> W_loc(n_pairs_aa, Eigen::MatrixXd::Zero(va_, va_));
+            #pragma omp parallel for schedule(static)
+            for (int k = 0; k < n_pairs_aa; ++k) {
                 Eigen::MatrixXd X_tmp(va_, va_);
-                #pragma omp for schedule(static) nowait
                 for (int P = 0; P < n_aux; ++P) {
                     Eigen::Map<const Eigen::MatrixXd> B_P(B_ab_a.col(P).data(), va_, va_);
-                    for (int k = 0; k < n_pairs_aa; ++k) {
-                        X_tmp.noalias() = T_aa_pairs[k] * B_P;
-                        W_loc[k].noalias() += B_P.transpose() * X_tmp;
-                    }
-                }
-                #pragma omp critical
-                {
-                    for (int k = 0; k < n_pairs_aa; ++k) W_aa_pairs[k] += W_loc[k];
+                    X_tmp.noalias() = T_aa_pairs[k] * B_P;
+                    W_aa_pairs[k].noalias() += B_P.transpose() * X_tmp;
                 }
             }
 
@@ -1250,6 +1242,9 @@ void OMP3::compute_mp3_correction() {
                 }
             }
         }
+        Waa_ladder_.resize(0, 0, 0, 0);
+        Waa_ring_.resize(0, 0, 0, 0);
+        M_oooo_aa.resize(0, 0);
     }
 
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
@@ -1285,6 +1280,7 @@ void OMP3::compute_mp3_correction() {
             }
 
             // Antisimetri BB: hanya hitung jika nb_ > 1 untuk pasangan i < j!
+            // Antisimetri BB: hanya hitung jika nb_ > 1 untuk pasangan i < j!
             int n_pairs_bb = nb_ * (nb_ - 1) / 2;
             if (n_pairs_bb > 0) {
                 std::vector<Eigen::MatrixXd> T_bb_pairs(n_pairs_bb, Eigen::MatrixXd(vb_, vb_));
@@ -1299,21 +1295,13 @@ void OMP3::compute_mp3_correction() {
                     }
                 }
 
-                #pragma omp parallel
-                {
-                    std::vector<Eigen::MatrixXd> W_loc(n_pairs_bb, Eigen::MatrixXd::Zero(vb_, vb_));
+                #pragma omp parallel for schedule(static)
+                for (int k = 0; k < n_pairs_bb; ++k) {
                     Eigen::MatrixXd X_tmp(vb_, vb_);
-                    #pragma omp for schedule(static) nowait
                     for (int P = 0; P < n_aux; ++P) {
                         Eigen::Map<const Eigen::MatrixXd> B_P(B_ab_b.col(P).data(), vb_, vb_);
-                        for (int k = 0; k < n_pairs_bb; ++k) {
-                            X_tmp.noalias() = T_bb_pairs[k] * B_P;
-                            W_loc[k].noalias() += B_P.transpose() * X_tmp;
-                        }
-                    }
-                    #pragma omp critical
-                    {
-                        for (int k = 0; k < n_pairs_bb; ++k) W_bb_pairs[k] += W_loc[k];
+                        X_tmp.noalias() = T_bb_pairs[k] * B_P;
+                        W_bb_pairs[k].noalias() += B_P.transpose() * X_tmp;
                     }
                 }
 
@@ -1382,7 +1370,9 @@ void OMP3::compute_mp3_correction() {
 
             tblis::mult< double >(-1.0, t_Voovv_ab_ex, "ikbc", t_Tab, "kjac", 1.0, t_Wab_ring, "ijab");
             tblis::mult< double >(-1.0, t_Tab, "ikcb", t_Voovv_ba_ex, "jkac", 1.0, t_Wab_ring, "ijab");
-          
+            M_oovv_ab_ex.resize(0, 0);
+            M_oovv_ba_ex.resize(0, 0);
+
             int n_pairs_ab = na_ * nb_;
             std::vector<Eigen::MatrixXd> T_ab_pairs(n_pairs_ab, Eigen::MatrixXd(va_, vb_));
             std::vector<Eigen::MatrixXd> W_ab_pairs(n_pairs_ab, Eigen::MatrixXd::Zero(va_, vb_));
@@ -1395,22 +1385,14 @@ void OMP3::compute_mp3_correction() {
                 }
             }
 
-            #pragma omp parallel
-            {
-                std::vector<Eigen::MatrixXd> W_loc(n_pairs_ab, Eigen::MatrixXd::Zero(va_, vb_));
+            #pragma omp parallel for schedule(static)
+            for (int k = 0; k < n_pairs_ab; ++k) {
                 Eigen::MatrixXd X_tmp(va_, vb_);
-                #pragma omp for schedule(static) nowait
                 for (int P = 0; P < n_aux; ++P) {
                     Eigen::Map<const Eigen::MatrixXd> B_Pa(B_ab_a.col(P).data(), va_, va_);
                     Eigen::Map<const Eigen::MatrixXd> B_Pb(B_ab_b.col(P).data(), vb_, vb_);
-                    for (int k = 0; k < n_pairs_ab; ++k) {
-                        X_tmp.noalias() = T_ab_pairs[k] * B_Pb;
-                        W_loc[k].noalias() += B_Pa.transpose() * X_tmp;
-                    }
-                }
-                #pragma omp critical
-                {
-                    for (int k = 0; k < n_pairs_ab; ++k) W_ab_pairs[k] += W_loc[k];
+                    X_tmp.noalias() = T_ab_pairs[k] * B_Pb;
+                    W_ab_pairs[k].noalias() += B_Pa.transpose() * X_tmp;
                 }
             }
 
