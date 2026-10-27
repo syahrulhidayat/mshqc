@@ -1,9 +1,22 @@
-# File: python/mshqc/__init__.py
+# Copyright 2026 Muhamad Syahrul Hidayat
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 import os
 import sys
-import glob
 import ctypes
 import multiprocessing
+from pathlib import Path
 
 def _configure_environment():
     try:
@@ -31,29 +44,34 @@ def _configure_environment():
             os.environ["MSHQC_BASIS_PATH"] = repo_basis
 
 def _preload_mkl():
-    """Preload MKL runtime libraries dari sys.prefix/lib agar _mshqc.so selalu menemukan simbol MKL."""
-    search_dirs = [
-        os.path.join(sys.prefix, "lib"),
-        os.path.join(sys.base_prefix, "lib"),
-        os.path.join(os.path.dirname(os.path.dirname(os.path.realpath(sys.executable))), "lib"),
+    """
+    Preload MKL runtime libraries dari environment (sys.prefix/lib) 
+    agar _mshqc.so selalu menemukan simbol MKL tanpa perlu set LD_LIBRARY_PATH.
+    """
+    _lib_dirs = [
+        Path(sys.prefix) / "lib",
+        Path(sys.prefix) / "lib64",
+        Path(sys.base_prefix) / "lib",
+        Path(sys.base_prefix) / "lib64",
     ]
-    lib_patterns = [
-        "libtbb.so*",
-        "libiomp5.so*",
-        "libmkl_core.so*",
-        "libmkl_gnu_thread.so*",
-        "libmkl_intel_thread.so*",
-        "libmkl_intel_lp64.so*",
-        "libmkl_rt.so*",
+    
+    # Memuat library utama MKL dan OpenMP yang di-exclude oleh auditwheel
+    _libs_to_load = [
+        "libmkl_rt.so.3", "libmkl_rt.so.2", "libmkl_rt.so",
+        "libiomp5.so", "libtbb.so.12"
     ]
+
+    # RTLD_GLOBAL sangat penting agar _mshqc.so bisa ikut memakai library yang di-load ini
     rtld_flags = getattr(ctypes, "RTLD_GLOBAL", 0) | getattr(os, "RTLD_LAZY", 1)
-    for d in search_dirs:
-        if not os.path.isdir(d):
+    
+    for _d in _lib_dirs:
+        if not _d.exists():
             continue
-        for pat in lib_patterns:
-            for lib_path in sorted(glob.glob(os.path.join(d, pat))):
+        for _lib_so in _libs_to_load:
+            _lib_path = _d / _lib_so
+            if _lib_path.exists():
                 try:
-                    ctypes.CDLL(lib_path, mode=rtld_flags)
+                    ctypes.CDLL(str(_lib_path), mode=rtld_flags)
                 except OSError:
                     pass
 
@@ -65,7 +83,7 @@ from .calculators import MSHQCCalculator, build_molecule, run
 from .session import MSHQCSession
 from .utils import quick_calculation, benchmark_basis_sets, compare_methods
 
-__version__ = "1.0.4.post6"
+__version__ = "1.0.4.post7"
 
 __all__ = [
     "Atom", "Molecule", "GaussianPrimitive", "Shell", "AngularMomentum",

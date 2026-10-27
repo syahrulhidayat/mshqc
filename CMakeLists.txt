@@ -213,7 +213,6 @@ set(ALL_SOURCES
 add_library(mshqc STATIC ${ALL_SOURCES})
 
 set_target_properties(mshqc PROPERTIES 
-    LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/python/mshqc"
     INSTALL_RPATH "$ORIGIN:$ORIGIN/../../.."
     BUILD_WITH_INSTALL_RPATH TRUE
 )
