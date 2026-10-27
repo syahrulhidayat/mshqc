@@ -102,6 +102,10 @@ jobs:
           ${{ github.workspace }}/mshqc_venv/bin/pip install --upgrade pip setuptools wheel nanobind cmake ninja \
             mkl mkl-devel mkl-include numpy scipy pytest
 
+          # Buat direktori scratch di SSD (workspace) dan paksa C++ compiler menggunakannya
+          mkdir -p ${{ github.workspace }}/scratch_tmp
+          export TMPDIR="${{ github.workspace }}/scratch_tmp"
+
           export CMAKE_PREFIX_PATH="/usr/local"
           export TBLIS_DIR="/usr/local"
           export CMAKE_BUILD_PARALLEL_LEVEL="4"
