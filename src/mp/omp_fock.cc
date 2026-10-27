@@ -106,77 +106,49 @@ void OMP2::build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_
 
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     Eigen::MatrixXd P_tot = P_a + P_b;
-    double max_P = std::max({P_tot.cwiseAbs().maxCoeff(), P_a.cwiseAbs().maxCoeff(), P_b.cwiseAbs().maxCoeff()});
-    double threshold = 1e-12;
-    const double* __restrict__ p_dtot = P_tot.data();
-    const double* __restrict__ p_da   = P_a.data();
-    const double* __restrict__ p_db   = P_b.data();
+    const auto& ERI = integrals_->compute_eri();
+    const double* __restrict__ eri_ptr = ERI.data();
 
-    const double* __restrict__ Jv = J_val_.data(); 
-    const int* __restrict__ Ji = J_ind_.data(); 
-    const size_t* __restrict__ Jp = J_ptr_.data();
-    const double* __restrict__ Kv = K_val_.data(); 
-    const int* __restrict__ Ki = K_ind_.data(); 
-    const size_t* __restrict__ Kp = K_ptr_.data();
+    Eigen::Map<const Eigen::MatrixXd> ERI_mat(eri_ptr, static_cast<Eigen::Index>(nbf_) * nbf_, static_cast<Eigen::Index>(nbf_) * nbf_);
+    Eigen::Map<const Eigen::VectorXd> P_tot_flat(P_tot.data(), static_cast<Eigen::Index>(nbf_) * nbf_);
+    Eigen::VectorXd J_flat = ERI_mat * P_tot_flat;
+    Eigen::Map<const Eigen::MatrixXd> J_mat(J_flat.data(), nbf_, nbf_);
 
-    Eigen::MatrixXd G_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
-    Eigen::MatrixXd G_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
-    size_t n_rows = row_map_.size();
+    Eigen::MatrixXd K_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
+    Eigen::MatrixXd K_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
 
-    #pragma omp parallel
-    {
-        Eigen::MatrixXd Ga_local = Eigen::MatrixXd::Zero(nbf_, nbf_);
-        Eigen::MatrixXd Gb_local;
-        if (!is_restricted) Gb_local = Eigen::MatrixXd::Zero(nbf_, nbf_);
-
-        #pragma omp for schedule(static) nowait
-        for (size_t r = 0; r < n_rows; ++r) {
-            int mu = row_map_[r].first;
-            int nu = row_map_[r].second;
-
-            if (schwarz_(mu, nu) * max_P < threshold) continue;
-
-            size_t js = Jp[r]; size_t je = Jp[r+1];
-            size_t ks = Kp[r]; size_t ke = Kp[r+1];
-
-            double vj = 0.0;
-            #pragma omp simd reduction(+:vj)
-            for (size_t k = js; k < je; ++k) vj += Jv[k] * p_dtot[Ji[k]];
-
-            if (is_restricted) {
-                double ka = 0.0;
-                #pragma omp simd reduction(+:ka)
-                for (size_t k = ks; k < ke; ++k) ka += Kv[k] * p_da[Ki[k]];
-                Ga_local(mu, nu) += vj - ka;
-            } else {
-                double ka = 0.0, kb = 0.0;
-                #pragma omp simd reduction(+:ka, kb)
-                for (size_t k = ks; k < ke; ++k) {
-                    double v = Kv[k]; int idx = Ki[k];
-                    ka += v * p_da[idx];
-                    kb += v * p_db[idx];
+    #pragma omp parallel for schedule(dynamic, 4)
+    for (int mu = 0; mu < nbf_; ++mu) {
+        for (int nu = 0; nu <= mu; ++nu) {
+            double ka = 0.0, kb = 0.0;
+            for (int sig = 0; sig < nbf_; ++sig) {
+                const double* __restrict__ e_col = eri_ptr + static_cast<size_t>(nbf_) * (mu + static_cast<size_t>(nbf_) * (nu + static_cast<size_t>(nbf_) * sig));
+                const double* __restrict__ pa_col = P_a.data() + static_cast<size_t>(sig) * nbf_;
+                if (is_restricted) {
+                    #pragma omp simd reduction(+:ka)
+                    for (int lam = 0; lam < nbf_; ++lam) {
+                        ka += e_col[lam] * pa_col[lam];
+                    }
+                } else {
+                    const double* __restrict__ pb_col = P_b.data() + static_cast<size_t>(sig) * nbf_;
+                    #pragma omp simd reduction(+:ka, kb)
+                    for (int lam = 0; lam < nbf_; ++lam) {
+                        ka += e_col[lam] * pa_col[lam];
+                        kb += e_col[lam] * pb_col[lam];
+                    }
                 }
-                Ga_local(mu, nu) += vj - ka;
-                Gb_local(mu, nu) += vj - kb;
+            }
+            K_a(mu, nu) = ka;
+            K_a(nu, mu) = ka;
+            if (!is_restricted) {
+                K_b(mu, nu) = kb;
+                K_b(nu, mu) = kb;
             }
         }
-
-        #pragma omp critical
-        {
-            G_a += Ga_local;
-            if (!is_restricted) G_b += Gb_local;
-        }
     }
 
-    for (int i = 0; i < nbf_; ++i) {
-        for (int j = 0; j < i; ++j) {
-            G_a(j, i) = G_a(i, j); 
-            if (!is_restricted) G_b(j, i) = G_b(i, j);
-        }
-    }
-
-    F_a = H_core_ + G_a;
-    F_b = is_restricted ? F_a : (H_core_ + G_b);
+    F_a = H_core_ + J_mat - K_a;
+    F_b = is_restricted ? F_a : (H_core_ + J_mat - K_b);
 }
 
 void OMP2::build_opdm_alpha() {
@@ -274,10 +246,7 @@ void OMP2::build_generalized_fock() {
         Z_mat_a.setZero();
         Z_mat_b.setZero();
 
-        if (eri_ao_cached_.size() == 0) {
-            eri_ao_cached_ = integrals_->compute_eri();
-        }
-        const auto& eri_ao = eri_ao_cached_;
+        const auto& eri_ao = integrals_->compute_eri();
 
         const Eigen::MatrixXd& Ca_o = scf_.C_alpha.leftCols(na_);
         const Eigen::MatrixXd& Ca_v = scf_.C_alpha.rightCols(va_);

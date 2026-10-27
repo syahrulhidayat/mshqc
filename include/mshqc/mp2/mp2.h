@@ -270,7 +270,6 @@ protected:
 
     Eigen::VectorXd orbital_gradient_;
     Eigen::VectorXd hessian_diag_;
-    Eigen::Tensor<double, 4> eri_ao_cached_;
 
    
     virtual double execute_micro_iterations();

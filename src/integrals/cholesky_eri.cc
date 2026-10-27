@@ -241,6 +241,9 @@ void CholeskyERI::decompose_direct() {
     // Cutoff screening diperketat ke 1e-15 agar tidak teramplifikasi oleh 1/sqrt(D_max)
     const double screen_cutoff = std::min(1e-15, threshold_ * 1e-6);
 
+    int n_shell_pairs = nshells * (nshells + 1) / 2;
+    std::vector<Eigen::MatrixXd> shell_pair_cache(n_shell_pairs);
+
     int iter = 0;
     while (true) {
         int pivot_idx = -1;
@@ -260,53 +263,59 @@ void CholeskyERI::decompose_direct() {
         int rel_p = p - shell_starts[sp];
         int rel_q = q - shell_starts[sq];
         int pair_pq = sp * (sp + 1) / 2 + sq;
-
-        Eigen::VectorXd col_buf = Eigen::VectorXd::Zero(npair);
-        double pivot_schwarz = shell_max[sp * nshells + sq];
         int dimP = basis.shell(sp).n_functions();
         int dimQ = basis.shell(sq).n_functions();
 
-        #pragma omp parallel
-        {
-            std::vector<double> thread_buf(10000);
+        if (shell_pair_cache[pair_pq].rows() == 0) {
+            Eigen::MatrixXd blk_mat = Eigen::MatrixXd::Zero(npair, dimP * dimQ);
+            double pivot_schwarz = shell_max[sp * nshells + sq];
 
-            #pragma omp for schedule(dynamic, 16) nowait
-            for (size_t v = 0; v < valid_pairs.size(); ++v) {
-                int s1 = valid_pairs[v].first;
-                int s2 = valid_pairs[v].second;
+            #pragma omp parallel
+            {
+                std::vector<double> thread_buf(10000);
+                #pragma omp for schedule(dynamic, 16) nowait
+                for (size_t v = 0; v < valid_pairs.size(); ++v) {
+                    int s1 = valid_pairs[v].first;
+                    int s2 = valid_pairs[v].second;
+                    if (shell_max[s1 * nshells + s2] * pivot_schwarz < screen_cutoff) continue;
 
-                if (shell_max[s1 * nshells + s2] * pivot_schwarz < screen_cutoff) continue;
+                    int pair_s = s1 * (s1 + 1) / 2 + s2;
+                    bool swap_pairs = (pair_s < pair_pq);
+                    int u1 = swap_pairs ? sp : s1;
+                    int u2 = swap_pairs ? sq : s2;
+                    int u3 = swap_pairs ? s1 : sp;
+                    int u4 = swap_pairs ? s2 : sq;
 
-                int pair_s = s1 * (s1 + 1) / 2 + s2;
-                bool swap_pairs = (pair_s < pair_pq);
+                    if (!integrals_ptr_->compute_shell_block_raw(u1, u2, u3, u4, thread_buf.data())) continue;
 
-                int u1 = swap_pairs ? sp : s1;
-                int u2 = swap_pairs ? sq : s2;
-                int u3 = swap_pairs ? s1 : sp;
-                int u4 = swap_pairs ? s2 : sq;
+                    int dim1 = basis.shell(s1).n_functions();
+                    int dim2 = basis.shell(s2).n_functions();
+                    int st1 = shell_starts[s1];
+                    int st2 = shell_starts[s2];
 
-                if (!integrals_ptr_->compute_shell_block_raw(u1, u2, u3, u4, thread_buf.data())) continue;
-
-                int dim1 = basis.shell(s1).n_functions();
-                int dim2 = basis.shell(s2).n_functions();
-                int st1 = shell_starts[s1];
-                int st2 = shell_starts[s2];
-
-                for (int i = 0; i < dim1; ++i) {
-                    int global_i = st1 + i;
-                    for (int j = 0; j < dim2; ++j) {
-                        int global_j = st2 + j;
-                        size_t idx_buf = (!swap_pairs)
-                            ? (i + dim1 * (j + dim2 * (rel_p + dimP * rel_q)))
-                            : (rel_p + dimP * (rel_q + dimQ * (i + dim1 * j)));
-
-                        double val = thread_buf[idx_buf];
-                        col_buf(global_i * n_basis_ + global_j) = val;
-                        if (global_i != global_j) col_buf(global_j * n_basis_ + global_i) = val;
+                    for (int rp = 0; rp < dimP; ++rp) {
+                        for (int rq = 0; rq < dimQ; ++rq) {
+                            int col_pq = rp + dimP * rq;
+                            for (int i = 0; i < dim1; ++i) {
+                                int global_i = st1 + i;
+                                for (int j = 0; j < dim2; ++j) {
+                                    int global_j = st2 + j;
+                                    size_t idx_buf = (!swap_pairs)
+                                        ? (i + dim1 * (j + dim2 * (rp + dimP * rq)))
+                                        : (rp + dimP * (rq + dimQ * (i + dim1 * j)));
+                                    double val = thread_buf[idx_buf];
+                                    blk_mat(global_i * n_basis_ + global_j, col_pq) = val;
+                                    if (global_i != global_j) blk_mat(global_j * n_basis_ + global_i, col_pq) = val;
+                                }
+                            }
+                        }
                     }
                 }
             }
+            shell_pair_cache[pair_pq] = std::move(blk_mat);
         }
+
+        Eigen::VectorXd col_buf = shell_pair_cache[pair_pq].col(rel_p + dimP * rel_q);
 
         if (iter > 0) {
             Eigen::Map<const Eigen::MatrixXd> L_prev(L_store.data(), npair, iter);
@@ -314,7 +323,6 @@ void CholeskyERI::decompose_direct() {
             col_buf.noalias() -= L_prev * L_piv;
         }
 
-        // Gunakan diagonal residu aktual col_buf(pivot_idx) agar bebas cancellation drift
         double exact_diag = col_buf(pivot_idx);
         if (exact_diag < threshold_) {
             D(p * n_basis_ + q) = 0.0;
@@ -330,12 +338,27 @@ void CholeskyERI::decompose_direct() {
         D(q * n_basis_ + p) = 0.0;
         D = D.cwiseMax(0.0);
 
+        bool has_active = false;
+        int stP = shell_starts[sp], stQ = shell_starts[sq];
+        for (int rp = 0; rp < dimP && !has_active; ++rp) {
+            for (int rq = 0; rq < dimQ; ++rq) {
+                if (D((stP + rp) * n_basis_ + (stQ + rq)) >= threshold_) {
+                    has_active = true;
+                    break;
+                }
+            }
+        }
+        if (!has_active) shell_pair_cache[pair_pq].resize(0, 0);
+
         iter++;
     }
 
+    shell_pair_cache.clear();
+    shell_pair_cache.shrink_to_fit();
     n_vectors_ = iter;
     decomposed_ = true;
-    L_mat_ = L_store.leftCols(n_vectors_);
+    L_store.conservativeResize(Eigen::NoChange, n_vectors_);
+    L_mat_ = std::move(L_store);
 }
 
 

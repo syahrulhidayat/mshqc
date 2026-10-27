@@ -107,10 +107,15 @@ void BaseSCF::init_integrals() {
     }
     if (config_.print_level > 0) std::cout << "Done.\n";
 
-    schwarz_ = precompute_shell_schwarz();
-
-    if (config_.eri_method == "cholesky" && !config_.use_df) init_integrals_cholesky();
-    else if (config_.scf_type == "incore") init_integrals_incore();
+    if (config_.eri_method == "df") config_.use_df = true;
+    if (!config_.use_df) {
+        if (config_.eri_method == "cholesky") {
+            init_integrals_cholesky();
+        } else {
+            schwarz_ = precompute_shell_schwarz();
+            if (config_.scf_type == "incore") init_integrals_incore();
+        }
+    }
 
     auto t_end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> elapsed = t_end - t_start;
@@ -205,6 +210,7 @@ void BaseSCF::init_integrals_cholesky() {
     internal_cholesky_->compute();
 
     L_mat_ = internal_cholesky_->get_L_mat();
+    internal_cholesky_.reset();
 
     if (config_.print_level > 0) std::cout << " Done. Rank: " << L_mat_.cols() << "\n";
 }
@@ -833,47 +839,33 @@ void UHF::build_fock_matrix() {
             }
 
             if (use_mo_alg) {
-                using tblis::len_type; using tblis::stride_type; using tblis::varray_view;
-                std::vector<len_type> len_L = { (len_type)nbasis_, (len_type)nbasis_, (len_type)k_size };
-                std::vector<stride_type> str_L = { 1, (stride_type)nbasis_, (stride_type)(nbasis_ * nbasis_) };
-                varray_view<double> t_L(len_L, is_ooc ? L_chunk.data() : const_cast<double*>(L_mat_.col(K_start).data()), str_L);
-
-                if (n_alpha_ > 0) {
-                    Eigen::MatrixXd Ca_occ = C_alpha_.leftCols(n_alpha_);
-                    std::vector<len_type> len_Ca = { (len_type)nbasis_, (len_type)n_alpha_ };
-                    std::vector<stride_type> str_Ca = { 1, (stride_type)nbasis_ };
-                    varray_view<double> t_Ca(len_Ca, Ca_occ.data(), str_Ca);
-
-                    std::vector<double> Ta_buf(nbasis_ * n_alpha_ * k_size, 0.0);
-                    std::vector<len_type> len_Ta = { (len_type)nbasis_, (len_type)n_alpha_, (len_type)k_size };
-                    std::vector<stride_type> str_Ta = { 1, (stride_type)nbasis_, (stride_type)(nbasis_ * n_alpha_) };
-                    varray_view<double> t_Ta(len_Ta, Ta_buf.data(), str_Ta);
-
-                    tblis::mult<double>(1.0, t_L, "mnP", t_Ca, "ni", 0.0, t_Ta, "miP");
-
-                    std::vector<len_type> len_Ka = { (len_type)nbasis_, (len_type)nbasis_ };
-                    std::vector<stride_type> str_Ka = { 1, (stride_type)nbasis_ };
-                    varray_view<double> t_Ka(len_Ka, Ka_acc.data(), str_Ka);
-                    tblis::mult<double>(1.0, t_Ta, "miP", t_Ta, "niP", 1.0, t_Ka, "mn");
+                const double* L_ptr = is_ooc ? L_chunk.data() : L_mat_.col(K_start).data();
+                const Eigen::MatrixXd Ca_occ = C_alpha_.leftCols(n_alpha_);
+                const Eigen::MatrixXd Cb_occ = C_beta_.leftCols(n_beta_);
+                int max_threads = omp_get_max_threads();
+                std::vector<Eigen::MatrixXd> Ka_tls(max_threads, Eigen::MatrixXd::Zero(nbasis_, nbasis_));
+                std::vector<Eigen::MatrixXd> Kb_tls(max_threads, Eigen::MatrixXd::Zero(nbasis_, nbasis_));
+                #pragma omp parallel
+                {
+                    int tid = omp_get_thread_num();
+                    Eigen::MatrixXd Ta_loc(nbasis_, std::max(1, n_alpha_));
+                    Eigen::MatrixXd Tb_loc(nbasis_, std::max(1, n_beta_));
+                    #pragma omp for schedule(static) nowait
+                    for (int P = 0; P < k_size; ++P) {
+                        Eigen::Map<const Eigen::MatrixXd> L_P(L_ptr + static_cast<size_t>(P) * nbasis_ * nbasis_, nbasis_, nbasis_);
+                        if (n_alpha_ > 0) {
+                            Ta_loc.noalias() = L_P * Ca_occ;
+                            Ka_tls[tid].noalias() += Ta_loc * Ta_loc.transpose();
+                        }
+                        if (n_beta_ > 0) {
+                            Tb_loc.noalias() = L_P * Cb_occ;
+                            Kb_tls[tid].noalias() += Tb_loc * Tb_loc.transpose();
+                        }
+                    }
                 }
-
-                if (n_beta_ > 0) {
-                    Eigen::MatrixXd Cb_occ = C_beta_.leftCols(n_beta_);
-                    std::vector<len_type> len_Cb = { (len_type)nbasis_, (len_type)n_beta_ };
-                    std::vector<stride_type> str_Cb = { 1, (stride_type)nbasis_ };
-                    varray_view<double> t_Cb(len_Cb, Cb_occ.data(), str_Cb);
-
-                    std::vector<double> Tb_buf(nbasis_ * n_beta_ * k_size, 0.0);
-                    std::vector<len_type> len_Tb = { (len_type)nbasis_, (len_type)n_beta_, (len_type)k_size };
-                    std::vector<stride_type> str_Tb = { 1, (stride_type)nbasis_, (stride_type)(nbasis_ * n_beta_) };
-                    varray_view<double> t_Tb(len_Tb, Tb_buf.data(), str_Tb);
-
-                    tblis::mult<double>(1.0, t_L, "mnP", t_Cb, "ni", 0.0, t_Tb, "miP");
-
-                    std::vector<len_type> len_Kb = { (len_type)nbasis_, (len_type)nbasis_ };
-                    std::vector<stride_type> str_Kb = { 1, (stride_type)nbasis_ };
-                    varray_view<double> t_Kb(len_Kb, Kb_acc.data(), str_Kb);
-                    tblis::mult<double>(1.0, t_Tb, "miP", t_Tb, "niP", 1.0, t_Kb, "mn");
+                for (int t = 0; t < max_threads; ++t) {
+                    if (n_alpha_ > 0) Ka_acc += Ka_tls[t];
+                    if (n_beta_ > 0)  Kb_acc += Kb_tls[t];
                 }
             } else {
                 using tblis::len_type; using tblis::stride_type; using tblis::varray_view;

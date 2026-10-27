@@ -117,9 +117,7 @@ void BaseMP2::transform_3center_mo() {
             }
         }
     }
-    else if (is_restricted && nocc_b_ > 0 && nvir_b_ > 0) {
-    B_ia_P_beta_ = B_ia_P_alpha_;
-    }
+
 }
 
 
@@ -476,92 +474,8 @@ OMP2::OMP2(const Molecule& mol, const BasisSet& basis,
 void OMP2::init_fast_integrals() {
     S_ = integrals_->compute_overlap();
     H_core_ = integrals_->compute_core_hamiltonian();
-    if (config_.eri_method != "exact") return;
-
-    J_val_.clear(); J_ind_.clear(); J_ptr_.clear();
-    K_val_.clear(); K_ind_.clear(); K_ptr_.clear();
-    row_map_.clear();
-
-    long long est_nnz = (long long)(std::pow(nbf_, 4) * 0.15); 
-    J_val_.reserve(est_nnz); J_ind_.reserve(est_nnz);
-    K_val_.reserve(est_nnz); K_ind_.reserve(est_nnz);
-    row_map_.reserve(nbf_ * nbf_ / 2);
-
-    schwarz_ = Eigen::MatrixXd::Zero(nbf_, nbf_);
-    J_ptr_.push_back(0);
-    K_ptr_.push_back(0);
-
-    if (eri_ao_cached_.size() == 0) {
-        eri_ao_cached_ = integrals_->compute_eri();
-    }
-    const auto& ERI = eri_ao_cached_;
-    const double sparse_threshold = 1e-12;
-
-    int nshells = basis_.n_shells();
-    std::vector<int> shell_starts(nshells), shell_sizes(nshells);
-    int offset = 0;
-    for(int i=0; i<nshells; ++i) {
-        shell_starts[i] = offset;
-        shell_sizes[i] = basis_.shell(i).n_functions();
-        offset += shell_sizes[i];
-    }
-
-    for (int sh_i = 0; sh_i < nshells; ++sh_i) {
-        int istart = shell_starts[sh_i]; int isize = shell_sizes[sh_i];
-        for (int sh_j = 0; sh_j <= sh_i; ++sh_j) {
-            int jstart = shell_starts[sh_j]; int jsize = shell_sizes[sh_j];
-            for (int i = 0; i < isize; ++i) {
-                for (int j = 0; j < jsize; ++j) {
-                    int mu = istart + i;
-                    int nu = jstart + j;
-                    if (sh_i == sh_j && nu > mu) continue;
-                    row_map_.push_back({mu, nu});
-                }
-            }
-        }
-    }
-
-    int n_rows = static_cast<int>(row_map_.size());
-    std::vector<std::vector<double>> J_val_rows(n_rows), K_val_rows(n_rows);
-    std::vector<std::vector<int>>    J_ind_rows(n_rows), K_ind_rows(n_rows);
-
-    #pragma omp parallel for schedule(dynamic, 16)
-    for (int r = 0; r < n_rows; ++r) {
-        int mu = row_map_[r].first;
-        int nu = row_map_[r].second;
-        double max_val_row = 0.0;
-
-        auto& jv = J_val_rows[r]; auto& ji = J_ind_rows[r];
-        auto& kv = K_val_rows[r]; auto& ki = K_ind_rows[r];
-
-        for (int sig = 0; sig < nbf_; ++sig) {
-            for (int lam = 0; lam < nbf_; ++lam) {
-                int density_idx = lam + sig * nbf_;
-                double vJ = ERI(mu, nu, lam, sig);
-                if (std::abs(vJ) > sparse_threshold) {
-                    jv.push_back(vJ);
-                    ji.push_back(density_idx);
-                    max_val_row = std::max(max_val_row, std::abs(vJ));
-                }
-                double vK = ERI(mu, lam, nu, sig);
-                if (std::abs(vK) > sparse_threshold) {
-                    kv.push_back(vK);
-                    ki.push_back(density_idx);
-                    max_val_row = std::max(max_val_row, std::abs(vK));
-                }
-            }
-        }
-        schwarz_(mu, nu) = max_val_row;
-        schwarz_(nu, mu) = max_val_row;
-    }
-
-    for (int r = 0; r < n_rows; ++r) {
-        J_val_.insert(J_val_.end(), J_val_rows[r].begin(), J_val_rows[r].end());
-        J_ind_.insert(J_ind_.end(), J_ind_rows[r].begin(), J_ind_rows[r].end());
-        K_val_.insert(K_val_.end(), K_val_rows[r].begin(), K_val_rows[r].end());
-        K_ind_.insert(K_ind_.end(), K_ind_rows[r].begin(), K_ind_rows[r].end());
-        J_ptr_.push_back(J_val_.size());
-        K_ptr_.push_back(K_val_.size());
+    if (config_.eri_method == "exact") {
+        integrals_->compute_eri();
     }
 }
 
@@ -572,10 +486,7 @@ void OMP2::transform_integrals() {
         scf_.irreps_beta.assign(nbf_, 0);
     }
     if (config_.eri_method == "exact") {
-        if (eri_ao_cached_.size() == 0) {
-            eri_ao_cached_ = integrals_->compute_eri();
-        }
-        const auto& eri_ao = eri_ao_cached_;
+        const auto& eri_ao = integrals_->compute_eri();
         const Eigen::MatrixXd& Ca_o = scf_.C_alpha.leftCols(na_);
         const Eigen::MatrixXd& Ca_v = scf_.C_alpha.rightCols(va_);
 
@@ -764,11 +675,7 @@ void OMP2::transform_3center_mo_cholesky() {
         }
     }
     
-    if (is_restricted && nb_ > 0 && vb_ > 0) {
-        B_ia_P_beta_ = B_ia_P_alpha_;
-        B_oo_P_beta_ = B_oo_P_alpha_;
-        B_vv_P_beta_ = B_vv_P_alpha_;
-    }
+
 }
 
 double OMP2::execute_micro_iterations() {
@@ -806,7 +713,8 @@ double OMP2::execute_micro_iterations() {
     } else if (is_restricted && nb_ > 0) {
         G_oo_beta_ = G_oo_alpha_; 
     }
-    return (e_ss_ + e_os_) - old_energy;
+    (void)old_energy;
+    return get_correlation_energy();
 }
 
 void OMP2::execute_macro_iterations(DIIS& diis_a, DIIS& diis_b, int macro_iter) {
@@ -913,7 +821,11 @@ MP2Result OMP2::compute() {
             C_a_current_ = C_a_orig * U;
             if (nb_ > 0) C_b_current_ = C_b_orig * U;
             
-            return (scf_.energy_total + execute_micro_iterations()); 
+            double e_corr_t = execute_micro_iterations();
+            double e_scf_t = 0.5 * (scf_.P_alpha.cwiseProduct(H_core_ + scf_.F_alpha).sum() +
+                                    scf_.P_beta.cwiseProduct(H_core_ + scf_.F_beta).sum())
+                             + mol_.nuclear_repulsion_energy();
+            return e_scf_t + e_corr_t;
         };
 
         double E_plus = calc_tot(theta);
