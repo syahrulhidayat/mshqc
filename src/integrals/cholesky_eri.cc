@@ -319,14 +319,19 @@ void CholeskyERI::decompose_direct() {
 
         if (iter > 0) {
             Eigen::Map<const Eigen::MatrixXd> L_prev(L_store.data(), npair, iter);
-            Eigen::VectorXd L_piv = L_prev.row(pivot_idx);
-            col_buf.noalias() -= L_prev * L_piv;
+            Eigen::VectorXd L_piv = L_prev.row(pivot_idx).transpose();
+            #pragma omp parallel for schedule(static)
+            for (int r = 0; r < npair; r += 256) {
+                int r_len = std::min(256, npair - r);
+                col_buf.segment(r, r_len).noalias() -= L_prev.middleRows(r, r_len) * L_piv;
+            }
         }
 
         double exact_diag = col_buf(pivot_idx);
         if (exact_diag < threshold_) {
             D(p * n_basis_ + q) = 0.0;
             D(q * n_basis_ + p) = 0.0;
+            shell_pair_cache[pair_pq].resize(0, 0);
             continue;
         }
         double inv_sqrt = 1.0 / std::sqrt(exact_diag);
@@ -337,6 +342,19 @@ void CholeskyERI::decompose_direct() {
         D(p * n_basis_ + q) = 0.0;
         D(q * n_basis_ + p) = 0.0;
         D = D.cwiseMax(0.0);
+
+        // Bebaskan shell_pair_cache segera jika tidak ada lagi kandidat pivot besar di shell ini
+        // atau jika total cache aktif melebihi 8 MB (mencegah pembengkakan VmHWM sebesar O(N^4))
+        double max_rem_in_shell = 0.0;
+        int stP = shell_starts[sp], stQ = shell_starts[sq];
+        for (int rp = 0; rp < dimP; ++rp) {
+            for (int rq = 0; rq < dimQ; ++rq) {
+                max_rem_in_shell = std::max(max_rem_in_shell, D((stP + rp) * n_basis_ + (stQ + rq)));
+            }
+        }
+        if (max_rem_in_shell < 0.1 * D_max) {
+            shell_pair_cache[pair_pq].resize(0, 0);
+        }
 
         bool has_active = false;
         int stP = shell_starts[sp], stQ = shell_starts[sq];

@@ -516,7 +516,6 @@ SCFResult BaseSCF::compute() {
 
         solve_fock(F_eff_a, C_alpha_, eps_alpha_);
         if (is_uhf) {
-            // Pada iterasi 1 dengan tebakan SAD simetris (F_eff_a == F_eff_b), hindari diagonalisasi ganda
             if (iter_scf_ == 1 && (F_eff_a - F_eff_b).cwiseAbs().maxCoeff() < 1e-14) {
                 C_beta_ = C_alpha_;
                 eps_beta_ = eps_alpha_;
@@ -541,7 +540,6 @@ SCFResult BaseSCF::compute() {
             printf(" %4d %18.10f %10.2e %10.2e\n", iter_scf_, energy(), dE, dP);
         }
 
-        // Gunakan ambang konvergensi presisi tinggi tanpa memaksa O2/OH menunggu hingga iterasi ke-61
         double e_tol = is_uhf ? std::min(config_.energy_threshold, 1e-12) : std::min(config_.energy_threshold, 1e-11);
         double p_tol = std::min(config_.density_threshold, 1e-10);
 
@@ -686,14 +684,13 @@ SCFResult BaseSCF::compute() {
         eps_beta_  = best_eb;
     }
 
-    // Sinkronisasi kanonikal akhir (bebas redundansi)
     int final_iter = iter_scf_;
     if (converged) {
         if (symmetrizer_) {
             symmetrizer_->symmetrize(P_alpha_);
             if (is_uhf) symmetrizer_->symmetrize(P_beta_);
         }
-        iter_scf_ = 2; // Gunakan mode inkremental agar tidak mereset akumulator G_accum_
+        iter_scf_ = 2;
         build_fock_matrix();
         if (symmetrizer_) {
             symmetrizer_->symmetrize(F_alpha_);
@@ -713,7 +710,7 @@ SCFResult BaseSCF::compute() {
         }
         update_densities();
 
-        iter_scf_ = 2; // Hanya memperbarui selisih densitas jika dP >= 1e-12
+        iter_scf_ = 2;
         build_fock_matrix();
         if (symmetrizer_) {
             symmetrizer_->symmetrize(F_alpha_);
@@ -956,62 +953,67 @@ void UHF::build_fock_matrix() {
         Eigen::MatrixXd P_tot = P_alpha_ + P_beta_;
         bool use_mo_alg = (C_alpha_.rows() == nbasis_) && (C_beta_.rows() == nbasis_)
                           && (occ_numbers_alpha_.size() == 0) && (occ_numbers_beta_.size() == 0);
-        bool sym_spin_density = (P_alpha_ - P_beta_).cwiseAbs().maxCoeff() < 1e-14;
+        bool sym_spin = (P_alpha_ - P_beta_).cwiseAbs().maxCoeff() < 1e-14;
 
-        Eigen::MatrixXd Ca_factor, Cb_factor;
-        if (use_mo_alg) {
-            Ca_factor = C_alpha_.leftCols(n_alpha_);
-            Cb_factor = C_beta_.leftCols(n_beta_);
-        } else {
-            Ca_factor = factorize_psd_density(P_alpha_);
-            if (!sym_spin_density) {
-                Cb_factor = factorize_psd_density(P_beta_);
-            }
-        }
+        // Faktorisasi PSD diagonal/eigen untuk iterasi 1 (menghindari cabang O(M*N^3) & alokasi Ta_buf/Tb_buf)
+        auto factorize_p = [&](const Eigen::MatrixXd& P) {
+            Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(0.5 * (P + P.transpose()));
+            std::vector<int> cols;
+            for (int i = 0; i < nbasis_; ++i) if (es.eigenvalues()(i) > 1e-12) cols.push_back(i);
+            Eigen::MatrixXd F(nbasis_, static_cast<int>(cols.size()));
+            for (size_t k = 0; k < cols.size(); ++k)
+                F.col(k) = std::sqrt(es.eigenvalues()(cols[k])) * es.eigenvectors().col(cols[k]);
+            return F;
+        };
+
+        Eigen::MatrixXd Ca_fac = use_mo_alg ? C_alpha_.leftCols(n_alpha_) : factorize_p(P_alpha_);
+        Eigen::MatrixXd Cb_fac = use_mo_alg ? C_beta_.leftCols(n_beta_)   : (sym_spin ? Eigen::MatrixXd(nbasis_, 0) : factorize_p(P_beta_));
+        const int na_f = Ca_fac.cols();
+        const int nb_f = Cb_fac.cols();
+        Eigen::MatrixXd Cab_fac(nbasis_, na_f + nb_f);
+        if (na_f > 0) Cab_fac.leftCols(na_f)  = Ca_fac;
+        if (nb_f > 0) Cab_fac.rightCols(nb_f) = Cb_fac;
 
         Eigen::MatrixXd J_mat  = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
         Eigen::MatrixXd Ka_acc = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
         Eigen::MatrixXd Kb_acc = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
 
         int n_chol = L_mat_.cols();
-        bool is_ooc = (L_mat_.rows() == 0 && n_chol > 0);
-        std::unique_ptr<utils::HDF5TensorIO> io = nullptr;
-        if (is_ooc) io = std::make_unique<utils::HDF5TensorIO>("df_tensor.h5", utils::HDF5TensorIO::Mode::READ_ONLY);
-        int chunk_size = is_ooc ? 128 : n_chol;
-
         Eigen::Map<const Eigen::VectorXd> P_tot_flat(P_tot.data(), nbasis_ * nbasis_);
+        Eigen::VectorXd X_J = L_mat_.transpose() * P_tot_flat;
+        Eigen::VectorXd J_flat = L_mat_ * X_J;
+        J_mat = Eigen::Map<Eigen::MatrixXd>(J_flat.data(), nbasis_, nbasis_);
 
-        if (!is_ooc) {
-            Eigen::VectorXd X_J = L_mat_.transpose() * P_tot_flat;
-            Eigen::VectorXd J_flat = L_mat_ * X_J;
-            J_mat = Eigen::Map<Eigen::MatrixXd>(J_flat.data(), nbasis_, nbasis_);
-        }
+        const double* L_ptr = L_mat_.data();
+        int max_threads = omp_get_max_threads();
+        std::vector<Eigen::MatrixXd> Ka_tls(max_threads, Eigen::MatrixXd::Zero(nbasis_, nbasis_));
+        std::vector<Eigen::MatrixXd> Kb_tls(max_threads, Eigen::MatrixXd::Zero(nbasis_, nbasis_));
 
-        for (int K_start = 0; K_start < n_chol; K_start += chunk_size) {
-            int K_end = std::min(n_chol, K_start + chunk_size);
-            int k_size = K_end - K_start;
-
-            Eigen::MatrixXd L_chunk;
-            if (is_ooc) {
-                L_chunk.resize(nbasis_ * nbasis_, k_size);
-                io->read_slice_4d("df_tensor", {K_start, 0, 0, 0}, {k_size, (long)nbasis_, (long)nbasis_, 1}, L_chunk.data());
-
-                Eigen::VectorXd X_J_chunk = L_chunk.transpose() * P_tot_flat;
-                Eigen::VectorXd J_flat_chunk = L_chunk * X_J_chunk;
-                J_mat += Eigen::Map<Eigen::MatrixXd>(J_flat_chunk.data(), nbasis_, nbasis_);
+        #pragma omp parallel
+        {
+            int tid = omp_get_thread_num();
+            Eigen::MatrixXd Tab_loc(nbasis_, std::max(1, na_f + nb_f));
+            #pragma omp for schedule(static) nowait
+            for (int P = 0; P < n_chol; ++P) {
+                Eigen::Map<const Eigen::MatrixXd> L_P(L_ptr + static_cast<size_t>(P) * nbasis_ * nbasis_, nbasis_, nbasis_);
+                if (na_f + nb_f > 0) {
+                    Tab_loc.noalias() = L_P * Cab_fac;
+                    if (na_f > 0) {
+                        auto Ta = Tab_loc.leftCols(na_f);
+                        Ka_tls[tid].noalias() += Ta * Ta.transpose();
+                    }
+                    if (nb_f > 0) {
+                        auto Tb = Tab_loc.rightCols(nb_f);
+                        Kb_tls[tid].noalias() += Tb * Tb.transpose();
+                    }
+                }
             }
-
-            const double* L_ptr = is_ooc ? L_chunk.data() : L_mat_.col(K_start).data();
-            if (sym_spin_density && !use_mo_alg) {
-                compute_exchange_cholesky_single(L_ptr, nbasis_, k_size, Ca_factor, Ka_acc);
-            } else {
-                compute_exchange_cholesky_dual(L_ptr, nbasis_, k_size, Ca_factor, Cb_factor, Ka_acc, Kb_acc);
-            }
         }
-
-        if (sym_spin_density && !use_mo_alg) {
-            Kb_acc = Ka_acc;
+        for (int t = 0; t < max_threads; ++t) {
+            Ka_acc += Ka_tls[t];
+            if (nb_f > 0) Kb_acc += Kb_tls[t];
         }
+        if (sym_spin && !use_mo_alg) Kb_acc = Ka_acc;
 
         G_accum_a_ = 0.5 * ((J_mat - Ka_acc) + (J_mat - Ka_acc).transpose());
         G_accum_b_ = 0.5 * ((J_mat - Kb_acc) + (J_mat - Kb_acc).transpose());

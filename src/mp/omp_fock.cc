@@ -69,7 +69,6 @@ void OMP2::build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_
                 Eigen::Map<const Eigen::MatrixXd> L_K(scf_.L_mat.col(K).data(), nbf_, nbf_);
 
                 if (is_idempotent_pa) {
-                    // Low-rank O(O * Nbf^2) saat dipanggil dari pseudocanonicalize()
                     Ta_buf.noalias() = L_K * Ca_o;
                     Ka_priv.noalias() += Ta_buf * Ta_buf.transpose();
 
@@ -79,11 +78,11 @@ void OMP2::build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_
                     }
                 } else {
                     Ta_buf.noalias() = L_K * P_a;
-                    Ka_priv.noalias() += Ta_buf * L_K;
+                    Ka_priv.noalias() += Ta_buf * L_K.transpose();
 
                     if (!is_restricted && nb_ > 0) {
                         Tb_buf.noalias() = L_K * P_b;
-                        Kb_tls[tid].noalias() += Tb_buf * L_K;
+                        Kb_tls[tid].noalias() += Tb_buf * L_K.transpose();
                     }
                 }
             }
