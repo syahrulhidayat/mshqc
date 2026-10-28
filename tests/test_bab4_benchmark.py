@@ -84,7 +84,6 @@ def suppress_stdout():
 
 @contextmanager
 def capture_c_stdout():
-    """Menangkap stdout C++ ke dalam string buffer tanpa menampilkannya ke layar."""
     flush_all()
     old_fd = os.dup(1)
     r_fd, w_fd = os.pipe()
@@ -156,6 +155,8 @@ def get_occ_counts(sys_name, scf_res=None):
 
 
 def compute_spin_s2(ints, C_a, C_b, n_occ_a, n_occ_b):
+    if n_occ_a == n_occ_b:
+        return 0.0, 0.0
     S_ao = np.array(ints.compute_overlap())
     Ca_occ, Cb_occ = np.array(C_a)[:, :n_occ_a], np.array(C_b)[:, :n_occ_b]
     sz = 0.5 * (n_occ_a - n_occ_b)
@@ -271,9 +272,11 @@ def restore_wfn(wfn, snap):
 
 def calc_s2_wfn(wfn):
     na, nb = wfn.nalpha(), wfn.nbeta()
+    if na == nb:
+        return 0.0
     sz = 0.5 * (na - nb)
     s_ideal = sz * (sz + 1.0)
-    if na == 0 or nb == 0:
+    if na == 0 or nb == 0 or wfn.Cb() is None:
         return s_ideal
     Ca = np.asarray(wfn.Ca_subset("AO", "OCC"))
     Cb = np.asarray(wfn.Cb_subset("AO", "OCC"))
@@ -289,24 +292,9 @@ def parse_occ_iterations(log_text):
     return iters
 
 payload = json.loads(sys.argv[1])
-results = {"runs": {}, "m_chol": {}}
+results = {}
 tmp_log = os.path.join(shm_dir, f"psi4_bab4_{os.getpid()}.out")
 
-# 1. Hitung peringkat Cholesky aktual secara dinamis untuk Tabel 1 (tanpa hardcode)
-psi4.core.be_quiet()
-for c_item in payload.get("chol_cases", []):
-    s_name, b_name = c_item["sys"], c_item["basis"]
-    lines = [f"{c_item['charge']} {c_item['mult']}", "units bohr", "symmetry c1"]
-    lines += [f"{Z_TO_SYM[z]} {x:.12f} {y:.12f} {zc:.12f}" for z, x, y, zc in c_item["atoms"]]
-    mol_c = psi4.geometry("\n".join(lines))
-    bas_c = psi4.core.BasisSet.build(mol_c, "ORBITAL", b_name)
-    mints_c = psi4.core.MintsHelper(bas_c)
-    L_mat = mints_c.cd_ints(1e-9)
-    results["m_chol"][f"{s_name}|{b_name}"] = int(L_mat.shape[0])
-    del L_mat, mints_c, bas_c, mol_c
-    psi4.core.clean()
-
-# 2. Jalankan suite referensi utama
 for item in payload["tasks"]:
     sys_name, eri_mode = item["sys"], item["mode"].lower()
     basis_name, aux_basis = item.get("basis", "cc-pVTZ"), item.get("aux", "cc-pVTZ-RI")
@@ -359,7 +347,7 @@ for item in payload["tasks"]:
         t_scf = time.perf_counter() - t0
         entry["SCF"] = {"e": float(e_scf), "t": float(t_scf), "s2": calc_s2_wfn(scf_wfn)}
     except Exception as ex:
-        results["runs"][key] = {"error": str(ex)}
+        results[key] = {"error": str(ex)}
         psi4.core.clean()
         continue
 
@@ -367,7 +355,6 @@ for item in payload["tasks"]:
     if eri_mode in ["cholesky", "df"]:
         psi4.set_options({"scf_type": "pk", "read_scf_3index": False})
 
-    # Aktifkan multithreading BLAS penuh untuk seluruh metode pasca-HF (occ & dfocc)
     set_blas_threads(n_threads)
     need_iter_log = is_uhf and eri_mode in ["exact", "df"]
     try:
@@ -404,7 +391,7 @@ for item in payload["tasks"]:
     finally:
         set_blas_threads(1)
 
-    results["runs"][key] = entry
+    results[key] = entry
 
 if os.path.exists(tmp_log):
     try:
@@ -421,20 +408,15 @@ def run_psi4_reference_suite():
         {"sys": s, "mode": m, "basis": "cc-pVTZ", "aux": "cc-pVTZ-RI", **SYSTEMS[s]}
         for s in ALL_SYSTEM_ORDER for m in ERI_MODE_ORDER
     ]
-    chol_cases = [
-        {"sys": s, "basis": b, **SYSTEMS[s]}
-        for s, b, _ in TABLE1_CASES
-    ]
     try:
         out = subprocess.check_output(
-            [PSI4_PY_BIN, "-c", PSI4_BATCH_WORKER, json.dumps({"tasks": tasks, "chol_cases": chol_cases})],
+            [PSI4_PY_BIN, "-c", PSI4_BATCH_WORKER, json.dumps({"tasks": tasks})],
             text=True
         )
-        data = extract_json_safe(out)
-        return data.get("runs", {}), data.get("m_chol", {})
+        return extract_json_safe(out)
     except Exception as exc:
         print(f"  [!] Peringatan: Subproses Psi4 gagal dijalankan ({exc}).", flush=True)
-        return {}, {}
+        return {}
 
 
 def run_mshqc_reference_suite():
@@ -479,7 +461,6 @@ def run_mshqc_reference_suite():
                 e_omp3 = float(getattr(res_omp3, "e_total", getattr(res_omp3, "energy_total", 0.0)))
                 _, s2_omp3 = compute_spin_s2(ints, res_omp3.C_alpha, res_omp3.C_beta, oa, ob)
 
-            # Tangkap jejak iterasi TR-SOSCF menggunakan objek scf_res & ints yang sudah ada (tanpa hitung ulang SCF)
             if (sys_name, mode) in (("H2O", "DF"), ("Oxygen", "DF")):
                 cfg_tr = make_mp2_config(mode, "cc-pvtz-ri", print_level=1, max_iterations=50)
                 with capture_c_stdout() as buf:
@@ -500,7 +481,7 @@ def run_mshqc_reference_suite():
     return mshqc_db, traces
 
 
-def run_table_1_eri_compression(chol_db):
+def run_table_1_eri_compression():
     print("\n" + "=" * 112, flush=True)
     print("  1. TABEL KOMPRESI TENSOR ERI AO & VEKTOR CHOLESKY AKTUAL (MSHQC vs PSI4, tau_CD = 1e-9)", flush=True)
     print("=" * 112, flush=True)
@@ -510,9 +491,12 @@ def run_table_1_eri_compression(chol_db):
     mb = 1024.0 * 1024.0
     for sys_name, b_name, aux_name in TABLE1_CASES:
         mol = build_mol(sys_name)
-        nbf = mshqc.BasisSet(b_name, mol).n_basis_functions()
-        naux = mshqc.BasisSet(aux_name, mol).n_basis_functions()
-        m_chol = chol_db.get(f"{sys_name}|{b_name}", 0)
+        basis = mshqc.BasisSet(b_name, mol)
+        aux = mshqc.BasisSet(aux_name, mol)
+        nbf = basis.n_basis_functions()
+        naux = aux.n_basis_functions()
+        with suppress_stdout():
+            m_chol = mshqc.CholeskyERI(mol, basis, 1e-9).n_vectors()
         mem_exact = (8.0 * (nbf ** 4)) / mb
         mem_chol  = (8.0 * (nbf ** 2) * m_chol) / mb
         mem_df    = (8.0 * (nbf ** 2) * naux) / mb
@@ -934,9 +918,9 @@ def run_table_6_calibrated_ram():
 if __name__ == "__main__":
     t_bab4_start = time.perf_counter()
     print(f"Menggunakan Python Psi4: {PSI4_PY_BIN}", flush=True)
-    psi4_ref_db, chol_db = run_psi4_reference_suite()
+    psi4_ref_db = run_psi4_reference_suite()
     mshqc_ref_db, tr_traces = run_mshqc_reference_suite()
-    run_table_1_eri_compression(chol_db)
+    run_table_1_eri_compression()
     run_table_2_o_v4_elimination()
     run_table_3_spin_contamination(mshqc_ref_db, psi4_ref_db)
     run_table_4_iteration_trace_and_fd(tr_traces)

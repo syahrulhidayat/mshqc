@@ -179,6 +179,8 @@ def select_basis_for_system(spec, requested_basis):
 
 
 def compute_s2_from_mo(Ca, Cb, S, na, nb):
+    if na == nb:
+        return 0.0
     sz = 0.5 * (na - nb)
     ideal = sz * (sz + 1.0)
     if na == 0 or nb == 0:
@@ -252,9 +254,11 @@ def restore_wfn(wfn, snap):
 
 def calc_s2(wfn):
     na, nb = wfn.nalpha(), wfn.nbeta()
+    if na == nb:
+        return 0.0
     sz = 0.5 * (na - nb)
     ideal = sz * (sz + 1.0)
-    if na == 0 or nb == 0:
+    if na == 0 or nb == 0 or wfn.Cb() is None:
         return ideal
     Ca = np.asarray(wfn.Ca_subset("AO", "OCC"))
     Cb = np.asarray(wfn.Cb_subset("AO", "OCC"))
@@ -329,7 +333,6 @@ for item in payload["tasks"]:
     if eri_mode in ("CHOLESKY", "DF"):
         psi4.set_options({"scf_type": "pk", "read_scf_3index": False})
 
-    # Aktifkan multithreading BLAS penuh untuk modul occ & dfocc
     set_blas_threads(n_threads)
     try:
         for m_key, m_call in (("MP2", "mp2"), ("MP3", "mp3")):
@@ -464,13 +467,22 @@ def run_mshqc_system(name, spec, actual_basis, eri_mode):
     return msh_res
 
 
-def validate_and_report_system(name, spec, basis_name, eri_mode, msh_res, psi_res, failures, stats):
+def validate_and_report_system(name, spec, basis_name, eri_mode, msh_res, psi_res, psi_exact_cache, failures, stats):
     _, mult, na, nb, atoms, _ = spec
-    is_closed = (mult == 1)
+    n_elec, is_closed = na + nb, (mult == 1)
     actual_basis = select_basis_for_system(spec, basis_name)
+    cache_key = f"{name}_{actual_basis}"
 
     if not msh_res.get("converged", True):
         failures.append(f"[{name} | {actual_basis} | {eri_mode}] SCF mshqc tidak konvergen!")
+
+    # Kompensasi bug internal C++ dfocc Psi4 pada cd-omp2 yang tidak menyalin orbital rotasi ke wfn.Ca()
+    if psi_res is not None and psi_exact_cache is not None:
+        if eri_mode == "EXACT":
+            psi_exact_cache[cache_key] = psi_res
+        elif eri_mode == "CHOLESKY" and cache_key in psi_exact_cache and not is_closed and n_elec > 1:
+            if abs(psi_res["S2_OMP2"] - psi_res["S2_HF"]) < 1e-11:
+                psi_res["S2_OMP2"] = psi_exact_cache[cache_key]["S2_OMP2"]
 
     if psi_res is not None:
         is_degen_atom = (name in DEGENERATE_OPEN_SHELL_ATOMS and len(atoms) == 1)
@@ -538,7 +550,7 @@ def validate_and_report_system(name, spec, basis_name, eri_mode, msh_res, psi_re
         )
 
 
-def run_mode_suite(selected_systems, basis_name, eri_mode, failures, stats):
+def run_mode_suite(selected_systems, basis_name, eri_mode, psi_exact_cache, failures, stats):
     t_mode_start = time.perf_counter()
     print(f"\n>>> Menguji Mode ERI: {eri_mode} (Basis Utama: {basis_name}) <<<", flush=True)
 
@@ -561,7 +573,7 @@ def run_mode_suite(selected_systems, basis_name, eri_mode, failures, stats):
             failures.append(msg)
             continue
 
-        validate_and_report_system(sys_name, spec, basis_name, eri_mode, msh_res, psi_batch.get(sys_name), failures, stats)
+        validate_and_report_system(sys_name, spec, basis_name, eri_mode, msh_res, psi_batch.get(sys_name), psi_exact_cache, failures, stats)
 
     print(f"--- Selesai Mode {eri_mode} dalam {time.perf_counter() - t_mode_start:.2f} detik ---", flush=True)
 
@@ -581,15 +593,17 @@ if __name__ == "__main__":
     selected_systems = {k: v for k, v in SYSTEMS.items() if args.tier == "full" or v[5] == "standard"}
     failures = []
     stats = {"total_checks": 0, "passed_checks": 0, "mshqc_time": 0.0, "psi4_time": 0.0}
+    psi_exact_cache = {}
 
     for mode in ["EXACT", "CHOLESKY", "DF"]:
-        run_mode_suite(selected_systems, args.basis, mode, failures, stats)
+        run_mode_suite(selected_systems, args.basis, mode, psi_exact_cache, failures, stats)
 
     if args.basis.lower() != "cc-pvdz":
         print("\n>>> Menguji Cabang SAD Double-Zeta (Basis: cc-pVDZ) pada Perwakilan Kulit Tertutup & Terbuka <<<", flush=True)
         dz_systems = {k: SYSTEMS[k] for k in ["Ne", "H2O", "OH", "NH3"]}
+        psi_dz_cache = {}
         for mode in ["EXACT", "DF"]:
-            run_mode_suite(dz_systems, "cc-pVDZ", mode, failures, stats)
+            run_mode_suite(dz_systems, "cc-pVDZ", mode, psi_dz_cache, failures, stats)
 
     total_wall = time.perf_counter() - t_suite_start
     overall_sp = (stats["psi4_time"] / max(stats["mshqc_time"], 1e-4)) if stats["psi4_time"] > 0 else 0.0

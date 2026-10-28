@@ -119,9 +119,6 @@ namespace mshqc_auto_tune {
 
         std::string threads_str = std::to_string(num_threads);
         set_env_if_empty("TBLIS_NUM_THREADS", threads_str.c_str());
-        set_env_if_empty("OMP_WAIT_POLICY", "PASSIVE");
-        set_env_if_empty("GOMP_SPINCOUNT", "0");
-
         set_env_if_empty("OPENBLAS_NUM_THREADS", "1");
         set_env_if_empty("MKL_NUM_THREADS", "1");
         set_env_if_empty("VECLIB_MAXIMUM_THREADS", "1");

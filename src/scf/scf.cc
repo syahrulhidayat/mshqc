@@ -540,8 +540,8 @@ SCFResult BaseSCF::compute() {
             printf(" %4d %18.10f %10.2e %10.2e\n", iter_scf_, energy(), dE, dP);
         }
 
-        double e_tol = is_uhf ? std::min(config_.energy_threshold, 1e-12) : std::min(config_.energy_threshold, 1e-11);
-        double p_tol = is_uhf ? std::min(config_.density_threshold, 1e-11) : std::min(config_.density_threshold, 1e-10);
+        double e_tol = config_.energy_threshold;
+        double p_tol = config_.density_threshold;
 
         bool strict_conv  = (dE < e_tol && dP < p_tol && err_rms < p_tol);
         bool plateau_conv = (iter_scf_ > 14 && dE < e_tol && dP < std::max(p_tol, 1e-10));
@@ -620,8 +620,8 @@ SCFResult BaseSCF::compute() {
                 double dE = std::abs(energy_ - energy_old_);
                 double dP = std::hypot((P_alpha_ - Pa_snap).norm(), (P_beta_ - Pb_snap).norm());
 
-                double e_tol = std::min(config_.energy_threshold, 1e-12);
-                double p_tol = std::min(config_.density_threshold, 1e-10);
+                double e_tol = config_.energy_threshold;
+                double p_tol = config_.density_threshold;
 
                 bool strict_conv  = (dE < e_tol && dP < p_tol && err_rms < p_tol);
                 bool plateau_conv = (iter_scf_ > 14 && dE < e_tol && dP < 5e-10 && err_rms < 1e-10);

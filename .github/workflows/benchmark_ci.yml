@@ -10,13 +10,7 @@ jobs:
     name: Run Pytest & Benchmark Suite (mshqc PyPI Wheel vs Psi4)
     runs-on: ubuntu-latest
     env:
-      OMP_NUM_THREADS: "4"
-      TBLIS_NUM_THREADS: "4"
-      MKL_NUM_THREADS: "1"
-      OPENBLAS_NUM_THREADS: "1"
-      OMP_MAX_ACTIVE_LEVELS: "1"
-      HDF5_USE_FILE_LOCKING: "FALSE"
-
+      
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4

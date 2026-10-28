@@ -895,14 +895,12 @@ void OMP3::compute_mp3_correction() {
 
             auto V_vvvv_aa = get_V_exact(Cav, Cav, Cav, Cav);
             TBLIS_VIEW_4D(t_Vvvvv_aa, V_vvvv_aa, va_, va_, va_, va_);
-            tblis::mult< double >(0.5, t_Taa, "ijef", t_Vvvvv_aa, "eafb", 1.0, t_Waa_ladder, "ijab");
-            tblis::mult< double >(-0.5, t_Taa, "ijef", t_Vvvvv_aa, "ebfa", 1.0, t_Waa_ladder, "ijab");
+            tblis::mult< double >(1.0, t_Taa, "ijef", t_Vvvvv_aa, "eafb", 1.0, t_Waa_ladder, "ijab");
 
             if (nb_ > 0 && vb_ > 0) {
                 auto V_vvvv_bb = get_V_exact(Cbv, Cbv, Cbv, Cbv);
                 TBLIS_VIEW_4D(t_Vvvvv_bb, V_vvvv_bb, vb_, vb_, vb_, vb_);
-                tblis::mult< double >(0.5, t_Tbb, "ijef", t_Vvvvv_bb, "eafb", 1.0, t_Wbb_ladder, "ijab");
-                tblis::mult< double >(-0.5, t_Tbb, "ijef", t_Vvvvv_bb, "ebfa", 1.0, t_Wbb_ladder, "ijab");
+                tblis::mult< double >(1.0, t_Tbb, "ijef", t_Vvvvv_bb, "eafb", 1.0, t_Wbb_ladder, "ijab");
 
                 auto V_vvvv_ab = get_V_exact(Cav, Cav, Cbv, Cbv);
                 TBLIS_VIEW_4D(t_Vvvvv_ab, V_vvvv_ab, va_, va_, vb_, vb_);
@@ -911,14 +909,12 @@ void OMP3::compute_mp3_correction() {
 
             auto V_oooo_aa = get_V_exact(Cao, Cao, Cao, Cao);
             TBLIS_VIEW_4D(t_Voooo_aa, V_oooo_aa, na_, na_, na_, na_);
-            tblis::mult< double >(0.5, t_Taa, "mnab", t_Voooo_aa, "minj", 1.0, t_Waa_ladder, "ijab");
-            tblis::mult< double >(-0.5, t_Taa, "mnab", t_Voooo_aa, "mjni", 1.0, t_Waa_ladder, "ijab");
+            tblis::mult< double >(1.0, t_Taa, "mnab", t_Voooo_aa, "minj", 1.0, t_Waa_ladder, "ijab");
 
             if (nb_ > 0 && vb_ > 0) {
                 auto V_oooo_bb = get_V_exact(Cbo, Cbo, Cbo, Cbo);
                 TBLIS_VIEW_4D(t_Voooo_bb, V_oooo_bb, nb_, nb_, nb_, nb_);
-                tblis::mult< double >(0.5, t_Tbb, "mnab", t_Voooo_bb, "minj", 1.0, t_Wbb_ladder, "ijab");
-                tblis::mult< double >(-0.5, t_Tbb, "mnab", t_Voooo_bb, "mjni", 1.0, t_Wbb_ladder, "ijab");
+                tblis::mult< double >(1.0, t_Tbb, "mnab", t_Voooo_bb, "minj", 1.0, t_Wbb_ladder, "ijab");
 
                 auto V_oooo_ab = get_V_exact(Cao, Cao, Cbo, Cbo);
                 TBLIS_VIEW_4D(t_Voooo_ab, V_oooo_ab, na_, na_, nb_, nb_);
