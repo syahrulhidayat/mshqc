@@ -3,9 +3,6 @@ import time
 import tempfile
 import psi4
 
-psi4.set_num_threads(n_threads)
-psi4.set_memory("8 GB")
-psi4.core.be_quiet()
 
 # ==============================================================================
 # 2. KONFIGURASI GLOBAL PSI4 (BEST-VS-BEST APPLE-TO-APPLE DENGAN MSHQC)

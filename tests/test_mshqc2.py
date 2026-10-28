@@ -1,8 +1,24 @@
 #!/usr/bin/env python3
+import os
 import sys
 import time
 import ctypes
 from contextlib import contextmanager
+
+try:
+    os.sched_setaffinity(0, set(range(os.cpu_count() or 4)))
+except Exception:
+    pass
+
+cpu_avail = os.cpu_count() or 4
+n_threads = int(os.environ.get("OMP_NUM_THREADS", str(min(6, cpu_avail))))
+os.environ["OMP_NUM_THREADS"] = str(n_threads)
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = str(n_threads)
+os.environ["OMP_MAX_ACTIVE_LEVELS"] = "1"
+os.environ["TBLIS_NUM_THREADS"] = str(n_threads)
+os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
+
 import mshqc
 
 ANG_TO_BOHR = 1.8897261246257702
