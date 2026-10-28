@@ -1,28 +1,6 @@
 #!/usr/bin/env python3
-import os
 import time
 import tempfile
-
-# =====================================================================
-# 1. KONFIGURASI HPC & LINGKUNGAN (KEKUATAN MAKSIMAL PSI4 MULTI-THREAD)
-# =====================================================================
-try:
-    os.sched_setaffinity(0, set(range(os.cpu_count() or 4)))
-except Exception:
-    pass
-
-cpu_avail = os.cpu_count() or 4
-n_threads = int(os.environ.get("OMP_NUM_THREADS", str(min(6, cpu_avail))))
-
-# Buka penuh thread pool OpenMP, MKL, dan OpenBLAS untuk C_DGEMM Psi4
-os.environ["OMP_NUM_THREADS"] = str(n_threads)
-os.environ["MKL_NUM_THREADS"] = str(n_threads)
-os.environ["OPENBLAS_NUM_THREADS"] = str(n_threads)
-os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
-
-shm_dir = "/dev/shm" if os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK) else tempfile.gettempdir()
-os.environ["PSI_SCRATCH"] = shm_dir
-
 import psi4
 
 psi4.set_num_threads(n_threads)
