@@ -16,7 +16,7 @@ cpu_avail = os.cpu_count() or 4
 n_threads = int(os.environ.get("OMP_NUM_THREADS", str(min(6, cpu_avail))))
 os.environ["OMP_NUM_THREADS"] = str(n_threads)
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = str(n_threads)
 os.environ["OMP_MAX_ACTIVE_LEVELS"] = "1"
 
 
@@ -30,7 +30,7 @@ psi4.set_memory("8 GB")
 psi4.core.be_quiet()
 
 
-def _ load_blas_setters():
+def _load_blas_setters():
     """Mencari simbol pengatur jumlah thread BLAS (MKL / OpenBLAS) yang sudah dimuat di memori."""
     setters = []
     for lib_name in ("libmkl_rt.so", "libmkl_rt.so.2", "libopenblas.so", "libopenblas.so.0", None):
