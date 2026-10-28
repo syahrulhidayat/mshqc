@@ -254,7 +254,7 @@ def run_scf_raw(mol, basis, ints, eri_mode, is_uhf, aux_basis_name="", print_lev
 # WORKER SUBPROCESS PSI4 (FULL BLAS/MKL MULTITHREADING & D2h SYMMETRY FOR O2)
 # ==============================================================================
 PSI4_BATCH_WORKER = r"""
-import os, sys, time, json, re, tempfile
+import os, sys, time, json, re, ctypes, tempfile
 import numpy as np
 
 try:
@@ -264,12 +264,10 @@ except Exception:
 
 cpu_avail = os.cpu_count() or 4
 n_threads = int(os.environ.get("OMP_NUM_THREADS", str(min(6, cpu_avail))))
-
-# Hapus pembatasan thread BLAS/MKL agar C_DGEMM Psi4 berjalan pada kecepatan maksimal
-os.environ.pop("OMP_MAX_ACTIVE_LEVELS", None)
 os.environ["OMP_NUM_THREADS"] = str(n_threads)
-os.environ["OPENBLAS_NUM_THREADS"] = str(n_threads)
-os.environ["MKL_NUM_THREADS"] = str(n_threads)
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OMP_MAX_ACTIVE_LEVELS"] = "1"
 os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
 shm_dir = "/dev/shm" if os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK) else tempfile.gettempdir()
@@ -278,6 +276,30 @@ os.environ["PSI_SCRATCH"] = shm_dir
 import psi4
 psi4.set_num_threads(n_threads)
 psi4.set_memory("8 GB")
+
+def _load_blas_setters():
+    setters = []
+    for lib_name in ("libmkl_rt.so", "libmkl_rt.so.2", "libopenblas.so", "libopenblas.so.0", None):
+        try:
+            lib = ctypes.CDLL(lib_name)
+        except Exception:
+            continue
+        for fn_name in ("MKL_Set_Num_Threads", "openblas_set_num_threads"):
+            if hasattr(lib, fn_name):
+                fn = getattr(lib, fn_name)
+                fn.argtypes = [ctypes.c_int]
+                fn.restype = None
+                setters.append(fn)
+    return setters
+
+_BLAS_SETTERS = _load_blas_setters()
+
+def set_blas_threads(num_t):
+    for fn in _BLAS_SETTERS:
+        try:
+            fn(int(num_t))
+        except Exception:
+            pass
 
 Z_TO_SYM = {1: "H", 3: "Li", 6: "C", 8: "O", 10: "Ne"}
 
@@ -347,9 +369,8 @@ for item in payload["tasks"]:
     psi4.core.clean_options()
     psi4.core.be_quiet()
 
-    # Konfigurasi Kecepatan Maksimal Psi4:
-    # - Mode EXACT pada Neon, H2O, Lithium, Carbon, Oxygen, dan O2 memakai simetri Abelian penuh (D2h / C2v).
-    # - Hanya OH (radikal Pi metastabil) dan mode DF/CHOLESKY (dfocc) yang menggunakan symmetry c1.
+    # Gunakan simetri Abelian penuh (D2h / C2v) pada mode EXACT termasuk untuk O2 (D2h).
+    # Hanya OH (radikal Pi metastabil) dan mode DF/CHOLESKY (dfocc) yang memakai symmetry c1.
     lines = [f"{chg} {mult}", "units bohr"]
     if eri_mode in ["df", "cholesky"] or sys_name == "OH":
         lines.append("symmetry c1")
@@ -379,26 +400,20 @@ for item in payload["tasks"]:
         "max_mograd_convergence": 1e-4,
         "maxiter": 200,
         "mo_maxiter": 50,
+        "cachelevel": 2,
+        "read_scf_3index": False,
     }
     if eri_mode == "df":
-        opts.update({
-            "df_basis_scf": aux_basis,
-            "df_basis_mp2": aux_basis,
-            "df_basis_cc": aux_basis,
-            "df_ints_io": "save",
-            "read_scf_3index": True,
-        })
+        opts.update({"df_basis_scf": aux_basis, "df_basis_mp2": aux_basis, "df_basis_cc": aux_basis})
     elif eri_mode == "cholesky":
-        opts.update({
-            "cholesky_tolerance": 1e-9,
-            "read_scf_3index": False,
-        })
+        opts["cholesky_tolerance"] = 1e-9
 
     psi4.set_options(opts)
 
     key = f"{sys_name}|{eri_mode.upper()}"
     entry = {}
 
+    set_blas_threads(1)
     try:
         t0 = time.perf_counter()
         e_scf, scf_wfn = psi4.energy("scf", molecule=mol, return_wfn=True)
@@ -411,70 +426,72 @@ for item in payload["tasks"]:
         continue
 
     hf_snap = snapshot_wfn(scf_wfn)
-    if eri_mode == "cholesky":
+    if eri_mode in ["cholesky", "df"]:
         psi4.set_options({"scf_type": "pk", "read_scf_3index": False})
 
-    # MP2
+    set_blas_threads(n_threads if eri_mode == "exact" else 1)
     try:
-        t0 = time.perf_counter()
-        e_mp2 = psi4.energy("mp2", ref_wfn=scf_wfn, molecule=mol)
-        t_mp2 = time.perf_counter() - t0
-        entry["MP2"] = {"e": float(e_mp2), "t": float(t_mp2)}
-    except Exception:
-        pass
-    if eri_mode != "df":
+        # MP2
+        try:
+            t0 = time.perf_counter()
+            e_mp2 = psi4.energy("mp2", ref_wfn=scf_wfn, molecule=mol)
+            t_mp2 = time.perf_counter() - t0
+            entry["MP2"] = {"e": float(e_mp2), "t": float(t_mp2)}
+        except Exception:
+            pass
         psi4.core.clean()
-    restore_wfn(scf_wfn, hf_snap)
+        restore_wfn(scf_wfn, hf_snap)
 
-    # MP3
-    try:
-        t0 = time.perf_counter()
-        e_mp3 = psi4.energy("mp3", ref_wfn=scf_wfn, molecule=mol)
-        t_mp3 = time.perf_counter() - t0
-        entry["MP3"] = {"e": float(e_mp3), "t": float(t_mp3)}
-    except Exception:
-        pass
-    if eri_mode != "df":
+        # MP3
+        try:
+            t0 = time.perf_counter()
+            e_mp3 = psi4.energy("mp3", ref_wfn=scf_wfn, molecule=mol)
+            t_mp3 = time.perf_counter() - t0
+            entry["MP3"] = {"e": float(e_mp3), "t": float(t_mp3)}
+        except Exception:
+            pass
         psi4.core.clean()
-    restore_wfn(scf_wfn, hf_snap)
+        restore_wfn(scf_wfn, hf_snap)
 
-    # OMP2
-    try:
-        psi4.core.set_output_file(tmp_log, False)
-        t0 = time.perf_counter()
-        e_omp2, omp2_wfn = psi4.energy("omp2", ref_wfn=scf_wfn, molecule=mol, return_wfn=True)
-        t_omp2 = time.perf_counter() - t0
-        psi4.core.flush_outfile()
-        psi4.core.be_quiet()
-        log_txt = open(tmp_log, "r", errors="replace").read() if os.path.exists(tmp_log) else ""
-        it_omp2 = parse_occ_iterations(log_txt)
-        s2_omp2 = calc_s2_wfn(omp2_wfn)
-        if eri_mode in ["cholesky", "df"] and abs(s2_omp2 - s2_uhf) < 1e-11:
-            s2_omp2 = results.get(f"{sys_name}|EXACT", {}).get("OMP2", {}).get("s2", s2_omp2)
-        entry["OMP2"] = {"e": float(e_omp2), "t": float(t_omp2), "iter": it_omp2, "s2": s2_omp2}
-    except Exception:
-        psi4.core.be_quiet()
-    if eri_mode != "df":
+        # OMP2
+        try:
+            psi4.core.set_output_file(tmp_log, False)
+            t0 = time.perf_counter()
+            e_omp2, omp2_wfn = psi4.energy("omp2", ref_wfn=scf_wfn, molecule=mol, return_wfn=True)
+            t_omp2 = time.perf_counter() - t0
+            psi4.core.flush_outfile()
+            psi4.core.be_quiet()
+            log_txt = open(tmp_log, "r", errors="replace").read() if os.path.exists(tmp_log) else ""
+            it_omp2 = parse_occ_iterations(log_txt)
+            s2_omp2 = calc_s2_wfn(omp2_wfn)
+            if eri_mode in ["cholesky", "df"] and abs(s2_omp2 - s2_uhf) < 1e-11:
+                s2_omp2 = results.get(f"{sys_name}|EXACT", {}).get("OMP2", {}).get("s2", s2_omp2)
+            entry["OMP2"] = {"e": float(e_omp2), "t": float(t_omp2), "iter": it_omp2, "s2": s2_omp2}
+        except Exception:
+            psi4.core.be_quiet()
         psi4.core.clean()
-    restore_wfn(scf_wfn, hf_snap)
+        restore_wfn(scf_wfn, hf_snap)
 
-    # OMP3
-    try:
-        psi4.core.set_output_file(tmp_log, False)
-        t0 = time.perf_counter()
-        e_omp3, omp3_wfn = psi4.energy("omp3", ref_wfn=scf_wfn, molecule=mol, return_wfn=True)
-        t_omp3 = time.perf_counter() - t0
-        psi4.core.flush_outfile()
-        psi4.core.be_quiet()
-        log_txt = open(tmp_log, "r", errors="replace").read() if os.path.exists(tmp_log) else ""
-        it_omp3 = parse_occ_iterations(log_txt)
-        s2_omp3 = calc_s2_wfn(omp3_wfn)
-        if eri_mode in ["cholesky", "df"] and abs(s2_omp3 - s2_uhf) < 1e-11:
-            s2_omp3 = results.get(f"{sys_name}|EXACT", {}).get("OMP3", {}).get("s2", s2_omp3)
-        entry["OMP3"] = {"e": float(e_omp3), "t": float(t_omp3), "iter": it_omp3, "s2": s2_omp3}
-    except Exception:
-        psi4.core.be_quiet()
-    psi4.core.clean()
+        # OMP3
+        try:
+            psi4.core.set_output_file(tmp_log, False)
+            t0 = time.perf_counter()
+            e_omp3, omp3_wfn = psi4.energy("omp3", ref_wfn=scf_wfn, molecule=mol, return_wfn=True)
+            t_omp3 = time.perf_counter() - t0
+            psi4.core.flush_outfile()
+            psi4.core.be_quiet()
+            log_txt = open(tmp_log, "r", errors="replace").read() if os.path.exists(tmp_log) else ""
+            it_omp3 = parse_occ_iterations(log_txt)
+            s2_omp3 = calc_s2_wfn(omp3_wfn)
+            if eri_mode in ["cholesky", "df"] and abs(s2_omp3 - s2_uhf) < 1e-11:
+                s2_omp3 = results.get(f"{sys_name}|EXACT", {}).get("OMP3", {}).get("s2", s2_omp3)
+            entry["OMP3"] = {"e": float(e_omp3), "t": float(t_omp3), "iter": it_omp3, "s2": s2_omp3}
+        except Exception:
+            psi4.core.be_quiet()
+        psi4.core.clean()
+    finally:
+        set_blas_threads(1)
+
     results[key] = entry
 
 if os.path.exists(tmp_log):
