@@ -20,7 +20,7 @@ os.environ["MKL_NUM_THREADS"] = str(n_threads)
 os.environ["OMP_MAX_ACTIVE_LEVELS"] = "1"
 
 
-shm_dir = "/dev/shm" if os.path.isdir("/dev/shm") and os.access("/dev/shm") else tempfile.gettempdir()
+shm_dir = "/dev/shm" if os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK) else tempfile.gettempdir()
 os.environ["PSI_SCRATCH"] = shm_dir
 
 import psi4
