@@ -12,7 +12,7 @@ jobs:
     env:
       OMP_NUM_THREADS: "4"
       TBLIS_NUM_THREADS: "4"
-      MKL_NUM_THREADS: "1"
+      MKL_NUM_THREADS: "4"
       OPENBLAS_NUM_THREADS: "1"
       OMP_MAX_ACTIVE_LEVELS: "1"
       HDF5_USE_FILE_LOCKING: "FALSE"
@@ -166,18 +166,17 @@ jobs:
       # ===================================================================
       - name: Run Isolated mshqc Bab 4 Suite (tests/run_mshqc_bab4.py)
         run: |
-          ${{ github.workspace }}/mshqc_venv/bin/python -u tests/run_mshqc_bab4.py --out mshqc_bab4_raw.json | tee mshqc_bab4_runner.log
+          ${{ github.workspace }}/mshqc_venv/bin/python -u tests/run_mshqc_bab4.py --out mshqc_bab4_raw.json --log mshqc_bab4_runner.log
 
       - name: Run Isolated Psi4 Bab 4 Suite (tests/run_psi4_bab4.py)
         shell: bash -el {0}
         run: |
           micromamba activate psi4_env
-          python -u tests/run_psi4_bab4.py --out psi4_bab4_raw.json | tee psi4_bab4_runner.log
+          python -u tests/run_psi4_bab4.py --out psi4_bab4_raw.json --log psi4_bab4_runner.log
 
       - name: Compare & Generate Bab 4 Tables 1-6 (tests/compare_bab4.py)
         run: |
-          ${{ github.workspace }}/mshqc_venv/bin/python -u tests/compare_bab4.py mshqc_bab4_raw.json psi4_bab4_raw.json | tee test_bab4_benchmark.txt
-          cp test_bab4_benchmark.txt bab4_extra_bench.txt
+          ${{ github.workspace }}/mshqc_venv/bin/python -u tests/compare_bab4.py mshqc_bab4_raw.json psi4_bab4_raw.json
           if [ -f "comparison_bab4_summary.md" ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
             cat comparison_bab4_summary.md >> "$GITHUB_STEP_SUMMARY"
           fi
