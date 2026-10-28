@@ -18,7 +18,7 @@ os.environ["OMP_NUM_THREADS"] = str(n_threads)
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["OMP_MAX_ACTIVE_LEVELS"] = "1"
-os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
+
 
 shm_dir = "/dev/shm" if os.path.isdir("/dev/shm") and os.access("/dev/shm") else tempfile.gettempdir()
 os.environ["PSI_SCRATCH"] = shm_dir
