@@ -541,12 +541,11 @@ SCFResult BaseSCF::compute() {
         }
 
         double e_tol = is_uhf ? std::min(config_.energy_threshold, 1e-12) : std::min(config_.energy_threshold, 1e-11);
-        double p_tol = std::min(config_.density_threshold, 1e-10);
+        double p_tol = is_uhf ? std::min(config_.density_threshold, 1e-11) : std::min(config_.density_threshold, 1e-10);
 
         bool strict_conv  = (dE < e_tol && dP < p_tol && err_rms < p_tol);
-        bool plateau_conv = (iter_scf_ > 14 && dE < e_tol && dP < 5e-10 && err_rms < 1e-10);
-
-        if (iter_scf_ > 2 && (strict_conv || plateau_conv)) {
+        bool plateau_conv = (iter_scf_ > 14 && dE < e_tol && dP < std::max(p_tol, 1e-10));
+            if (iter_scf_ > 2 && (strict_conv || plateau_conv)) {
             converged = true;
             break;
         }
@@ -807,7 +806,7 @@ void RHF::build_fock_matrix() {
     }
     if (config_.eri_method == "cholesky" || config_.use_df) {
         Eigen::MatrixXd dP = (iter_scf_ == 1) ? P_alpha_ : (P_alpha_ - P_old_);
-        if (iter_scf_ > 1 && dP.cwiseAbs().maxCoeff() < 1e-12) {
+        if (iter_scf_ > 1 && dP.cwiseAbs().maxCoeff() < 1e-15) {
             F_alpha_ = H_ + G_accum_;
             F_beta_  = F_alpha_;
             return;
@@ -940,20 +939,19 @@ void UHF::build_fock_matrix() {
         G_J_accum_b_.setZero();
     }
     if (config_.eri_method == "cholesky" || config_.use_df) {
-        if (iter_scf_ > 1) {
-            double max_dP = std::max((P_alpha_ - P_alpha_old_).cwiseAbs().maxCoeff(),
-                                     (P_beta_  - P_beta_old_).cwiseAbs().maxCoeff());
-            if (max_dP < 1e-12) {
-                F_alpha_ = H_ + G_accum_a_;
-                F_beta_  = H_ + G_accum_b_;
-                return;
-            }
-        }
+     if (iter_scf_ > 1) {
+         double max_dP = std::max((P_alpha_ - P_alpha_old_).cwiseAbs().maxCoeff(),
+                                  (P_beta_  - P_beta_old_).cwiseAbs().maxCoeff());
+         if (max_dP < 1e-15) {
+             F_alpha_ = H_ + G_accum_a_;
+             F_beta_  = H_ + G_accum_b_;
+             return;
+         }
+     }
 
-        Eigen::MatrixXd P_tot = P_alpha_ + P_beta_;
-        bool use_mo_alg = (C_alpha_.rows() == nbasis_) && (C_beta_.rows() == nbasis_)
-                          && (occ_numbers_alpha_.size() == 0) && (occ_numbers_beta_.size() == 0);
-        bool sym_spin = (P_alpha_ - P_beta_).cwiseAbs().maxCoeff() < 1e-14;
+     Eigen::MatrixXd P_tot = P_alpha_ + P_beta_;
+     bool use_mo_alg = (C_alpha_.rows() == nbasis_) && (C_beta_.rows() == nbasis_);
+     bool sym_spin = (P_alpha_ - P_beta_).cwiseAbs().maxCoeff() < 1e-14;
 
         Eigen::MatrixXd Ca_fac = use_mo_alg ? C_alpha_.leftCols(n_alpha_) : factorize_psd_density(P_alpha_);
         Eigen::MatrixXd Cb_fac = use_mo_alg ? C_beta_.leftCols(n_beta_)   : (sym_spin ? Eigen::MatrixXd(nbasis_, 0) : factorize_psd_density(P_beta_));
