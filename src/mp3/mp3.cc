@@ -394,16 +394,14 @@ MP3Result UMP3::compute() {
         Eigen::Tensor<double, 4> Vvvvv_aa = get_V_exact(Cav, Cav, Cav, Cav);
         TBLIS_VIEW_4D(t_Vaa, Vvvvv_aa, nv_a_, nv_a_, nv_a_, nv_a_);
         tblis::mult< double >(1.0, t_Taa, "ijef", t_Vaa, "eafb", 1.0, t_Waa, "ijab");
-        tblis::mult< double >(-1.0, t_Taa, "ijef", t_Vaa, "ebfa", 1.0, t_Waa, "ijab");
-        e3_aa += 0.125 * tensor_dot(t2_aa_, Waa);
+        e3_aa += 0.25 * tensor_dot(t2_aa_, Waa);
 
         if (no_b_ > 0 && nv_b_ > 0) {
             Wbb.setZero();
             Eigen::Tensor<double, 4> Vvvvv_bb = get_V_exact(Cbv, Cbv, Cbv, Cbv);
             TBLIS_VIEW_4D(t_Vbb, Vvvvv_bb, nv_b_, nv_b_, nv_b_, nv_b_);
             tblis::mult< double >(1.0, t_Tbb, "ijef", t_Vbb, "eafb", 1.0, t_Wbb, "ijab");
-            tblis::mult< double >(-1.0, t_Tbb, "ijef", t_Vbb, "ebfa", 1.0, t_Wbb, "ijab");
-            e3_bb += 0.125 * tensor_dot(t2_bb_, Wbb);
+            e3_bb += 0.25 * tensor_dot(t2_bb_, Wbb);
 
             Wab.setZero();
             Eigen::Tensor<double, 4> Vvvvv_ab = get_V_exact(Cav, Cav, Cbv, Cbv);
@@ -963,8 +961,9 @@ void OMP3::compute_mp3_correction() {
                 for (int j = 0; j < na_; ++j) {
                     for (int a = 0; a < va_; ++a) {
                         for (int b = 0; b < va_; ++b) {
+                            double l_asym = 0.5 * (Waa_ladder(i,j,a,b) - Waa_ladder(i,j,b,a));
                             double r_asym = Waa_ring(i,j,a,b) - Waa_ring(j,i,a,b) - Waa_ring(i,j,b,a) + Waa_ring(j,i,b,a);
-                            double w_tot = Waa_ladder(i,j,a,b) + r_asym;
+                            double w_tot = l_asym + r_asym;
                             double D = ea(i) + ea(j) - ea(na_+a) - ea(na_+b);
                             t2_3rd_aa_(i,j,a,b) = w_tot / D;
                             e3_aa += 0.25 * T2_aa_ijab(i,j,a,b) * w_tot;
@@ -979,8 +978,9 @@ void OMP3::compute_mp3_correction() {
                     for (int j = 0; j < nb_; ++j) {
                         for (int a = 0; a < vb_; ++a) {
                             for (int b = 0; b < vb_; ++b) {
+                                double l_asym = 0.5 * (Wbb_ladder(i,j,a,b) - Wbb_ladder(i,j,b,a));
                                 double r_asym = Wbb_ring(i,j,a,b) - Wbb_ring(j,i,a,b) - Wbb_ring(i,j,b,a) + Wbb_ring(j,i,b,a);
-                                double w_tot = Wbb_ladder(i,j,a,b) + r_asym;
+                                double w_tot = l_asym + r_asym;
                                 double D = eb(i) + eb(j) - eb(nb_+a) - eb(nb_+b);
                                 t2_3rd_bb_(i,j,a,b) = w_tot / D;
                                 e3_bb += 0.25 * (*t2_bb_dense_ptr)(i,j,a,b) * w_tot;
