@@ -343,8 +343,7 @@ void CholeskyERI::decompose_direct() {
         D(q * n_basis_ + p) = 0.0;
         D = D.cwiseMax(0.0);
 
-        // Bebaskan shell_pair_cache segera jika tidak ada lagi kandidat pivot besar di shell ini
-        // atau jika total cache aktif melebihi 8 MB (mencegah pembengkakan VmHWM sebesar O(N^4))
+       
         double max_rem_in_shell = 0.0;
         int stP = shell_starts[sp], stQ = shell_starts[sq];
         for (int rp = 0; rp < dimP; ++rp) {
@@ -352,21 +351,9 @@ void CholeskyERI::decompose_direct() {
                 max_rem_in_shell = std::max(max_rem_in_shell, D((stP + rp) * n_basis_ + (stQ + rq)));
             }
         }
-        if (max_rem_in_shell < 0.1 * D_max) {
+        if (max_rem_in_shell < std::max(threshold_, 0.1 * D_max)) {
             shell_pair_cache[pair_pq].resize(0, 0);
         }
-
-        bool has_active = false;
-        int stP = shell_starts[sp], stQ = shell_starts[sq];
-        for (int rp = 0; rp < dimP && !has_active; ++rp) {
-            for (int rq = 0; rq < dimQ; ++rq) {
-                if (D((stP + rp) * n_basis_ + (stQ + rq)) >= threshold_) {
-                    has_active = true;
-                    break;
-                }
-            }
-        }
-        if (!has_active) shell_pair_cache[pair_pq].resize(0, 0);
 
         iter++;
     }

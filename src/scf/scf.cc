@@ -955,24 +955,8 @@ void UHF::build_fock_matrix() {
                           && (occ_numbers_alpha_.size() == 0) && (occ_numbers_beta_.size() == 0);
         bool sym_spin = (P_alpha_ - P_beta_).cwiseAbs().maxCoeff() < 1e-14;
 
-        // Faktorisasi PSD diagonal/eigen untuk iterasi 1 (menghindari cabang O(M*N^3) & alokasi Ta_buf/Tb_buf)
-        auto factorize_p = [&](const Eigen::MatrixXd& P) {
-            Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(0.5 * (P + P.transpose()));
-            std::vector<int> cols;
-            for (int i = 0; i < nbasis_; ++i) if (es.eigenvalues()(i) > 1e-12) cols.push_back(i);
-            Eigen::MatrixXd F(nbasis_, static_cast<int>(cols.size()));
-            for (size_t k = 0; k < cols.size(); ++k)
-                F.col(k) = std::sqrt(es.eigenvalues()(cols[k])) * es.eigenvectors().col(cols[k]);
-            return F;
-        };
-
-        Eigen::MatrixXd Ca_fac = use_mo_alg ? C_alpha_.leftCols(n_alpha_) : factorize_p(P_alpha_);
-        Eigen::MatrixXd Cb_fac = use_mo_alg ? C_beta_.leftCols(n_beta_)   : (sym_spin ? Eigen::MatrixXd(nbasis_, 0) : factorize_p(P_beta_));
-        const int na_f = Ca_fac.cols();
-        const int nb_f = Cb_fac.cols();
-        Eigen::MatrixXd Cab_fac(nbasis_, na_f + nb_f);
-        if (na_f > 0) Cab_fac.leftCols(na_f)  = Ca_fac;
-        if (nb_f > 0) Cab_fac.rightCols(nb_f) = Cb_fac;
+        Eigen::MatrixXd Ca_fac = use_mo_alg ? C_alpha_.leftCols(n_alpha_) : factorize_psd_density(P_alpha_);
+        Eigen::MatrixXd Cb_fac = use_mo_alg ? C_beta_.leftCols(n_beta_)   : (sym_spin ? Eigen::MatrixXd(nbasis_, 0) : factorize_psd_density(P_beta_));
 
         Eigen::MatrixXd J_mat  = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
         Eigen::MatrixXd Ka_acc = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
@@ -985,35 +969,12 @@ void UHF::build_fock_matrix() {
         J_mat = Eigen::Map<Eigen::MatrixXd>(J_flat.data(), nbasis_, nbasis_);
 
         const double* L_ptr = L_mat_.data();
-        int max_threads = omp_get_max_threads();
-        std::vector<Eigen::MatrixXd> Ka_tls(max_threads, Eigen::MatrixXd::Zero(nbasis_, nbasis_));
-        std::vector<Eigen::MatrixXd> Kb_tls(max_threads, Eigen::MatrixXd::Zero(nbasis_, nbasis_));
-
-        #pragma omp parallel
-        {
-            int tid = omp_get_thread_num();
-            Eigen::MatrixXd Tab_loc(nbasis_, std::max(1, na_f + nb_f));
-            #pragma omp for schedule(static) nowait
-            for (int P = 0; P < n_chol; ++P) {
-                Eigen::Map<const Eigen::MatrixXd> L_P(L_ptr + static_cast<size_t>(P) * nbasis_ * nbasis_, nbasis_, nbasis_);
-                if (na_f + nb_f > 0) {
-                    Tab_loc.noalias() = L_P * Cab_fac;
-                    if (na_f > 0) {
-                        auto Ta = Tab_loc.leftCols(na_f);
-                        Ka_tls[tid].noalias() += Ta * Ta.transpose();
-                    }
-                    if (nb_f > 0) {
-                        auto Tb = Tab_loc.rightCols(nb_f);
-                        Kb_tls[tid].noalias() += Tb * Tb.transpose();
-                    }
-                }
-            }
+        if (sym_spin && !use_mo_alg) {
+            compute_exchange_cholesky_single(L_ptr, nbasis_, n_chol, Ca_fac, Ka_acc);
+            Kb_acc = Ka_acc;
+        } else {
+            compute_exchange_cholesky_dual(L_ptr, nbasis_, n_chol, Ca_fac, Cb_fac, Ka_acc, Kb_acc);
         }
-        for (int t = 0; t < max_threads; ++t) {
-            Ka_acc += Ka_tls[t];
-            if (nb_f > 0) Kb_acc += Kb_tls[t];
-        }
-        if (sym_spin && !use_mo_alg) Kb_acc = Ka_acc;
 
         G_accum_a_ = 0.5 * ((J_mat - Ka_acc) + (J_mat - Ka_acc).transpose());
         G_accum_b_ = 0.5 * ((J_mat - Kb_acc) + (J_mat - Kb_acc).transpose());
