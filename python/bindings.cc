@@ -163,11 +163,7 @@ namespace mshqc_auto_tune {
             c.use_df = true;
         }
         if (c.use_df && (c.aux_basis_name.empty() || c.aux_basis_name == "cc-pVDZ-JKFIT")) {
-            if (!basis.name().empty() && basis.name() != "cc-pVDZ") {
-                c.aux_basis_name = basis.name() + "-RI";
-            } else if (c.aux_basis_name.empty()) {
-                c.aux_basis_name = "cc-pVTZ-RI";
-            }
+            c.aux_basis_name = basis.name().empty() ? "cc-pVTZ-RI" : (basis.name() + "-RI");
         }
         return c;
     }

@@ -533,6 +533,70 @@ Eigen::Tensor<double, 4> ERITransformer::transform_ovvv(
 }
 
 // File: src/integrals/eri_transformer.cc
+Eigen::Tensor<double, 4> ERITransformer::transform_half_bra(
+    const Eigen::Tensor<double, 4>& eri_ao,
+    const Eigen::MatrixXd& C1, const Eigen::MatrixXd& C2,
+    int nbf, int n1, int n2)
+{
+    using tblis::len_type;
+    using tblis::stride_type;
+    using tblis::varray_view;
+
+    varray_view<double> t_C1({(len_type)C1.rows(), (len_type)C1.cols()}, const_cast<double*>(C1.data()), {1, (stride_type)C1.rows()});
+    varray_view<double> t_C2({(len_type)C2.rows(), (len_type)C2.cols()}, const_cast<double*>(C2.data()), {1, (stride_type)C2.rows()});
+    varray_view<double> t_eri({(len_type)nbf, (len_type)nbf, (len_type)nbf, (len_type)nbf},
+                              const_cast<double*>(eri_ao.data()),
+                              {1, (stride_type)nbf, (stride_type)(nbf*nbf), (stride_type)(nbf*nbf*nbf)});
+
+    Eigen::Tensor<double, 4> T1(n1, nbf, nbf, nbf);
+    T1.setZero();
+    varray_view<double> t_T1({(len_type)n1, (len_type)nbf, (len_type)nbf, (len_type)nbf},
+                             T1.data(),
+                             {1, (stride_type)n1, (stride_type)(n1*nbf), (stride_type)(n1*nbf*nbf)});
+    tblis::mult<double>(1.0, t_eri, "abcd", t_C1, "ae", 0.0, t_T1, "ebcd");
+
+    Eigen::Tensor<double, 4> T2(n1, n2, nbf, nbf);
+    T2.setZero();
+    varray_view<double> t_T2({(len_type)n1, (len_type)n2, (len_type)nbf, (len_type)nbf},
+                             T2.data(),
+                             {1, (stride_type)n1, (stride_type)(n1*n2), (stride_type)(n1*n2*nbf)});
+    tblis::mult<double>(1.0, t_T1, "ebcd", t_C2, "bf", 0.0, t_T2, "efcd");
+
+    return T2;
+}
+
+Eigen::Tensor<double, 4> ERITransformer::transform_finish_ket(
+    const Eigen::Tensor<double, 4>& half_bra,
+    const Eigen::MatrixXd& C3, const Eigen::MatrixXd& C4,
+    int nbf, int n1, int n2, int n3, int n4)
+{
+    using tblis::len_type;
+    using tblis::stride_type;
+    using tblis::varray_view;
+
+    varray_view<double> t_C3({(len_type)C3.rows(), (len_type)C3.cols()}, const_cast<double*>(C3.data()), {1, (stride_type)C3.rows()});
+    varray_view<double> t_C4({(len_type)C4.rows(), (len_type)C4.cols()}, const_cast<double*>(C4.data()), {1, (stride_type)C4.rows()});
+    varray_view<double> t_T2({(len_type)n1, (len_type)n2, (len_type)nbf, (len_type)nbf},
+                             const_cast<double*>(half_bra.data()),
+                             {1, (stride_type)n1, (stride_type)(n1*n2), (stride_type)(n1*n2*nbf)});
+
+    Eigen::Tensor<double, 4> T3(n1, n2, n3, nbf);
+    T3.setZero();
+    varray_view<double> t_T3({(len_type)n1, (len_type)n2, (len_type)n3, (len_type)nbf},
+                             T3.data(),
+                             {1, (stride_type)n1, (stride_type)(n1*n2), (stride_type)(n1*n2*n3)});
+    tblis::mult<double>(1.0, t_T2, "efcd", t_C3, "cg", 0.0, t_T3, "efgd");
+
+    Eigen::Tensor<double, 4> result(n1, n2, n3, n4);
+    result.setZero();
+    varray_view<double> t_out({(len_type)n1, (len_type)n2, (len_type)n3, (len_type)n4},
+                              result.data(),
+                              {1, (stride_type)n1, (stride_type)(n1*n2), (stride_type)(n1*n2*n3)});
+    tblis::mult<double>(1.0, t_T3, "efgd", t_C4, "dh", 0.0, t_out, "efgh");
+
+    return result;
+}
+
 Eigen::Tensor<double, 4> ERITransformer::transform_custom(
     const Eigen::Tensor<double, 4>& eri_ao,
     const Eigen::MatrixXd& C1, const Eigen::MatrixXd& C2, 

@@ -9,7 +9,14 @@ jobs:
   apple_to_apple_benchmark:
     name: Build mshqc from Source & Run Benchmark Suite (mshqc vs Psi4)
     runs-on: ubuntu-latest
-    
+    env:
+      OMP_NUM_THREADS: "4"
+      TBLIS_NUM_THREADS: "4"
+      MKL_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      OMP_MAX_ACTIVE_LEVELS: "1"
+      HDF5_USE_FILE_LOCKING: "FALSE"
+
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -97,7 +104,6 @@ jobs:
             cp -r /usr/local/include /usr/local/lib* "$DEPS_CACHE"/
           fi
 
-          # Verifikasi eksplisit agar pastikan header tblis.h dan libcint tersedia
           test -f /usr/local/include/tblis/tblis.h
           test -f /usr/local/include/cint.h
 
@@ -118,16 +124,7 @@ jobs:
           export CMAKE_BUILD_PARALLEL_LEVEL="4"
           ${{ github.workspace }}/mshqc_venv/bin/pip install . --no-build-isolation --no-cache-dir -v
 
-          # Bersihkan folder cache & scratch sebelum menjalankan benchmark
           rm -rf ${{ github.workspace }}/scratch_tmp
-
-      - name: Run Automated Pytest Validation Suite (tests/test_mshqc.py)
-        run: |
-          ${{ github.workspace }}/mshqc_venv/bin/pytest tests/test_mshqc.py -v -s
-
-      - name: Run Full 60-Run mshqc Benchmark (tests/test_mshqc2.py)
-        run: |
-          ${{ github.workspace }}/mshqc_venv/bin/python tests/test_mshqc2.py | tee mshqc_bench.txt
 
       - name: Set up Micromamba & Install Psi4 (conda-forge)
         uses: mamba-org/setup-micromamba@v2
@@ -140,31 +137,76 @@ jobs:
             numpy
             scipy
 
-      - name: Run Full 60-Run Psi4 Reference Benchmark (tests/benc.py)
+      # ===================================================================
+      # 1. PYTEST API VALIDATION
+      # ===================================================================
+      - name: Run Automated Pytest Validation Suite (tests/test_mshqc.py)
+        run: |
+          ${{ github.workspace }}/mshqc_venv/bin/pytest tests/test_mshqc.py -v -s
+
+      # ===================================================================
+      # 2. SUITE A: 5-SYSTEM HEAD-TO-HEAD BENCHMARK (test_mshqc2 vs benc)
+      # ===================================================================
+      - name: Run Standalone mshqc Benchmark (tests/test_mshqc2.py)
+        run: |
+          ${{ github.workspace }}/mshqc_venv/bin/python -u tests/test_mshqc2.py | tee mshqc_bench.txt
+
+      - name: Run Standalone Psi4 Benchmark (tests/benc.py)
         shell: bash -el {0}
         run: |
           micromamba activate psi4_env
-          python tests/benc.py | tee psi4_bench.txt
+          python -u tests/benc.py | tee psi4_bench.txt
 
-      - name: Generate Head-to-Head Comparison Table (mshqc vs Psi4)
+      - name: Compare 5-System Benchmark (tests/compare_mshqc_psi4.py)
         run: |
           ${{ github.workspace }}/mshqc_venv/bin/python tests/compare_mshqc_psi4.py mshqc_bench.txt psi4_bench.txt
 
-      - name: Run Extra Chapter 4 Benchmarks (RAM, S2, FD Gradient)
+      # ===================================================================
+      # 3. SUITE B: BAB IV FULL BENCHMARK (105 RUNS + RAM + S2 + FD)
+      # ===================================================================
+      - name: Run Isolated mshqc Bab 4 Suite (tests/run_mshqc_bab4.py)
+        run: |
+          ${{ github.workspace }}/mshqc_venv/bin/python -u tests/run_mshqc_bab4.py --out mshqc_bab4_raw.json | tee mshqc_bab4_runner.log
+
+      - name: Run Isolated Psi4 Bab 4 Suite (tests/run_psi4_bab4.py)
         shell: bash -el {0}
         run: |
-          export PSI4_PY=$(micromamba run -n psi4_env which python)
-          export PSI4_PYTHON="$PSI4_PY"
-          ${{ github.workspace }}/mshqc_venv/bin/python -u tests/test_bab4_benchmark.py | tee test_bab4_benchmark.txt
-          cp test_bab4_benchmark.txt bab4_extra_bench.txt
+          micromamba activate psi4_env
+          python -u tests/run_psi4_bab4.py --out psi4_bab4_raw.json | tee psi4_bab4_runner.log
 
-      - name: test_universal validation
+      - name: Compare & Generate Bab 4 Tables 1-6 (tests/compare_bab4.py)
         run: |
-          export PSI4_PY=$(micromamba run -n psi4_env which python)
-          export PSI4_PYTHON="$PSI4_PY"
-          ${{ github.workspace }}/mshqc_venv/bin/python tests/test_universal_validation.py | tee test_universal_validation.txt
+          ${{ github.workspace }}/mshqc_venv/bin/python -u tests/compare_bab4.py mshqc_bab4_raw.json psi4_bab4_raw.json | tee test_bab4_benchmark.txt
+          cp test_bab4_benchmark.txt bab4_extra_bench.txt
+          if [ -f "comparison_bab4_summary.md" ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            cat comparison_bab4_summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
 
-      - name: Upload Benchmark Logs & Comparison Table as Artifacts
+      # ===================================================================
+      # 4. SUITE C: UNIVERSAL VALIDATION SUITE (ISOLATED RUNNERS)
+      # ===================================================================
+      - name: Run Isolated mshqc Universal Validation (tests/run_mshqc_universal.py)
+        run: |
+          ${{ github.workspace }}/mshqc_venv/bin/python -u tests/run_mshqc_universal.py --tier standard --basis cc-pVDZ --out mshqc_universal_raw.json | tee mshqc_universal_runner.log
+
+      - name: Run Isolated Psi4 Universal Validation (tests/run_psi4_universal.py)
+        shell: bash -el {0}
+        run: |
+          micromamba activate psi4_env
+          python -u tests/run_psi4_universal.py --tier standard --basis cc-pVDZ --out psi4_universal_raw.json | tee psi4_universal_runner.log
+
+      - name: Compare & Validate Universal Suite (tests/compare_universal.py)
+        run: |
+          ${{ github.workspace }}/mshqc_venv/bin/python -u tests/compare_universal.py mshqc_universal_raw.json psi4_universal_raw.json | tee test_universal_validation.txt
+          if [ -f "comparison_universal_summary.md" ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
+            cat comparison_universal_summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # ===================================================================
+      # 5. UPLOAD ARTIFACTS
+      # ===================================================================
+      - name: Upload Benchmark Logs & Comparison Tables as Artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: mshqc-vs-psi4-benchmark-results
@@ -172,6 +214,12 @@ jobs:
             mshqc_bench.txt
             psi4_bench.txt
             comparison_summary.md
+            mshqc_bab4_raw.json
+            psi4_bab4_raw.json
             test_bab4_benchmark.txt
             bab4_extra_bench.txt
+            comparison_bab4_summary.md
+            mshqc_universal_raw.json
+            psi4_universal_raw.json
             test_universal_validation.txt
+            comparison_universal_summary.md

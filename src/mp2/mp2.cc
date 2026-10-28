@@ -492,23 +492,23 @@ void OMP2::transform_integrals() {
 
         g_aa_.clear(); g_bb_.clear(); g_ab_.clear();
 
-       
-
-        auto dense_aa = integrals::ERITransformer::transform_custom(eri_ao, Ca_o, Ca_v, Ca_o, Ca_v, nbf_, na_, va_, na_, va_);
-        g_aa_.allocate_block(0, 0, 0, 0, na_, va_, na_, va_);
-        *(g_aa_.get_block(0, 0, 0, 0)) = dense_aa;
-
         if (!is_restricted && nb_ > 0 && vb_ > 0) {
             const Eigen::MatrixXd& Cb_o = scf_.C_beta.leftCols(nb_);
             const Eigen::MatrixXd& Cb_v = scf_.C_beta.rightCols(vb_);
 
-            auto dense_bb = integrals::ERITransformer::transform_custom(eri_ao, Cb_o, Cb_v, Cb_o, Cb_v, nbf_, nb_, vb_, nb_, vb_);
-            g_bb_.allocate_block(0, 0, 0, 0, nb_, vb_, nb_, vb_);
-            *(g_bb_.get_block(0, 0, 0, 0)) = dense_bb;
+            auto half_ov_a = integrals::ERITransformer::transform_half_bra(eri_ao, Ca_o, Ca_v, nbf_, na_, va_);
+            g_aa_.allocate_block(0, 0, 0, 0, na_, va_, na_, va_);
+            *(g_aa_.get_block(0, 0, 0, 0)) = integrals::ERITransformer::transform_finish_ket(half_ov_a, Ca_o, Ca_v, nbf_, na_, va_, na_, va_);
 
-            auto dense_ab = integrals::ERITransformer::transform_custom(eri_ao, Ca_o, Ca_v, Cb_o, Cb_v, nbf_, na_, va_, nb_, vb_);
             g_ab_.allocate_block(0, 0, 0, 0, na_, va_, nb_, vb_);
-            *(g_ab_.get_block(0, 0, 0, 0)) = dense_ab;
+            *(g_ab_.get_block(0, 0, 0, 0)) = integrals::ERITransformer::transform_finish_ket(half_ov_a, Cb_o, Cb_v, nbf_, na_, va_, nb_, vb_);
+            half_ov_a.resize(0, 0, 0, 0);
+
+            g_bb_.allocate_block(0, 0, 0, 0, nb_, vb_, nb_, vb_);
+            *(g_bb_.get_block(0, 0, 0, 0)) = integrals::ERITransformer::transform_custom(eri_ao, Cb_o, Cb_v, Cb_o, Cb_v, nbf_, nb_, vb_, nb_, vb_);
+        } else {
+            g_aa_.allocate_block(0, 0, 0, 0, na_, va_, na_, va_);
+            *(g_aa_.get_block(0, 0, 0, 0)) = integrals::ERITransformer::transform_custom(eri_ao, Ca_o, Ca_v, Ca_o, Ca_v, nbf_, na_, va_, na_, va_);
         }
     } else {
         scf_.C_alpha = C_a_current_;

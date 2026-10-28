@@ -274,7 +274,21 @@ public:
         const Eigen::MatrixXd& C3, 
         const Eigen::MatrixXd& C4,
         int nbf, int n1, int n2, int n3, int n4
-    );    
+    );
+
+    static Eigen::Tensor<double, 4> transform_half_bra(
+        const Eigen::Tensor<double, 4>& eri_ao,
+        const Eigen::MatrixXd& C1,
+        const Eigen::MatrixXd& C2,
+        int nbf, int n1, int n2
+    );
+
+    static Eigen::Tensor<double, 4> transform_finish_ket(
+        const Eigen::Tensor<double, 4>& half_bra,
+        const Eigen::MatrixXd& C3,
+        const Eigen::MatrixXd& C4,
+        int nbf, int n1, int n2, int n3, int n4
+    );  
     
     static void print_transform_info(
         const char* name,

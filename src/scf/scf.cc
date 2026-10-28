@@ -1008,15 +1008,13 @@ void UHF::build_fock_matrix() {
             int nshells = basis_.n_shells();
             Eigen::MatrixXd P_max = compute_shell_pmax(nshells, shell_starts_, shell_sizes_, dPa, &dPb);
 
-            Eigen::MatrixXd dJ  = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-            Eigen::MatrixXd dKa = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-            Eigen::MatrixXd dKb = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+            Eigen::MatrixXd dGa = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+            Eigen::MatrixXd dGb = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
 
             #pragma omp parallel
             {
-                Eigen::MatrixXd J_local  = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-                Eigen::MatrixXd Ka_local = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-                Eigen::MatrixXd Kb_local = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+                Eigen::MatrixXd Ga_local = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+                Eigen::MatrixXd Gb_local = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
 
                 #pragma omp for schedule(static) nowait
                 for (size_t i = 0; i < incore_quartets_.size(); ++i) {
@@ -1044,49 +1042,58 @@ void UHF::build_fock_matrix() {
                         for (int p = 0; p < dimP; ++p) {
                             int lam = offP + p;
                             double pt_ls_2 = dP_tot(lam, sig) * 2.0;
+                            double j_ls_accum = 0.0;
+
                             for (int n = 0; n < dimN; ++n) {
                                 int nu = offN + n;
                                 double dPa_ns = dPa(nu, sig);
                                 double dPa_nl = dPa(nu, lam);
                                 double dPb_ns = dPb(nu, sig);
                                 double dPb_nl = dPb(nu, lam);
+                                double j_mn_accum = 0.0;
+
                                 for (int m = 0; m < dimM; ++m) {
                                     int mu = offM + m;
                                     double val = *I_ptr++;
                                     if (std::abs(val) < 1e-14) continue;
 
                                     double v = val * fac;
-                                    J_local(mu, nu)   += v * pt_ls_2;
-                                    J_local(lam, sig) += v * (dP_tot(mu, nu) * 2.0);
+                                    j_mn_accum += v * pt_ls_2;
+                                    j_ls_accum += v * (dP_tot(mu, nu) * 2.0);
 
-                                    Ka_local(mu, lam) += v * dPa_ns;
-                                    Ka_local(nu, lam) += v * dPa(mu, sig);
-                                    Ka_local(mu, sig) += v * dPa_nl;
-                                    Ka_local(nu, sig) += v * dPa(mu, lam);
+                                    Ga_local(mu, lam) -= v * dPa_ns;
+                                    Ga_local(nu, lam) -= v * dPa(mu, sig);
+                                    Ga_local(mu, sig) -= v * dPa_nl;
+                                    Ga_local(nu, sig) -= v * dPa(mu, lam);
 
-                                    Kb_local(mu, lam) += v * dPb_ns;
-                                    Kb_local(nu, lam) += v * dPb(mu, sig);
-                                    Kb_local(mu, sig) += v * dPb_nl;
-                                    Kb_local(nu, sig) += v * dPb(mu, lam);
+                                    Gb_local(mu, lam) -= v * dPb_ns;
+                                    Gb_local(nu, lam) -= v * dPb(mu, sig);
+                                    Gb_local(mu, sig) -= v * dPb_nl;
+                                    Gb_local(nu, sig) -= v * dPb(mu, lam);
+
+                                    double j_val = v * pt_ls_2;
+                                    Ga_local(mu, nu) += j_val;
+                                    Gb_local(mu, nu) += j_val;
                                 }
+                                (void)j_mn_accum;
                             }
+                            Ga_local(lam, sig) += j_ls_accum;
+                            Gb_local(lam, sig) += j_ls_accum;
                         }
                     }
                 }
                 #pragma omp critical
                 {
-                    dJ.noalias()  += J_local;
-                    dKa.noalias() += Ka_local;
-                    dKb.noalias() += Kb_local;
+                    dGa.noalias() += Ga_local;
+                    dGb.noalias() += Gb_local;
                 }
             }
 
-            dJ  = (dJ  + dJ.transpose()).eval();
-            dKa = (dKa + dKa.transpose()).eval();
-            dKb = (dKb + dKb.transpose()).eval();
+            dGa = (dGa + dGa.transpose()).eval();
+            dGb = (dGb + dGb.transpose()).eval();
 
-            G_accum_a_ += (dJ - dKa);
-            G_accum_b_ += (dJ - dKb);
+            G_accum_a_ += dGa;
+            G_accum_b_ += dGb;
             F_alpha_ = H_ + G_accum_a_;
             F_beta_  = H_ + G_accum_b_;
             G_J_accum_a_ = P_tot;
@@ -1303,15 +1310,13 @@ void ROHF::build_fock_matrix() {
             int nshells = basis_.n_shells();
             Eigen::MatrixXd P_max = compute_shell_pmax(nshells, shell_starts_, shell_sizes_, dPa, &dPb);
 
-            Eigen::MatrixXd dJ  = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-            Eigen::MatrixXd dKa = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-            Eigen::MatrixXd dKb = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+            Eigen::MatrixXd dGa = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+            Eigen::MatrixXd dGb = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
 
             #pragma omp parallel
             {
-                Eigen::MatrixXd J_local  = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-                Eigen::MatrixXd Ka_local = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-                Eigen::MatrixXd Kb_local = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+                Eigen::MatrixXd Ga_local = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+                Eigen::MatrixXd Gb_local = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
 
                 #pragma omp for schedule(static) nowait
                 for (size_t i = 0; i < incore_quartets_.size(); ++i) {
@@ -1339,49 +1344,54 @@ void ROHF::build_fock_matrix() {
                         for (int p = 0; p < dimP; ++p) {
                             int lam = offP + p;
                             double pt_ls_2 = dP_tot(lam, sig) * 2.0;
+                            double j_ls_accum = 0.0;
+
                             for (int n = 0; n < dimN; ++n) {
                                 int nu = offN + n;
                                 double dPa_ns = dPa(nu, sig);
                                 double dPa_nl = dPa(nu, lam);
                                 double dPb_ns = dPb(nu, sig);
                                 double dPb_nl = dPb(nu, lam);
+
                                 for (int m = 0; m < dimM; ++m) {
                                     int mu = offM + m;
                                     double val = *I_ptr++;
                                     if (std::abs(val) < 1e-14) continue;
 
                                     double v = val * fac;
-                                    J_local(mu, nu)   += v * pt_ls_2;
-                                    J_local(lam, sig) += v * (dP_tot(mu, nu) * 2.0);
+                                    double j_val = v * pt_ls_2;
+                                    Ga_local(mu, nu) += j_val;
+                                    Gb_local(mu, nu) += j_val;
+                                    j_ls_accum += v * (dP_tot(mu, nu) * 2.0);
 
-                                    Ka_local(mu, lam) += v * dPa_ns;
-                                    Ka_local(nu, lam) += v * dPa(mu, sig);
-                                    Ka_local(mu, sig) += v * dPa_nl;
-                                    Ka_local(nu, sig) += v * dPa(mu, lam);
+                                    Ga_local(mu, lam) -= v * dPa_ns;
+                                    Ga_local(nu, lam) -= v * dPa(mu, sig);
+                                    Ga_local(mu, sig) -= v * dPa_nl;
+                                    Ga_local(nu, sig) -= v * dPa(mu, lam);
 
-                                    Kb_local(mu, lam) += v * dPb_ns;
-                                    Kb_local(nu, lam) += v * dPb(mu, sig);
-                                    Kb_local(mu, sig) += v * dPb_nl;
-                                    Kb_local(nu, sig) += v * dPb(mu, lam);
+                                    Gb_local(mu, lam) -= v * dPb_ns;
+                                    Gb_local(nu, lam) -= v * dPb(mu, sig);
+                                    Gb_local(mu, sig) -= v * dPb_nl;
+                                    Gb_local(nu, sig) -= v * dPb(mu, lam);
                                 }
                             }
+                            Ga_local(lam, sig) += j_ls_accum;
+                            Gb_local(lam, sig) += j_ls_accum;
                         }
                     }
                 }
                 #pragma omp critical
                 {
-                    dJ.noalias()  += J_local;
-                    dKa.noalias() += Ka_local;
-                    dKb.noalias() += Kb_local;
+                    dGa.noalias() += Ga_local;
+                    dGb.noalias() += Gb_local;
                 }
             }
 
-            dJ  = (dJ  + dJ.transpose()).eval();
-            dKa = (dKa + dKa.transpose()).eval();
-            dKb = (dKb + dKb.transpose()).eval();
+            dGa = (dGa + dGa.transpose()).eval();
+            dGb = (dGb + dGb.transpose()).eval();
 
-            G_accum_a_ += (dJ - dKa);
-            G_accum_b_ += (dJ - dKb);
+            G_accum_a_ += dGa;
+            G_accum_b_ += dGb;
             F_alpha_ = H_ + G_accum_a_;
             F_beta_  = H_ + G_accum_b_;
         }

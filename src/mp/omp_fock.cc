@@ -263,6 +263,8 @@ void OMP2::build_generalized_fock() {
         const Eigen::MatrixXd& Ca_v = scf_.C_alpha.rightCols(va_);
         auto* t_aa_blk = t2_aa_.get_block(0, 0, 0, 0);
 
+        Eigen::Tensor<double, 4> half_ov_a, half_oo_a;
+
         if (t_aa_blk && na_ > 0 && va_ > 0) {
             Eigen::Tensor<double, 4> T2_eff_aa(na_, na_, va_, va_);
             #pragma omp parallel for collapse(4) schedule(static)
@@ -280,15 +282,16 @@ void OMP2::build_generalized_fock() {
                 }
             }
 
-            auto V_ovvv_aa = integrals::ERITransformer::transform_custom(eri_ao, Ca_o, Ca_v, Ca_v, Ca_v, nbf_, na_, va_, va_, va_);
-            auto V_ooov_aa = integrals::ERITransformer::transform_custom(eri_ao, Ca_o, Ca_o, Ca_o, Ca_v, nbf_, na_, na_, na_, va_);
+            half_ov_a = integrals::ERITransformer::transform_half_bra(eri_ao, Ca_o, Ca_v, nbf_, na_, va_);
+            half_oo_a = integrals::ERITransformer::transform_half_bra(eri_ao, Ca_o, Ca_o, nbf_, na_, na_);
+            auto V_ovvv_aa = integrals::ERITransformer::transform_finish_ket(half_ov_a, Ca_v, Ca_v, nbf_, na_, va_, va_, va_);
+            auto V_ooov_aa = integrals::ERITransformer::transform_finish_ket(half_oo_a, Ca_o, Ca_v, nbf_, na_, na_, na_, va_);
 
             TBLIS_VIEW_4D(t_Teff_aa, T2_eff_aa, na_, na_, va_, va_);
             TBLIS_VIEW_4D(t_Vovvv_aa, V_ovvv_aa, na_, va_, va_, va_);
             TBLIS_VIEW_4D(t_Vooov_aa, V_ooov_aa, na_, na_, na_, va_);
             TBLIS_VIEW_2D(t_Zmat_a, Z_mat_a.data(), va_, na_);
 
-            // Dipanggil di luar #pragma omp parallel agar TBLIS bebas memakai seluruh core CPU
             tblis::mult<double>(1.0,  t_Vovvv_aa, "kcab", t_Teff_aa, "ikbc", 0.0, t_Zmat_a, "ai");
             tblis::mult<double>(-1.0, t_Vooov_aa, "jikc", t_Teff_aa, "jkac", 1.0, t_Zmat_a, "ai");
         }
@@ -303,12 +306,22 @@ void OMP2::build_generalized_fock() {
             auto* t_ab_dense = t2_ab_.get_block(0, 0, 0, 0);
 
             if (t_bb_dense && t_ab_dense) {
-                auto V_ovvv_bb    = integrals::ERITransformer::transform_custom(eri_ao, Cb_o, Cb_v, Cb_v, Cb_v, nbf_, nb_, vb_, vb_, vb_);
-                auto V_ooov_bb    = integrals::ERITransformer::transform_custom(eri_ao, Cb_o, Cb_o, Cb_o, Cb_v, nbf_, nb_, nb_, nb_, vb_);
-                auto V_ovvv_ba_aa = integrals::ERITransformer::transform_custom(eri_ao, Cb_o, Cb_v, Ca_v, Ca_v, nbf_, nb_, vb_, va_, va_);
-                auto V_ooov_aa_bb = integrals::ERITransformer::transform_custom(eri_ao, Ca_o, Ca_o, Cb_o, Cb_v, nbf_, na_, na_, nb_, vb_);
-                auto V_ovvv_ab_bb = integrals::ERITransformer::transform_custom(eri_ao, Ca_o, Ca_v, Cb_v, Cb_v, nbf_, na_, va_, vb_, vb_);
-                auto V_ooov_bb_aa = integrals::ERITransformer::transform_custom(eri_ao, Cb_o, Cb_o, Ca_o, Ca_v, nbf_, nb_, nb_, na_, va_);
+                if (half_ov_a.size() == 0) half_ov_a = integrals::ERITransformer::transform_half_bra(eri_ao, Ca_o, Ca_v, nbf_, na_, va_);
+                if (half_oo_a.size() == 0) half_oo_a = integrals::ERITransformer::transform_half_bra(eri_ao, Ca_o, Ca_o, nbf_, na_, na_);
+                auto V_ooov_aa_bb = integrals::ERITransformer::transform_finish_ket(half_oo_a, Cb_o, Cb_v, nbf_, na_, na_, nb_, vb_);
+                auto V_ovvv_ab_bb = integrals::ERITransformer::transform_finish_ket(half_ov_a, Cb_v, Cb_v, nbf_, na_, va_, vb_, vb_);
+                half_ov_a.resize(0, 0, 0, 0);
+                half_oo_a.resize(0, 0, 0, 0);
+
+                auto half_ov_b = integrals::ERITransformer::transform_half_bra(eri_ao, Cb_o, Cb_v, nbf_, nb_, vb_);
+                auto V_ovvv_bb    = integrals::ERITransformer::transform_finish_ket(half_ov_b, Cb_v, Cb_v, nbf_, nb_, vb_, vb_, vb_);
+                auto V_ovvv_ba_aa = integrals::ERITransformer::transform_finish_ket(half_ov_b, Ca_v, Ca_v, nbf_, nb_, vb_, va_, va_);
+                half_ov_b.resize(0, 0, 0, 0);
+
+                auto half_oo_b = integrals::ERITransformer::transform_half_bra(eri_ao, Cb_o, Cb_o, nbf_, nb_, nb_);
+                auto V_ooov_bb    = integrals::ERITransformer::transform_finish_ket(half_oo_b, Cb_o, Cb_v, nbf_, nb_, nb_, nb_, vb_);
+                auto V_ooov_bb_aa = integrals::ERITransformer::transform_finish_ket(half_oo_b, Ca_o, Ca_v, nbf_, nb_, nb_, na_, va_);
+                half_oo_b.resize(0, 0, 0, 0);
 
                 TBLIS_VIEW_4D(t_Tbb, (*t_bb_dense), nb_, nb_, vb_, vb_);
                 TBLIS_VIEW_4D(t_Tab, (*t_ab_dense), na_, nb_, va_, vb_);
