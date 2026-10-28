@@ -9,13 +9,7 @@ jobs:
   apple_to_apple_benchmark:
     name: Build mshqc from Source & Run Benchmark Suite (mshqc vs Psi4)
     runs-on: ubuntu-latest
-    env:
-      OMP_NUM_THREADS: str(n_threads)
-      TBLIS_NUM_THREADS: str(n_threads)
-      MKL_NUM_THREADS: "1"
-      OPENBLAS_NUM_THREADS: "1"
-      HDF5_USE_FILE_LOCKING: "FALSE"
-
+    
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
