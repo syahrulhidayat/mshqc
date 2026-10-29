@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-Simplified MSHQC Universal Validation Runner (Clean User-Friendly API)
+Simplified MSHQC Universal Validation Runner (Safe C++ Lifetime & Real-Time Output)
 Output: mshqc_universal_raw.json
 """
 
 import gc
+import sys
 import time
 import json
 import argparse
@@ -105,15 +106,21 @@ def select_basis_for_system(spec, requested_basis: str) -> str:
     return requested_basis
 
 
-def compute_s2_from_mo(res, S_mat, na: int, nb: int) -> float:
-    if na == nb:
+def compute_s2_from_mo(res, S_mat, na: int, nb: int, is_closed: bool) -> float:
+    if is_closed or na == nb:
         return 0.0
     sz = 0.5 * (na - nb)
     ideal = float(sz * (sz + 1.0))
     if na == 0 or nb == 0:
         return ideal
-    sab = np.asarray(res.C_alpha)[:, :na].T @ np.asarray(S_mat) @ np.asarray(res.C_beta)[:, :nb]
-    return float(ideal + nb - np.sum(sab ** 2))
+    try:
+        ca = np.array(res.C_alpha, dtype=np.float64, copy=True)[:, :na]
+        cb = np.array(res.C_beta, dtype=np.float64, copy=True)[:, :nb]
+        s  = np.array(S_mat, dtype=np.float64, copy=True)
+        sab = ca.T @ s @ cb
+        return float(ideal + nb - np.sum(sab ** 2))
+    except Exception:
+        return ideal
 
 
 def run_mshqc_system(spec, actual_basis: str, eri_mode: str) -> dict:
@@ -129,22 +136,29 @@ def run_mshqc_system(spec, actual_basis: str, eri_mode: str) -> dict:
     # 2. Load basis set and integral engine
     basis     = mshqc.BasisSet(actual_basis, mol)
     integrals = mshqc.IntegralEngine(mol, basis)
-    S_mat     = integrals.compute_overlap()
+    S_mat     = np.array(integrals.compute_overlap(), dtype=np.float64, copy=True)
 
-    # 3. Run RHF / UHF
+    # 3. Run RHF / UHF (keep solver reference alive during compute)
     scf_cls  = mshqc.RHF if is_closed else mshqc.UHF
-    scf_conf = mshqc.SCFConfig(eri_method=eri_mode, threshold=1e-10, aux_basis_name=aux_basis, max_iterations=200)
+    scf_conf = mshqc.SCFConfig(
+        eri_method=eri_mode,
+        threshold=1e-10,
+        aux_basis_name=aux_basis,
+        max_iterations=200,
+    )
     scf_conf.cholesky_threshold = 1e-9
     scf_conf.df_threshold = 1e-9
 
-    t0_hf   = time.perf_counter()
-    scf_res = scf_cls(mol, basis, integrals, scf_conf).compute()
+    t0_hf      = time.perf_counter()
+    scf_solver = scf_cls(mol, basis, integrals, scf_conf)
+    scf_res    = scf_solver.compute()
     if not scf_res.converged:
         scf_conf.max_iterations = 400
-        scf_res = scf_cls(mol, basis, integrals, scf_conf).compute()
+        scf_solver = scf_cls(mol, basis, integrals, scf_conf)
+        scf_res    = scf_solver.compute()
     t_hf = time.perf_counter() - t0_hf
 
-    s2_hf = compute_s2_from_mo(scf_res, S_mat, na, nb)
+    s2_hf = compute_s2_from_mo(scf_res, S_mat, na, nb, is_closed)
     msh_res = {
         "basis": actual_basis,
         "converged": bool(scf_res.converged),
@@ -154,41 +168,74 @@ def run_mshqc_system(spec, actual_basis: str, eri_mode: str) -> dict:
     }
 
     # 4. Run Post-HF (MP2, MP3, OMP2, OMP3)
+    # Keep solver instances bound to local variables so C++ references stay valid
     if n_elec > 1:
         mp2_cls  = mshqc.RMP2 if is_closed else mshqc.UMP2
         mp3_cls  = mshqc.RMP3 if is_closed else mshqc.UMP3
-        mp2_conf = mshqc.MP2Config(eri_method=eri_mode, threshold=1e-9, gradient_threshold=1e-5, aux_basis_name=aux_basis, max_iterations=50)
+        mp2_conf = mshqc.MP2Config(
+            eri_method=eri_mode,
+            threshold=1e-9,
+            gradient_threshold=1e-5,
+            aux_basis_name=aux_basis,
+            max_iterations=50,
+        )
+        if hasattr(mp2_conf, "cholesky_threshold"):
+            mp2_conf.cholesky_threshold = 1e-9
+        if hasattr(mp2_conf, "df_threshold"):
+            mp2_conf.df_threshold = 1e-9
 
         t0 = time.perf_counter()
-        mp2_res = mp2_cls(mol, basis, integrals, scf_res, mp2_conf).compute()
+        mp2_solver = mp2_cls(mol, basis, integrals, scf_res, mp2_conf)
+        mp2_res    = mp2_solver.compute()
         t_mp2 = time.perf_counter() - t0
+        e_mp2 = float(mp2_res.energy_total)
 
         t0 = time.perf_counter()
-        mp3_res = mp3_cls(scf_res, mp2_res, mp2_conf, integrals).compute()
+        mp3_solver = mp3_cls(scf_res, mp2_res, mp2_conf, integrals)
+        mp3_res    = mp3_solver.compute()
         t_mp3 = time.perf_counter() - t0
+        e_mp3 = float(mp3_res.energy_total)
 
         t0 = time.perf_counter()
-        omp2_res = mshqc.OMP2(mol, basis, integrals, scf_res, mp2_conf).compute()
+        omp2_solver = mshqc.OMP2(mol, basis, integrals, scf_res, mp2_conf)
+        omp2_res    = omp2_solver.compute()
         t_omp2 = time.perf_counter() - t0
+        e_omp2  = float(omp2_res.energy_total)
+        s2_omp2 = compute_s2_from_mo(omp2_res, S_mat, na, nb, is_closed)
 
         t0 = time.perf_counter()
-        omp3_res = mshqc.OMP3(mol, basis, integrals, scf_res, mp2_conf).compute()
+        omp3_solver = mshqc.OMP3(mol, basis, integrals, scf_res, mp2_conf)
+        omp3_res    = omp3_solver.compute()
         t_omp3 = time.perf_counter() - t0
+        e_omp3  = float(omp3_res.energy_total)
+        s2_omp3 = compute_s2_from_mo(omp3_res, S_mat, na, nb, is_closed)
 
         msh_res.update({
-            "MP2": float(mp2_res.energy_total),
-            "MP3": float(mp3_res.energy_total),
-            "OMP2": float(omp2_res.energy_total),
-            "OMP3": float(omp3_res.energy_total),
-            "S2_OMP2": compute_s2_from_mo(omp2_res, S_mat, na, nb),
-            "S2_OMP3": compute_s2_from_mo(omp3_res, S_mat, na, nb),
+            "MP2": e_mp2,
+            "MP3": e_mp3,
+            "OMP2": e_omp2,
+            "OMP3": e_omp3,
+            "S2_OMP2": s2_omp2,
+            "S2_OMP3": s2_omp3,
         })
-        msh_res["TIME"].update({"MP2": float(t_mp2), "MP3": float(t_mp3), "OMP2": float(t_omp2), "OMP3": float(t_omp3)})
+        msh_res["TIME"].update({
+            "MP2": float(t_mp2),
+            "MP3": float(t_mp3),
+            "OMP2": float(t_omp2),
+            "OMP3": float(t_omp3),
+        })
+
+        # Deterministic teardown in reverse dependency order
+        del omp3_res, omp3_solver
+        del omp2_res, omp2_solver
+        del mp3_res, mp3_solver
+        del mp2_res, mp2_solver
     else:
         for m in ("MP2", "MP3", "OMP2", "OMP3"):
             msh_res[m] = float(scf_res.energy_total)
         msh_res["S2_OMP2"] = msh_res["S2_OMP3"] = s2_hf
 
+    del scf_res, scf_solver, integrals, basis, mol
     gc.collect()
     return msh_res
 
@@ -208,6 +255,17 @@ if __name__ == "__main__":
     selected_systems = {k: v for k, v in SYSTEMS.items() if args.tier == "full" or v[5] == "standard"}
     results_db = {}
 
+    def save_checkpoint():
+        wall_time = time.perf_counter() - t_start
+        with open(args.out, "w", encoding="utf-8") as f:
+            json.dump({
+                "engine": "mshqc",
+                "tier": args.tier,
+                "basis": args.basis,
+                "wall_time_s": wall_time,
+                "results": results_db,
+            }, f, indent=2)
+
     for mode in ["EXACT", "CHOLESKY", "DF"]:
         print(f"\n>>> [MSHQC] Mode ERI: {mode} (Basis Utama: {args.basis}) <<<", flush=True)
         for sys_name, spec in selected_systems.items():
@@ -217,10 +275,17 @@ if __name__ == "__main__":
                 res = run_mshqc_system(spec, actual_basis, mode)
                 results_db[key] = res
                 t_sum = sum(res["TIME"].values())
-                print(f"  [MSHQC] {sys_name:<11} ({actual_basis:<9} | {mode:<8}) -> OMP3: {res['OMP3']:14.8f} Ha ({t_sum:.3f} s)", flush=True)
+                print(
+                    f"  [MSHQC] {sys_name:<11} ({actual_basis:<9} | {mode:<8}) -> "
+                    f"HF: {res['HF']:12.6f} | MP2: {res['MP2']:12.6f} | "
+                    f"MP3: {res['MP3']:12.6f} | OMP2: {res['OMP2']:12.6f} | "
+                    f"OMP3: {res['OMP3']:14.8f} Ha ({t_sum:.3f} s)",
+                    flush=True,
+                )
             except Exception as exc:
                 results_db[key] = {"error": str(exc), "basis": actual_basis}
                 print(f"  [FAIL]  {sys_name:<11} ({actual_basis:<9} | {mode:<8}) -> Error: {exc}", flush=True)
+            save_checkpoint()
 
     if args.basis.lower() != "cc-pvdz":
         print("\n>>> [MSHQC] Cabang SAD Double-Zeta (Basis: cc-pVDZ) <<<", flush=True)
@@ -233,15 +298,8 @@ if __name__ == "__main__":
                     results_db[key] = run_mshqc_system(spec, actual_basis, mode)
                 except Exception as exc:
                     results_db[key] = {"error": str(exc), "basis": actual_basis}
+                save_checkpoint()
 
     wall_time = time.perf_counter() - t_start
-    with open(args.out, "w", encoding="utf-8") as f:
-        json.dump({
-            "engine": "mshqc",
-            "tier": args.tier,
-            "basis": args.basis,
-            "wall_time_s": wall_time,
-            "results": results_db,
-        }, f, indent=2)
-
+    save_checkpoint()
     print(f"\n[SELESAI] Hasil MSHQC Universal disimpan ke: {args.out} ({wall_time:.2f} s)", flush=True)

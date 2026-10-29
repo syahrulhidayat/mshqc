@@ -12,7 +12,7 @@ jobs:
     env:
       OMP_NUM_THREADS: "4"
       TBLIS_NUM_THREADS: "4"
-      MKL_NUM_THREADS: "4"
+      MKL_NUM_THREADS: "1"
       OPENBLAS_NUM_THREADS: "1"
       OMP_MAX_ACTIVE_LEVELS: "1"
       HDF5_USE_FILE_LOCKING: "FALSE"
