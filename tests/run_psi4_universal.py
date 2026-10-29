@@ -241,11 +241,10 @@ def full_psio_clean():
     except Exception:
         pass
     try:
-        
+        # PERBAIKAN: Gunakan clean_variables(), bukan clean()
         psi4.core.clean_variables()
     except Exception:
         pass
-
 
 ANG_TO_BOHR = 1.8897261246257702
 CC_PV_SUPPORTED_Z = set(range(1, 19)) | {20} | set(range(31, 37))
