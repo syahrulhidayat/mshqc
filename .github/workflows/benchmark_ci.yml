@@ -189,12 +189,20 @@ jobs:
       - name: Run Isolated mshqc Universal Validation (tests/run_mshqc_universal.py)
         run: |
           set -eo pipefail
-          gdb -batch -return-child-result \
-            -ex "set pagination off" \
-            -ex "set print thread-events off" \
-            -ex "handle SIGPIPE nostop noprint pass" \
-            -ex "run" \
-            -ex "if \$_isvoid(\$_exitcode)\nbt full\nthread apply all bt\ninfo registers\nend" \
+          cat << 'EOF' > /tmp/ci_debug_mshqc.gdb
+          set pagination off
+          set print thread-events off
+          handle SIGPIPE nostop noprint pass
+          run
+          if $_isvoid($_exitcode)
+            bt full
+            thread apply all bt
+            info registers
+            quit 1
+          end
+          quit 0
+          EOF
+          gdb -batch -x /tmp/ci_debug_mshqc.gdb \
             --args ${{ github.workspace }}/mshqc_venv/bin/python -u tests/run_mshqc_universal.py \
             --tier standard --basis cc-pVDZ --out mshqc_universal_raw.json 2>&1 | tee mshqc_universal_runner.log
 
@@ -203,12 +211,20 @@ jobs:
         run: |
           micromamba activate psi4_env
           PYTHON_BIN="$(which python)"
-          gdb -batch -return-child-result \
-            -ex "set pagination off" \
-            -ex "set print thread-events off" \
-            -ex "handle SIGPIPE nostop noprint pass" \
-            -ex "run" \
-            -ex "if \$_isvoid(\$_exitcode)\nbt full\nthread apply all bt\ninfo registers\nend" \
+          cat << 'EOF' > /tmp/ci_debug_psi4.gdb
+          set pagination off
+          set print thread-events off
+          handle SIGPIPE nostop noprint pass
+          run
+          if $_isvoid($_exitcode)
+            bt full
+            thread apply all bt
+            info registers
+            quit 1
+          end
+          quit 0
+          EOF
+          gdb -batch -x /tmp/ci_debug_psi4.gdb \
             --args "$PYTHON_BIN" -u tests/run_psi4_universal.py \
             --tier standard --basis cc-pVDZ --debug-nan --out psi4_universal_raw.json 2>&1 | tee psi4_universal_runner.log
 
@@ -218,7 +234,6 @@ jobs:
           if [ -f "comparison_universal_summary.md" ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
             cat comparison_universal_summary.md >> "$GITHUB_STEP_SUMMARY"
           fi
-
       # ===================================================================
       # 5. UPLOAD ARTIFACTS
       # ===================================================================
