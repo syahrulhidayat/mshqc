@@ -241,7 +241,8 @@ def full_psio_clean():
     except Exception:
         pass
     try:
-        psi4.core.clean()
+        
+        psi4.core.clean_variables()
     except Exception:
         pass
 
