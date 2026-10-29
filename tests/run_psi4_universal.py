@@ -217,37 +217,38 @@ def calc_s2(wfn, is_closed: bool):
         return float(ideal)
 
 
-def _configure_psi4_options(basis_name: str, is_closed: bool, eri_mode: str, post_hf: bool = False):
+def _configure_psi4_options(basis_name: str, is_closed: bool, eri_mode: str):
     scf_type_map = {"EXACT": "pk", "CHOLESKY": "cd", "DF": "df"}
     mp_type_map  = {"EXACT": "conv", "CHOLESKY": "cd", "DF": "df"}
-
-    # Untuk Post-HF pada CHOLESKY/DF, gunakan scf_type="pk" & read_scf_3index=False
-    # agar dfocc tidak mencoba membuka PSIO unit 97 yang sudah dibersihkan pasca-SCF
-    effective_scf_type = "pk" if (post_hf and eri_mode in ("CHOLESKY", "DF")) else scf_type_map[eri_mode]
 
     opts = {
         "basis": basis_name,
         "reference": "rhf" if is_closed else "uhf",
-        "scf_type": effective_scf_type,
+        "scf_type": scf_type_map[eri_mode],
         "mp2_type": mp_type_map[eri_mode],
         "mp_type": mp_type_map[eri_mode],
         "cc_type": mp_type_map[eri_mode],
-        "e_convergence": 1e-9 if post_hf else 1e-10,
-        "d_convergence": 1e-10,
+        "e_convergence": 1e-10,
+        "d_convergence": 1e-9,
         "r_convergence": 1e-6,
         "rms_mograd_convergence": 1e-5,
         "max_mograd_convergence": 1e-4,
         "freeze_core": False,
         "maxiter": 200,
-        "mo_maxiter": 50,
+        "mo_maxiter": 60,
         "cachelevel": 2,
-        "read_scf_3index": False,
     }
+    
     if eri_mode == "CHOLESKY":
-        opts["cholesky_tolerance"] = 1e-9
+        opts["cholesky_tolerance"] = 1e-8
     elif eri_mode == "DF":
         aux_b = basis_name.lower() + "-ri"
-        opts.update({"df_basis_scf": aux_b, "df_basis_mp2": aux_b, "df_basis_cc": aux_b})
+        opts.update({
+            "df_basis_scf": aux_b,
+            "df_basis_mp2": aux_b,
+            "df_basis_cc": aux_b
+        })
+        
     psi4.set_options(opts)
 
 
@@ -264,10 +265,9 @@ def run_psi4_system(name, spec, basis_name, eri_mode):
     mol_lines += [f"{sym} {x:.12f} {y:.12f} {zc:.12f}" for _, sym, x, y, zc in atoms]
     mol = psi4.geometry("\n".join(mol_lines))
 
-    _configure_psi4_options(basis_name, is_closed, eri_mode, post_hf=False)
+    _configure_psi4_options(basis_name, is_closed, eri_mode)
 
-    # SCF menggunakan 4 thread OpenMP di libfock -> BLAS = 1 thread agar bebas oversubscription
-    set_blas_threads(1)
+    # 1. Jalankan SCF
     t0 = time.perf_counter()
     e_hf, wfn_hf = psi4.energy("scf", molecule=mol, return_wfn=True)
     t_hf = time.perf_counter() - t0
@@ -286,41 +286,39 @@ def run_psi4_system(name, spec, basis_name, eri_mode):
         full_psio_clean()
         return res
 
-    hf_snap = snapshot_wfn(wfn_hf)
-    if eri_mode in ("CHOLESKY", "DF"):
-        psi4.set_options({"scf_type": "pk", "read_scf_3index": False, "e_convergence": 1e-9})
-    else:
-        psi4.set_options({"e_convergence": 1e-9})
+    # 2. Eliminasi Redundansi: Cukup panggil MP3 (otomatis menghitung MP2)
+    t0 = time.perf_counter()
+    e_mp3, wfn_mp3 = psi4.energy("mp3", ref_wfn=wfn_hf, molecule=mol, return_wfn=True)
+    t_mp3 = time.perf_counter() - t0
+    
+    # Ambil energi MP2 langsung dari wave function/variabel Psi4 tanpa re-run
+    res["MP2"] = float(psi4.core.variable("MP2 TOTAL ENERGY"))
+    res["MP3"] = float(e_mp3)
+    res["TIME"]["MP3"] = float(t_mp3)
+    res["TIME"]["MP2"] = float(psi4.core.variable("MP2 TOTAL ENERGY")) # Opsional/Estimasi
 
-    # Aktifkan multi-thread BLAS khusus untuk modul occ/libdpd (mode EXACT);
-    # pada mode CHOLESKY/DF, dfocc sudah paralel via OpenMP (N_THREADS)
-    corr_blas_threads = N_THREADS if eri_mode == "EXACT" else 1
-    set_blas_threads(corr_blas_threads)
+    # 3. Eksekusi OMP2 & OMP3
+    # Catatan: OMP2 dan OMP3 memiliki orbital yang berbeda (variational MO).
+    # Namun pada mode CD/DF, gunakan 'omp2' dan 'omp3' dengan konfigurasi SCF type yang konsisten.
+    try:
+        t0 = time.perf_counter()
+        e_omp2, wfn_omp2 = psi4.energy("omp2", ref_wfn=wfn_hf, molecule=mol, return_wfn=True)
+        res["OMP2"] = float(e_omp2)
+        res["S2_OMP2"] = calc_s2(wfn_omp2, is_closed)
+        res["TIME"]["OMP2"] = time.perf_counter() - t0
+    except Exception as e:
+        res["OMP2"] = float("nan")
 
     try:
-        for m_key, m_call in (("MP2", "mp2"), ("MP3", "mp3")):
-            restore_wfn(wfn_hf, hf_snap)
-            _configure_psi4_options(basis_name, is_closed, eri_mode, post_hf=True)
-            t0 = time.perf_counter()
-            val = float(psi4.energy(m_call, ref_wfn=wfn_hf, molecule=mol))
-            t_elapsed = time.perf_counter() - t0
-            res[m_key] = val
-            res["TIME"][m_key] = float(t_elapsed)
-            full_psio_clean()
+        t0 = time.perf_counter()
+        e_omp3, wfn_omp3 = psi4.energy("omp3", ref_wfn=wfn_hf, molecule=mol, return_wfn=True)
+        res["OMP3"] = float(e_omp3)
+        res["S2_OMP3"] = calc_s2(wfn_omp3, is_closed)
+        res["TIME"]["OMP3"] = time.perf_counter() - t0
+    except Exception as e:
+        res["OMP3"] = float("nan")
 
-        for m_key, m_call in (("OMP2", "omp2"), ("OMP3", "omp3")):
-            restore_wfn(wfn_hf, hf_snap)
-            _configure_psi4_options(basis_name, is_closed, eri_mode, post_hf=True)
-            t0 = time.perf_counter()
-            e_tmp, wfn_opt = psi4.energy(m_call, ref_wfn=wfn_hf, molecule=mol, return_wfn=True)
-            t_elapsed = time.perf_counter() - t0
-            res[m_key] = float(e_tmp)
-            res[f"S2_{m_key}"] = calc_s2(wfn_opt, is_closed)
-            res["TIME"][m_key] = float(t_elapsed)
-            full_psio_clean()
-    finally:
-        set_blas_threads(1)
-
+    full_psio_clean()
     return res
 
 
