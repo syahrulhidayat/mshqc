@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 MSHQC Bab IV Benchmark Runner (Clean User-Friendly API & Real-Time Console UI)
-Output: mshqc_bab4_raw.json & mshqc_bab4_runner.log
+Output: mshqc_bab4_raw.json, mshqc_bab4_runner.log, mshqc_bab4_test.txt
 """
 
 import os
@@ -9,12 +9,18 @@ import gc
 import sys
 import time
 import json
+import ctypes
 import argparse
 import subprocess
 from pathlib import Path
 from contextlib import contextmanager
 import numpy as np
 import mshqc
+
+try:
+    _LIBC = ctypes.CDLL(None)
+except Exception:
+    _LIBC = None
 
 SYSTEMS = {
     "Neon":    {"atoms": [("Ne", 0.0, 0.0,  0.0000)], "charge": 0, "mult": 1, "is_uhf": False},
@@ -60,12 +66,14 @@ class TeeLogger:
     def __init__(self, log_path: str):
         self.terminal = sys.__stdout__
         self.log_file = open(log_path, "w", encoding="utf-8", buffering=1)
+        self.chunks = []
 
     def write(self, message: str):
         self.terminal.write(message)
         self.terminal.flush()
         self.log_file.write(message)
         self.log_file.flush()
+        self.chunks.append(message)
 
     def flush(self):
         self.terminal.flush()
@@ -73,6 +81,9 @@ class TeeLogger:
 
     def fileno(self):
         return self.terminal.fileno()
+
+    def get_text(self) -> str:
+        return "".join(self.chunks)
 
     def close(self):
         self.log_file.close()
@@ -87,6 +98,8 @@ def atomic_write_text(path_str: str, content: str):
 @contextmanager
 def capture_c_stdout():
     sys.stdout.flush()
+    if _LIBC is not None:
+        _LIBC.fflush(None)
     old_fd = os.dup(1)
     r_fd, w_fd = os.pipe()
     buf = []
@@ -96,6 +109,8 @@ def capture_c_stdout():
         yield buf
     finally:
         sys.stdout.flush()
+        if _LIBC is not None:
+            _LIBC.fflush(None)
         os.dup2(old_fd, 1)
         os.close(old_fd)
         chunks = []
@@ -151,20 +166,23 @@ def run_ram_worker(payload_str: str):
 
     base_rss, base_hwm = get_rss_and_hwm_mb()
     p = json.loads(payload_str)
+    mode_lower = p["mode"].lower()
 
     mol = build_mol(p["sys"])
     basis = mshqc.BasisSet(p["basis"], mol)
     ints = mshqc.IntegralEngine(mol, basis)
 
-    scf_conf = mshqc.SCFConfig(eri_method=p["mode"], threshold=1e-9, aux_basis_name=p["aux"])
-    mp2_conf = mshqc.MP2Config(eri_method=p["mode"], threshold=1e-9, gradient_threshold=1e-5, aux_basis_name=p["aux"])
+    scf_conf = mshqc.SCFConfig(eri_method=mode_lower, threshold=1e-9, aux_basis_name=p["aux"])
+    mp2_conf = mshqc.MP2Config(eri_method=mode_lower, threshold=1e-9, gradient_threshold=1e-5, aux_basis_name=p["aux"])
 
     scf_cls = mshqc.UHF if SYSTEMS[p["sys"]]["is_uhf"] else mshqc.RHF
-    scf_res = scf_cls(mol, basis, ints, scf_conf).compute()
+    with capture_c_stdout():
+        scf_res = scf_cls(mol, basis, ints, scf_conf).compute()
     gc.collect()
 
     omp_cls = mshqc.OMP2 if p["method"] == "OMP2" else mshqc.OMP3
-    omp_cls(mol, basis, ints, scf_res, mp2_conf).compute()
+    with capture_c_stdout():
+        omp_cls(mol, basis, ints, scf_res, mp2_conf).compute()
 
     curr_rss, peak_hwm = get_rss_and_hwm_mb()
     net_ram = max(peak_hwm - base_hwm, curr_rss - base_rss, 0.10)
@@ -174,7 +192,7 @@ def run_ram_worker(payload_str: str):
 def compute_mshqc_suite():
     ref_suite, traces = {}, {}
     print("\n" + "=" * 106, flush=True)
-    print("  [LIVE TEST 1/4] MSHQC 105-RUN SOLVER SUITE (HF, MP2, MP3, OMP2, OMP3 | cc-pVTZ / cc-pVTZ-RI)", flush=True)
+    print("  [LIVE TEST 1/5] MSHQC 105-RUN SOLVER SUITE (HF, MP2, MP3, OMP2, OMP3 | cc-pVTZ / cc-pVTZ-RI)", flush=True)
     print("=" * 106, flush=True)
     print(f"| {'Sistem':<8} | {'Mode ERI':<9} | {'Metode':<6} | {'E_mshqc (Ha)':<16} | {'Waktu (s)':<9} | {'<S^2>':<10} | {'Ideal':<6} | {'Iter':<6} | {'Status':<6} |", flush=True)
     print(f"|{'-'*10}|{'-'*11}|{'-'*8}|{'-'*18}|{'-'*11}|{'-'*12}|{'-'*8}|{'-'*8}|{'-'*8}|", flush=True)
@@ -192,49 +210,52 @@ def compute_mshqc_suite():
         mp3_cls = mshqc.UMP3 if is_uhf else mshqc.RMP3
 
         for mode in ERI_MODE_ORDER:
-            scf_conf = mshqc.SCFConfig(eri_method=mode, threshold=1e-9, max_iterations=200)
-            mp2_conf = mshqc.MP2Config(eri_method=mode, threshold=1e-9, gradient_threshold=1e-5, max_iterations=50)
+            # PENTING: C++ mshqc mengharuskan eri_method dalam huruf kecil ("exact", "cholesky", "df")
+            mode_lower = mode.lower()
+            scf_conf = mshqc.SCFConfig(
+                eri_method=mode_lower, threshold=1e-9, max_iterations=200, aux_basis_name="cc-pVTZ-RI"
+            )
+            mp2_conf = mshqc.MP2Config(
+                eri_method=mode_lower, threshold=1e-9, gradient_threshold=1e-5, max_iterations=50, aux_basis_name="cc-pVTZ-RI"
+            )
 
-            t0 = time.perf_counter()
-            scf_res = scf_cls(mol, basis, ints, scf_conf).compute()
-            t_scf = time.perf_counter() - t0
+            with capture_c_stdout():
+                t0 = time.perf_counter()
+                scf_res = scf_cls(mol, basis, ints, scf_conf).compute()
+                t_scf = time.perf_counter() - t0
             na, nb = scf_res.n_occ_alpha, scf_res.n_occ_beta
             s_ideal, s2_uhf = compute_spin_s2(ints, scf_res, na, nb)
             print(f"| {sys_name:<8} | {mode:<9} | {ref_lbl+'HF':<6} | {scf_res.energy_total:<16.8f} | {t_scf:<9.3f} | {s2_uhf:<10.6f} | {s_ideal:<6.2f} | {'-':<6} | {'OK':<6} |", flush=True)
 
-            t0 = time.perf_counter()
-            res_mp2 = mp2_cls(mol, basis, ints, scf_res, mp2_conf).compute()
-            t_mp2 = time.perf_counter() - t0
+            with capture_c_stdout():
+                t0 = time.perf_counter()
+                res_mp2 = mp2_cls(mol, basis, ints, scf_res, mp2_conf).compute()
+                t_mp2 = time.perf_counter() - t0
             print(f"| {sys_name:<8} | {mode:<9} | {ref_lbl+'MP2':<6} | {res_mp2.energy_total:<16.8f} | {t_mp2:<9.3f} | {'-':<10} | {s_ideal:<6.2f} | {'-':<6} | {'OK':<6} |", flush=True)
 
-            t0 = time.perf_counter()
-            res_mp3 = mp3_cls(scf_res, res_mp2, mp2_conf, ints).compute()
-            t_mp3 = time.perf_counter() - t0
+            with capture_c_stdout():
+                t0 = time.perf_counter()
+                res_mp3 = mp3_cls(scf_res, res_mp2, mp2_conf, ints).compute()
+                t_mp3 = time.perf_counter() - t0
             print(f"| {sys_name:<8} | {mode:<9} | {ref_lbl+'MP3':<6} | {res_mp3.energy_total:<16.8f} | {t_mp3:<9.3f} | {'-':<10} | {s_ideal:<6.2f} | {'-':<6} | {'OK':<6} |", flush=True)
 
             need_trace = (sys_name, mode) in TRACE_CASES
             omp_conf = mshqc.MP2Config(
-                eri_method=mode, threshold=1e-9, gradient_threshold=1e-5,
-                max_iterations=50, print_level=1 if need_trace else 0
+                eri_method=mode_lower, threshold=1e-9, gradient_threshold=1e-5,
+                max_iterations=50, aux_basis_name="cc-pVTZ-RI", print_level=1 if need_trace else 0
             )
 
-            if need_trace:
-                with capture_c_stdout() as buf_o2:
-                    t0 = time.perf_counter()
-                    res_omp2 = mshqc.OMP2(mol, basis, ints, scf_res, omp_conf).compute()
-                    t_omp2 = time.perf_counter() - t0
-                with capture_c_stdout() as buf_o3:
-                    t0 = time.perf_counter()
-                    res_omp3 = mshqc.OMP3(mol, basis, ints, scf_res, omp_conf).compute()
-                    t_omp3 = time.perf_counter() - t0
-                traces[f"{sys_name}|{mode}"] = buf_o2[0] + buf_o3[0]
-            else:
+            with capture_c_stdout() as buf_o2:
                 t0 = time.perf_counter()
                 res_omp2 = mshqc.OMP2(mol, basis, ints, scf_res, omp_conf).compute()
                 t_omp2 = time.perf_counter() - t0
+            with capture_c_stdout() as buf_o3:
                 t0 = time.perf_counter()
                 res_omp3 = mshqc.OMP3(mol, basis, ints, scf_res, omp_conf).compute()
                 t_omp3 = time.perf_counter() - t0
+
+            if need_trace:
+                traces[f"{sys_name}|{mode}"] = buf_o2[0] + buf_o3[0]
 
             _, s2_omp2 = compute_spin_s2(ints, res_omp2, na, nb)
             _, s2_omp3 = compute_spin_s2(ints, res_omp3, na, nb)
@@ -262,7 +283,7 @@ def compute_table1_and_table2():
     mb = 1024.0 * 1024.0
 
     print("\n" + "=" * 112, flush=True)
-    print("  [LIVE TEST 2/4] TABEL KOMPRESI TENSOR ERI AO & VEKTOR CHOLESKY AKTUAL (MSHQC, tau_CD = 1e-9)", flush=True)
+    print("  [LIVE TEST 2/5] TABEL KOMPRESI TENSOR ERI AO & VEKTOR CHOLESKY AKTUAL (MSHQC, tau_CD = 1e-9)", flush=True)
     print("=" * 112, flush=True)
     print(f"| {'Sistem':<8} | {'Basis':<8} | {'N_bf':<5} | {'N_aux(DF)':<9} | {'M_chol':<7} | {'Exact (MB)':<11} | {'Chol (MB)':<10} | {'DF (MB)':<9} | {'Exact/Chol':<10} | {'Exact/DF':<9} |", flush=True)
     print(f"|{'-'*10}|{'-'*10}|{'-'*7}|{'-'*11}|{'-'*9}|{'-'*13}|{'-'*12}|{'-'*11}|{'-'*12}|{'-'*11}|", flush=True)
@@ -272,7 +293,8 @@ def compute_table1_and_table2():
         basis = mshqc.BasisSet(b_name, mol)
         aux = mshqc.BasisSet(aux_name, mol)
         nbf, naux = basis.n_basis_functions(), aux.n_basis_functions()
-        m_chol = mshqc.CholeskyERI(mol, basis, 1e-9).n_vectors()
+        with capture_c_stdout():
+            m_chol = mshqc.CholeskyERI(mol, basis, 1e-9).n_vectors()
 
         mem_exact = (8.0 * (nbf ** 4)) / mb
         mem_chol = (8.0 * (nbf ** 2) * m_chol) / mb
@@ -317,7 +339,7 @@ def compute_table1_and_table2():
             })
 
     print("\n" + "=" * 116, flush=True)
-    print("  [LIVE TEST 2/4 Continued] ELIMINASI HAMBATAN MEMORI O(V^4) PADA OMP3: KONVENSIONAL vs MSHQC (DF MODE)", flush=True)
+    print("  [LIVE TEST 3/5] TABEL ELIMINASI HAMBATAN MEMORI O(V^4) PADA OMP3: KONVENSIONAL vs MSHQC (DF MODE)", flush=True)
     print("=" * 116, flush=True)
     print(f"| {'Sistem':<7} | {'Basis':<8} | {'(O, V, N_aux)':<15} | {'Konvensional V_vvvv + Gamma_vvvv (MB)':<37} | {'MSHQC B_3c + T2 + Y_ooov (MB)':<30} | {'Reduksi Memori MO':<17} |", flush=True)
     print(f"|{'-'*9}|{'-'*10}|{'-'*17}|{'-'*39}|{'-'*32}|{'-'*19}|", flush=True)
@@ -334,7 +356,7 @@ def compute_table1_and_table2():
 
 def compute_fd_logs(traces):
     print("\n" + "=" * 108, flush=True)
-    print("  [LIVE TEST 3/4] JEJAK ITERASI TR-SOSCF & VERIFIKASI GRADIEN FINITE-DIFFERENCE (cc-pVTZ)", flush=True)
+    print("  [LIVE TEST 4/5] JEJAK ITERASI TR-SOSCF & VERIFIKASI GRADIEN FINITE-DIFFERENCE (cc-pVTZ)", flush=True)
     print("=" * 108, flush=True)
     for sys_name, mode in [("H2O", "DF"), ("Oxygen", "DF")]:
         print(f"\n>>> Log Iterasi Lengkap TR-SOSCF: {sys_name} (cc-pVTZ, Mode={mode}) <<<", flush=True)
@@ -348,7 +370,8 @@ def compute_fd_logs(traces):
         basis = mshqc.BasisSet("cc-pVTZ", mol)
         ints = mshqc.IntegralEngine(mol, basis)
         scf_cls = mshqc.UHF if SYSTEMS[sys_name]["is_uhf"] else mshqc.RHF
-        scf_res = scf_cls(mol, basis, ints, mshqc.SCFConfig(eri_method="exact", threshold=1e-9)).compute()
+        with capture_c_stdout():
+            scf_res = scf_cls(mol, basis, ints, mshqc.SCFConfig(eri_method="exact", threshold=1e-9)).compute()
         cfg_fd = mshqc.MP2Config(eri_method="exact", print_level=3, max_iterations=0)
         with capture_c_stdout() as buf:
             mshqc.OMP2(mol, basis, ints, scf_res, cfg_fd).compute()
@@ -364,7 +387,7 @@ def compute_ram_benchmark():
     ram_results = {}
     script_path = os.path.abspath(__file__)
     print("\n" + "=" * 96, flush=True)
-    print("  [LIVE TEST 4/4] PENGUKURAN PEAK RSS (VmHWM) & NET WORKING RAM TERKALIBRASI (MSHQC)", flush=True)
+    print("  [LIVE TEST 5/5] PENGUKURAN PEAK RSS (VmHWM) & NET WORKING RAM TERKALIBRASI (MSHQC)", flush=True)
     print("=" * 96, flush=True)
     print(f"| {'Sistem':<8} | {'Basis':<8} | {'Mode ERI':<9} | {'Metode':<6} | {'Base HWM (MB)':<14} | {'Peak HWM (MB)':<14} | {'Net RAM (MB)':<13} |", flush=True)
     print(f"|{'-'*10}|{'-'*10}|{'-'*11}|{'-'*8}|{'-'*16}|{'-'*16}|{'-'*15}|", flush=True)
@@ -406,8 +429,7 @@ if __name__ == "__main__":
         t1_rows, t2_rows  = compute_table1_and_table2()
         fd_logs           = compute_fd_logs(traces)
         ram_bench         = compute_ram_benchmark()
-        
-        wall_time = time.perf_counter() - t_start
+        wall_time         = time.perf_counter() - t_start
 
         atomic_write_text(args.out, json.dumps({
             "engine": "mshqc",
@@ -423,4 +445,6 @@ if __name__ == "__main__":
         print(f"\n[SELESAI] Data JSON MSHQC disimpan ke: {args.out} | Log Teks: {args.log} ({wall_time:.2f} s)", flush=True)
     finally:
         sys.stdout = logger.terminal
+        log_content = logger.get_text()
         logger.close()
+        atomic_write_text("mshqc_bab4_test.txt", log_content)
