@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 MSHQC Bab IV Benchmark Runner (Clean User-Friendly API & Real-Time Console UI)
-Output: mshqc_bab4_raw.json, mshqc_bab4_runner.log, mshqc_bab4_test.txt
+Output: mshqc_bab4_raw.json & mshqc_bab4_runner.log
 """
 
 import os
@@ -55,22 +55,27 @@ RAM_CASES = [
 ]
 
 
-class TeeRecorder:
-    """Menampilkan output secara real-time ke terminal dan merekamnya untuk disimpan ke berkas."""
-    def __init__(self):
-        self.terminal = sys.stdout
-        self.chunks = []
+class TeeLogger:
+    """Menampilkan output secara real-time ke terminal sekaligus menyimpannya ke berkas log."""
+    def __init__(self, log_path: str):
+        self.terminal = sys.__stdout__
+        self.log_file = open(log_path, "w", encoding="utf-8", buffering=1)
 
     def write(self, message: str):
         self.terminal.write(message)
         self.terminal.flush()
-        self.chunks.append(message)
+        self.log_file.write(message)
+        self.log_file.flush()
 
     def flush(self):
         self.terminal.flush()
+        self.log_file.flush()
 
-    def get_text(self) -> str:
-        return "".join(self.chunks)
+    def fileno(self):
+        return self.terminal.fileno()
+
+    def close(self):
+        self.log_file.close()
 
 
 def atomic_write_text(path_str: str, content: str):
@@ -166,85 +171,10 @@ def run_ram_worker(payload_str: str):
     print(json.dumps({"base_hwm": base_hwm, "peak_hwm": peak_hwm, "net_ram": net_ram}), flush=True)
 
 
-def compute_table1_and_table2():
-    table1_rows, table2_rows = [], []
-    mb = 1024.0 * 1024.0
-
-    print("\n" + "=" * 112, flush=True)
-    print("  [LIVE TEST 1/5] TABEL KOMPRESI TENSOR ERI AO & VEKTOR CHOLESKY AKTUAL (MSHQC, tau_CD = 1e-9)", flush=True)
-    print("=" * 112, flush=True)
-    print(f"| {'Sistem':<8} | {'Basis':<8} | {'N_bf':<5} | {'N_aux(DF)':<9} | {'M_chol':<7} | {'Exact (MB)':<11} | {'Chol (MB)':<10} | {'DF (MB)':<9} | {'Exact/Chol':<10} | {'Exact/DF':<9} |", flush=True)
-    print(f"|{'-'*10}|{'-'*10}|{'-'*7}|{'-'*11}|{'-'*9}|{'-'*13}|{'-'*12}|{'-'*11}|{'-'*12}|{'-'*11}|", flush=True)
-
-    for sys_name, b_name, aux_name in TABLE1_CASES:
-        mol = build_mol(sys_name)
-        basis = mshqc.BasisSet(b_name, mol)
-        aux = mshqc.BasisSet(aux_name, mol)
-        nbf, naux = basis.n_basis_functions(), aux.n_basis_functions()
-        m_chol = mshqc.CholeskyERI(mol, basis, 1e-9).n_vectors()
-
-        mem_exact = (8.0 * (nbf ** 4)) / mb
-        mem_chol = (8.0 * (nbf ** 2) * m_chol) / mb
-        mem_df = (8.0 * (nbf ** 2) * naux) / mb
-        r_chol = mem_exact / mem_chol if m_chol > 0 else 0.0
-        r_df = mem_exact / mem_df
-
-        row1 = {
-            "sys": sys_name, "basis": b_name, "nbf": nbf, "naux": naux, "m_chol": m_chol,
-            "mem_exact": mem_exact, "mem_chol": mem_chol, "mem_df": mem_df,
-            "r_chol": r_chol, "r_df": r_df,
-        }
-        table1_rows.append(row1)
-        print(
-            f"| {sys_name:<8} | {b_name:<8} | {nbf:<5} | {naux:<9} | {m_chol:<7} | "
-            f"{mem_exact:<11.3f} | {mem_chol:<10.3f} | {mem_df:<9.3f} | "
-            f"{r_chol:<8.2f} x | {r_df:<7.2f} x |",
-            flush=True,
-        )
-
-        if sys_name not in ("Lithium", "Carbon"):
-            n_elec, mult = mol.n_electrons(), mol.multiplicity()
-            oa, ob = (n_elec + mult - 1) // 2, (n_elec - mult + 1) // 2
-            va, vb = nbf - oa, nbf - ob
-            if not SYSTEMS[sys_name]["is_uhf"]:
-                mem_conv_v4 = 2.0 * 8.0 * (va ** 4) / mb
-                n_pairs = oa * (oa + 1) // 2
-                mem_mshqc = (8.0 * ((oa*oa + oa*va + va*va) * naux + 2.0 * oa*oa*va*va + 2.0 * n_pairs*va*va + oa*oa*oa*va)) / mb
-            else:
-                mem_conv_v4 = 2.0 * 8.0 * ((va ** 4) + (vb ** 4) + (va * va * vb * vb)) / mb
-                mem_mshqc = (
-                    8.0 * (
-                        ((oa*oa + oa*va + va*va) + (ob*ob + ob*vb + vb*vb)) * naux
-                        + 2.0 * ((oa*oa*va*va) + (ob*ob*vb*vb) + (oa*ob*va*vb))
-                        + 2.0 * ((oa*ob*va*vb) + (oa*(oa-1)//2)*va*va)
-                        + ((oa*oa*oa*va) + (ob*ob*ob*vb) + (oa*ob*oa*vb) + (oa*ob*ob*va))
-                    )
-                ) / mb
-            table2_rows.append({
-                "sys": sys_name, "basis": b_name, "oa": oa, "va": va, "naux": naux,
-                "mem_conv_v4": mem_conv_v4, "mem_mshqc": mem_mshqc, "ratio": mem_conv_v4 / mem_mshqc,
-            })
-
-    print("\n" + "=" * 116, flush=True)
-    print("  [LIVE TEST 2/5] TABEL ELIMINASI HAMBATAN MEMORI O(V^4) PADA OMP3: KONVENSIONAL vs MSHQC (DF MODE)", flush=True)
-    print("=" * 116, flush=True)
-    print(f"| {'Sistem':<7} | {'Basis':<8} | {'(O, V, N_aux)':<15} | {'Konvensional V_vvvv + Gamma_vvvv (MB)':<37} | {'MSHQC B_3c + T2 + Y_ooov (MB)':<30} | {'Reduksi Memori MO':<17} |", flush=True)
-    print(f"|{'-'*9}|{'-'*10}|{'-'*17}|{'-'*39}|{'-'*32}|{'-'*19}|", flush=True)
-    for r in table2_rows:
-        ov_str = f"({r['oa']},{r['va']},{r['naux']})"
-        print(
-            f"| {r['sys']:<7} | {r['basis']:<8} | {ov_str:<15} | "
-            f"{r['mem_conv_v4']:<37.3f} | {r['mem_mshqc']:<30.3f} | {r['ratio']:<15.2f} x |",
-            flush=True,
-        )
-
-    return table1_rows, table2_rows
-
-
 def compute_mshqc_suite():
     ref_suite, traces = {}, {}
     print("\n" + "=" * 106, flush=True)
-    print("  [LIVE TEST 3/5] MSHQC 105-RUN SOLVER SUITE (HF, MP2, MP3, OMP2, OMP3 | cc-pVTZ / cc-pVTZ-RI)", flush=True)
+    print("  [LIVE TEST 1/4] MSHQC 105-RUN SOLVER SUITE (HF, MP2, MP3, OMP2, OMP3 | cc-pVTZ / cc-pVTZ-RI)", flush=True)
     print("=" * 106, flush=True)
     print(f"| {'Sistem':<8} | {'Mode ERI':<9} | {'Metode':<6} | {'E_mshqc (Ha)':<16} | {'Waktu (s)':<9} | {'<S^2>':<10} | {'Ideal':<6} | {'Iter':<6} | {'Status':<6} |", flush=True)
     print(f"|{'-'*10}|{'-'*11}|{'-'*8}|{'-'*18}|{'-'*11}|{'-'*12}|{'-'*8}|{'-'*8}|{'-'*8}|", flush=True)
@@ -327,9 +257,84 @@ def compute_mshqc_suite():
     return ref_suite, traces
 
 
+def compute_table1_and_table2():
+    table1_rows, table2_rows = [], []
+    mb = 1024.0 * 1024.0
+
+    print("\n" + "=" * 112, flush=True)
+    print("  [LIVE TEST 2/4] TABEL KOMPRESI TENSOR ERI AO & VEKTOR CHOLESKY AKTUAL (MSHQC, tau_CD = 1e-9)", flush=True)
+    print("=" * 112, flush=True)
+    print(f"| {'Sistem':<8} | {'Basis':<8} | {'N_bf':<5} | {'N_aux(DF)':<9} | {'M_chol':<7} | {'Exact (MB)':<11} | {'Chol (MB)':<10} | {'DF (MB)':<9} | {'Exact/Chol':<10} | {'Exact/DF':<9} |", flush=True)
+    print(f"|{'-'*10}|{'-'*10}|{'-'*7}|{'-'*11}|{'-'*9}|{'-'*13}|{'-'*12}|{'-'*11}|{'-'*12}|{'-'*11}|", flush=True)
+
+    for sys_name, b_name, aux_name in TABLE1_CASES:
+        mol = build_mol(sys_name)
+        basis = mshqc.BasisSet(b_name, mol)
+        aux = mshqc.BasisSet(aux_name, mol)
+        nbf, naux = basis.n_basis_functions(), aux.n_basis_functions()
+        m_chol = mshqc.CholeskyERI(mol, basis, 1e-9).n_vectors()
+
+        mem_exact = (8.0 * (nbf ** 4)) / mb
+        mem_chol = (8.0 * (nbf ** 2) * m_chol) / mb
+        mem_df = (8.0 * (nbf ** 2) * naux) / mb
+        r_chol = mem_exact / mem_chol if m_chol > 0 else 0.0
+        r_df = mem_exact / mem_df
+
+        row1 = {
+            "sys": sys_name, "basis": b_name, "nbf": nbf, "naux": naux, "m_chol": m_chol,
+            "mem_exact": mem_exact, "mem_chol": mem_chol, "mem_df": mem_df,
+            "r_chol": r_chol, "r_df": r_df,
+        }
+        table1_rows.append(row1)
+        print(
+            f"| {sys_name:<8} | {b_name:<8} | {nbf:<5} | {naux:<9} | {m_chol:<7} | "
+            f"{mem_exact:<11.3f} | {mem_chol:<10.3f} | {mem_df:<9.3f} | "
+            f"{r_chol:<8.2f} x | {r_df:<7.2f} x |",
+            flush=True,
+        )
+
+        if sys_name not in ("Lithium", "Carbon"):
+            n_elec, mult = mol.n_electrons(), mol.multiplicity()
+            oa, ob = (n_elec + mult - 1) // 2, (n_elec - mult + 1) // 2
+            va, vb = nbf - oa, nbf - ob
+            if not SYSTEMS[sys_name]["is_uhf"]:
+                mem_conv_v4 = 2.0 * 8.0 * (va ** 4) / mb
+                n_pairs = oa * (oa + 1) // 2
+                mem_mshqc = (8.0 * ((oa*oa + oa*va + va*va) * naux + 2.0 * oa*oa*va*va + 2.0 * n_pairs*va*va + oa*oa*oa*va)) / mb
+            else:
+                mem_conv_v4 = 2.0 * 8.0 * ((va ** 4) + (vb ** 4) + (va * va * vb * vb)) / mb
+                mem_mshqc = (
+                    8.0 * (
+                        ((oa*oa + oa*va + va*va) + (ob*ob + ob*vb + vb*vb)) * naux
+                        + 2.0 * ((oa*oa*va*va) + (ob*ob*vb*vb) + (oa*ob*va*vb))
+                        + 2.0 * ((oa*ob*va*vb) + (oa*(oa-1)//2)*va*va)
+                        + ((oa*oa*oa*va) + (ob*ob*ob*vb) + (oa*ob*oa*vb) + (oa*ob*ob*va))
+                    )
+                ) / mb
+            table2_rows.append({
+                "sys": sys_name, "basis": b_name, "oa": oa, "va": va, "naux": naux,
+                "mem_conv_v4": mem_conv_v4, "mem_mshqc": mem_mshqc, "ratio": mem_conv_v4 / mem_mshqc,
+            })
+
+    print("\n" + "=" * 116, flush=True)
+    print("  [LIVE TEST 2/4 Continued] ELIMINASI HAMBATAN MEMORI O(V^4) PADA OMP3: KONVENSIONAL vs MSHQC (DF MODE)", flush=True)
+    print("=" * 116, flush=True)
+    print(f"| {'Sistem':<7} | {'Basis':<8} | {'(O, V, N_aux)':<15} | {'Konvensional V_vvvv + Gamma_vvvv (MB)':<37} | {'MSHQC B_3c + T2 + Y_ooov (MB)':<30} | {'Reduksi Memori MO':<17} |", flush=True)
+    print(f"|{'-'*9}|{'-'*10}|{'-'*17}|{'-'*39}|{'-'*32}|{'-'*19}|", flush=True)
+    for r in table2_rows:
+        ov_str = f"({r['oa']},{r['va']},{r['naux']})"
+        print(
+            f"| {r['sys']:<7} | {r['basis']:<8} | {ov_str:<15} | "
+            f"{r['mem_conv_v4']:<37.3f} | {r['mem_mshqc']:<30.3f} | {r['ratio']:<15.2f} x |",
+            flush=True,
+        )
+
+    return table1_rows, table2_rows
+
+
 def compute_fd_logs(traces):
     print("\n" + "=" * 108, flush=True)
-    print("  [LIVE TEST 4/5] JEJAK ITERASI PENUH TRUST-REGION SOSCF & VERIFIKASI GRADIEN (cc-pVTZ)", flush=True)
+    print("  [LIVE TEST 3/4] JEJAK ITERASI TR-SOSCF & VERIFIKASI GRADIEN FINITE-DIFFERENCE (cc-pVTZ)", flush=True)
     print("=" * 108, flush=True)
     for sys_name, mode in [("H2O", "DF"), ("Oxygen", "DF")]:
         print(f"\n>>> Log Iterasi Lengkap TR-SOSCF: {sys_name} (cc-pVTZ, Mode={mode}) <<<", flush=True)
@@ -359,7 +364,7 @@ def compute_ram_benchmark():
     ram_results = {}
     script_path = os.path.abspath(__file__)
     print("\n" + "=" * 96, flush=True)
-    print("  [LIVE TEST 5/5] PENGUKURAN PEAK RSS (VmHWM) & NET WORKING RAM TERKALIBRASI (MSHQC)", flush=True)
+    print("  [LIVE TEST 4/4] PENGUKURAN PEAK RSS (VmHWM) & NET WORKING RAM TERKALIBRASI (MSHQC)", flush=True)
     print("=" * 96, flush=True)
     print(f"| {'Sistem':<8} | {'Basis':<8} | {'Mode ERI':<9} | {'Metode':<6} | {'Base HWM (MB)':<14} | {'Peak HWM (MB)':<14} | {'Net RAM (MB)':<13} |", flush=True)
     print(f"|{'-'*10}|{'-'*10}|{'-'*11}|{'-'*8}|{'-'*16}|{'-'*16}|{'-'*15}|", flush=True)
@@ -385,7 +390,7 @@ def compute_ram_benchmark():
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="MSHQC Bab IV Benchmark Runner (Real-Time UI & Clean API)")
     parser.add_argument("--out", default="mshqc_bab4_raw.json", help="Path output berkas JSON MSHQC")
-    parser.add_argument("--log", default="mshqc_bab4_runner.log", help="Path output berkas log teks real-time")
+    parser.add_argument("--log", default="mshqc_bab4_runner.log", help="Path berkas log teks real-time")
     parser.add_argument("--ram-worker", default=None, help=argparse.SUPPRESS)
     args = parser.parse_args()
 
@@ -393,15 +398,16 @@ if __name__ == "__main__":
         run_ram_worker(args.ram_worker)
         sys.exit(0)
 
-    recorder = TeeRecorder()
-    sys.stdout = recorder
+    logger = TeeLogger(args.log)
+    sys.stdout = logger
     try:
         t_start = time.perf_counter()
-        t1_rows, t2_rows  = compute_table1_and_table2()
         ref_suite, traces = compute_mshqc_suite()
+        t1_rows, t2_rows  = compute_table1_and_table2()
         fd_logs           = compute_fd_logs(traces)
         ram_bench         = compute_ram_benchmark()
-        wall_time         = time.perf_counter() - t_start
+        
+        wall_time = time.perf_counter() - t_start
 
         atomic_write_text(args.out, json.dumps({
             "engine": "mshqc",
@@ -414,10 +420,7 @@ if __name__ == "__main__":
             "ram_bench": ram_bench,
         }, indent=2))
 
-        print(f"\n[SELESAI] Data benchmark MSHQC Bab IV disimpan ke: {args.out} & {args.log} ({wall_time:.2f} s)", flush=True)
+        print(f"\n[SELESAI] Data JSON MSHQC disimpan ke: {args.out} | Log Teks: {args.log} ({wall_time:.2f} s)", flush=True)
     finally:
-        sys.stdout = recorder.terminal
-
-    log_content = recorder.get_text()
-    atomic_write_text(args.log, log_content)
-    atomic_write_text("mshqc_bab4_test.txt", log_content)
+        sys.stdout = logger.terminal
+        logger.close()
