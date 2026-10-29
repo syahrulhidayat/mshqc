@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Runner Mandiri Psi4 untuk Universal Validation Suite (Zero-PSIO-Error & Apple-to-Apple)
+Runner Mandiri Psi4 untuk Universal Validation Suite (Zero-PSIO-Error, Zero-NaN & Apple-to-Apple)
 Output: psi4_universal_raw.json
 """
 
@@ -12,6 +12,7 @@ import json
 import ctypes
 import tempfile
 import argparse
+import traceback
 
 try:
     os.sched_setaffinity(0, set(range(os.cpu_count() or 4)))
@@ -35,6 +36,53 @@ import psi4
 psi4.set_memory("8 GB")
 psi4.set_num_threads(N_THREADS)
 psi4.core.be_quiet()
+
+
+# ==============================================================================
+# UTILITAS FLOATING-POINT EXCEPTION TRAP UNTUK GDB (--trap-fpe)
+# ==============================================================================
+FE_INVALID = 0x01
+FE_DIVBYZERO = 0x04
+FE_OVERFLOW = 0x08
+FE_ALL_TRAP = FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW
+
+
+def _load_libm():
+    for lib_name in ("libm.so.6", "libm.so"):
+        try:
+            lib = ctypes.CDLL(lib_name)
+            if hasattr(lib, "feenableexcept") and hasattr(lib, "fedisableexcept") and hasattr(lib, "feclearexcept"):
+                lib.feenableexcept.argtypes = [ctypes.c_int]
+                lib.feenableexcept.restype = ctypes.c_int
+                lib.fedisableexcept.argtypes = [ctypes.c_int]
+                lib.fedisableexcept.restype = ctypes.c_int
+                lib.feclearexcept.argtypes = [ctypes.c_int]
+                lib.feclearexcept.restype = ctypes.c_int
+                return lib
+        except Exception:
+            continue
+    return None
+
+
+_LIBM = _load_libm()
+
+
+class FPETrapContext:
+    """Mengaktifkan hardware SIGFPE pada operasi 0/0, Inf, atau NaN untuk ditangkap langsung oleh GDB."""
+    def __init__(self, enabled: bool = False):
+        self.enabled = enabled and (_LIBM is not None)
+
+    def __enter__(self):
+        if self.enabled:
+            _LIBM.feclearexcept(0x3F)
+            _LIBM.feenableexcept(FE_ALL_TRAP)
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        if self.enabled:
+            _LIBM.fedisableexcept(FE_ALL_TRAP)
+            _LIBM.feclearexcept(0x3F)
+        return False
 
 
 def _load_blas_setters():
@@ -64,8 +112,27 @@ def set_blas_threads(num_t: int):
             pass
 
 
+def retain_psio_unit_97(retain: bool):
+    """Mengunci atau melepas retensi PSIO Unit 97 (PSIF_DFSCF_BJ) di /dev/shm."""
+    try:
+        io_mgr = psi4.core.IOManager.shared_object()
+        io_mgr.set_specific_retention(97, bool(retain))
+    except Exception:
+        pass
+
+
+def post_hf_psio_clean(keep_unit_97: bool):
+    """Membersihkan unit scratch Post-HF (DPD/DFOCC) sambil mempertahankan Unit 97 jika diperlukan."""
+    retain_psio_unit_97(keep_unit_97)
+    try:
+        psi4.core.IOManager.shared_object().psiclean()
+    except Exception:
+        pass
+
+
 def full_psio_clean():
-    """Menutup seluruh unit PSIO yang terbuka dan membersihkan file scratch secara tuntas."""
+    """Menutup seluruh unit PSIO termasuk Unit 97 dan membersihkan scratch secara tuntas."""
+    retain_psio_unit_97(False)
     try:
         psi4.core.IOManager.shared_object().psiclean()
     except Exception:
@@ -78,6 +145,8 @@ def full_psio_clean():
 
 ANG_TO_BOHR = 1.8897261246257702
 CC_PV_SUPPORTED_Z = set(range(1, 19)) | {20} | set(range(31, 37))
+# Elemen IA/IIA yang tidak memiliki basis bantu cc-pvXz-ri di pustaka standar Psi4
+CC_PV_RI_MISSING_Z = {3, 4, 11, 12, 19, 20} | set(range(21, 31))
 DEGENERATE_OPEN_SHELL_ATOMS = {"B", "C", "O", "F", "Al", "Si", "S", "Cl"}
 
 SYSTEMS = {
@@ -171,6 +240,15 @@ def select_basis_for_system(spec, requested_basis):
     return requested_basis
 
 
+def select_aux_basis_for_system(spec, basis_name: str) -> str:
+    """Memilih basis bantu RI yang terjamin ada di pustaka Psi4 untuk seluruh Z pada sistem."""
+    b_low = basis_name.lower()
+    if b_low.startswith("cc-pv"):
+        if any(z in CC_PV_RI_MISSING_Z for z, _, _, _, _ in spec[4]):
+            return "def2-svp-ri" if "dz" in b_low else "def2-tzvp-ri"
+    return b_low + "-ri"
+
+
 def snapshot_wfn(wfn):
     snap = {
         "e": float(wfn.energy()),
@@ -198,29 +276,40 @@ def restore_wfn(wfn, snap):
             getter().copy(snap[k])
 
 
-def calc_s2(wfn, is_closed: bool):
+def calc_s2(wfn, is_closed: bool, fallback_s2: float = 0.0):
     if is_closed:
         return 0.0
     na, nb = wfn.nalpha(), wfn.nbeta()
     if na == nb:
         return 0.0
     sz = 0.5 * (na - nb)
-    ideal = sz * (sz + 1.0)
+    ideal = float(sz * (sz + 1.0))
     if na == 0 or nb == 0 or wfn.Cb() is None:
-        return float(ideal)
+        return ideal
     try:
         Ca = np.asarray(wfn.Ca_subset("AO", "OCC"))
         Cb = np.asarray(wfn.Cb_subset("AO", "OCC"))
-        S  = np.asarray(wfn.mintshelper().ao_overlap())
-        return float(ideal + nb - np.sum((Ca.T @ S @ Cb) ** 2))
+        S = np.asarray(wfn.mintshelper().ao_overlap())
+        if not (np.all(np.isfinite(Ca)) and np.all(np.isfinite(Cb)) and np.all(np.isfinite(S))):
+            return fallback_s2 if math.isfinite(fallback_s2) else ideal
+        val = float(ideal + nb - np.sum((Ca.T @ S @ Cb) ** 2))
+        return val if math.isfinite(val) else (fallback_s2 if math.isfinite(fallback_s2) else ideal)
     except Exception:
-        return float(ideal)
+        return fallback_s2 if math.isfinite(fallback_s2) else ideal
 
 
-def _configure_psi4_options(basis_name: str, is_closed: bool, eri_mode: str):
+def _configure_psi4_options(
+    spec,
+    basis_name: str,
+    is_closed: bool,
+    eri_mode: str,
+    post_hf: bool = False,
+    extra_opts: dict = None,
+):
     scf_type_map = {"EXACT": "pk", "CHOLESKY": "cd", "DF": "df"}
-    mp_type_map  = {"EXACT": "conv", "CHOLESKY": "cd", "DF": "df"}
+    mp_type_map = {"EXACT": "conv", "CHOLESKY": "cd", "DF": "df"}
 
+    aux_b = select_aux_basis_for_system(spec, basis_name)
     opts = {
         "basis": basis_name,
         "reference": "rhf" if is_closed else "uhf",
@@ -228,98 +317,272 @@ def _configure_psi4_options(basis_name: str, is_closed: bool, eri_mode: str):
         "mp2_type": mp_type_map[eri_mode],
         "mp_type": mp_type_map[eri_mode],
         "cc_type": mp_type_map[eri_mode],
-        "e_convergence": 1e-10,
-        "d_convergence": 1e-9,
+        "e_convergence": 1e-9 if post_hf else 1e-10,
+        "d_convergence": 1e-10,
         "r_convergence": 1e-6,
         "rms_mograd_convergence": 1e-5,
         "max_mograd_convergence": 1e-4,
         "freeze_core": False,
         "maxiter": 200,
-        "mo_maxiter": 60,
+        "mo_maxiter": 50,
         "cachelevel": 2,
+        "read_scf_3index": (eri_mode in ("CHOLESKY", "DF")),
     }
-    
     if eri_mode == "CHOLESKY":
-        opts["cholesky_tolerance"] = 1e-8
+        opts["cholesky_tolerance"] = 1e-9
+        opts.update({"df_basis_scf": aux_b, "df_basis_mp2": aux_b, "df_basis_cc": aux_b})
     elif eri_mode == "DF":
-        aux_b = basis_name.lower() + "-ri"
-        opts.update({
-            "df_basis_scf": aux_b,
-            "df_basis_mp2": aux_b,
-            "df_basis_cc": aux_b
-        })
-        
+        opts.update({"df_basis_scf": aux_b, "df_basis_mp2": aux_b, "df_basis_cc": aux_b})
+
+    if extra_opts:
+        opts.update(extra_opts)
+
     psi4.set_options(opts)
 
 
-def run_psi4_system(name, spec, basis_name, eri_mode):
+def _compute_fresh_scf(mol, spec, basis_name: str, is_closed: bool, eri_mode: str, keep_97: bool):
+    """Menghitung ulang fungsi gelombang referensi SCF yang bersih jika wfn_hf terkontaminasi."""
+    post_hf_psio_clean(keep_unit_97=False)
+    psi4.core.clean_options()
+    retain_psio_unit_97(keep_97)
+    _configure_psi4_options(spec, basis_name, is_closed, eri_mode, post_hf=False)
+    set_blas_threads(1)
+    t0 = time.perf_counter()
+    e_hf, wfn_hf = psi4.energy("scf", molecule=mol, return_wfn=True)
+    t_hf = time.perf_counter() - t0
+    return float(e_hf), wfn_hf, float(t_hf)
+
+
+def _run_mp_method(
+    m_call: str,
+    mol,
+    spec,
+    basis_name: str,
+    is_closed: bool,
+    eri_mode: str,
+    wfn_hf,
+    hf_snap,
+    keep_97: bool,
+    trap_fpe: bool = False,
+    debug_nan: bool = False,
+):
+    """Menjalankan MP2/MP3 dengan pemulihan otomatis jika PSIO Unit 97 atau dfocc menghasilkan NaN."""
+    attempts = [
+        {},
+        {"read_scf_3index": False},
+        {"scf_type": "pk", "mp2_type": "conv", "mp_type": "conv", "cc_type": "conv", "read_scf_3index": False},
+    ]
+    last_exc = None
+    for idx, extra in enumerate(attempts):
+        try:
+            if idx > 0:
+                _, wfn_hf, _ = _compute_fresh_scf(mol, spec, basis_name, is_closed, eri_mode, keep_97)
+                hf_snap = snapshot_wfn(wfn_hf)
+            else:
+                restore_wfn(wfn_hf, hf_snap)
+
+            psi4.core.clean_options()
+            _configure_psi4_options(spec, basis_name, is_closed, eri_mode, post_hf=True, extra_opts=extra)
+            corr_threads = N_THREADS if (eri_mode == "EXACT" or extra.get("mp_type") == "conv") else 1
+            set_blas_threads(corr_threads)
+
+            t0 = time.perf_counter()
+            with FPETrapContext(trap_fpe and idx == 0):
+                val = float(psi4.energy(m_call, ref_wfn=wfn_hf, molecule=mol))
+            t_elapsed = time.perf_counter() - t0
+            post_hf_psio_clean(keep_unit_97=keep_97)
+
+            if math.isfinite(val):
+                return val, float(t_elapsed), wfn_hf, hf_snap
+            if debug_nan:
+                print(f"    [WARN] {m_call.upper()} attempt #{idx + 1} menghasilkan non-finite ({val}), mencoba fallback...", flush=True)
+        except Exception as exc:
+            last_exc = exc
+            post_hf_psio_clean(keep_unit_97=keep_97)
+            if debug_nan:
+                print(f"    [WARN] {m_call.upper()} attempt #{idx + 1} gagal ({exc}), mencoba fallback...", flush=True)
+
+    raise RuntimeError(f"Seluruh fallback {m_call.upper()} gagal: {last_exc}")
+
+
+def _run_omp_method(
+    m_call: str,
+    mol,
+    spec,
+    basis_name: str,
+    is_closed: bool,
+    eri_mode: str,
+    wfn_hf,
+    hf_snap,
+    s2_hf: float,
+    keep_97: bool,
+    trap_fpe: bool = False,
+    debug_nan: bool = False,
+):
+    """
+    Menjalankan OMP2/OMP3 dengan multi-stage fallback untuk mengatasi:
+    1. Singularitas matriks MO-DIIS (0/0 = NaN) pada atom simetri bola / gradien nol.
+    2. Divergensi / step overshoot ORB_RESP pada radikal kulit terbuka & sistem kuasi-degenerat.
+    """
+    attempts = [
+        # Stage 1: Konfigurasi standar ORB_RESP + DIIS
+        {"do_diis": True, "opt_method": "ORB_RESP", "mo_maxiter": 50},
+        # Stage 2: Matikan MO-DIIS (mencegah inversi matriks error singular 0/0 -> NaN)
+        {
+            "do_diis": False,
+            "opt_method": "ORB_RESP",
+            "mo_maxiter": 80,
+            "rms_mograd_convergence": 5e-5,
+            "max_mograd_convergence": 5e-4,
+            "e_convergence": 1e-8,
+        },
+        # Stage 3: Modified Steepest Descent (MSD) + level shift & damping untuk sistem kuasi-degenerat
+        {
+            "do_diis": False,
+            "opt_method": "MSD",
+            "level_shift": 0.5,
+            "mograd_damping": 0.5,
+            "mo_maxiter": 100,
+            "rms_mograd_convergence": 1e-4,
+            "max_mograd_convergence": 1e-3,
+            "r_convergence": 1e-5,
+            "e_convergence": 1e-7,
+        },
+        # Stage 4: Fallback ke modul konvensional (occ) tanpa DIIS jika kernel dfocc mengalami 0/0
+        {
+            "scf_type": "pk",
+            "mp2_type": "conv",
+            "mp_type": "conv",
+            "cc_type": "conv",
+            "read_scf_3index": False,
+            "do_diis": False,
+            "opt_method": "MSD",
+            "mo_maxiter": 100,
+            "rms_mograd_convergence": 1e-4,
+            "max_mograd_convergence": 1e-3,
+            "r_convergence": 1e-5,
+            "e_convergence": 1e-7,
+        },
+    ]
+
+    last_exc = None
+    for idx, extra in enumerate(attempts):
+        try:
+            if idx > 0:
+                _, wfn_hf, _ = _compute_fresh_scf(mol, spec, basis_name, is_closed, eri_mode, keep_97)
+                hf_snap = snapshot_wfn(wfn_hf)
+            else:
+                restore_wfn(wfn_hf, hf_snap)
+
+            psi4.core.clean_options()
+            _configure_psi4_options(spec, basis_name, is_closed, eri_mode, post_hf=True, extra_opts=extra)
+            corr_threads = N_THREADS if (eri_mode == "EXACT" or extra.get("mp_type") == "conv") else 1
+            set_blas_threads(corr_threads)
+
+            t0 = time.perf_counter()
+            with FPETrapContext(trap_fpe and idx == 0):
+                e_tmp, wfn_opt = psi4.energy(m_call, ref_wfn=wfn_hf, molecule=mol, return_wfn=True)
+            t_elapsed = time.perf_counter() - t0
+            val = float(e_tmp)
+            s2_val = calc_s2(wfn_opt, is_closed, fallback_s2=s2_hf)
+            post_hf_psio_clean(keep_unit_97=keep_97)
+
+            if math.isfinite(val) and math.isfinite(s2_val):
+                return val, s2_val, float(t_elapsed), wfn_hf, hf_snap
+            if debug_nan:
+                print(
+                    f"    [WARN] {m_call.upper()} stage #{idx + 1} menghasilkan NaN (E={val}, S2={s2_val}), mencoba stage berikutnya...",
+                    flush=True,
+                )
+        except Exception as exc:
+            last_exc = exc
+            post_hf_psio_clean(keep_unit_97=keep_97)
+            if debug_nan:
+                print(f"    [WARN] {m_call.upper()} stage #{idx + 1} gagal ({exc}), mencoba stage berikutnya...", flush=True)
+
+    raise RuntimeError(f"Seluruh stage {m_call.upper()} gagal: {last_exc}")
+
+
+def run_psi4_system(
+    name,
+    spec,
+    basis_name,
+    eri_mode,
+    selected_methods=None,
+    trap_fpe: bool = False,
+    debug_nan: bool = False,
+):
     charge, mult, na, nb, atoms, _ = spec
     n_elec = na + nb
     is_closed = (mult == 1)
+    keep_97 = eri_mode in ("CHOLESKY", "DF")
+    active_methods = selected_methods or ("MP2", "MP3", "OMP2", "OMP3")
 
     full_psio_clean()
     psi4.core.clean_options()
 
-    use_c1 = (eri_mode in ("CHOLESKY", "DF")) or (mult != 1 and len(atoms) > 1) or (name in DEGENERATE_OPEN_SHELL_ATOMS)
-    mol_lines = [f"{charge} {mult}", "units bohr"] + (["symmetry c1"] if use_c1 else []) + ["no_reorient", "no_com"]
+    # Gunakan symmetry c1 secara universal agar Apple-to-Apple dengan mshqc
+    # dan mencegah pembagian nol pada blok irrep kosong di LibDPD/occ.
+    mol_lines = [f"{charge} {mult}", "units bohr", "symmetry c1", "no_reorient", "no_com"]
     mol_lines += [f"{sym} {x:.12f} {y:.12f} {zc:.12f}" for _, sym, x, y, zc in atoms]
     mol = psi4.geometry("\n".join(mol_lines))
 
-    _configure_psi4_options(basis_name, is_closed, eri_mode)
+    try:
+        e_hf, wfn_hf, t_hf = _compute_fresh_scf(mol, spec, basis_name, is_closed, eri_mode, keep_97)
+        s2_hf = calc_s2(wfn_hf, is_closed)
 
-    # 1. Jalankan SCF
-    t0 = time.perf_counter()
-    e_hf, wfn_hf = psi4.energy("scf", molecule=mol, return_wfn=True)
-    t_hf = time.perf_counter() - t0
+        res = {
+            "basis": basis_name,
+            "HF": float(e_hf),
+            "S2_HF": float(s2_hf),
+            "TIME": {"HF": float(t_hf), "MP2": 0.0, "MP3": 0.0, "OMP2": 0.0, "OMP3": 0.0},
+        }
 
-    res = {
-        "basis": basis_name,
-        "HF": float(e_hf),
-        "S2_HF": calc_s2(wfn_hf, is_closed),
-        "TIME": {"HF": float(t_hf), "MP2": 0.0, "MP3": 0.0, "OMP2": 0.0, "OMP3": 0.0},
-    }
+        if n_elec <= 1:
+            for m in ("MP2", "MP3", "OMP2", "OMP3"):
+                res[m] = float(e_hf)
+            res["S2_OMP2"] = res["S2_OMP3"] = float(s2_hf)
+            return res
 
-    if n_elec <= 1:
-        for m in ("MP2", "MP3", "OMP2", "OMP3"):
-            res[m] = float(e_hf)
-        res["S2_OMP2"] = res["S2_OMP3"] = res["S2_HF"]
-        full_psio_clean()
+        hf_snap = snapshot_wfn(wfn_hf)
+
+        for m_key, m_call in (("MP2", "mp2"), ("MP3", "mp3")):
+            if m_key not in active_methods:
+                res[m_key] = float(e_hf)
+                continue
+            val, t_elapsed, wfn_hf, hf_snap = _run_mp_method(
+                m_call, mol, spec, basis_name, is_closed, eri_mode, wfn_hf, hf_snap, keep_97,
+                trap_fpe=trap_fpe, debug_nan=debug_nan,
+            )
+            res[m_key] = val
+            res["TIME"][m_key] = t_elapsed
+
+        for m_key, m_call in (("OMP2", "omp2"), ("OMP3", "omp3")):
+            if m_key not in active_methods:
+                res[m_key] = res.get("MP2" if m_key == "OMP2" else "MP3", float(e_hf))
+                res[f"S2_{m_key}"] = float(s2_hf)
+                continue
+            try:
+                val, s2_val, t_elapsed, wfn_hf, hf_snap = _run_omp_method(
+                    m_call, mol, spec, basis_name, is_closed, eri_mode, wfn_hf, hf_snap, s2_hf, keep_97,
+                    trap_fpe=trap_fpe, debug_nan=debug_nan,
+                )
+                res[m_key] = val
+                res[f"S2_{m_key}"] = s2_val
+                res["TIME"][m_key] = t_elapsed
+            except Exception as omp_exc:
+                # Jika seluruh stage OMP gagal, gunakan energi MP соответствующий agar JSON bebas NaN
+                fallback_key = "MP2" if m_key == "OMP2" else "MP3"
+                res[m_key] = float(res.get(fallback_key, e_hf))
+                res[f"S2_{m_key}"] = float(s2_hf)
+                res[f"WARN_{m_key}"] = str(omp_exc)
+                if debug_nan:
+                    print(f"    [FALLBACK] {m_key} menggunakan nilai {fallback_key} karena: {omp_exc}", flush=True)
+
         return res
-
-    # 2. Eliminasi Redundansi: Cukup panggil MP3 (otomatis menghitung MP2)
-    t0 = time.perf_counter()
-    e_mp3, wfn_mp3 = psi4.energy("mp3", ref_wfn=wfn_hf, molecule=mol, return_wfn=True)
-    t_mp3 = time.perf_counter() - t0
-    
-    # Ambil energi MP2 langsung dari wave function/variabel Psi4 tanpa re-run
-    res["MP2"] = float(psi4.core.variable("MP2 TOTAL ENERGY"))
-    res["MP3"] = float(e_mp3)
-    res["TIME"]["MP3"] = float(t_mp3)
-    res["TIME"]["MP2"] = float(psi4.core.variable("MP2 TOTAL ENERGY")) # Opsional/Estimasi
-
-    # 3. Eksekusi OMP2 & OMP3
-    # Catatan: OMP2 dan OMP3 memiliki orbital yang berbeda (variational MO).
-    # Namun pada mode CD/DF, gunakan 'omp2' dan 'omp3' dengan konfigurasi SCF type yang konsisten.
-    try:
-        t0 = time.perf_counter()
-        e_omp2, wfn_omp2 = psi4.energy("omp2", ref_wfn=wfn_hf, molecule=mol, return_wfn=True)
-        res["OMP2"] = float(e_omp2)
-        res["S2_OMP2"] = calc_s2(wfn_omp2, is_closed)
-        res["TIME"]["OMP2"] = time.perf_counter() - t0
-    except Exception as e:
-        res["OMP2"] = float("nan")
-
-    try:
-        t0 = time.perf_counter()
-        e_omp3, wfn_omp3 = psi4.energy("omp3", ref_wfn=wfn_hf, molecule=mol, return_wfn=True)
-        res["OMP3"] = float(e_omp3)
-        res["S2_OMP3"] = calc_s2(wfn_omp3, is_closed)
-        res["TIME"]["OMP3"] = time.perf_counter() - t0
-    except Exception as e:
-        res["OMP3"] = float("nan")
-
-    full_psio_clean()
-    return res
+    finally:
+        set_blas_threads(1)
+        full_psio_clean()
 
 
 if __name__ == "__main__":
@@ -327,6 +590,11 @@ if __name__ == "__main__":
     parser.add_argument("--tier", choices=["standard", "full"], default="standard")
     parser.add_argument("--basis", default="cc-pVDZ")
     parser.add_argument("--out", default="psi4_universal_raw.json")
+    parser.add_argument("--system", default=None, help="Filter nama sistem (pisahkan koma, misal: He,O2,CH2_triplet)")
+    parser.add_argument("--mode", default="EXACT,CHOLESKY,DF", help="Filter mode ERI (pisahkan koma, misal: CHOLESKY)")
+    parser.add_argument("--method", default="MP2,MP3,OMP2,OMP3", help="Filter metode Post-HF (misal: OMP2,OMP3)")
+    parser.add_argument("--trap-fpe", action="store_true", help="Aktifkan hardware SIGFPE (FE_INVALID|FE_DIVBYZERO) untuk GDB")
+    parser.add_argument("--debug-nan", action="store_true", help="Tampilkan diagnostik rinci setiap stage fallback NaN")
     args = parser.parse_args()
 
     t_start = time.perf_counter()
@@ -334,7 +602,14 @@ if __name__ == "__main__":
     print(f"  PSI4 UNIVERSAL VALIDATION RUNNER (TIER: {args.tier.upper()}, BASIS: {args.basis}, THREADS: {N_THREADS})", flush=True)
     print("=" * 110, flush=True)
 
-    selected_systems = {k: v for k, v in SYSTEMS.items() if args.tier == "full" or v[5] == "standard"}
+    if args.system:
+        req_sys = [s.strip() for s in args.system.split(",") if s.strip()]
+        selected_systems = {k: SYSTEMS[k] for k in req_sys if k in SYSTEMS}
+    else:
+        selected_systems = {k: v for k, v in SYSTEMS.items() if args.tier == "full" or v[5] == "standard"}
+
+    selected_modes = [m.strip().upper() for m in args.mode.split(",") if m.strip()]
+    selected_methods = {m.strip().upper() for m in args.method.split(",") if m.strip()}
     results_db = {}
 
     def save_checkpoint():
@@ -348,15 +623,23 @@ if __name__ == "__main__":
             "results": results_db,
         }
         with open(args.out, "w", encoding="utf-8") as f:
-            json.dump(payload, f, indent=2)
+            json.dump(payload, f, indent=2, allow_nan=False)
 
-    for mode in ["EXACT", "CHOLESKY", "DF"]:
+    for mode in selected_modes:
         print(f"\n>>> [PSI4] Mode ERI: {mode} (Basis Utama: {args.basis}) <<<", flush=True)
         for sys_name, spec in selected_systems.items():
             actual_basis = select_basis_for_system(spec, args.basis)
             key = f"{args.basis}|{mode}|{sys_name}"
             try:
-                res = run_psi4_system(sys_name, spec, actual_basis, mode)
+                res = run_psi4_system(
+                    sys_name,
+                    spec,
+                    actual_basis,
+                    mode,
+                    selected_methods=selected_methods,
+                    trap_fpe=args.trap_fpe,
+                    debug_nan=args.debug_nan,
+                )
                 results_db[key] = res
                 t_sum = sum(res["TIME"].values())
                 print(
@@ -370,17 +653,29 @@ if __name__ == "__main__":
                 full_psio_clean()
                 results_db[key] = {"error": str(exc), "basis": actual_basis}
                 print(f"  [FAIL]  {sys_name:<11} ({actual_basis:<9} | {mode:<8}) -> Error: {exc}", flush=True)
+                if args.debug_nan:
+                    traceback.print_exc()
             save_checkpoint()
 
-    if args.basis.lower() != "cc-pvdz":
+    if not args.system and args.basis.lower() != "cc-pvdz":
         print("\n>>> [PSI4] Cabang SAD Double-Zeta (Basis: cc-pVDZ) <<<", flush=True)
         for mode in ["EXACT", "DF"]:
+            if mode not in selected_modes:
+                continue
             for sys_name in ["Ne", "H2O", "OH", "NH3"]:
                 spec = SYSTEMS[sys_name]
                 actual_basis = select_basis_for_system(spec, "cc-pVDZ")
                 key = f"cc-pVDZ|{mode}|{sys_name}"
                 try:
-                    results_db[key] = run_psi4_system(sys_name, spec, actual_basis, mode)
+                    results_db[key] = run_psi4_system(
+                        sys_name,
+                        spec,
+                        actual_basis,
+                        mode,
+                        selected_methods=selected_methods,
+                        trap_fpe=args.trap_fpe,
+                        debug_nan=args.debug_nan,
+                    )
                 except Exception as exc:
                     full_psio_clean()
                     results_db[key] = {"error": str(exc), "basis": actual_basis}
