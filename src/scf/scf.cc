@@ -540,12 +540,12 @@ SCFResult BaseSCF::compute() {
             printf(" %4d %18.10f %10.2e %10.2e\n", iter_scf_, energy(), dE, dP);
         }
 
-        double e_tol = config_.energy_threshold;
-        double p_tol = config_.density_threshold;
+        double e_tol = is_uhf ? std::min(config_.energy_threshold, 1e-10) : config_.energy_threshold;
+        double p_tol = is_uhf ? std::min(config_.density_threshold, 1e-10) : config_.density_threshold;
 
         bool strict_conv  = (dE < e_tol && dP < p_tol && err_rms < p_tol);
-        bool plateau_conv = (iter_scf_ > 14 && dE < e_tol && dP < std::max(p_tol, 1e-10));
-            if (iter_scf_ > 2 && (strict_conv || plateau_conv)) {
+        bool plateau_conv = (iter_scf_ > 24 && dE < e_tol && dP < 1e-10 && err_rms < 1e-10);
+        if (iter_scf_ > 2 && (strict_conv || plateau_conv)) {
             converged = true;
             break;
         }
@@ -620,14 +620,13 @@ SCFResult BaseSCF::compute() {
                 double dE = std::abs(energy_ - energy_old_);
                 double dP = std::hypot((P_alpha_ - Pa_snap).norm(), (P_beta_ - Pb_snap).norm());
 
-                double e_tol = config_.energy_threshold;
-                double p_tol = config_.density_threshold;
+                double e_tol = is_uhf ? std::min(config_.energy_threshold, 1e-10) : config_.energy_threshold;
+                double p_tol = is_uhf ? std::min(config_.density_threshold, 1e-10) : config_.density_threshold;
 
                 bool strict_conv  = (dE < e_tol && dP < p_tol && err_rms < p_tol);
-                bool plateau_conv = (iter_scf_ > 14 && dE < e_tol && dP < 5e-10 && err_rms < 1e-10);
-
+                bool plateau_conv = (iter_scf_ > 24 && dE < e_tol && dP < 1e-10 && err_rms < 1e-10);
                 if (iter_scf_ > 2 && (strict_conv || plateau_conv)) {
-                    trial_conv = true;
+                    converged = true;
                     break;
                 }
             }
@@ -689,7 +688,8 @@ SCFResult BaseSCF::compute() {
             symmetrizer_->symmetrize(P_alpha_);
             if (is_uhf) symmetrizer_->symmetrize(P_beta_);
         }
-        iter_scf_ = 2;
+        // Gunakan iter_scf_ = 1 agar Fock terakhir dibangun secara eksak tanpa residu screening inkremental
+        iter_scf_ = 1;
         build_fock_matrix();
         if (symmetrizer_) {
             symmetrizer_->symmetrize(F_alpha_);
@@ -701,21 +701,24 @@ SCFResult BaseSCF::compute() {
             solve_fock(F_beta_, C_beta_, eps_beta_);
             occ_numbers_alpha_.resize(0);
             occ_numbers_beta_.resize(0);
+            update_densities();
         } else {
+            Eigen::MatrixXd Pa_prev = P_alpha_;
             occ_numbers_alpha_ = smear_electrons(eps_alpha_, n_alpha_);
             C_beta_ = C_alpha_;
             eps_beta_ = eps_alpha_;
             occ_numbers_beta_ = occ_numbers_alpha_;
-        }
-        update_densities();
+            update_densities();
 
-        iter_scf_ = 2;
-        build_fock_matrix();
-        if (symmetrizer_) {
-            symmetrizer_->symmetrize(F_alpha_);
-            if (is_uhf) symmetrizer_->symmetrize(F_beta_);
+            // Hanya bangun ulang Fock jika smearing mengubah matriks densitas
+            if ((P_alpha_ - Pa_prev).cwiseAbs().maxCoeff() > 1e-12) {
+                iter_scf_ = 1;
+                build_fock_matrix();
+                if (symmetrizer_) symmetrizer_->symmetrize(F_alpha_);
+                F_beta_ = F_alpha_;
+                energy_ = compute_energy();
+            }
         }
-        energy_ = compute_energy();
     }
 
     std::vector<int> irreps_a(nbasis_, 0), irreps_b(nbasis_, 0);
@@ -1016,7 +1019,7 @@ void UHF::build_fock_matrix() {
                 Eigen::MatrixXd Ga_local = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
                 Eigen::MatrixXd Gb_local = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
 
-                #pragma omp for schedule(static) nowait
+                #pragma omp for schedule(dynamic, 32) nowait
                 for (size_t i = 0; i < incore_quartets_.size(); ++i) {
                     const auto& cq = incore_quartets_[i];
                     int M = cq.M; int N = cq.N; int P = cq.P; int Q = cq.Q;
@@ -1039,18 +1042,26 @@ void UHF::build_fock_matrix() {
 
                     for (int q = 0; q < dimQ; ++q) {
                         int sig = offQ + q;
+                        const double* dPa_sig = dPa.col(sig).data();
+                        const double* dPb_sig = dPb.col(sig).data();
+
                         for (int p = 0; p < dimP; ++p) {
                             int lam = offP + p;
+                            const double* dPa_lam = dPa.col(lam).data();
+                            const double* dPb_lam = dPb.col(lam).data();
                             double pt_ls_2 = dP_tot(lam, sig) * 2.0;
                             double j_ls_accum = 0.0;
 
                             for (int n = 0; n < dimN; ++n) {
                                 int nu = offN + n;
-                                double dPa_ns = dPa(nu, sig);
-                                double dPa_nl = dPa(nu, lam);
-                                double dPb_ns = dPb(nu, sig);
-                                double dPb_nl = dPb(nu, lam);
-                                double j_mn_accum = 0.0;
+                                const double* dP_tot_nu = dP_tot.col(nu).data();
+                                double dPa_ns = dPa_sig[nu];
+                                double dPa_nl = dPa_lam[nu];
+                                double dPb_ns = dPb_sig[nu];
+                                double dPb_nl = dPb_lam[nu];
+
+                                double ka_nl_acc = 0.0, ka_ns_acc = 0.0;
+                                double kb_nl_acc = 0.0, kb_ns_acc = 0.0;
 
                                 for (int m = 0; m < dimM; ++m) {
                                     int mu = offM + m;
@@ -1058,27 +1069,29 @@ void UHF::build_fock_matrix() {
                                     if (std::abs(val) < 1e-14) continue;
 
                                     double v = val * fac;
-                                    j_mn_accum += v * pt_ls_2;
-                                    j_ls_accum += v * (dP_tot(mu, nu) * 2.0);
-
-                                    Ga_local(mu, lam) -= v * dPa_ns;
-                                    Ga_local(nu, lam) -= v * dPa(mu, sig);
-                                    Ga_local(mu, sig) -= v * dPa_nl;
-                                    Ga_local(nu, sig) -= v * dPa(mu, lam);
-
-                                    Gb_local(mu, lam) -= v * dPb_ns;
-                                    Gb_local(nu, lam) -= v * dPb(mu, sig);
-                                    Gb_local(mu, sig) -= v * dPb_nl;
-                                    Gb_local(nu, sig) -= v * dPb(mu, lam);
-
                                     double j_val = v * pt_ls_2;
-                                    Ga_local(mu, nu) += j_val;
-                                    Gb_local(mu, nu) += j_val;
+                                    j_ls_accum += v * dP_tot_nu[mu];
+
+                                    Ga_local(mu, nu)  += j_val;
+                                    Gb_local(mu, nu)  += j_val;
+                                    Ga_local(mu, lam) -= v * dPa_ns;
+                                    Ga_local(mu, sig) -= v * dPa_nl;
+                                    Gb_local(mu, lam) -= v * dPb_ns;
+                                    Gb_local(mu, sig) -= v * dPb_nl;
+
+                                    ka_nl_acc += v * dPa_sig[mu];
+                                    ka_ns_acc += v * dPa_lam[mu];
+                                    kb_nl_acc += v * dPb_sig[mu];
+                                    kb_ns_acc += v * dPb_lam[mu];
                                 }
-                                (void)j_mn_accum;
+
+                                Ga_local(nu, lam) -= ka_nl_acc;
+                                Ga_local(nu, sig) -= ka_ns_acc;
+                                Gb_local(nu, lam) -= kb_nl_acc;
+                                Gb_local(nu, sig) -= kb_ns_acc;
                             }
-                            Ga_local(lam, sig) += j_ls_accum;
-                            Gb_local(lam, sig) += j_ls_accum;
+                            Ga_local(lam, sig) += 2.0 * j_ls_accum;
+                            Gb_local(lam, sig) += 2.0 * j_ls_accum;
                         }
                     }
                 }
