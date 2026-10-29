@@ -1,14 +1,33 @@
 #!/usr/bin/env python3
 """
-Simplified MSHQC Universal Validation Runner (Safe C++ Lifetime & Real-Time Output)
+Simplified MSHQC Universal Validation Runner (Safe C++ Lifetime, Auto-GDB Backtrace & Real-Time Output)
 Output: mshqc_universal_raw.json
 """
 
+import os
 import gc
 import sys
 import time
 import json
+import shutil
+import signal
 import argparse
+import subprocess
+
+try:
+    os.sched_setaffinity(0, set(range(os.cpu_count() or 4)))
+except Exception:
+    pass
+
+CPU_AVAIL = os.cpu_count() or 4
+N_THREADS = int(os.environ.get("OMP_NUM_THREADS", str(min(4, CPU_AVAIL))))
+os.environ["OMP_NUM_THREADS"] = str(N_THREADS)
+os.environ["TBLIS_NUM_THREADS"] = str(N_THREADS)
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OMP_MAX_ACTIVE_LEVELS"] = "1"
+os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
+
 import numpy as np
 import mshqc
 
@@ -128,17 +147,14 @@ def run_mshqc_system(spec, actual_basis: str, eri_mode: str) -> dict:
     n_elec, is_closed = na + nb, (mult == 1)
     aux_basis = f"{actual_basis.lower()}-ri"
 
-    # 1. Initialize molecule
     mol = mshqc.Molecule(charge=charge, multiplicity=mult)
     for _, sym, x, y, zc in atoms:
         mol.add_atom(sym, x, y, zc, units="bohr")
 
-    # 2. Load basis set and integral engine
     basis     = mshqc.BasisSet(actual_basis, mol)
     integrals = mshqc.IntegralEngine(mol, basis)
     S_mat     = np.array(integrals.compute_overlap(), dtype=np.float64, copy=True)
 
-    # 3. Run RHF / UHF (keep solver reference alive during compute)
     scf_cls  = mshqc.RHF if is_closed else mshqc.UHF
     scf_conf = mshqc.SCFConfig(
         eri_method=eri_mode,
@@ -152,11 +168,14 @@ def run_mshqc_system(spec, actual_basis: str, eri_mode: str) -> dict:
     t0_hf      = time.perf_counter()
     scf_solver = scf_cls(mol, basis, integrals, scf_conf)
     scf_res    = scf_solver.compute()
+    t_hf       = time.perf_counter() - t0_hf
+
     if not scf_res.converged:
         scf_conf.max_iterations = 400
+        t0_hf      = time.perf_counter()
         scf_solver = scf_cls(mol, basis, integrals, scf_conf)
         scf_res    = scf_solver.compute()
-    t_hf = time.perf_counter() - t0_hf
+        t_hf       = time.perf_counter() - t0_hf
 
     s2_hf = compute_s2_from_mo(scf_res, S_mat, na, nb, is_closed)
     msh_res = {
@@ -167,8 +186,6 @@ def run_mshqc_system(spec, actual_basis: str, eri_mode: str) -> dict:
         "TIME": {"HF": float(t_hf), "MP2": 0.0, "MP3": 0.0, "OMP2": 0.0, "OMP3": 0.0},
     }
 
-    # 4. Run Post-HF (MP2, MP3, OMP2, OMP3)
-    # Keep solver instances bound to local variables so C++ references stay valid
     if n_elec > 1:
         mp2_cls  = mshqc.RMP2 if is_closed else mshqc.UMP2
         mp3_cls  = mshqc.RMP3 if is_closed else mshqc.UMP3
@@ -225,7 +242,6 @@ def run_mshqc_system(spec, actual_basis: str, eri_mode: str) -> dict:
             "OMP3": float(t_omp3),
         })
 
-        # Deterministic teardown in reverse dependency order
         del omp3_res, omp3_solver
         del omp2_res, omp2_solver
         del mp3_res, mp3_solver
@@ -240,20 +256,96 @@ def run_mshqc_system(spec, actual_basis: str, eri_mode: str) -> dict:
     return msh_res
 
 
+def run_gdb_backtrace(sys_name: str, actual_basis: str, eri_mode: str):
+    """Menjalankan ulang sistem yang crash di bawah gdb --args dengan bt full untuk mendiagnosis sinyal C++."""
+    gdb_bin = shutil.which("gdb")
+    if not gdb_bin:
+        print(f"  [GDB] Binary 'gdb' tidak ditemukan di PATH; lewati pengambilan stacktrace.", flush=True)
+        return
+
+    print("\n" + "!" * 110, flush=True)
+    print(f"  [GDB CRASH DIAGNOSIS] Menjalankan gdb --args + bt full untuk: {sys_name} ({actual_basis} | {eri_mode})", flush=True)
+    print("!" * 110, flush=True)
+
+    cmd = [
+        gdb_bin, "-batch",
+        "-ex", "set pagination off",
+        "-ex", "handle SIGPIPE nostop noprint pass",
+        "-ex", "run",
+        "-ex", "bt full",
+        "-ex", "info registers",
+        "-ex", "thread apply all bt full",
+        "-ex", "quit",
+        "--args", sys.executable, "-u", os.path.abspath(__file__),
+        "--single-system", sys_name,
+        "--single-basis", actual_basis,
+        "--single-mode", eri_mode,
+    ]
+    subprocess.run(cmd, check=False)
+    print("!" * 110 + "\n", flush=True)
+
+
+def run_isolated_worker(sys_name: str, actual_basis: str, eri_mode: str, tmp_json: str) -> dict:
+    """Menjalankan 1 sistem dalam subprocess terisolasi agar jika terjadi SIGSEGV, bisa di-debug via GDB & lanjut."""
+    if os.path.exists(tmp_json):
+        os.remove(tmp_json)
+
+    cmd = [
+        sys.executable, "-u", os.path.abspath(__file__),
+        "--single-system", sys_name,
+        "--single-basis", actual_basis,
+        "--single-mode", eri_mode,
+        "--single-out", tmp_json,
+    ]
+    proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+
+    if proc.returncode == 0 and os.path.exists(tmp_json):
+        with open(tmp_json, "r", encoding="utf-8") as f:
+            return json.load(f)
+
+    if proc.returncode < 0:
+        sig_num = -proc.returncode
+        try:
+            sig_name = signal.Signals(sig_num).name
+        except Exception:
+            sig_name = f"SIG({sig_num})"
+        err_msg = f"Terminated by C++ native signal {sig_name} (exit {proc.returncode})"
+        run_gdb_backtrace(sys_name, actual_basis, eri_mode)
+    else:
+        tail_out = (proc.stdout or "").strip().splitlines()[-3:]
+        err_msg = f"Worker exit {proc.returncode}: {' | '.join(tail_out)}"
+
+    return {"error": err_msg, "basis": actual_basis}
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Simplified MSHQC Universal Validation Runner")
     parser.add_argument("--tier", choices=["standard", "full"], default="standard")
     parser.add_argument("--basis", default="cc-pVDZ")
     parser.add_argument("--out", default="mshqc_universal_raw.json")
+    parser.add_argument("--single-system", default=None)
+    parser.add_argument("--single-basis", default=None)
+    parser.add_argument("--single-mode", default=None)
+    parser.add_argument("--single-out", default=None)
     args = parser.parse_args()
+
+    # Mode eksekusi sistem tunggal (untuk subprocess worker & gdb --args)
+    if args.single_system:
+        spec = SYSTEMS[args.single_system]
+        res = run_mshqc_system(spec, args.single_basis, args.single_mode)
+        if args.single_out:
+            with open(args.single_out, "w", encoding="utf-8") as f:
+                json.dump(res, f)
+        sys.exit(0)
 
     t_start = time.perf_counter()
     print("=" * 110, flush=True)
-    print(f"  MSHQC UNIVERSAL VALIDATION RUNNER (TIER: {args.tier.upper()}, BASIS: {args.basis})", flush=True)
+    print(f"  MSHQC UNIVERSAL VALIDATION RUNNER (TIER: {args.tier.upper()}, BASIS: {args.basis}, THREADS: {N_THREADS})", flush=True)
     print("=" * 110, flush=True)
 
     selected_systems = {k: v for k, v in SYSTEMS.items() if args.tier == "full" or v[5] == "standard"}
     results_db = {}
+    tmp_worker_json = f"{args.out}.worker_tmp.json"
 
     def save_checkpoint():
         wall_time = time.perf_counter() - t_start
@@ -262,6 +354,7 @@ if __name__ == "__main__":
                 "engine": "mshqc",
                 "tier": args.tier,
                 "basis": args.basis,
+                "threads": N_THREADS,
                 "wall_time_s": wall_time,
                 "results": results_db,
             }, f, indent=2)
@@ -271,9 +364,9 @@ if __name__ == "__main__":
         for sys_name, spec in selected_systems.items():
             actual_basis = select_basis_for_system(spec, args.basis)
             key = f"{args.basis}|{mode}|{sys_name}"
-            try:
-                res = run_mshqc_system(spec, actual_basis, mode)
-                results_db[key] = res
+            res = run_isolated_worker(sys_name, actual_basis, mode, tmp_worker_json)
+            results_db[key] = res
+            if "error" not in res:
                 t_sum = sum(res["TIME"].values())
                 print(
                     f"  [MSHQC] {sys_name:<11} ({actual_basis:<9} | {mode:<8}) -> "
@@ -282,9 +375,8 @@ if __name__ == "__main__":
                     f"OMP3: {res['OMP3']:14.8f} Ha ({t_sum:.3f} s)",
                     flush=True,
                 )
-            except Exception as exc:
-                results_db[key] = {"error": str(exc), "basis": actual_basis}
-                print(f"  [FAIL]  {sys_name:<11} ({actual_basis:<9} | {mode:<8}) -> Error: {exc}", flush=True)
+            else:
+                print(f"  [FAIL]  {sys_name:<11} ({actual_basis:<9} | {mode:<8}) -> Error: {res['error']}", flush=True)
             save_checkpoint()
 
     if args.basis.lower() != "cc-pvdz":
@@ -294,11 +386,11 @@ if __name__ == "__main__":
                 spec = SYSTEMS[sys_name]
                 actual_basis = select_basis_for_system(spec, "cc-pVDZ")
                 key = f"cc-pVDZ|{mode}|{sys_name}"
-                try:
-                    results_db[key] = run_mshqc_system(spec, actual_basis, mode)
-                except Exception as exc:
-                    results_db[key] = {"error": str(exc), "basis": actual_basis}
+                results_db[key] = run_isolated_worker(sys_name, actual_basis, mode, tmp_worker_json)
                 save_checkpoint()
+
+    if os.path.exists(tmp_worker_json):
+        os.remove(tmp_worker_json)
 
     wall_time = time.perf_counter() - t_start
     save_checkpoint()

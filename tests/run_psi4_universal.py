@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Runner Mandiri Psi4 untuk Universal Validation Suite (Zero-NaN & RHF/UHF DF/CD Guard)
+Runner Mandiri Psi4 untuk Universal Validation Suite (Zero-PSIO-Error & Apple-to-Apple)
 Output: psi4_universal_raw.json
 """
 
@@ -19,7 +19,7 @@ except Exception:
     pass
 
 CPU_AVAIL = os.cpu_count() or 4
-N_THREADS = int(os.environ.get("OMP_NUM_THREADS", str(min(6, CPU_AVAIL))))
+N_THREADS = int(os.environ.get("OMP_NUM_THREADS", str(min(4, CPU_AVAIL))))
 os.environ["OMP_NUM_THREADS"] = str(N_THREADS)
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = str(N_THREADS)
@@ -62,6 +62,18 @@ def set_blas_threads(num_t: int):
             fn(int(num_t))
         except Exception:
             pass
+
+
+def full_psio_clean():
+    """Menutup seluruh unit PSIO yang terbuka dan membersihkan file scratch secara tuntas."""
+    try:
+        psi4.core.IOManager.shared_object().psiclean()
+    except Exception:
+        pass
+    try:
+        psi4.core.clean()
+    except Exception:
+        pass
 
 
 ANG_TO_BOHR = 1.8897261246257702
@@ -205,18 +217,22 @@ def calc_s2(wfn, is_closed: bool):
         return float(ideal)
 
 
-def _configure_psi4_options(basis_name: str, is_closed: bool, eri_mode: str, scf_type_override=None):
+def _configure_psi4_options(basis_name: str, is_closed: bool, eri_mode: str, post_hf: bool = False):
     scf_type_map = {"EXACT": "pk", "CHOLESKY": "cd", "DF": "df"}
     mp_type_map  = {"EXACT": "conv", "CHOLESKY": "cd", "DF": "df"}
+
+    # Untuk Post-HF pada CHOLESKY/DF, gunakan scf_type="pk" & read_scf_3index=False
+    # agar dfocc tidak mencoba membuka PSIO unit 97 yang sudah dibersihkan pasca-SCF
+    effective_scf_type = "pk" if (post_hf and eri_mode in ("CHOLESKY", "DF")) else scf_type_map[eri_mode]
 
     opts = {
         "basis": basis_name,
         "reference": "rhf" if is_closed else "uhf",
-        "scf_type": scf_type_override if scf_type_override else scf_type_map[eri_mode],
+        "scf_type": effective_scf_type,
         "mp2_type": mp_type_map[eri_mode],
         "mp_type": mp_type_map[eri_mode],
         "cc_type": mp_type_map[eri_mode],
-        "e_convergence": 1e-10,
+        "e_convergence": 1e-9 if post_hf else 1e-10,
         "d_convergence": 1e-10,
         "r_convergence": 1e-6,
         "rms_mograd_convergence": 1e-5,
@@ -240,7 +256,7 @@ def run_psi4_system(name, spec, basis_name, eri_mode):
     n_elec = na + nb
     is_closed = (mult == 1)
 
-    psi4.core.clean()
+    full_psio_clean()
     psi4.core.clean_options()
 
     use_c1 = (eri_mode in ("CHOLESKY", "DF")) or (mult != 1 and len(atoms) > 1) or (name in DEGENERATE_OPEN_SHELL_ATOMS)
@@ -248,9 +264,10 @@ def run_psi4_system(name, spec, basis_name, eri_mode):
     mol_lines += [f"{sym} {x:.12f} {y:.12f} {zc:.12f}" for _, sym, x, y, zc in atoms]
     mol = psi4.geometry("\n".join(mol_lines))
 
-    _configure_psi4_options(basis_name, is_closed, eri_mode)
+    _configure_psi4_options(basis_name, is_closed, eri_mode, post_hf=False)
 
-    set_blas_threads(1)
+    # Apple-to-apple: gunakan N_THREADS secara konsisten pada SCF maupun Post-HF
+    set_blas_threads(N_THREADS)
     t0 = time.perf_counter()
     e_hf, wfn_hf = psi4.energy("scf", molecule=mol, return_wfn=True)
     t_hf = time.perf_counter() - t0
@@ -266,76 +283,68 @@ def run_psi4_system(name, spec, basis_name, eri_mode):
         for m in ("MP2", "MP3", "OMP2", "OMP3"):
             res[m] = float(e_hf)
         res["S2_OMP2"] = res["S2_OMP3"] = res["S2_HF"]
-        psi4.core.clean()
+        full_psio_clean()
         return res
 
     hf_snap = snapshot_wfn(wfn_hf)
+    full_psio_clean()
+    _configure_psi4_options(basis_name, is_closed, eri_mode, post_hf=True)
 
-    # Untuk UHF pada CHOLESKY/DF, dfocc membutuhkan read_scf_3index=False & scf_type=pk
-    # Namun untuk RHF pada CHOLESKY/DF, kita jaga opsi dan fallback bila ref_wfn membutuhkan rebuild
-    if eri_mode in ("CHOLESKY", "DF") and not is_closed:
-        psi4.set_options({"scf_type": "pk", "read_scf_3index": False})
+    for m_key, m_call in (("MP2", "mp2"), ("MP3", "mp3")):
+        restore_wfn(wfn_hf, hf_snap)
+        _configure_psi4_options(basis_name, is_closed, eri_mode, post_hf=True)
+        t0 = time.perf_counter()
+        try:
+            val = float(psi4.energy(m_call, ref_wfn=wfn_hf, molecule=mol))
+            t_elapsed = time.perf_counter() - t0
+        except Exception:
+            full_psio_clean()
+            _configure_psi4_options(basis_name, is_closed, eri_mode, post_hf=False)
+            _, wfn_hf = psi4.energy("scf", molecule=mol, return_wfn=True)
+            hf_snap = snapshot_wfn(wfn_hf)
+            full_psio_clean()
+            _configure_psi4_options(basis_name, is_closed, eri_mode, post_hf=True)
+            t0_retry = time.perf_counter()
+            val = float(psi4.energy(m_call, ref_wfn=wfn_hf, molecule=mol))
+            t_elapsed = time.perf_counter() - t0_retry
+        res[m_key] = val
+        res["TIME"][m_key] = float(t_elapsed)
+        full_psio_clean()
 
-    set_blas_threads(N_THREADS)
-    try:
-        for m_key, m_call in (("MP2", "mp2"), ("MP3", "mp3")):
+    for m_key, m_call in (("OMP2", "omp2"), ("OMP3", "omp3")):
+        restore_wfn(wfn_hf, hf_snap)
+        _configure_psi4_options(basis_name, is_closed, eri_mode, post_hf=True)
+        e_val = float("nan")
+        s2_val = 0.0 if is_closed else float("nan")
+        t_elapsed = 0.0
+
+        try:
             t0 = time.perf_counter()
-            try:
-                val = float(psi4.energy(m_call, ref_wfn=wfn_hf, molecule=mol))
-            except Exception:
-                psi4.core.clean()
-                _configure_psi4_options(basis_name, is_closed, eri_mode)
-                _, wfn_hf = psi4.energy("scf", molecule=mol, return_wfn=True)
-                hf_snap = snapshot_wfn(wfn_hf)
-                val = float(psi4.energy(m_call, ref_wfn=wfn_hf, molecule=mol))
-            res[m_key] = val
-            res["TIME"][m_key] = float(time.perf_counter() - t0)
-            psi4.core.clean()
-            restore_wfn(wfn_hf, hf_snap)
+            e_tmp, wfn_opt = psi4.energy(m_call, ref_wfn=wfn_hf, molecule=mol, return_wfn=True)
+            t_elapsed = time.perf_counter() - t0
+            if not math.isnan(float(e_tmp)):
+                e_val = float(e_tmp)
+                s2_val = calc_s2(wfn_opt, is_closed)
+        except Exception:
+            full_psio_clean()
 
-        for m_key, m_call in (("OMP2", "omp2"), ("OMP3", "omp3")):
-            t0 = time.perf_counter()
-            e_val = float("nan")
-            s2_val = 0.0 if is_closed else float("nan")
+        if math.isnan(e_val):
+            full_psio_clean()
+            _configure_psi4_options(basis_name, is_closed, eri_mode, post_hf=False)
+            _, wfn_hf = psi4.energy("scf", molecule=mol, return_wfn=True)
+            hf_snap = snapshot_wfn(wfn_hf)
+            full_psio_clean()
+            _configure_psi4_options(basis_name, is_closed, eri_mode, post_hf=True)
+            t0_retry = time.perf_counter()
+            e_tmp, wfn_opt = psi4.energy(m_call, ref_wfn=wfn_hf, molecule=mol, return_wfn=True)
+            t_elapsed = time.perf_counter() - t0_retry
+            e_val = float(e_tmp)
+            s2_val = calc_s2(wfn_opt, is_closed)
 
-            # Strategi 1: Gunakan ref_wfn langsung (dengan scf_type sesuai untuk RHF/UHF)
-            for scf_try in (["pk", None] if (eri_mode in ("CHOLESKY", "DF") and is_closed) else [None, "pk"]):
-                try:
-                    psi4.core.clean()
-                    restore_wfn(wfn_hf, hf_snap)
-                    if scf_try is not None:
-                        psi4.set_options({"scf_type": scf_try, "read_scf_3index": False})
-                    else:
-                        _configure_psi4_options(basis_name, is_closed, eri_mode)
-                    e_tmp, wfn_opt = psi4.energy(m_call, ref_wfn=wfn_hf, molecule=mol, return_wfn=True)
-                    if not math.isnan(float(e_tmp)):
-                        e_val = float(e_tmp)
-                        s2_val = calc_s2(wfn_opt, is_closed)
-                        break
-                except Exception:
-                    continue
-
-            # Strategi 2 (Fallback anti-NaN): Jika ref_wfn gagal karena Cb/3-index di RHF dfocc,
-            # jalankan direct psi4.energy(m_call) dengan bersih
-            if math.isnan(e_val):
-                try:
-                    psi4.core.clean()
-                    _configure_psi4_options(basis_name, is_closed, eri_mode)
-                    t_re = time.perf_counter()
-                    e_tmp, wfn_opt = psi4.energy(m_call, molecule=mol, return_wfn=True)
-                    t0 = t_re  # Gunakan waktu murni solver
-                    e_val = float(e_tmp)
-                    s2_val = calc_s2(wfn_opt, is_closed)
-                except Exception:
-                    pass
-
-            res[m_key] = e_val
-            res[f"S2_{m_key}"] = s2_val
-            res["TIME"][m_key] = float(time.perf_counter() - t0)
-            psi4.core.clean()
-            restore_wfn(wfn_hf, hf_snap)
-    finally:
-        set_blas_threads(1)
+        res[m_key] = e_val
+        res[f"S2_{m_key}"] = s2_val
+        res["TIME"][m_key] = float(t_elapsed)
+        full_psio_clean()
 
     return res
 
@@ -385,6 +394,7 @@ if __name__ == "__main__":
                     flush=True,
                 )
             except Exception as exc:
+                full_psio_clean()
                 results_db[key] = {"error": str(exc), "basis": actual_basis}
                 print(f"  [FAIL]  {sys_name:<11} ({actual_basis:<9} | {mode:<8}) -> Error: {exc}", flush=True)
             save_checkpoint()
@@ -399,6 +409,7 @@ if __name__ == "__main__":
                 try:
                     results_db[key] = run_psi4_system(sys_name, spec, actual_basis, mode)
                 except Exception as exc:
+                    full_psio_clean()
                     results_db[key] = {"error": str(exc), "basis": actual_basis}
                 save_checkpoint()
 
