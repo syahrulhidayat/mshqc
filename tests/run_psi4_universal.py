@@ -266,8 +266,8 @@ def run_psi4_system(name, spec, basis_name, eri_mode):
 
     _configure_psi4_options(basis_name, is_closed, eri_mode, post_hf=False)
 
-    # Apple-to-apple: gunakan N_THREADS secara konsisten pada SCF maupun Post-HF
-    set_blas_threads(N_THREADS)
+    # SCF menggunakan 4 thread OpenMP di libfock -> BLAS = 1 thread agar bebas oversubscription
+    set_blas_threads(1)
     t0 = time.perf_counter()
     e_hf, wfn_hf = psi4.energy("scf", molecule=mol, return_wfn=True)
     t_hf = time.perf_counter() - t0
@@ -287,64 +287,39 @@ def run_psi4_system(name, spec, basis_name, eri_mode):
         return res
 
     hf_snap = snapshot_wfn(wfn_hf)
-    full_psio_clean()
-    _configure_psi4_options(basis_name, is_closed, eri_mode, post_hf=True)
+    if eri_mode in ("CHOLESKY", "DF"):
+        psi4.set_options({"scf_type": "pk", "read_scf_3index": False, "e_convergence": 1e-9})
+    else:
+        psi4.set_options({"e_convergence": 1e-9})
 
-    for m_key, m_call in (("MP2", "mp2"), ("MP3", "mp3")):
-        restore_wfn(wfn_hf, hf_snap)
-        _configure_psi4_options(basis_name, is_closed, eri_mode, post_hf=True)
-        t0 = time.perf_counter()
-        try:
+    # Aktifkan multi-thread BLAS khusus untuk modul occ/libdpd (mode EXACT);
+    # pada mode CHOLESKY/DF, dfocc sudah paralel via OpenMP (N_THREADS)
+    corr_blas_threads = N_THREADS if eri_mode == "EXACT" else 1
+    set_blas_threads(corr_blas_threads)
+
+    try:
+        for m_key, m_call in (("MP2", "mp2"), ("MP3", "mp3")):
+            restore_wfn(wfn_hf, hf_snap)
+            _configure_psi4_options(basis_name, is_closed, eri_mode, post_hf=True)
+            t0 = time.perf_counter()
             val = float(psi4.energy(m_call, ref_wfn=wfn_hf, molecule=mol))
             t_elapsed = time.perf_counter() - t0
-        except Exception:
+            res[m_key] = val
+            res["TIME"][m_key] = float(t_elapsed)
             full_psio_clean()
-            _configure_psi4_options(basis_name, is_closed, eri_mode, post_hf=False)
-            _, wfn_hf = psi4.energy("scf", molecule=mol, return_wfn=True)
-            hf_snap = snapshot_wfn(wfn_hf)
-            full_psio_clean()
+
+        for m_key, m_call in (("OMP2", "omp2"), ("OMP3", "omp3")):
+            restore_wfn(wfn_hf, hf_snap)
             _configure_psi4_options(basis_name, is_closed, eri_mode, post_hf=True)
-            t0_retry = time.perf_counter()
-            val = float(psi4.energy(m_call, ref_wfn=wfn_hf, molecule=mol))
-            t_elapsed = time.perf_counter() - t0_retry
-        res[m_key] = val
-        res["TIME"][m_key] = float(t_elapsed)
-        full_psio_clean()
-
-    for m_key, m_call in (("OMP2", "omp2"), ("OMP3", "omp3")):
-        restore_wfn(wfn_hf, hf_snap)
-        _configure_psi4_options(basis_name, is_closed, eri_mode, post_hf=True)
-        e_val = float("nan")
-        s2_val = 0.0 if is_closed else float("nan")
-        t_elapsed = 0.0
-
-        try:
             t0 = time.perf_counter()
             e_tmp, wfn_opt = psi4.energy(m_call, ref_wfn=wfn_hf, molecule=mol, return_wfn=True)
             t_elapsed = time.perf_counter() - t0
-            if not math.isnan(float(e_tmp)):
-                e_val = float(e_tmp)
-                s2_val = calc_s2(wfn_opt, is_closed)
-        except Exception:
+            res[m_key] = float(e_tmp)
+            res[f"S2_{m_key}"] = calc_s2(wfn_opt, is_closed)
+            res["TIME"][m_key] = float(t_elapsed)
             full_psio_clean()
-
-        if math.isnan(e_val):
-            full_psio_clean()
-            _configure_psi4_options(basis_name, is_closed, eri_mode, post_hf=False)
-            _, wfn_hf = psi4.energy("scf", molecule=mol, return_wfn=True)
-            hf_snap = snapshot_wfn(wfn_hf)
-            full_psio_clean()
-            _configure_psi4_options(basis_name, is_closed, eri_mode, post_hf=True)
-            t0_retry = time.perf_counter()
-            e_tmp, wfn_opt = psi4.energy(m_call, ref_wfn=wfn_hf, molecule=mol, return_wfn=True)
-            t_elapsed = time.perf_counter() - t0_retry
-            e_val = float(e_tmp)
-            s2_val = calc_s2(wfn_opt, is_closed)
-
-        res[m_key] = e_val
-        res[f"S2_{m_key}"] = s2_val
-        res["TIME"][m_key] = float(t_elapsed)
-        full_psio_clean()
+    finally:
+        set_blas_threads(1)
 
     return res
 

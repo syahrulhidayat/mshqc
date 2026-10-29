@@ -189,15 +189,7 @@ jobs:
       - name: Run Isolated mshqc Universal Validation (tests/run_mshqc_universal.py)
         run: |
           set -eo pipefail
-          gdb -batch -return-child-result \
-            -ex "set pagination off" \
-            -ex "handle SIGPIPE nostop noprint pass" \
-            -ex "run" \
-            -ex "bt full" \
-            -ex "info registers" \
-            -ex "thread apply all bt full" \
-            -ex "quit" \
-            --args ${{ github.workspace }}/mshqc_venv/bin/python -u tests/run_mshqc_universal.py --tier standard --basis cc-pVDZ --out mshqc_universal_raw.json 2>&1 | tee mshqc_universal_runner.log
+          ${{ github.workspace }}/mshqc_venv/bin/python -u tests/run_mshqc_universal.py --tier standard --basis cc-pVDZ --out mshqc_universal_raw.json 2>&1 | tee mshqc_universal_runner.log
 
       - name: Run Isolated Psi4 Universal Validation (tests/run_psi4_universal.py)
         shell: bash -eo pipefail -l {0}

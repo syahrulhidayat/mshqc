@@ -145,6 +145,7 @@ def compute_s2_from_mo(res, S_mat, na: int, nb: int, is_closed: bool) -> float:
 def run_mshqc_system(spec, actual_basis: str, eri_mode: str) -> dict:
     charge, mult, na, nb, atoms, _ = spec
     n_elec, is_closed = na + nb, (mult == 1)
+    mode_lower = eri_mode.lower()
     aux_basis = f"{actual_basis.lower()}-ri"
 
     mol = mshqc.Molecule(charge=charge, multiplicity=mult)
@@ -157,7 +158,7 @@ def run_mshqc_system(spec, actual_basis: str, eri_mode: str) -> dict:
 
     scf_cls  = mshqc.RHF if is_closed else mshqc.UHF
     scf_conf = mshqc.SCFConfig(
-        eri_method=eri_mode,
+        eri_method=mode_lower,
         threshold=1e-10,
         aux_basis_name=aux_basis,
         max_iterations=200,
@@ -190,7 +191,7 @@ def run_mshqc_system(spec, actual_basis: str, eri_mode: str) -> dict:
         mp2_cls  = mshqc.RMP2 if is_closed else mshqc.UMP2
         mp3_cls  = mshqc.RMP3 if is_closed else mshqc.UMP3
         mp2_conf = mshqc.MP2Config(
-            eri_method=eri_mode,
+            eri_method=mode_lower,
             threshold=1e-9,
             gradient_threshold=1e-5,
             aux_basis_name=aux_basis,

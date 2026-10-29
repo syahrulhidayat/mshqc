@@ -25,9 +25,80 @@
 #include <iostream>
 #include <iomanip>
 #include <chrono>
+#include <algorithm>
+#include <cctype>
 #include <omp.h>
 #include <tblis/tblis.h>
 #include <unsupported/Eigen/CXX11/Tensor>
+
+namespace tblis {
+
+inline size_t view_num_elements(const varray_view<double>& v) {
+    const auto& len = v.lengths();
+    if (len.empty()) return 0;
+    size_t prod = 1;
+    for (auto d : len) {
+        if (d <= 0) return 0;
+        prod *= static_cast<size_t>(d);
+    }
+    return prod;
+}
+
+// Pengganti aman untuk tblis::mult<double> yang mencegah SIGSEGV pada TBLIS v1.2.0
+// saat seluruh dimensi dari salah satu tensor bernilai 1 (misal O = 1 pada He, H2, Li-beta)
+template <typename T = double>
+inline void safe_tblis_mult(
+    T alpha,
+    const varray_view<double>& A, const char* idxA,
+    const varray_view<double>& B, const char* idxB,
+    T beta,
+    varray_view<double>& C, const char* idxC)
+{
+    const size_t szA = view_num_elements(A);
+    const size_t szB = view_num_elements(B);
+    const size_t szC = view_num_elements(C);
+
+    if (szC == 0) return;
+    if (szA == 0 || szB == 0) {
+        Eigen::Map<Eigen::VectorXd> vecC(C.data(), static_cast<Eigen::Index>(szC));
+        if (beta == T(0)) vecC.setZero();
+        else vecC *= static_cast<double>(beta);
+        return;
+    }
+
+    // Kasus 1: Tensor output C berukuran 1 elemen (misal G_oo (1,1) atau G_oooo (1,1,1,1))
+    if (szC == 1 && szA == szB) {
+        Eigen::Map<const Eigen::VectorXd> vecA(A.data(), static_cast<Eigen::Index>(szA));
+        Eigen::Map<const Eigen::VectorXd> vecB(B.data(), static_cast<Eigen::Index>(szB));
+        const double dot = vecA.dot(vecB);
+        C.data()[0] = (beta == T(0)) ? (alpha * dot) : (beta * C.data()[0] + alpha * dot);
+        return;
+    }
+    // Kasus 2: Tensor input A berukuran 1 elemen (misal G_oooo (1,1,1,1) * V_ooov (1,1,1,V) -> Z (V,1))
+    if (szA == 1 && szB == szC) {
+        Eigen::Map<const Eigen::VectorXd> vecB(B.data(), static_cast<Eigen::Index>(szB));
+        Eigen::Map<Eigen::VectorXd> vecC(C.data(), static_cast<Eigen::Index>(szC));
+        const double scale = alpha * A.data()[0];
+        if (beta == T(0)) vecC.noalias() = scale * vecB;
+        else vecC.noalias() = beta * vecC + scale * vecB;
+        return;
+    }
+    // Kasus 3: Tensor input B berukuran 1 elemen (misal T2 (1,1,V,V) * V_oooo (1,1,1,1) -> W (1,1,V,V))
+    if (szB == 1 && szA == szC) {
+        Eigen::Map<const Eigen::VectorXd> vecA(A.data(), static_cast<Eigen::Index>(szA));
+        Eigen::Map<Eigen::VectorXd> vecC(C.data(), static_cast<Eigen::Index>(szC));
+        const double scale = alpha * B.data()[0];
+        if (beta == T(0)) vecC.noalias() = scale * vecA;
+        else vecC.noalias() = beta * vecC + scale * vecA;
+        return;
+    }
+
+    ::tblis::mult<double>(alpha, A, idxA, B, idxB, beta, C, idxC);
+}
+
+} // namespace tblis
+
+#define mult safe_tblis_mult
 
 namespace mshqc {
 
@@ -89,6 +160,10 @@ MP3Result RMP3::compute() {
     // Bypass TBLIS/MKL thread limits with explicit layout-respecting mapping
     auto make_V_from_B_inplace = [&](const Eigen::MatrixXd& B1, const Eigen::MatrixXd& B2, Eigen::Tensor<double, 4>& V_mo) {
         int d1 = B1.rows(); int d2 = B2.rows(); 
+        if (d1 <= 0 || d2 <= 0 || B1.cols() <= 0 || B2.cols() <= 0) {
+            V_mo.setZero();
+            return false;
+        }
         Eigen::MatrixXd V_mat(d1, d2);
         
         #pragma omp parallel for schedule(dynamic)
@@ -321,6 +396,10 @@ MP3Result UMP3::compute() {
 
     auto make_V_from_B_inplace = [&](const Eigen::MatrixXd& B1, const Eigen::MatrixXd& B2, Eigen::Tensor<double, 4>& V_mo) {
         int d1 = B1.rows(); int d2 = B2.rows(); 
+        if (d1 <= 0 || d2 <= 0 || B1.cols() <= 0 || B2.cols() <= 0) {
+            V_mo.setZero();
+            return false;
+        }
         Eigen::MatrixXd V_mat(d1, d2);
         
         #pragma omp parallel for schedule(dynamic)

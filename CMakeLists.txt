@@ -8,9 +8,9 @@ if(NOT CMAKE_BUILD_TYPE)
 endif()
 
 if(DEFINED ENV{GITHUB_ACTIONS} OR DEFINED ENV{CIBUILDWHEEL})
-    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -mavx2 -mfma -mno-avx512f -funroll-loops -ftree-vectorize -mtune=generic -DNDEBUG -fno-math-errno")
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -g -fno-omit-frame-pointer -mavx2 -mfma -mno-avx512f -funroll-loops -ftree-vectorize -mtune=generic -DNDEBUG -fno-math-errno")
 else()
-    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -march=native -funroll-loops -ftree-vectorize -DNDEBUG -fno-math-errno")
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -g -fno-omit-frame-pointer -march=native -funroll-loops -ftree-vectorize -DNDEBUG -fno-math-errno")
 endif()
 
 set(CMAKE_CXX_STANDARD 20)
@@ -263,11 +263,10 @@ set_target_properties(_mshqc PROPERTIES
     BUILD_WITH_INSTALL_RPATH TRUE
 )
 
-if(ipo_supported AND NOT DEFINED ENV{CIBUILDWHEEL})
+if(ipo_supported AND NOT DEFINED ENV{CIBUILDWHEEL} AND NOT DEFINED ENV{GITHUB_ACTIONS})
     set_target_properties(mshqc PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
     set_target_properties(_mshqc PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
 endif()
-
 install(TARGETS mshqc _mshqc
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
