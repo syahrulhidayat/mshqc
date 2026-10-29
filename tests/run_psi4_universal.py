@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Simplified PSI4 Universal Validation Runner (Anti-NaN Wfn Snapshot, Isolated Subprocess & Real-Time Output)
+Simplified PSI4 Universal Validation Runner (JOSS-Compliant Fair Benchmark, Clean Wfn State & Real-Time Output)
 Output: psi4_universal_raw.json
 """
 
@@ -126,36 +126,28 @@ def select_basis_for_system(spec, requested_basis: str) -> str:
     return requested_basis
 
 
-def ideal_s2(na: int, nb: int, is_closed: bool) -> float:
-    if is_closed or na == nb:
-        return 0.0
-    sz = 0.5 * (na - nb)
-    return float(sz * (sz + 1.0))
-
-
 def compute_s2_from_wfn(wfn, S_mat: np.ndarray, na: int, nb: int, is_closed: bool) -> float:
     if is_closed or na == nb:
         return 0.0
-    ideal = ideal_s2(na, nb, is_closed)
-    if na == 0 or nb == 0 or wfn is None:
+    sz = 0.5 * (na - nb)
+    ideal = float(sz * (sz + 1.0))
+    if na == 0 or nb == 0:
         return ideal
     try:
-        ca_full = np.array(wfn.Ca().to_array(dense=True), dtype=np.float64, copy=True)
-        cb_full = np.array(wfn.Cb().to_array(dense=True), dtype=np.float64, copy=True)
-        ca = ca_full[:, :na]
-        cb = cb_full[:, :nb]
-        if not (np.all(np.isfinite(ca)) and np.all(np.isfinite(cb))):
-            return ideal
+        ca = np.array(wfn.Ca().to_array(dense=True), dtype=np.float64, copy=True)[:, :na]
+        cb = np.array(wfn.Cb().to_array(dense=True), dtype=np.float64, copy=True)[:, :nb]
         sab = ca.T @ S_mat @ cb
         val = float(ideal + nb - np.sum(sab ** 2))
-        return val if math.isfinite(val) and val >= 0.0 else ideal
+        if not math.isfinite(val):
+            raise ValueError("Non-finite S2 value computed")
+        return val
     except Exception:
         return ideal
 
 
 def snapshot_scf_wfn(wfn) -> dict:
-    """Menyimpan state kanonik SCF agar tidak rusak akibat mutasi in-place oleh modul occ/dfocc."""
-    snap = {
+    """Menyimpan state kanonik SCF agar tidak tertimpa secara in-place oleh modul occ/dfocc."""
+    return {
         "Ca": wfn.Ca().clone(),
         "Cb": wfn.Cb().clone(),
         "Da": wfn.Da().clone(),
@@ -165,11 +157,10 @@ def snapshot_scf_wfn(wfn) -> dict:
         "ea": wfn.epsilon_a().clone(),
         "eb": wfn.epsilon_b().clone(),
     }
-    return snap
 
 
 def restore_scf_wfn(wfn, snap: dict):
-    """Mengembalikan orbital, matriks Fock, dan nilai eigen kanonik ke objek scf_wfn."""
+    """Merestorasi orbital dan matriks Fock kanonik HF sebelum eksekusi metode post-HF berikutnya."""
     wfn.Ca().copy(snap["Ca"])
     wfn.Cb().copy(snap["Cb"])
     wfn.Da().copy(snap["Da"])
@@ -180,194 +171,9 @@ def restore_scf_wfn(wfn, snap: dict):
     wfn.epsilon_b().copy(snap["eb"])
 
 
-def is_valid_energy(val, ref_hf: float = None, max_corr_ha: float = 50.0) -> bool:
-    if val is None or not isinstance(val, (int, float, np.floating)):
-        return False
-    if not math.isfinite(float(val)):
-        return False
-    if ref_hf is not None and math.isfinite(ref_hf):
-        if abs(float(val) - float(ref_hf)) > max_corr_ha:
-            return False
-    return True
-
-
-def build_base_options(actual_basis: str, ref_type: str, mode_lower: str, aux_basis: str, use_aux: bool = True) -> dict:
-    opts = {
-        "basis": actual_basis,
-        "reference": ref_type,
-        "e_convergence": 1e-10,
-        "d_convergence": 1e-8,
-        "maxiter": 200,
-        "freeze_core": False,
-        # Parameter post-HF / OCC / DFOCC yang adil dan stabil
-        "mo_maxiter": 50,
-        "r_convergence": 1e-5,
-        "rms_mograd_convergence": 1e-5,
-        "max_mograd_convergence": 1e-4,
-        "mo_step_max": 0.2,
-    }
-    if mode_lower == "exact":
-        opts["scf_type"] = "pk"
-        opts["mp2_type"] = "conv"
-        opts["occ_orbs_print"] = False
-    elif mode_lower == "cholesky":
-        opts["scf_type"] = "cd"
-        opts["cholesky_tolerance"] = 1e-9
-        opts["mp2_type"] = "df"
-        if use_aux:
-            opts["df_basis_mp2"] = aux_basis
-            opts["df_basis_cc"] = aux_basis
-    else:  # df
-        opts["scf_type"] = "df"
-        opts["mp2_type"] = "df"
-        if use_aux:
-            opts["df_basis_scf"] = aux_basis
-            opts["df_basis_mp2"] = aux_basis
-            opts["df_basis_cc"] = aux_basis
-    return opts
-
-
-def run_scf_safe(mol, actual_basis: str, ref_type: str, mode_lower: str, aux_basis: str):
-    """Menjalankan SCF dengan fallback bertingkat jika konvergensi sulit atau aux_basis tidak tersedia."""
-    attempts = [
-        {"use_aux": True,  "extra": {}},
-        {"use_aux": False, "extra": {"maxiter": 400, "soscf": True, "damping_percentage": 20.0}},
-        {"use_aux": False, "extra": {"maxiter": 400, "guess": "core", "damping_percentage": 30.0}},
-    ]
-    last_err = None
-    for idx, att in enumerate(attempts):
-        psi4.core.clean()
-        psi4.core.clean_options()
-        psi4.core.clean_variables()
-        opts = build_base_options(actual_basis, ref_type, mode_lower, aux_basis, use_aux=att["use_aux"])
-        opts.update(att["extra"])
-        psi4.set_options(opts)
-        try:
-            t0 = time.perf_counter()
-            e_hf, scf_wfn = psi4.energy("scf", molecule=mol, return_wfn=True)
-            t_hf = time.perf_counter() - t0
-            if is_valid_energy(e_hf):
-                return float(e_hf), scf_wfn, float(t_hf), True, att["use_aux"]
-        except Exception as exc:
-            last_err = exc
-            continue
-
-    raise RuntimeError(f"SCF failed to converge or returned NaN: {last_err}")
-
-
-def run_correlated_safe(
-    method_name: str,
-    mol,
-    scf_wfn,
-    scf_snap: dict,
-    e_hf: float,
-    fallback_energy: float,
-    actual_basis: str,
-    ref_type: str,
-    mode_lower: str,
-    aux_basis: str,
-    use_aux: bool,
-):
-    """
-    Menjalankan metode post-HF (mp2, mp3, omp2, omp3) dengan restorasi scf_wfn
-    dan fallback stabilisasi orbital agar tidak pernah menghasilkan NaN.
-    """
-    is_orbital_opt = method_name.lower() in ("omp2", "omp3")
-
-    # Konfigurasi percobaan bertingkat:
-    # 1. Konfigurasi standar benchmark
-    # 2. Level shift + damping step rotasi orbital jika terjadi osilasi/NaN pada open-shell
-    # 3. Mode konvensional / MSD (Modified Steepest Descent) tanpa inversi Hessian singular
-    trial_configs = [
-        {"mode": mode_lower, "extra": {}},
-        {
-            "mode": mode_lower,
-            "extra": {
-                "mo_step_max": 0.1,
-                "do_level_shift": True,
-                "level_shift": 0.15,
-                "e_convergence": 1e-7,
-                "rms_mograd_convergence": 1e-4,
-                "max_mograd_convergence": 1e-3,
-            },
-        },
-        {
-            "mode": "df" if mode_lower == "cholesky" else mode_lower,
-            "extra": {
-                "opt_method": "MSD",
-                "mo_step_max": 0.08,
-                "do_diis": False,
-                "do_level_shift": True,
-                "level_shift": 0.2,
-                "e_convergence": 1e-6,
-                "rms_mograd_convergence": 5e-4,
-            },
-        },
-    ]
-
-    for cfg in trial_configs:
-        restore_scf_wfn(scf_wfn, scf_snap)
-        psi4.core.clean_variables()
-        psi4.core.clean_options()
-
-        cur_mode = cfg["mode"]
-        opts = build_base_options(actual_basis, ref_type, cur_mode, aux_basis, use_aux=use_aux)
-        opts.update(cfg["extra"])
-
-        # Pada Psi4, MP2 di mode cholesky memerlukan routing ke dfocc atau mp2_type conv
-        if method_name.lower() == "mp2" and cur_mode == "cholesky":
-            opts["qc_module"] = "dfocc"
-
-        psi4.set_options(opts)
-
-        try:
-            # Jika mode berubah pada fallback ke-3, bangun ulang ref_wfn bersih agar PSIO cocok
-            active_ref_wfn = scf_wfn
-            if cur_mode != mode_lower:
-                psi4.core.clean()
-                _, active_ref_wfn = psi4.energy("scf", molecule=mol, return_wfn=True)
-
-            t0 = time.perf_counter()
-            e_val, cor_wfn = psi4.energy(method_name.lower(), ref_wfn=active_ref_wfn, return_wfn=True)
-            t_elapsed = time.perf_counter() - t0
-
-            if is_valid_energy(e_val, ref_hf=e_hf):
-                return float(e_val), cor_wfn, float(t_elapsed)
-        except Exception:
-            if not is_orbital_opt and method_name.lower() == "mp2":
-                # Fallback mp2_type conv jika aux_basis tidak mendukung elemen tertentu
-                try:
-                    restore_scf_wfn(scf_wfn, scf_snap)
-                    opts["mp2_type"] = "conv"
-                    opts.pop("qc_module", None)
-                    psi4.set_options(opts)
-                    t0 = time.perf_counter()
-                    e_val, cor_wfn = psi4.energy("mp2", ref_wfn=scf_wfn, return_wfn=True)
-                    t_elapsed = time.perf_counter() - t0
-                    if is_valid_energy(e_val, ref_hf=e_hf):
-                        return float(e_val), cor_wfn, float(t_elapsed)
-                except Exception:
-                    pass
-            continue
-
-    # Proteksi akhir: jika semua percobaan di internal Psi4 gagal/NaN, gunakan nilai finite fallback
-    restore_scf_wfn(scf_wfn, scf_snap)
-    return float(fallback_energy), scf_wfn, 0.0
-
-
-def sanitize_results_dict(res: dict, e_hf_fallback: float, s2_fallback: float) -> dict:
-    """Memastikan tidak ada satu pun nilai NaN atau Inf di dalam dictionary output."""
-    for k in ("HF", "MP2", "MP3", "OMP2", "OMP3"):
-        if k in res and not is_valid_energy(res[k]):
-            res[k] = float(e_hf_fallback) if is_valid_energy(e_hf_fallback) else 0.0
-    for k in ("S2_HF", "S2_OMP2", "S2_OMP3"):
-        if k in res and (res[k] is None or not math.isfinite(float(res[k]))):
-            res[k] = float(s2_fallback)
-    if "TIME" in res and isinstance(res["TIME"], dict):
-        for tk, tv in list(res["TIME"].items()):
-            if tv is None or not math.isfinite(float(tv)) or float(tv) < 0.0:
-                res["TIME"][tk] = 0.0
-    return res
+def assert_finite(name: str, val: float):
+    if val is None or not math.isfinite(float(val)):
+        raise RuntimeError(f"Psi4 returned non-finite energy ({val}) for {name}")
 
 
 def run_psi4_system(spec, actual_basis: str, eri_mode: str) -> dict:
@@ -376,6 +182,11 @@ def run_psi4_system(spec, actual_basis: str, eri_mode: str) -> dict:
     mode_lower = eri_mode.lower()
     aux_basis = f"{actual_basis.lower()}-ri"
     ref_type = "rhf" if is_closed else "uhf"
+
+    # Ca (Z=20) memiliki basis utama cc-pVDZ/cc-pVTZ di Psi4 tetapi tidak memiliki file cc-pvXz-ri di pustaka Psi4
+    has_ca = any(z == 20 for z, _, _, _, _ in atoms)
+    mp2_aux = "def2-svp-ri" if (has_ca and aux_basis.startswith("cc-pv")) else aux_basis
+    scf_aux = "def2-universal-jkfit" if (has_ca and aux_basis.startswith("cc-pv")) else aux_basis
 
     scratch_dir = tempfile.mkdtemp(prefix="psi4_scr_")
     try:
@@ -395,68 +206,121 @@ def run_psi4_system(spec, actual_basis: str, eri_mode: str) -> dict:
             geom_lines.append(f"{sym} {x:.12f} {y:.12f} {zc:.12f}")
         mol = psi4.geometry("\n".join(geom_lines))
 
-        e_hf, scf_wfn, t_hf, converged, use_aux = run_scf_safe(
-            mol, actual_basis, ref_type, mode_lower, aux_basis
-        )
+        # Konfigurasi yang setara 1-ke-1 dengan mshqc
+        base_opts = {
+            "basis": actual_basis,
+            "reference": ref_type,
+            "e_convergence": 1e-10,
+            "d_convergence": 1e-8,
+            "maxiter": 200,
+            "freeze_core": False,
+        }
+        if mode_lower == "exact":
+            base_opts["scf_type"] = "pk"
+            base_opts["mp2_type"] = "conv"
+        elif mode_lower == "cholesky":
+            base_opts["scf_type"] = "cd"
+            base_opts["cholesky_tolerance"] = 1e-9
+            base_opts["mp2_type"] = "df"
+            base_opts["df_basis_mp2"] = mp2_aux
+            base_opts["df_basis_cc"] = mp2_aux
+        else:  # df
+            base_opts["scf_type"] = "df"
+            base_opts["mp2_type"] = "df"
+            base_opts["df_basis_scf"] = scf_aux
+            base_opts["df_basis_mp2"] = mp2_aux
+            base_opts["df_basis_cc"] = mp2_aux
+
+        psi4.core.clean()
+        psi4.core.clean_options()
+        psi4.core.clean_variables()
+        psi4.set_options(base_opts)
+
+        scf_converged = True
+        t0_hf = time.perf_counter()
+        try:
+            e_hf, scf_wfn = psi4.energy("scf", molecule=mol, return_wfn=True)
+            t_hf = time.perf_counter() - t0_hf
+        except psi4.SCFConvergenceError:
+            # Setara persis dengan blok if not scf_res.converged: max_iterations = 400 di mshqc
+            psi4.core.clean()
+            psi4.set_options({"maxiter": 400})
+            t0_hf = time.perf_counter()
+            e_hf, scf_wfn = psi4.energy("scf", molecule=mol, return_wfn=True)
+            t_hf = time.perf_counter() - t0_hf
+
+        assert_finite("HF", e_hf)
         scf_snap = snapshot_scf_wfn(scf_wfn)
         S_mat = np.array(scf_wfn.S().to_array(dense=True), dtype=np.float64, copy=True)
         s2_hf = compute_s2_from_wfn(scf_wfn, S_mat, na, nb, is_closed)
 
         psi_res = {
             "basis": actual_basis,
-            "converged": bool(converged),
+            "converged": bool(scf_converged),
             "HF": float(e_hf),
             "S2_HF": float(s2_hf),
             "TIME": {"HF": float(t_hf), "MP2": 0.0, "MP3": 0.0, "OMP2": 0.0, "OMP3": 0.0},
         }
 
         if n_elec > 1:
-            e_mp2, mp2_wfn, t_mp2 = run_correlated_safe(
-                "mp2", mol, scf_wfn, scf_snap, e_hf, e_hf,
-                actual_basis, ref_type, mode_lower, aux_basis, use_aux
-            )
+            # Setara persis dengan MP2Config di mshqc (threshold=1e-9, gradient_threshold=1e-5, max_iterations=50)
+            post_hf_opts = dict(base_opts)
+            post_hf_opts.update({
+                "e_convergence": 1e-9,
+                "r_convergence": 1e-5,
+                "rms_mograd_convergence": 1e-5,
+                "max_mograd_convergence": 1e-4,
+                "mo_maxiter": 50,
+            })
+
+            def run_single_post_hf(method_label: str):
+                restore_scf_wfn(scf_wfn, scf_snap)
+                psi4.core.clean()
+                psi4.core.clean_variables()
+                psi4.core.clean_options()
+                opts = dict(post_hf_opts)
+                if method_label == "mp2" and mode_lower == "cholesky":
+                    opts["qc_module"] = "dfocc"
+                psi4.set_options(opts)
+
+                t0 = time.perf_counter()
+                e_val, wfn_out = psi4.energy(method_label, ref_wfn=scf_wfn, return_wfn=True)
+                t_el = time.perf_counter() - t0
+                assert_finite(method_label.upper(), e_val)
+                return float(e_val), wfn_out, float(t_el)
+
+            e_mp2, mp2_wfn, t_mp2 = run_single_post_hf("mp2")
             del mp2_wfn
 
-            e_mp3, mp3_wfn, t_mp3 = run_correlated_safe(
-                "mp3", mol, scf_wfn, scf_snap, e_hf, e_mp2,
-                actual_basis, ref_type, mode_lower, aux_basis, use_aux
-            )
+            e_mp3, mp3_wfn, t_mp3 = run_single_post_hf("mp3")
             del mp3_wfn
 
-            e_omp2, omp2_wfn, t_omp2 = run_correlated_safe(
-                "omp2", mol, scf_wfn, scf_snap, e_hf, e_mp2,
-                actual_basis, ref_type, mode_lower, aux_basis, use_aux
-            )
+            e_omp2, omp2_wfn, t_omp2 = run_single_post_hf("omp2")
             s2_omp2 = compute_s2_from_wfn(omp2_wfn, S_mat, na, nb, is_closed)
             del omp2_wfn
 
-            e_omp3, omp3_wfn, t_omp3 = run_correlated_safe(
-                "omp3", mol, scf_wfn, scf_snap, e_hf, e_mp3,
-                actual_basis, ref_type, mode_lower, aux_basis, use_aux
-            )
+            e_omp3, omp3_wfn, t_omp3 = run_single_post_hf("omp3")
             s2_omp3 = compute_s2_from_wfn(omp3_wfn, S_mat, na, nb, is_closed)
             del omp3_wfn
 
             psi_res.update({
-                "MP2": float(e_mp2),
-                "MP3": float(e_mp3),
-                "OMP2": float(e_omp2),
-                "OMP3": float(e_omp3),
-                "S2_OMP2": float(s2_omp2),
-                "S2_OMP3": float(s2_omp3),
+                "MP2": e_mp2,
+                "MP3": e_mp3,
+                "OMP2": e_omp2,
+                "OMP3": e_omp3,
+                "S2_OMP2": s2_omp2,
+                "S2_OMP3": s2_omp3,
             })
             psi_res["TIME"].update({
-                "MP2": float(t_mp2),
-                "MP3": float(t_mp3),
-                "OMP2": float(t_omp2),
-                "OMP3": float(t_omp3),
+                "MP2": t_mp2,
+                "MP3": t_mp3,
+                "OMP2": t_omp2,
+                "OMP3": t_omp3,
             })
         else:
             for m in ("MP2", "MP3", "OMP2", "OMP3"):
                 psi_res[m] = float(e_hf)
             psi_res["S2_OMP2"] = psi_res["S2_OMP3"] = float(s2_hf)
-
-        psi_res = sanitize_results_dict(psi_res, e_hf, s2_hf)
 
         del scf_snap, scf_wfn, mol
         psi4.core.clean()
