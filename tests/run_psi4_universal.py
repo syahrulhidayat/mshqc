@@ -209,23 +209,23 @@ def run_psi4_system(spec, actual_basis: str, eri_mode: str) -> dict:
             "maxiter": 200,
             "freeze_core": False,
         }
+        
+        # Samakan persis dengan konfigurasi benc.py (tambahkan mp_type dan cc_type)
         if mode_lower == "exact":
-            base_opts["scf_type"] = "pk"
-            base_opts["mp2_type"] = "conv"
+            base_opts.update({"scf_type": "pk", "mp2_type": "conv", "mp_type": "conv", "cc_type": "conv"})
         elif mode_lower == "cholesky":
-            base_opts["scf_type"] = "cd"
-            base_opts["cholesky_tolerance"] = 1e-9
-            base_opts["mp2_type"] = "df"
-            base_opts["df_basis_mp2"] = mp2_aux
-            base_opts["df_basis_cc"] = mp2_aux
+            base_opts.update({
+                "scf_type": "cd", "cholesky_tolerance": 1e-9, 
+                "mp2_type": "df", "mp_type": "df", "cc_type": "df",
+                "df_basis_mp2": mp2_aux, "df_basis_cc": mp2_aux
+            })
         else:  # df
-            base_opts["scf_type"] = "df"
-            base_opts["mp2_type"] = "df"
-            base_opts["df_basis_scf"] = scf_aux
-            base_opts["df_basis_mp2"] = mp2_aux
-            base_opts["df_basis_cc"] = mp2_aux
+            base_opts.update({
+                "scf_type": "df", 
+                "mp2_type": "df", "mp_type": "df", "cc_type": "df",
+                "df_basis_scf": scf_aux, "df_basis_mp2": mp2_aux, "df_basis_cc": mp2_aux
+            })
 
-        # ... (Bagian geometri dan base_opts tetap sama) ...
         psi4.core.clean()
         psi4.core.clean_options()
         psi4.core.clean_variables()
@@ -244,6 +244,7 @@ def run_psi4_system(spec, actual_basis: str, eri_mode: str) -> dict:
             t_hf_baseline = time.perf_counter() - t0_hf
 
         assert_finite("HF", e_hf)
+        scf_snap = snapshot_scf_wfn(scf_wfn)
         S_mat = np.array(scf_wfn.S().to_array(dense=True), dtype=np.float64, copy=True)
         s2_hf = compute_s2_from_wfn(scf_wfn, S_mat, na, nb, is_closed)
 
@@ -264,36 +265,35 @@ def run_psi4_system(spec, actual_basis: str, eri_mode: str) -> dict:
                 "max_mograd_convergence": 1e-4,
                 "mo_maxiter": 50,
             })
+            
+            # Trik dari benc.py untuk membypass PSIO_ERROR dan OMP2 NaN
+            if mode_lower in ["cholesky", "df"]:
+                post_hf_opts.update({"scf_type": "pk", "read_scf_3index": False})
 
-            def run_isolated_post_hf(method_label: str):
-                # Putus dependensi I/O: Eksekusi pipeline penuh secara terisolasi tanpa memori wfn iterasi sebelumnya
-                psi4.core.clean()
-                psi4.core.clean_variables()
-                psi4.core.clean_options()
-                
-                opts = dict(post_hf_opts)
-                psi4.set_options(opts)
+            def run_single_post_hf(method_label: str):
+                restore_scf_wfn(scf_wfn, scf_snap)
+                psi4.set_options(post_hf_opts)
 
                 t0 = time.perf_counter()
-                # Eksekusi full graph dari objek molekul, bukan referensi scf_wfn
-                e_val, wfn_out = psi4.energy(method_label, molecule=mol, return_wfn=True)
-                t_total = time.perf_counter() - t0
+                # Eksekusi dengan ref_wfn persis seperti benc.py
+                e_val, wfn_out = psi4.energy(method_label, ref_wfn=scf_wfn, return_wfn=True)
+                t_el = time.perf_counter() - t0
                 
                 assert_finite(method_label.upper(), e_val)
-                t_post_hf = max(0.0, t_total - t_hf_baseline)
-                return float(e_val), wfn_out, float(t_post_hf)
+                psi4.core.clean()  # Clean setelah komputasi selesai
+                return float(e_val), wfn_out, float(t_el)
 
-            e_mp2, mp2_wfn, t_mp2 = run_isolated_post_hf("mp2")
+            e_mp2, mp2_wfn, t_mp2 = run_single_post_hf("mp2")
             del mp2_wfn
 
-            e_mp3, mp3_wfn, t_mp3 = run_isolated_post_hf("mp3")
+            e_mp3, mp3_wfn, t_mp3 = run_single_post_hf("mp3")
             del mp3_wfn
 
-            e_omp2, omp2_wfn, t_omp2 = run_isolated_post_hf("omp2")
+            e_omp2, omp2_wfn, t_omp2 = run_single_post_hf("omp2")
             s2_omp2 = compute_s2_from_wfn(omp2_wfn, S_mat, na, nb, is_closed)
             del omp2_wfn
 
-            e_omp3, omp3_wfn, t_omp3 = run_isolated_post_hf("omp3")
+            e_omp3, omp3_wfn, t_omp3 = run_single_post_hf("omp3")
             s2_omp3 = compute_s2_from_wfn(omp3_wfn, S_mat, na, nb, is_closed)
             del omp3_wfn
 
@@ -316,7 +316,7 @@ def run_psi4_system(spec, actual_basis: str, eri_mode: str) -> dict:
                 psi_res[m] = float(e_hf)
             psi_res["S2_OMP2"] = psi_res["S2_OMP3"] = float(s2_hf)
 
-        del scf_wfn, mol
+        del scf_snap, scf_wfn, mol
         psi4.core.clean()
         gc.collect()
         return psi_res
