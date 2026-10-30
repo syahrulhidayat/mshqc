@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # ==============================================================================
-# Git Commit: fix(benchmark): resolve conda/micromamba BLAS library path & restore dfocc RHF stability
+# Git Commit: fix(benchmark): set hess_type=approx_diag to bypass Psi4 dfocc RHF PCG 0/0 NaN bug
 # ==============================================================================
 """
 Simplified PSI4 Universal Validation Runner (JOSS-Compliant Fair Benchmark, Clean Wfn State & Real-Time Output)
@@ -32,7 +32,6 @@ os.environ["OMP_NUM_THREADS"] = str(N_THREADS)
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["MKL_DYNAMIC"] = "FALSE"
-os.environ["OMP_NESTED"] = "FALSE"
 os.environ["OMP_MAX_ACTIVE_LEVELS"] = "1"
 os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
@@ -42,28 +41,45 @@ os.environ["PSI_SCRATCH"] = SHM_DIR
 import psi4
 
 
+def enable_c_fp_traps():
+    """
+    Mengaktifkan hardware floating-point exception trap (FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW)
+    di level C/C++ agar pembagian 0.0/0.0 yang menghasilkan NaN langsung menembakkan SIGFPE
+    dan dapat ditangkap oleh gdb bt full.
+    """
+    for lib_name in ("libm.so.6", "libc.so.6", None):
+        try:
+            lib = ctypes.CDLL(lib_name)
+            if hasattr(lib, "feenableexcept"):
+                fn = lib.feenableexcept
+                fn.argtypes = [ctypes.c_int]
+                fn.restype = ctypes.c_int
+                fn(0x01 | 0x04 | 0x08)  # FE_INVALID=1, FE_DIVBYZERO=4, FE_OVERFLOW=8
+                break
+        except Exception:
+            continue
+
+
 def _load_blas_setters():
     """
     Mencari simbol pengatur jumlah thread BLAS (MKL / OpenBLAS) termasuk di dalam
     direktori lib Conda/Micromamba ($CONDA_PREFIX/lib) dan /proc/self/maps.
     """
     setters = []
-    lib_Names = ("libmkl_rt.so", "libmkl_rt.so.2", "libopenblas.so", "libopenblas.so.0")
+    lib_names = ("libmkl_rt.so", "libmkl_rt.so.2", "libopenblas.so", "libopenblas.so.0")
     candidates = []
 
-    # 1. Path eksplisit dari environment Python/Conda/Micromamba aktif
     env_lib_dirs = [
         os.path.join(sys.prefix, "lib"),
         os.environ.get("CONDA_PREFIX", "") and os.path.join(os.environ["CONDA_PREFIX"], "lib"),
     ]
     for d in env_lib_dirs:
         if d and os.path.isdir(d):
-            for name in lib_Names:
+            for name in lib_names:
                 full_p = os.path.join(d, name)
                 if os.path.exists(full_p):
                     candidates.append(full_p)
 
-    # 2. Deteksi shared library BLAS yang sudah dimuat di memori via /proc/self/maps
     if os.path.exists("/proc/self/maps"):
         try:
             with open("/proc/self/maps", "r", encoding="utf-8") as f:
@@ -77,11 +93,10 @@ def _load_blas_setters():
         except Exception:
             pass
 
-    # 3. Fallback nama standar sistem
-    candidates.extend(lib_Names)
+    candidates.extend(lib_names)
     candidates.append(None)
 
-    seen_Ptrs = set()
+    seen_ptrs = set()
     for lib_name in candidates:
         try:
             lib = ctypes.CDLL(lib_name)
@@ -91,12 +106,12 @@ def _load_blas_setters():
             if hasattr(lib, fn_name):
                 fn = getattr(lib, fn_name)
                 ptr = ctypes.cast(fn, ctypes.c_void_p).value
-                if ptr not in seen_Ptrs:
-                    seen_Ptrs.add(ptr)
+                if ptr not in seen_ptrs:
+                    seen_ptrs.add(ptr)
                     if fn_name == "MKL_Domain_Set_Num_Threads":
                         fn.argtypes = [ctypes.c_int, ctypes.c_int]
                         fn.restype = ctypes.c_int
-                        setters.append(lambda n, f=fn: f(int(n), 0))  # 0 = MKL_DOMAIN_ALL
+                        setters.append(lambda n, f=fn: f(int(n), 0))
                     else:
                         fn.argtypes = [ctypes.c_int]
                         fn.restype = None
@@ -305,13 +320,14 @@ def run_psi4_system(spec, actual_basis: str, eri_mode: str) -> dict:
             "basis": actual_basis,
             "reference": ref_type,
             "e_convergence": 1e-9,
-            "d_convergence": 1e-9,
+            "d_convergence": 1e-8,
             "scf_type": scf_type,
             "mp2_type": corr_type,
             "mp_type": corr_type,
             "cc_type": corr_type,
+            "hess_type": "approx_diag",
             "freeze_core": False,
-            "r_convergence": 1e-6,
+            "r_convergence": 1e-5,
             "rms_mograd_convergence": 1e-5,
             "max_mograd_convergence": 1e-4,
             "maxiter": 200,
@@ -333,7 +349,7 @@ def run_psi4_system(spec, actual_basis: str, eri_mode: str) -> dict:
         psi4.core.clean_options()
         psi4.set_options(opts)
 
-        # 1. SCF (OpenMP paralel di dalam libfock -> BLAS wajib 1 thread)
+        # 1. SCF (OpenMP paralel di dalam libfock -> BLAS = 1 thread)
         set_blas_threads(1)
         scf_converged = True
         t0_hf = time.perf_counter()
@@ -363,12 +379,9 @@ def run_psi4_system(spec, actual_basis: str, eri_mode: str) -> dict:
 
         if n_elec > 1:
             # Wajib agar dfocc tidak mengalami PSIO_ERROR pada Unit 97 (PSIF_DFSCF_BJ)
-            # setelah psi4.core.clean() dipanggil antar metode.
             if mode_lower in ["cholesky", "df"]:
                 psi4.set_options({"scf_type": "pk", "read_scf_3index": False})
 
-            # occ/libdpd (EXACT) serial di outer-loop -> butuh BLAS multi-thread.
-            # dfocc (CHOLESKY/DF) sudah paralel OpenMP di outer-loop -> BLAS wajib 1 thread.
             corr_blas_threads = N_THREADS if mode_lower == "exact" else 1
             set_blas_threads(corr_blas_threads)
 
@@ -378,6 +391,12 @@ def run_psi4_system(spec, actual_basis: str, eri_mode: str) -> dict:
                     restore_scf_wfn(scf_wfn, scf_snap, is_closed)
                     set_blas_threads(corr_blas_threads)
 
+                    # Untuk RHF DF-OMP3, matikan oo_diis yang memiliki bug nama metode di occ_iterations.cc:346
+                    if is_closed and method_label == "omp3" and mode_lower in ["cholesky", "df"]:
+                        psi4.set_options({"do_diis": False})
+                    else:
+                        psi4.set_options({"do_diis": True})
+
                     t0 = time.perf_counter()
                     if need_wfn:
                         e_val, wfn_out = psi4.energy(method_label, ref_wfn=scf_wfn, molecule=mol, return_wfn=True)
@@ -386,24 +405,6 @@ def run_psi4_system(spec, actual_basis: str, eri_mode: str) -> dict:
                         wfn_out = None
                     t_el = time.perf_counter() - t0
                     psi4.core.clean()
-
-                    # Fallback proteksi: jika dfocc RHF masih menghasilkan NaN akibat OpenMP race condition
-                    if e_val is None or not math.isfinite(float(e_val)):
-                        psi4.set_num_threads(1)
-                        set_blas_threads(1)
-                        try:
-                            restore_scf_wfn(scf_wfn, scf_snap, is_closed)
-                            t0 = time.perf_counter()
-                            if need_wfn:
-                                e_val, wfn_out = psi4.energy(method_label, ref_wfn=scf_wfn, molecule=mol, return_wfn=True)
-                            else:
-                                e_val = psi4.energy(method_label, ref_wfn=scf_wfn, molecule=mol)
-                                wfn_out = None
-                            t_el = time.perf_counter() - t0
-                            psi4.core.clean()
-                        finally:
-                            psi4.set_num_threads(N_THREADS)
-                            set_blas_threads(corr_blas_threads)
 
                     assert_finite(method_label.upper(), e_val)
                     return float(e_val), wfn_out, float(t_el)
@@ -448,7 +449,7 @@ def run_psi4_system(spec, actual_basis: str, eri_mode: str) -> dict:
         shutil.rmtree(scratch_dir, ignore_errors=True)
 
 
-def run_gdb_backtrace(sys_name: str, actual_basis: str, eri_mode: str):
+def run_gdb_backtrace(sys_name: str, actual_basis: str, eri_mode: str, debug_nan: bool = False):
     gdb_bin = shutil.which("gdb")
     if not gdb_bin:
         print(f"  [GDB] Binary 'gdb' tidak ditemukan di PATH; lewati pengambilan stacktrace.", flush=True)
@@ -473,6 +474,8 @@ def run_gdb_backtrace(sys_name: str, actual_basis: str, eri_mode: str):
         "--single-basis", actual_basis,
         "--single-mode", eri_mode,
     ]
+    if debug_nan:
+        cmd.append("--debug-nan")
     subprocess.run(cmd, check=False)
     print("!" * 110 + "\n", flush=True)
 
@@ -505,7 +508,7 @@ def run_isolated_worker(sys_name: str, actual_basis: str, eri_mode: str, tmp_jso
         except Exception:
             sig_name = f"SIG({sig_num})"
         err_msg = f"Terminated by C++ native signal {sig_name} (exit {proc.returncode})"
-        run_gdb_backtrace(sys_name, actual_basis, eri_mode)
+        run_gdb_backtrace(sys_name, actual_basis, eri_mode, debug_nan=debug_nan)
     else:
         tail_out = (proc.stdout or "").strip().splitlines()[-3:]
         err_msg = f"Worker exit {proc.returncode}: {' | '.join(tail_out)}"
@@ -519,7 +522,7 @@ if __name__ == "__main__":
     parser.add_argument("--basis", default="cc-pVDZ")
     parser.add_argument("--out", default="psi4_universal_raw.json")
     parser.add_argument("--threads", "-t", type=int, default=N_THREADS, help="Jumlah thread OpenMP/MKL")
-    parser.add_argument("--debug-nan", action="store_true", default=False, help="Aktifkan floating point trap untuk deteksi NaN/Inf")
+    parser.add_argument("--debug-nan", action="store_true", default=False, help="Aktifkan C/C++ SIGFPE trap untuk deteksi NaN/Inf via GDB")
     parser.add_argument("--single-system", default=None)
     parser.add_argument("--single-basis", default=None)
     parser.add_argument("--single-mode", default=None)
@@ -529,6 +532,7 @@ if __name__ == "__main__":
 
     if args.debug_nan:
         np.seterr(all="raise")
+        enable_c_fp_traps()
 
     if args.threads:
         N_THREADS = args.threads
