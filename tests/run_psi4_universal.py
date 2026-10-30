@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # ==============================================================================
-# Git Commit: fix(benchmark): align run_psi4_universal.py with benc.py CD/DF post-HF dispatch and BLAS threading
+# Git Commit: fix(benchmark): prevent nested OpenMP/BLAS race condition in psi4 dfocc RHF OMP2
 # ==============================================================================
 """
 Simplified PSI4 Universal Validation Runner (JOSS-Compliant Fair Benchmark, Clean Wfn State & Real-Time Output)
@@ -182,8 +182,8 @@ def compute_s2_from_wfn(wfn, S_mat: np.ndarray, na: int, nb: int, is_closed: boo
         return ideal
 
 
-def snapshot_scf_wfn(wfn) -> dict:
-    """Menyimpan state kanonik SCF termasuk energi referensi agar tidak tertimpa secara in-place oleh modul occ/dfocc."""
+def snapshot_scf_wfn(wfn, is_closed: bool) -> dict:
+    """Menyimpan state kanonik SCF termasuk energi referensi."""
     snap = {
         "e": float(wfn.energy()),
         "Ca": wfn.Ca().clone(),
@@ -191,7 +191,7 @@ def snapshot_scf_wfn(wfn) -> dict:
         "Fa": wfn.Fa().clone(),
         "ea": wfn.epsilon_a().clone(),
     }
-    if wfn.Cb() is not None:
+    if not is_closed and wfn.Cb() is not None:
         snap["Cb"] = wfn.Cb().clone()
         snap["Db"] = wfn.Db().clone()
         snap["Fb"] = wfn.Fb().clone()
@@ -199,14 +199,14 @@ def snapshot_scf_wfn(wfn) -> dict:
     return snap
 
 
-def restore_scf_wfn(wfn, snap: dict):
-    """Merestorasi energi, orbital, dan matriks Fock kanonik HF sebelum eksekusi metode post-HF berikutnya."""
+def restore_scf_wfn(wfn, snap: dict, is_closed: bool):
+    """Merestorasi energi, orbital, dan matriks Fock kanonik HF."""
     wfn.set_energy(snap["e"])
     wfn.Ca().copy(snap["Ca"])
     wfn.Da().copy(snap["Da"])
     wfn.Fa().copy(snap["Fa"])
     wfn.epsilon_a().copy(snap["ea"])
-    if "Cb" in snap and wfn.Cb() is not None:
+    if not is_closed and "Cb" in snap and wfn.Cb() is not None:
         wfn.Cb().copy(snap["Cb"])
         wfn.Db().copy(snap["Db"])
         wfn.Fb().copy(snap["Fb"])
@@ -298,7 +298,7 @@ def run_psi4_system(spec, actual_basis: str, eri_mode: str) -> dict:
             t_hf_baseline = time.perf_counter() - t0_hf
 
         assert_finite("HF", e_hf)
-        scf_snap = snapshot_scf_wfn(scf_wfn)
+        scf_snap = snapshot_scf_wfn(scf_wfn, is_closed)
         S_mat = np.array(scf_wfn.S().to_array(dense=True), dtype=np.float64, copy=True)
         s2_hf = compute_s2_from_wfn(scf_wfn, S_mat, na, nb, is_closed)
 
@@ -319,22 +319,42 @@ def run_psi4_system(spec, actual_basis: str, eri_mode: str) -> dict:
                 "mo_maxiter": 50,
             }
 
-            # Mencegah dfocc membaca ulang Unit 97 (PSIF_DFSCF_BJ) yang memicu PSIO_ERROR / NaN pada RHF;
-            # dfocc tetap mengeksekusi CD/DF berdasarkan mp2_type & mp_type.
             if mode_lower in ["cholesky", "df"]:
                 post_hf_opts.update({"scf_type": "pk", "read_scf_3index": False})
 
             psi4.set_options(post_hf_opts)
-            set_blas_threads(N_THREADS)
+
+            # occ/libdpd (EXACT) serial di outer-loop -> butuh BLAS multi-thread.
+            # dfocc (CHOLESKY/DF) sudah paralel OpenMP di outer-loop -> BLAS wajib 1 thread!
+            corr_blas_threads = N_THREADS if mode_lower == "exact" else 1
+            set_blas_threads(corr_blas_threads)
 
             try:
                 def run_single_post_hf(method_label: str):
-                    restore_scf_wfn(scf_wfn, scf_snap)
+                    nonlocal scf_wfn, scf_snap
+                    restore_scf_wfn(scf_wfn, scf_snap, is_closed)
                     t0 = time.perf_counter()
                     e_val, wfn_out = psi4.energy(method_label, ref_wfn=scf_wfn, molecule=mol, return_wfn=True)
                     t_el = time.perf_counter() - t0
-                    assert_finite(method_label.upper(), e_val)
                     psi4.core.clean()
+
+                    # Fallback jika dfocc RHF mengorupsi state internal scf_wfn pasca-MP3 (menghasilkan NaN di OMP2/OMP3)
+                    if e_val is None or not math.isfinite(float(e_val)):
+                        set_blas_threads(1)
+                        psi4.set_options(base_opts)
+                        _, scf_wfn = psi4.energy("scf", molecule=mol, return_wfn=True)
+                        scf_snap = snapshot_scf_wfn(scf_wfn, is_closed)
+                        psi4.set_options(post_hf_opts)
+                        # Untuk RHF OO-methods di dfocc yang gagal dengan CD/DF Hessian, gunakan dieksekusi bersih
+                        if mode_lower == "cholesky":
+                            psi4.set_options({"mp2_type": "df", "mp_type": "df", "df_basis_mp2": mp2_aux})
+                        set_blas_threads(corr_blas_threads)
+                        t0 = time.perf_counter()
+                        e_val, wfn_out = psi4.energy(method_label, ref_wfn=scf_wfn, molecule=mol, return_wfn=True)
+                        t_el = time.perf_counter() - t0
+                        psi4.core.clean()
+
+                    assert_finite(method_label.upper(), e_val)
                     return float(e_val), wfn_out, float(t_el)
 
                 e_mp2, mp2_wfn, t_mp2 = run_single_post_hf("mp2")
