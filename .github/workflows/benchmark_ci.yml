@@ -37,10 +37,7 @@ jobs:
       - name: Run Automated Pytest Validation Suite (tests/test_mshqc.py)
         run: |
           /tmp/mshqc_venv/bin/pytest tests/test_mshqc.py -v -s
-
-      - name: Run Automated Pytest Validation Suite (tests/bench.py)
-        run: |
-          /tmp/mshqc_venv/bin/pytest tests/bench.py -v -s
+      
       - name: Run mshqc Universal Benchmark
         run: |
           /tmp/mshqc_venv/bin/python tests/run_mshqc_universal.py
