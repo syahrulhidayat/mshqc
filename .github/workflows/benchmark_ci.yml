@@ -70,7 +70,22 @@ jobs:
         run: |
           /tmp/mshqc_venv/bin/python tests/compare_mshqc_psi4.py mshqc_out.txt psi4_out.txt || true
 
-      # --- 6. RUNNER UNIVERSAL BAWAAN ---
+      # --- 6. UJI SKRIPSI BAB 4 ---
+      - name: Run mshqc Bab 4 Benchmark
+        run: |
+          /tmp/mshqc_venv/bin/python tests/run_mshqc_bab4.py
+
+      - name: Run Psi4 Bab 4 Benchmark
+        shell: bash -el {0}
+        run: |
+          micromamba activate psi4_env
+          python tests/run_psi4_bab4.py
+
+      - name: Compare Bab 4 Results
+        run: |
+          /tmp/mshqc_venv/bin/python tests/compare_bab4.py || true
+
+      # --- 7. RUNNER UNIVERSAL BAWAAN ---
       - name: Run mshqc Universal Benchmark
         run: |
           /tmp/mshqc_venv/bin/python tests/run_mshqc_universal.py
@@ -85,11 +100,11 @@ jobs:
         run: |
           /tmp/mshqc_venv/bin/python tests/compare_universal.py || true
 
-      # --- 7. UPLOAD SEMUA LOG ---
+      # --- 8. UPLOAD SEMUA LOG ---
       - name: Upload Benchmark Logs & Comparison Table as Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: mshqc-vs-psi4-universal-results
+          name: mshqc-vs-psi4-benchmark-results
           path: |
             *universal*.json
             *universal*.txt

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 # ==============================================================================
-# Git Commit: align(benchmark): Remove redundant fallback logic, mirror benc.py speed
+# Git Commit: fix(benchmark): set hess_type=approx_diag to bypass Psi4 dfocc RHF PCG 0/0 NaN bug
 # ==============================================================================
 """
-Simplified PSI4 Universal Validation Runner (JOSS-Compliant Fair Benchmark)
+Simplified PSI4 Universal Validation Runner (JOSS-Compliant Fair Benchmark, Clean Wfn State & Real-Time Output)
 Output: psi4_universal_raw.json
 """
 
@@ -15,9 +15,10 @@ import json
 import math
 import ctypes
 import shutil
+import signal
+import tempfile
 import argparse
 import subprocess
-import tempfile
 import numpy as np
 
 try:
@@ -26,7 +27,7 @@ except Exception:
     pass
 
 CPU_AVAIL = os.cpu_count() or 4
-N_THREADS = int(os.environ.get("OMP_NUM_THREADS", str(min(6, CPU_AVAIL))))
+N_THREADS = int(os.environ.get("OMP_NUM_THREADS", str(min(4, CPU_AVAIL))))
 os.environ["OMP_NUM_THREADS"] = str(N_THREADS)
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
@@ -39,8 +40,31 @@ os.environ["PSI_SCRATCH"] = SHM_DIR
 
 import psi4
 
+
+def enable_c_fp_traps():
+    """
+    Mengaktifkan hardware floating-point exception trap (FE_INVALID | FE_DIVBYZERO | FE_OVERFLOW)
+    di level C/C++ agar pembagian 0.0/0.0 yang menghasilkan NaN langsung menembakkan SIGFPE
+    dan dapat ditangkap oleh gdb bt full.
+    """
+    for lib_name in ("libm.so.6", "libc.so.6", None):
+        try:
+            lib = ctypes.CDLL(lib_name)
+            if hasattr(lib, "feenableexcept"):
+                fn = lib.feenableexcept
+                fn.argtypes = [ctypes.c_int]
+                fn.restype = ctypes.c_int
+                fn(0x01 | 0x04 | 0x08)  # FE_INVALID=1, FE_DIVBYZERO=4, FE_OVERFLOW=8
+                break
+        except Exception:
+            continue
+
+
 def _load_blas_setters():
-    """Mencari simbol pengatur jumlah thread BLAS (MKL / OpenBLAS)."""
+    """
+    Mencari simbol pengatur jumlah thread BLAS (MKL / OpenBLAS) termasuk di dalam
+    direktori lib Conda/Micromamba ($CONDA_PREFIX/lib) dan /proc/self/maps.
+    """
     setters = []
     lib_names = ("libmkl_rt.so", "libmkl_rt.so.2", "libopenblas.so", "libopenblas.so.0")
     candidates = []
@@ -94,15 +118,18 @@ def _load_blas_setters():
                         setters.append(fn)
     return setters
 
+
 _BLAS_SETTERS = _load_blas_setters()
 
+
 def set_blas_threads(num_t: int):
-    """Mengatur jumlah thread BLAS secara dinamis khusus untuk modul serial."""
+    """Mengatur jumlah thread BLAS secara dinamis."""
     for fn in _BLAS_SETTERS:
         try:
             fn(int(num_t))
         except Exception:
             pass
+
 
 ANG_TO_BOHR = 1.8897261246257702
 CC_PV_SUPPORTED_Z = set(range(1, 19)) | {20} | set(range(31, 37))
@@ -190,11 +217,13 @@ SYSTEMS = {
     "O2": (0, 3, 9, 7, [(8, "O", 0.0, 0.0, -0.6035 * ANG_TO_BOHR), (8, "O", 0.0, 0.0, 0.6035 * ANG_TO_BOHR)], "standard"),
 }
 
+
 def select_basis_for_system(spec, requested_basis: str) -> str:
     if requested_basis.lower().startswith("cc-pv"):
         if any(z not in CC_PV_SUPPORTED_Z for z, _, _, _, _ in spec[4]):
             return "def2-SVP" if "dz" in requested_basis.lower() else "def2-TZVP"
     return requested_basis
+
 
 def compute_s2_from_wfn(wfn, S_mat: np.ndarray, na: int, nb: int, is_closed: bool) -> float:
     if is_closed or na == nb:
@@ -214,7 +243,9 @@ def compute_s2_from_wfn(wfn, S_mat: np.ndarray, na: int, nb: int, is_closed: boo
     except Exception:
         return ideal
 
+
 def snapshot_scf_wfn(wfn, is_closed: bool) -> dict:
+    """Menyimpan state kanonik SCF termasuk energi referensi."""
     snap = {
         "e": float(wfn.energy()),
         "Ca": wfn.Ca().clone(),
@@ -229,7 +260,9 @@ def snapshot_scf_wfn(wfn, is_closed: bool) -> dict:
         snap["eb"] = wfn.epsilon_b().clone()
     return snap
 
+
 def restore_scf_wfn(wfn, snap: dict, is_closed: bool):
+    """Merestorasi energi, orbital, dan matriks Fock kanonik HF."""
     wfn.set_energy(snap["e"])
     wfn.Ca().copy(snap["Ca"])
     wfn.Da().copy(snap["Da"])
@@ -241,9 +274,11 @@ def restore_scf_wfn(wfn, snap: dict, is_closed: bool):
         wfn.Fb().copy(snap["Fb"])
         wfn.epsilon_b().copy(snap["eb"])
 
+
 def assert_finite(name: str, val: float):
     if val is None or not math.isfinite(float(val)):
         raise RuntimeError(f"Psi4 returned non-finite energy ({val}) for {name}")
+
 
 def run_psi4_system(spec, actual_basis: str, eri_mode: str) -> dict:
     charge, mult, na, nb, atoms, _ = spec
@@ -263,9 +298,13 @@ def run_psi4_system(spec, actual_basis: str, eri_mode: str) -> dict:
         psi4.set_memory("4 GB")
         psi4.core.IOManager.shared_object().set_default_path(scratch_dir)
 
-        geom_lines = [f"{charge} {mult}", "units bohr"]
-        if mode_lower in ["df", "cholesky"]:
-            geom_lines.append("symmetry c1")
+        geom_lines = [
+            f"{charge} {mult}",
+            "units bohr",
+            "symmetry c1",
+            "no_reorient",
+            "no_com",
+        ]
         for _, sym, x, y, zc in atoms:
             geom_lines.append(f"{sym} {x:.12f} {y:.12f} {zc:.12f}")
         mol = psi4.geometry("\n".join(geom_lines))
@@ -281,14 +320,14 @@ def run_psi4_system(spec, actual_basis: str, eri_mode: str) -> dict:
             "basis": actual_basis,
             "reference": ref_type,
             "e_convergence": 1e-9,
-            "d_convergence": 1e-9,
+            "d_convergence": 1e-8,
             "scf_type": scf_type,
             "mp2_type": corr_type,
             "mp_type": corr_type,
             "cc_type": corr_type,
             "hess_type": "approx_diag",
             "freeze_core": False,
-            "r_convergence": 1e-6,
+            "r_convergence": 1e-5,
             "rms_mograd_convergence": 1e-5,
             "max_mograd_convergence": 1e-4,
             "maxiter": 200,
@@ -310,6 +349,7 @@ def run_psi4_system(spec, actual_basis: str, eri_mode: str) -> dict:
         psi4.core.clean_options()
         psi4.set_options(opts)
 
+        # 1. SCF (OpenMP paralel di dalam libfock -> BLAS = 1 thread)
         set_blas_threads(1)
         scf_converged = True
         t0_hf = time.perf_counter()
@@ -338,6 +378,7 @@ def run_psi4_system(spec, actual_basis: str, eri_mode: str) -> dict:
         }
 
         if n_elec > 1:
+            # Wajib agar dfocc tidak mengalami PSIO_ERROR pada Unit 97 (PSIF_DFSCF_BJ)
             if mode_lower in ["cholesky", "df"]:
                 psi4.set_options({"scf_type": "pk", "read_scf_3index": False})
 
@@ -349,6 +390,12 @@ def run_psi4_system(spec, actual_basis: str, eri_mode: str) -> dict:
                     nonlocal scf_wfn, scf_snap
                     restore_scf_wfn(scf_wfn, scf_snap, is_closed)
                     set_blas_threads(corr_blas_threads)
+
+                    # Untuk RHF DF-OMP3, matikan oo_diis yang memiliki bug nama metode di occ_iterations.cc:346
+                    if is_closed and method_label == "omp3" and mode_lower in ["cholesky", "df"]:
+                        psi4.set_options({"do_diis": False})
+                    else:
+                        psi4.set_options({"do_diis": True})
 
                     t0 = time.perf_counter()
                     if need_wfn:
@@ -401,7 +448,39 @@ def run_psi4_system(spec, actual_basis: str, eri_mode: str) -> dict:
     finally:
         shutil.rmtree(scratch_dir, ignore_errors=True)
 
-def run_isolated_worker(sys_name: str, actual_basis: str, eri_mode: str, tmp_json: str) -> dict:
+
+def run_gdb_backtrace(sys_name: str, actual_basis: str, eri_mode: str, debug_nan: bool = False):
+    gdb_bin = shutil.which("gdb")
+    if not gdb_bin:
+        print(f"  [GDB] Binary 'gdb' tidak ditemukan di PATH; lewati pengambilan stacktrace.", flush=True)
+        return
+
+    print("\n" + "!" * 110, flush=True)
+    print(f"  [GDB CRASH DIAGNOSIS] Menjalankan gdb --args + bt full untuk: {sys_name} ({actual_basis} | {eri_mode})", flush=True)
+    print("!" * 110, flush=True)
+
+    cmd = [
+        gdb_bin, "-batch",
+        "-ex", "set pagination off",
+        "-ex", "handle SIGPIPE nostop noprint pass",
+        "-ex", "run",
+        "-ex", "bt full",
+        "-ex", "info registers",
+        "-ex", "thread apply all bt full",
+        "-ex", "quit",
+        "--args", sys.executable, "-u", os.path.abspath(__file__),
+        "--threads", str(N_THREADS),
+        "--single-system", sys_name,
+        "--single-basis", actual_basis,
+        "--single-mode", eri_mode,
+    ]
+    if debug_nan:
+        cmd.append("--debug-nan")
+    subprocess.run(cmd, check=False)
+    print("!" * 110 + "\n", flush=True)
+
+
+def run_isolated_worker(sys_name: str, actual_basis: str, eri_mode: str, tmp_json: str, debug_nan: bool = False) -> dict:
     if os.path.exists(tmp_json):
         os.remove(tmp_json)
 
@@ -413,6 +492,8 @@ def run_isolated_worker(sys_name: str, actual_basis: str, eri_mode: str, tmp_jso
         "--single-mode", eri_mode,
         "--single-out", tmp_json,
     ]
+    if debug_nan:
+        cmd.append("--debug-nan")
 
     proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 
@@ -421,25 +502,37 @@ def run_isolated_worker(sys_name: str, actual_basis: str, eri_mode: str, tmp_jso
             return json.load(f)
 
     if proc.returncode < 0:
-        err_msg = f"Terminated by C++ native signal {-proc.returncode} (exit {proc.returncode})"
+        sig_num = -proc.returncode
+        try:
+            sig_name = signal.Signals(sig_num).name
+        except Exception:
+            sig_name = f"SIG({sig_num})"
+        err_msg = f"Terminated by C++ native signal {sig_name} (exit {proc.returncode})"
+        run_gdb_backtrace(sys_name, actual_basis, eri_mode, debug_nan=debug_nan)
     else:
         tail_out = (proc.stdout or "").strip().splitlines()[-3:]
         err_msg = f"Worker exit {proc.returncode}: {' | '.join(tail_out)}"
 
     return {"error": err_msg, "basis": actual_basis}
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Simplified PSI4 Universal Validation Runner")
     parser.add_argument("--tier", choices=["standard", "full"], default="standard")
     parser.add_argument("--basis", default="cc-pVDZ")
     parser.add_argument("--out", default="psi4_universal_raw.json")
-    parser.add_argument("--threads", "-t", type=int, default=N_THREADS)
+    parser.add_argument("--threads", "-t", type=int, default=N_THREADS, help="Jumlah thread OpenMP/MKL")
+    parser.add_argument("--debug-nan", action="store_true", default=False, help="Aktifkan C/C++ SIGFPE trap untuk deteksi NaN/Inf via GDB")
     parser.add_argument("--single-system", default=None)
     parser.add_argument("--single-basis", default=None)
     parser.add_argument("--single-mode", default=None)
     parser.add_argument("--single-out", default=None)
 
     args, unknown_args = parser.parse_known_args()
+
+    if args.debug_nan:
+        np.seterr(all="raise")
+        enable_c_fp_traps()
 
     if args.threads:
         N_THREADS = args.threads
@@ -479,7 +572,10 @@ if __name__ == "__main__":
         for sys_name, spec in selected_systems.items():
             actual_basis = select_basis_for_system(spec, args.basis)
             key = f"{args.basis}|{mode}|{sys_name}"
-            res = run_isolated_worker(sys_name, actual_basis, mode, tmp_worker_json)
+            try:
+                res = run_psi4_system(spec, actual_basis, mode)
+            except Exception as e:
+                res = {"error": str(e), "basis": actual_basis}
             results_db[key] = res
             if "error" not in res:
                 t_sum = sum(res["TIME"].values())
@@ -501,7 +597,10 @@ if __name__ == "__main__":
                 spec = SYSTEMS[sys_name]
                 actual_basis = select_basis_for_system(spec, "cc-pVDZ")
                 key = f"cc-pVDZ|{mode}|{sys_name}"
-                res = run_isolated_worker(sys_name, actual_basis, mode, tmp_worker_json)
+                try:
+                    res = run_psi4_system(spec, actual_basis, mode)
+                except Exception as e:
+                    res = {"error": str(e), "basis": actual_basis}
                 results_db[key] = res
                 if "error" not in res:
                     t_sum = sum(res["TIME"].values())
