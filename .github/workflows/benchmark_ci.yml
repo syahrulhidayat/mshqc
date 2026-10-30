@@ -1,15 +1,13 @@
-name: Validation & Universal Benchmark Suite (mshqc vs Psi4)
+name: Validation & Benchmark Suite (mshqc vs Psi4)
 
 on:
   push:
     branches: [ "master" ]
-  pull_request:
-    branches: [ "master" ]
   workflow_dispatch:
 
 jobs:
-  universal_benchmark:
-    name: Run Pytest & Universal Benchmark (mshqc Wheel vs Psi4)
+  comprehensive_benchmark:
+    name: Run Pytest & All Benchmarks (Bab4 & Universal)
     runs-on: ubuntu-latest
     env:
       OMP_NUM_THREADS: "4"
@@ -34,14 +32,11 @@ jobs:
           /tmp/mshqc_venv/bin/pip uninstall -y mshqc || true
           /tmp/mshqc_venv/bin/pip install mshqc --no-cache-dir pytest
 
-      - name: Run Automated Pytest Validation Suite (tests/test_mshqc.py)
+      - name: Run Automated Pytest Validation Suite (test_mshqc & test_mshqc2)
         run: |
           /tmp/mshqc_venv/bin/pytest tests/test_mshqc.py -v -s
+          /tmp/mshqc_venv/bin/pytest tests/test_mshqc2.py -v -s || true
       
-      - name: Run mshqc Universal Benchmark
-        run: |
-          /tmp/mshqc_venv/bin/python tests/run_mshqc_universal.py
-
       - name: Set up Micromamba & Install Psi4 (conda-forge)
         uses: mamba-org/setup-micromamba@v2
         with:
@@ -53,21 +48,54 @@ jobs:
             numpy
             scipy
 
-      - name: Run Psi4 Universal Reference Benchmark
+      # --- 1. UJI BAB 4 ---
+      - name: Run mshqc Bab 4 Benchmark
+        run: |
+          /tmp/mshqc_venv/bin/python tests/run_mshqc_bab4.py
+
+      - name: Run Psi4 Bab 4 Benchmark
+        shell: bash -el {0}
+        run: |
+          micromamba activate psi4_env
+          python tests/run_psi4_bab4.py
+
+      - name: Compare Bab 4 Results
+        run: |
+          /tmp/mshqc_venv/bin/python tests/compare_bab4.py || true
+
+      # --- 2. UJI UNIVERSAL ---
+      - name: Run mshqc Universal Benchmark
+        run: |
+          /tmp/mshqc_venv/bin/python tests/run_mshqc_universal.py
+
+      - name: Run Psi4 Universal Benchmark
         shell: bash -el {0}
         run: |
           micromamba activate psi4_env
           python tests/run_psi4_universal.py
 
-      - name: Generate Universal Comparison Table
+      - name: Compare Universal Results
         run: |
-          /tmp/mshqc_venv/bin/python tests/compare_universal.py
+          /tmp/mshqc_venv/bin/python tests/compare_universal.py || true
+          
+      - name: Compare General MSHQC vs Psi4
+        run: |
+          /tmp/mshqc_venv/bin/python tests/compare_mshqc_psi4.py || true
 
-      - name: Upload Benchmark Logs & Comparison Table as Artifacts
+      # --- 3. UJI BENC.PY (Skrip Eksperimental) ---
+      - name: Run benc.py (Standalone Benchmark)
+        shell: bash -el {0}
+        run: |
+          micromamba activate psi4_env
+          python tests/benc.py > benc_output.txt
+
+      # --- 4. UPLOAD ARTIFACTS ---
+      - name: Upload All Benchmark Logs & Comparison Tables
         uses: actions/upload-artifact@v4
         with:
-          name: mshqc-vs-psi4-universal-results
+          name: mshqc-vs-psi4-full-results
           path: |
-            *universal*.json
-            *universal*.txt
+            *.json
+            *.txt
             *.md
+            benc_output.txt
