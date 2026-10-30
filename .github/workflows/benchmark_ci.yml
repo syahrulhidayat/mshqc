@@ -2,9 +2,7 @@ name: Validation & Universal Benchmark Suite (mshqc vs Psi4)
 
 on:
   push:
-    branches: [ "master" ]
-  pull_request:
-    branches: [ "master" ]
+    branches: [ "benchmark" ]
   workflow_dispatch:
 
 jobs:
