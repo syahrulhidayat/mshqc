@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # ==============================================================================
-# Git Commit: fix(benchmark): robust Psi4 dfocc RHF OMP2/OMP3 execution & wfn state isolation
+# Git Commit: fix(benchmark): resolve conda/micromamba BLAS library path & restore dfocc RHF stability
 # ==============================================================================
 """
 Simplified PSI4 Universal Validation Runner (JOSS-Compliant Fair Benchmark, Clean Wfn State & Real-Time Output)
@@ -31,6 +31,8 @@ N_THREADS = int(os.environ.get("OMP_NUM_THREADS", str(min(4, CPU_AVAIL))))
 os.environ["OMP_NUM_THREADS"] = str(N_THREADS)
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["MKL_DYNAMIC"] = "FALSE"
+os.environ["OMP_NESTED"] = "FALSE"
 os.environ["OMP_MAX_ACTIVE_LEVELS"] = "1"
 os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
@@ -41,19 +43,64 @@ import psi4
 
 
 def _load_blas_setters():
-    """Mencari simbol pengatur jumlah thread BLAS (MKL / OpenBLAS) yang sudah dimuat di memori."""
+    """
+    Mencari simbol pengatur jumlah thread BLAS (MKL / OpenBLAS) termasuk di dalam
+    direktori lib Conda/Micromamba ($CONDA_PREFIX/lib) dan /proc/self/maps.
+    """
     setters = []
-    for lib_name in ("libmkl_rt.so", "libmkl_rt.so.2", "libopenblas.so", "libopenblas.so.0", None):
+    lib_Names = ("libmkl_rt.so", "libmkl_rt.so.2", "libopenblas.so", "libopenblas.so.0")
+    candidates = []
+
+    # 1. Path eksplisit dari environment Python/Conda/Micromamba aktif
+    env_lib_dirs = [
+        os.path.join(sys.prefix, "lib"),
+        os.environ.get("CONDA_PREFIX", "") and os.path.join(os.environ["CONDA_PREFIX"], "lib"),
+    ]
+    for d in env_lib_dirs:
+        if d and os.path.isdir(d):
+            for name in lib_Names:
+                full_p = os.path.join(d, name)
+                if os.path.exists(full_p):
+                    candidates.append(full_p)
+
+    # 2. Deteksi shared library BLAS yang sudah dimuat di memori via /proc/self/maps
+    if os.path.exists("/proc/self/maps"):
+        try:
+            with open("/proc/self/maps", "r", encoding="utf-8") as f:
+                for line in f:
+                    parts = line.strip().split()
+                    if len(parts) >= 6 and parts[5].startswith("/"):
+                        path = parts[5]
+                        base = os.path.basename(path)
+                        if ("mkl_rt" in base or "openblas" in base) and path not in candidates:
+                            candidates.append(path)
+        except Exception:
+            pass
+
+    # 3. Fallback nama standar sistem
+    candidates.extend(lib_Names)
+    candidates.append(None)
+
+    seen_Ptrs = set()
+    for lib_name in candidates:
         try:
             lib = ctypes.CDLL(lib_name)
         except Exception:
             continue
-        for fn_name in ("MKL_Set_Num_Threads", "openblas_set_num_threads"):
+        for fn_name in ("MKL_Set_Num_Threads", "MKL_Domain_Set_Num_Threads", "openblas_set_num_threads"):
             if hasattr(lib, fn_name):
                 fn = getattr(lib, fn_name)
-                fn.argtypes = [ctypes.c_int]
-                fn.restype = None
-                setters.append(fn)
+                ptr = ctypes.cast(fn, ctypes.c_void_p).value
+                if ptr not in seen_Ptrs:
+                    seen_Ptrs.add(ptr)
+                    if fn_name == "MKL_Domain_Set_Num_Threads":
+                        fn.argtypes = [ctypes.c_int, ctypes.c_int]
+                        fn.restype = ctypes.c_int
+                        setters.append(lambda n, f=fn: f(int(n), 0))  # 0 = MKL_DOMAIN_ALL
+                    else:
+                        fn.argtypes = [ctypes.c_int]
+                        fn.restype = None
+                        setters.append(fn)
     return setters
 
 
@@ -102,7 +149,7 @@ SYSTEMS = {
     "HF": (0, 1, 5, 5, [(9, "F", 0.0, 0.0, 0.0), (1, "H", 0.0, 0.0, 0.9168 * ANG_TO_BOHR)], "standard"),
     "HCl": (0, 1, 9, 9, [(17, "Cl", 0.0, 0.0, 0.0), (1, "H", 0.0, 0.0, 1.2746 * ANG_TO_BOHR)], "full"),
     "N2": (0, 1, 7, 7, [(7, "N", 0.0, 0.0, -0.5488 * ANG_TO_BOHR), (7, "N", 0.0, 0.0, 0.5488 * ANG_TO_BOHR)], "standard"),
-    "CO": (0, 1, 7, 7, [(6, "C", 0.0, 0.0, -0.5642 * ANG_TO_BOHR), (8, "O", 0.0, 0.5642 * ANG_TO_BOHR)], "full"),
+    "CO": (0, 1, 7, 7, [(6, "C", 0.0, 0.0, -0.5642 * ANG_TO_BOHR), (8, "O", 0.0, 0.0, 0.5642 * ANG_TO_BOHR)], "full"),
     "H2O": (0, 1, 5, 5, [
         (8, "O", 0.0, 0.0, 0.117300 * ANG_TO_BOHR),
         (1, "H", 0.0, 0.757200 * ANG_TO_BOHR, -0.469200 * ANG_TO_BOHR),
@@ -168,7 +215,7 @@ def compute_s2_from_wfn(wfn, S_mat: np.ndarray, na: int, nb: int, is_closed: boo
         return 0.0
     sz = 0.5 * (na - nb)
     ideal = float(sz * (sz + 1.0))
-    if na == 0 or nb == 0:
+    if na == 0 or nb == 0 or wfn is None:
         return ideal
     try:
         ca = np.array(wfn.Ca().to_array(dense=True), dtype=np.float64, copy=True)[:, :na]
@@ -183,6 +230,7 @@ def compute_s2_from_wfn(wfn, S_mat: np.ndarray, na: int, nb: int, is_closed: boo
 
 
 def snapshot_scf_wfn(wfn, is_closed: bool) -> dict:
+    """Menyimpan state kanonik SCF termasuk energi referensi."""
     snap = {
         "e": float(wfn.energy()),
         "Ca": wfn.Ca().clone(),
@@ -199,6 +247,7 @@ def snapshot_scf_wfn(wfn, is_closed: bool) -> dict:
 
 
 def restore_scf_wfn(wfn, snap: dict, is_closed: bool):
+    """Merestorasi energi, orbital, dan matriks Fock kanonik HF."""
     wfn.set_energy(snap["e"])
     wfn.Ca().copy(snap["Ca"])
     wfn.Da().copy(snap["Da"])
@@ -214,21 +263,6 @@ def restore_scf_wfn(wfn, snap: dict, is_closed: bool):
 def assert_finite(name: str, val: float):
     if val is None or not math.isfinite(float(val)):
         raise RuntimeError(f"Psi4 returned non-finite energy ({val}) for {name}")
-
-
-def resolve_method_call(method: str, eri_mode: str) -> str:
-    """
-    Memetakan nama metode ke string driver eksplisit agar Psi4 memanggil
-    modul dfocc secara deterministik (menghindari fallback ke modul occ conv).
-    """
-    m = method.lower()
-    mode = eri_mode.lower()
-    if m in ["omp2", "omp3"]:
-        if mode == "df":
-            return f"df-{m}"
-        elif mode == "cholesky":
-            return f"cd-{m}"
-    return m
 
 
 def run_psi4_system(spec, actual_basis: str, eri_mode: str) -> dict:
@@ -267,24 +301,29 @@ def run_psi4_system(spec, actual_basis: str, eri_mode: str) -> dict:
         else:  # df
             scf_type, corr_type = "df", "df"
 
-        base_opts = {
+        opts = {
             "basis": actual_basis,
             "reference": ref_type,
-            "e_convergence": 1e-10,
-            "d_convergence": 1e-8,
+            "e_convergence": 1e-9,
+            "d_convergence": 1e-9,
             "scf_type": scf_type,
             "mp2_type": corr_type,
             "mp_type": corr_type,
             "cc_type": corr_type,
-            "maxiter": 200,
             "freeze_core": False,
+            "r_convergence": 1e-6,
+            "rms_mograd_convergence": 1e-5,
+            "max_mograd_convergence": 1e-4,
+            "maxiter": 200,
+            "mo_maxiter": 50,
             "cachelevel": 2,
+            "read_scf_3index": False,
         }
 
         if mode_lower == "cholesky":
-            base_opts["cholesky_tolerance"] = 1e-9
+            opts["cholesky_tolerance"] = 1e-9
         elif mode_lower == "df":
-            base_opts.update({
+            opts.update({
                 "df_basis_scf": scf_aux,
                 "df_basis_mp2": mp2_aux,
                 "df_basis_cc": mp2_aux,
@@ -292,10 +331,9 @@ def run_psi4_system(spec, actual_basis: str, eri_mode: str) -> dict:
 
         psi4.core.clean()
         psi4.core.clean_options()
-        psi4.core.clean_variables()
-        psi4.set_options(base_opts)
+        psi4.set_options(opts)
 
-        # 1. SCF: OpenMP di level libfock -> BLAS diset ke 1 thread
+        # 1. SCF (OpenMP paralel di dalam libfock -> BLAS wajib 1 thread)
         set_blas_threads(1)
         scf_converged = True
         t0_hf = time.perf_counter()
@@ -305,6 +343,7 @@ def run_psi4_system(spec, actual_basis: str, eri_mode: str) -> dict:
         except psi4.SCFConvergenceError:
             psi4.core.clean()
             psi4.set_options({"maxiter": 400})
+            set_blas_threads(1)
             t0_hf = time.perf_counter()
             e_hf, scf_wfn = psi4.energy("scf", molecule=mol, return_wfn=True)
             t_hf_baseline = time.perf_counter() - t0_hf
@@ -323,66 +362,60 @@ def run_psi4_system(spec, actual_basis: str, eri_mode: str) -> dict:
         }
 
         if n_elec > 1:
-            post_hf_opts = {
-                "e_convergence": 1e-9,
-                "r_convergence": 1e-5,
-                "rms_mograd_convergence": 1e-5,
-                "max_mograd_convergence": 1e-4,
-                "mo_maxiter": 100,
-                # PERBAIKAN PENTING: Pertahankan scf_type agar dfocc tidak kehilangan
-                # konteks tensor metrik 3-indeks pada sistem RHF.
-                "scf_type": scf_type,
-                "mp2_type": corr_type,
-                "mp_type": corr_type,
-            }
+            # Wajib agar dfocc tidak mengalami PSIO_ERROR pada Unit 97 (PSIF_DFSCF_BJ)
+            # setelah psi4.core.clean() dipanggil antar metode.
             if mode_lower in ["cholesky", "df"]:
-                post_hf_opts["read_scf_3index"] = True
+                psi4.set_options({"scf_type": "pk", "read_scf_3index": False})
 
-            psi4.set_options(post_hf_opts)
-
-            # Untuk mode EXACT: BLAS = N_THREADS (karena outer loop DPD serial).
-            # Untuk DF/CHOLESKY: BLAS = 1 thread (outer loop dfocc sudah diparalelisasi OpenMP).
+            # occ/libdpd (EXACT) serial di outer-loop -> butuh BLAS multi-thread.
+            # dfocc (CHOLESKY/DF) sudah paralel OpenMP di outer-loop -> BLAS wajib 1 thread.
             corr_blas_threads = N_THREADS if mode_lower == "exact" else 1
             set_blas_threads(corr_blas_threads)
 
             try:
-                def run_single_post_hf(raw_method: str):
+                def run_single_post_hf(method_label: str, need_wfn: bool = False):
                     nonlocal scf_wfn, scf_snap
                     restore_scf_wfn(scf_wfn, scf_snap, is_closed)
-                    method_call = resolve_method_call(raw_method, mode_lower)
-                    
+                    set_blas_threads(corr_blas_threads)
+
                     t0 = time.perf_counter()
-                    try:
-                        e_val, wfn_out = psi4.energy(method_call, ref_wfn=scf_wfn, molecule=mol, return_wfn=True)
-                    except Exception:
-                        # Fallback eksekusi langsung dari molekul bila reuse wfn corrupt
-                        e_val, wfn_out = psi4.energy(method_call, molecule=mol, return_wfn=True)
+                    if need_wfn:
+                        e_val, wfn_out = psi4.energy(method_label, ref_wfn=scf_wfn, molecule=mol, return_wfn=True)
+                    else:
+                        e_val = psi4.energy(method_label, ref_wfn=scf_wfn, molecule=mol)
+                        wfn_out = None
                     t_el = time.perf_counter() - t0
+                    psi4.core.clean()
 
-                    # Verifikasi kelayakan nilai energi
+                    # Fallback proteksi: jika dfocc RHF masih menghasilkan NaN akibat OpenMP race condition
                     if e_val is None or not math.isfinite(float(e_val)):
-                        # Jika gagal, re-run mandiri dari scratch tanpa dependensi wfn sebelumnya
-                        psi4.core.clean()
-                        psi4.set_options(base_opts)
-                        psi4.set_options(post_hf_opts)
-                        t0 = time.perf_counter()
-                        e_val, wfn_out = psi4.energy(method_call, molecule=mol, return_wfn=True)
-                        t_el = time.perf_counter() - t0
+                        psi4.set_num_threads(1)
+                        set_blas_threads(1)
+                        try:
+                            restore_scf_wfn(scf_wfn, scf_snap, is_closed)
+                            t0 = time.perf_counter()
+                            if need_wfn:
+                                e_val, wfn_out = psi4.energy(method_label, ref_wfn=scf_wfn, molecule=mol, return_wfn=True)
+                            else:
+                                e_val = psi4.energy(method_label, ref_wfn=scf_wfn, molecule=mol)
+                                wfn_out = None
+                            t_el = time.perf_counter() - t0
+                            psi4.core.clean()
+                        finally:
+                            psi4.set_num_threads(N_THREADS)
+                            set_blas_threads(corr_blas_threads)
 
-                    assert_finite(raw_method.upper(), e_val)
+                    assert_finite(method_label.upper(), e_val)
                     return float(e_val), wfn_out, float(t_el)
 
-                e_mp2, mp2_wfn, t_mp2 = run_single_post_hf("mp2")
-                del mp2_wfn
+                e_mp2, _, t_mp2 = run_single_post_hf("mp2", need_wfn=False)
+                e_mp3, _, t_mp3 = run_single_post_hf("mp3", need_wfn=False)
 
-                e_mp3, mp3_wfn, t_mp3 = run_single_post_hf("mp3")
-                del mp3_wfn
-
-                e_omp2, omp2_wfn, t_omp2 = run_single_post_hf("omp2")
+                e_omp2, omp2_wfn, t_omp2 = run_single_post_hf("omp2", need_wfn=(not is_closed))
                 s2_omp2 = compute_s2_from_wfn(omp2_wfn, S_mat, na, nb, is_closed)
                 del omp2_wfn
 
-                e_omp3, omp3_wfn, t_omp3 = run_single_post_hf("omp3")
+                e_omp3, omp3_wfn, t_omp3 = run_single_post_hf("omp3", need_wfn=(not is_closed))
                 s2_omp3 = compute_s2_from_wfn(omp3_wfn, S_mat, na, nb, is_closed)
                 del omp3_wfn
             finally:
@@ -435,6 +468,7 @@ def run_gdb_backtrace(sys_name: str, actual_basis: str, eri_mode: str):
         "-ex", "thread apply all bt full",
         "-ex", "quit",
         "--args", sys.executable, "-u", os.path.abspath(__file__),
+        "--threads", str(N_THREADS),
         "--single-system", sys_name,
         "--single-basis", actual_basis,
         "--single-mode", eri_mode,
@@ -449,6 +483,7 @@ def run_isolated_worker(sys_name: str, actual_basis: str, eri_mode: str, tmp_jso
 
     cmd = [
         sys.executable, "-u", os.path.abspath(__file__),
+        "--threads", str(N_THREADS),
         "--single-system", sys_name,
         "--single-basis", actual_basis,
         "--single-mode", eri_mode,
