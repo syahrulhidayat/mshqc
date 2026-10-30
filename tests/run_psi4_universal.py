@@ -225,6 +225,7 @@ def run_psi4_system(spec, actual_basis: str, eri_mode: str) -> dict:
             base_opts["df_basis_mp2"] = mp2_aux
             base_opts["df_basis_cc"] = mp2_aux
 
+        # ... (Bagian geometri dan base_opts tetap sama) ...
         psi4.core.clean()
         psi4.core.clean_options()
         psi4.core.clean_variables()
@@ -234,16 +235,15 @@ def run_psi4_system(spec, actual_basis: str, eri_mode: str) -> dict:
         t0_hf = time.perf_counter()
         try:
             e_hf, scf_wfn = psi4.energy("scf", molecule=mol, return_wfn=True)
-            t_hf = time.perf_counter() - t0_hf
+            t_hf_baseline = time.perf_counter() - t0_hf
         except psi4.SCFConvergenceError:
             psi4.core.clean()
             psi4.set_options({"maxiter": 400})
             t0_hf = time.perf_counter()
             e_hf, scf_wfn = psi4.energy("scf", molecule=mol, return_wfn=True)
-            t_hf = time.perf_counter() - t0_hf
+            t_hf_baseline = time.perf_counter() - t0_hf
 
         assert_finite("HF", e_hf)
-        scf_snap = snapshot_scf_wfn(scf_wfn)
         S_mat = np.array(scf_wfn.S().to_array(dense=True), dtype=np.float64, copy=True)
         s2_hf = compute_s2_from_wfn(scf_wfn, S_mat, na, nb, is_closed)
 
@@ -252,7 +252,7 @@ def run_psi4_system(spec, actual_basis: str, eri_mode: str) -> dict:
             "converged": bool(scf_converged),
             "HF": float(e_hf),
             "S2_HF": float(s2_hf),
-            "TIME": {"HF": float(t_hf), "MP2": 0.0, "MP3": 0.0, "OMP2": 0.0, "OMP3": 0.0},
+            "TIME": {"HF": float(t_hf_baseline), "MP2": 0.0, "MP3": 0.0, "OMP2": 0.0, "OMP3": 0.0},
         }
 
         if n_elec > 1:
@@ -265,8 +265,9 @@ def run_psi4_system(spec, actual_basis: str, eri_mode: str) -> dict:
                 "mo_maxiter": 50,
             })
 
-            def run_single_post_hf(method_label: str):
-                restore_scf_wfn(scf_wfn, scf_snap)
+            def run_isolated_post_hf(method_label: str):
+                # Putus dependensi I/O: Eksekusi pipeline penuh secara terisolasi tanpa memori wfn iterasi sebelumnya
+                psi4.core.clean()
                 psi4.core.clean_variables()
                 psi4.core.clean_options()
                 
@@ -274,22 +275,25 @@ def run_psi4_system(spec, actual_basis: str, eri_mode: str) -> dict:
                 psi4.set_options(opts)
 
                 t0 = time.perf_counter()
-                e_val, wfn_out = psi4.energy(method_label, ref_wfn=scf_wfn, return_wfn=True)
-                t_el = time.perf_counter() - t0
+                # Eksekusi full graph dari objek molekul, bukan referensi scf_wfn
+                e_val, wfn_out = psi4.energy(method_label, molecule=mol, return_wfn=True)
+                t_total = time.perf_counter() - t0
+                
                 assert_finite(method_label.upper(), e_val)
-                return float(e_val), wfn_out, float(t_el)
+                t_post_hf = max(0.0, t_total - t_hf_baseline)
+                return float(e_val), wfn_out, float(t_post_hf)
 
-            e_mp2, mp2_wfn, t_mp2 = run_single_post_hf("mp2")
+            e_mp2, mp2_wfn, t_mp2 = run_isolated_post_hf("mp2")
             del mp2_wfn
 
-            e_mp3, mp3_wfn, t_mp3 = run_single_post_hf("mp3")
+            e_mp3, mp3_wfn, t_mp3 = run_isolated_post_hf("mp3")
             del mp3_wfn
 
-            e_omp2, omp2_wfn, t_omp2 = run_single_post_hf("omp2")
+            e_omp2, omp2_wfn, t_omp2 = run_isolated_post_hf("omp2")
             s2_omp2 = compute_s2_from_wfn(omp2_wfn, S_mat, na, nb, is_closed)
             del omp2_wfn
 
-            e_omp3, omp3_wfn, t_omp3 = run_single_post_hf("omp3")
+            e_omp3, omp3_wfn, t_omp3 = run_isolated_post_hf("omp3")
             s2_omp3 = compute_s2_from_wfn(omp3_wfn, S_mat, na, nb, is_closed)
             del omp3_wfn
 
@@ -312,7 +316,7 @@ def run_psi4_system(spec, actual_basis: str, eri_mode: str) -> dict:
                 psi_res[m] = float(e_hf)
             psi_res["S2_OMP2"] = psi_res["S2_OMP3"] = float(s2_hf)
 
-        del scf_snap, scf_wfn, mol
+        del scf_wfn, mol
         psi4.core.clean()
         gc.collect()
         return psi_res
