@@ -15,6 +15,9 @@ import signal
 import tempfile
 import argparse
 import subprocess
+import argparse
+import sys
+import numpy as np
 
 try:
     os.sched_setaffinity(0, set(range(os.cpu_count() or 4)))
@@ -359,8 +362,7 @@ def run_gdb_backtrace(sys_name: str, actual_basis: str, eri_mode: str):
     print("!" * 110 + "\n", flush=True)
 
 
-def run_isolated_worker(sys_name: str, actual_basis: str, eri_mode: str, tmp_json: str) -> dict:
-    """Menjalankan 1 sistem dalam subprocess terisolasi agar jika terjadi SIGSEGV, bisa di-debug via GDB & lanjut."""
+def run_isolated_worker(sys_name: str, actual_basis: str, eri_mode: str, tmp_json: str, debug_nan: bool = False) -> dict:
     if os.path.exists(tmp_json):
         os.remove(tmp_json)
 
@@ -371,6 +373,9 @@ def run_isolated_worker(sys_name: str, actual_basis: str, eri_mode: str, tmp_jso
         "--single-mode", eri_mode,
         "--single-out", tmp_json,
     ]
+    if debug_nan:
+        cmd.append("--debug-nan")
+
     proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
 
     if proc.returncode == 0 and os.path.exists(tmp_json):
@@ -397,11 +402,24 @@ if __name__ == "__main__":
     parser.add_argument("--tier", choices=["standard", "full"], default="standard")
     parser.add_argument("--basis", default="cc-pVDZ")
     parser.add_argument("--out", default="psi4_universal_raw.json")
+    parser.add_argument("--threads", "-t", type=int, default=N_THREADS, help="Jumlah thread OpenMP/MKL")
+    parser.add_argument("--debug-nan", action="store_true", default=False, help="Aktifkan floating point trap untuk deteksi NaN/Inf")
     parser.add_argument("--single-system", default=None)
     parser.add_argument("--single-basis", default=None)
     parser.add_argument("--single-mode", default=None)
     parser.add_argument("--single-out", default=None)
-    args = parser.parse_args()
+
+    # Menggunakan parse_known_args agar tidak crash jika wrapper GDB/CI menambahkan argumen tak terduga
+    args, unknown_args = parser.parse_known_args()
+
+    # Trap floating point exception jika --debug-nan aktif
+    if args.debug_nan:
+        np.seterr(all="raise")
+
+    if args.threads:
+        N_THREADS = args.threads
+        os.environ["OMP_NUM_THREADS"] = str(N_THREADS)
+        os.environ["MKL_NUM_THREADS"] = str(N_THREADS)
 
     # Mode eksekusi sistem tunggal (untuk subprocess worker & gdb --args)
     if args.single_system:
