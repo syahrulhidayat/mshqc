@@ -5,7 +5,7 @@ import ctypes
 import tempfile
 
 # =====================================================================
-# 1. KONFIGURASI HPC & LINGKUNGAN (Bebas Nested Thread Contention)
+# 1. KONFIGURASI HPC & LINGKUNGAN (Setara dengan mshqc)
 # =====================================================================
 try:
     os.sched_setaffinity(0, set(range(os.cpu_count() or 4)))
@@ -13,12 +13,11 @@ except Exception:
     pass
 
 cpu_avail = os.cpu_count() or 4
-n_threads = int(os.environ.get("OMP_NUM_THREADS", str(min(6, cpu_avail))))
+n_threads = int(os.environ.get("OMP_NUM_THREADS", str(min(4, cpu_avail))))
 os.environ["OMP_NUM_THREADS"] = str(n_threads)
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["OMP_MAX_ACTIVE_LEVELS"] = "1"
-
 
 shm_dir = "/dev/shm" if os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK) else tempfile.gettempdir()
 os.environ["PSI_SCRATCH"] = shm_dir
@@ -51,7 +50,7 @@ _BLAS_SETTERS = _load_blas_setters()
 
 
 def set_blas_threads(num_t: int):
-    """Mengatur jumlah thread BLAS secara dinamis khusus untuk modul serial-outer-loop (occ/libdpd)."""
+    """Mengatur jumlah thread BLAS secara dinamis."""
     for fn in _BLAS_SETTERS:
         try:
             fn(int(num_t))
@@ -60,7 +59,7 @@ def set_blas_threads(num_t: int):
 
 
 # ==============================================================================
-# 2. KONFIGURASI GLOBAL PSI4 (BEST-VS-BEST APPLE-TO-APPLE DENGAN MSHQC)
+# 2. KONFIGURASI GLOBAL PSI4 (1:1 APPLE-TO-APPLE DENGAN test_mshqc2.py)
 # ==============================================================================
 BASIS_NAME = "cc-pVTZ"
 AUX_BASIS  = "cc-pVTZ-RI"
@@ -85,15 +84,18 @@ SYSTEMS = [
 RESULTS_DB = []
 
 
-def build_psi4_mol(atoms, chg, mult, eri_mode="exact"):
+def build_psi4_mol(atoms, chg, mult):
     """
-    Membangun objek molekul Psi4 pada kekuatan maksimal:
-    - Mode EXACT menggunakan simetri Abelian penuh (D2h untuk atom, C2v untuk H2O).
-    - Mode DF & CHOLESKY menggunakan symmetry c1 (karena modul dfocc Psi4 hanya mendukung C1).
+    Membangun objek molekul Psi4 dengan simetri C1 dan orientasi koordinat tetap
+    di semua mode ERI agar dimensi tensor 1:1 dengan mshqc.
     """
-    lines = [f"{chg} {mult}", "units bohr"]
-    if eri_mode in ["df", "cholesky"]:
-        lines.append("symmetry c1")
+    lines = [
+        f"{chg} {mult}",
+        "units bohr",
+        "symmetry c1",
+        "no_reorient",
+        "no_com",
+    ]
     for z, x, y, z_c in atoms:
         lines.append(f"{Z_TO_SYM[z]} {x:.12f} {y:.12f} {z_c:.12f}")
     return psi4.geometry("\n".join(lines))
@@ -133,8 +135,9 @@ def restore_wfn(wfn, snap):
 def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
     psi4.core.clean()
     psi4.core.clean_options()
+    psi4.core.clean_variables()
 
-    mol = build_psi4_mol(atoms, chg, mult, eri_mode)
+    mol = build_psi4_mol(atoms, chg, mult)
 
     if eri_mode == "exact":
         scf_type, corr_type = "pk", "conv"
@@ -147,13 +150,13 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
         "basis": basis_name,
         "reference": ref,
         "e_convergence": THRESHOLD,
-        "d_convergence": THRESHOLD,
+        "d_convergence": 1e-8,
         "scf_type": scf_type,
         "mp2_type": corr_type,
         "mp_type": corr_type,
         "cc_type": corr_type,
-        "freeze_core": "false",
-        "r_convergence": 1e-6,
+        "freeze_core": False,
+        "r_convergence": 1e-5,
         "rms_mograd_convergence": 1e-5,
         "max_mograd_convergence": 1e-4,
         "maxiter": 200,
@@ -169,7 +172,7 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
 
     psi4.set_options(opts)
 
-    # --- 1. SCF (OpenMP paralel di dalam libfock -> BLAS = 1 thread) ---
+    # --- 1. SCF ---
     set_blas_threads(1)
     t0_scf = time.perf_counter()
     try:
@@ -182,13 +185,13 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
 
     hf_snap = snapshot_wfn(scf_wfn)
 
-    # Wajib agar dfocc tidak mengalami PSIO_ERROR pada Unit 97 (PSIF_DFSCF_BJ)
+    # Mencegah dfocc membaca ulang PSIF_DFSCF_BJ (Unit 97) yang dihapus clean();
+    # dfocc tetap menjalankan DF/CD berdasarkan mp2_type & mp_type.
     if eri_mode in ["cholesky", "df"]:
         psi4.set_options({"scf_type": "pk", "read_scf_3index": False})
 
-    # Aktifkan multi-thread BLAS khusus untuk modul occ/libdpd (mode EXACT)
-    corr_blas_threads = n_threads if eri_mode == "exact" else 1
-    set_blas_threads(corr_blas_threads)
+    # Berikan alokasi thread penuh secara adil untuk semua modul post-HF (occ & dfocc)
+    set_blas_threads(n_threads)
 
     try:
         # --- 2. MP2 ---
