@@ -83,7 +83,7 @@ from .calculators import MSHQCCalculator, build_molecule, run
 from .session import MSHQCSession
 from .utils import quick_calculation, benchmark_basis_sets, compare_methods
 
-__version__ = "1.0.4.post8"
+__version__ = "1.0.4.post9"
 
 __all__ = [
     "Atom", "Molecule", "GaussianPrimitive", "Shell", "AngularMomentum",
