@@ -276,14 +276,26 @@ def run_psi4_system(spec, actual_basis: str, eri_mode: str) -> dict:
                 "mo_maxiter": 50,
             })
 
+            if n_elec > 1:
+            post_hf_opts = dict(base_opts)
+            post_hf_opts.update({
+                "e_convergence": 1e-9,
+                "r_convergence": 1e-5,
+                "rms_mograd_convergence": 1e-5,
+                "max_mograd_convergence": 1e-4,
+                "mo_maxiter": 50,
+            })
+
             def run_single_post_hf(method_label: str):
                 restore_scf_wfn(scf_wfn, scf_snap)
-                psi4.core.clean()
+                
+                # JANGAN panggil psi4.core.clean() di sini! 
+                # clean() menghapus berkas integral PSIO (file 100+) yang dibutuhkan post-HF DF.
                 psi4.core.clean_variables()
                 psi4.core.clean_options()
+                
                 opts = dict(post_hf_opts)
-                if method_label == "mp2" and mode_lower == "cholesky":
-                    opts["qc_module"] = "dfocc"
+                # Hapus injeksi "dfocc", biarkan driver Psi4 menangani dispatch secara native
                 psi4.set_options(opts)
 
                 t0 = time.perf_counter()
