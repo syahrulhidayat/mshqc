@@ -213,10 +213,10 @@ def compute_mshqc_suite():
             # PENTING: C++ mshqc mengharuskan eri_method dalam huruf kecil ("exact", "cholesky", "df")
             mode_lower = mode.lower()
             scf_conf = mshqc.SCFConfig(
-                eri_method=mode_lower, threshold=1e-10, max_iterations=200, aux_basis_name="cc-pVTZ-RI"
+                eri_method=mode_lower, threshold=1e-9, max_iterations=200, aux_basis_name="cc-pVTZ-RI"
             )
             mp2_conf = mshqc.MP2Config(
-                eri_method=mode_lower, threshold=1e-10, gradient_threshold=1e-5, max_iterations=50, aux_basis_name="cc-pVTZ-RI"
+                eri_method=mode_lower, threshold=1e-9, gradient_threshold=1e-5, max_iterations=50, aux_basis_name="cc-pVTZ-RI"
             )
 
             with capture_c_stdout():

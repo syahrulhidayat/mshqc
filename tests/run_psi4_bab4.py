@@ -23,11 +23,12 @@ except Exception:
     pass
 
 CPU_AVAIL = os.cpu_count() or 4
-N_THREADS = int(os.environ.get("OMP_NUM_THREADS", str(min(6, CPU_AVAIL))))
+N_THREADS = int(os.environ.get("OMP_NUM_THREADS", str(min(4, CPU_AVAIL))))
 os.environ.update({
     "OMP_NUM_THREADS": str(N_THREADS),
     "OPENBLAS_NUM_THREADS": "1",
-    "MKL_NUM_THREADS": str(N_THREADS),
+    "MKL_NUM_THREADS": "1",
+    "MKL_DYNAMIC": "FALSE",
     "OMP_MAX_ACTIVE_LEVELS": "1",
     "HDF5_USE_FILE_LOCKING": "FALSE",
 })
@@ -102,17 +103,56 @@ def atomic_write_text(path_str: str, content: str):
 
 def _load_blas_setters():
     setters = []
-    for lib_name in ("libmkl_rt.so", "libmkl_rt.so.2", "libopenblas.so", "libopenblas.so.0", None):
+    lib_names = ("libmkl_rt.so", "libmkl_rt.so.2", "libopenblas.so", "libopenblas.so.0")
+    candidates = []
+
+    env_lib_dirs = [
+        os.path.join(sys.prefix, "lib"),
+        os.environ.get("CONDA_PREFIX", "") and os.path.join(os.environ["CONDA_PREFIX"], "lib"),
+    ]
+    for d in env_lib_dirs:
+        if d and os.path.isdir(d):
+            for name in lib_names:
+                full_p = os.path.join(d, name)
+                if os.path.exists(full_p):
+                    candidates.append(full_p)
+
+    if os.path.exists("/proc/self/maps"):
+        try:
+            with open("/proc/self/maps", "r", encoding="utf-8") as f:
+                for line in f:
+                    parts = line.strip().split()
+                    if len(parts) >= 6 and parts[5].startswith("/"):
+                        path = parts[5]
+                        base = os.path.basename(path)
+                        if ("mkl_rt" in base or "openblas" in base) and path not in candidates:
+                            candidates.append(path)
+        except Exception:
+            pass
+
+    candidates.extend(lib_names)
+    candidates.append(None)
+
+    seen_ptrs = set()
+    for lib_name in candidates:
         try:
             lib = ctypes.CDLL(lib_name)
         except Exception:
             continue
-        for fn_name in ("MKL_Set_Num_Threads", "openblas_set_num_threads"):
+        for fn_name in ("MKL_Set_Num_Threads", "MKL_Domain_Set_Num_Threads", "openblas_set_num_threads"):
             if hasattr(lib, fn_name):
                 fn = getattr(lib, fn_name)
-                fn.argtypes = [ctypes.c_int]
-                fn.restype = None
-                setters.append(fn)
+                ptr = ctypes.cast(fn, ctypes.c_void_p).value
+                if ptr not in seen_ptrs:
+                    seen_ptrs.add(ptr)
+                    if fn_name == "MKL_Domain_Set_Num_Threads":
+                        fn.argtypes = [ctypes.c_int, ctypes.c_int]
+                        fn.restype = ctypes.c_int
+                        setters.append(lambda n, f=fn: f(int(n), 0))
+                    else:
+                        fn.argtypes = [ctypes.c_int]
+                        fn.restype = None
+                        setters.append(fn)
     return setters
 
 
@@ -151,9 +191,13 @@ def get_scratch_mb(folder: str) -> float:
 
 def build_psi4_mol(sys_name: str, mode_lower: str):
     info = SYSTEMS[sys_name]
-    lines = [f"{info['charge']} {info['mult']}", "units bohr"]
-    if mode_lower in ("df", "cholesky") or sys_name == "OH":
-        lines.append("symmetry c1")
+    lines = [
+        f"{info['charge']} {info['mult']}",
+        "units bohr",
+        "symmetry c1",
+        "no_reorient",
+        "no_com",
+    ]
     for sym, x, y, z in info["atoms"]:
         lines.append(f"{sym} {x * ANG_TO_BOHR:.12f} {y * ANG_TO_BOHR:.12f} {z * ANG_TO_BOHR:.12f}")
     return psi4.geometry("\n".join(lines))
@@ -171,7 +215,8 @@ def configure_psi4(mode_lower: str, is_uhf: bool, basis: str = "cc-pVTZ", aux: s
         "mp2_type": corr_t,
         "mp_type": corr_t,
         "cc_type": corr_t,
-        "freeze_core": "false",
+        "hess_type": "approx_diag",
+        "freeze_core": False,
         "r_convergence": 1e-6,
         "rms_mograd_convergence": 1e-5,
         "max_mograd_convergence": 1e-4,
@@ -212,9 +257,9 @@ def calc_s2_wfn(wfn, is_uhf: bool):
     if na == nb or na == 0 or nb == 0 or wfn.Cb() is None:
         return s_ideal, s_ideal
     try:
-        Ca = np.asarray(wfn.Ca_subset("AO", "OCC"))
-        Cb = np.asarray(wfn.Cb_subset("AO", "OCC"))
-        S = np.asarray(wfn.mintshelper().ao_overlap())
+        Ca = np.asarray(wfn.Ca().to_array(dense=True), dtype=np.float64)[:, :na]
+        Cb = np.asarray(wfn.Cb().to_array(dense=True), dtype=np.float64)[:, :nb]
+        S = np.asarray(wfn.S().to_array(dense=True), dtype=np.float64)
         return s_ideal, float(s_ideal + nb - np.sum((Ca.T @ S @ Cb) ** 2))
     except Exception:
         return s_ideal, s_ideal
@@ -223,7 +268,7 @@ def calc_s2_wfn(wfn, is_uhf: bool):
 def parse_occ_iterations(log_text: str) -> int:
     iters = 0
     for line in log_text.splitlines():
-        m = re.match(r"^\s*(\d+)\s+-?\d+\.\d+\s+-?\d+\.\d+", line)
+        m = re.match(r"^\s*(\d+)\s+-?\d+\.\d+\s+[-+]?\d+\.\d+(?:[eE][-+]?\d+)?", line)
         if m:
             iters = max(iters, int(m.group(1)))
     return iters
@@ -255,7 +300,12 @@ def run_ram_worker(payload_str: str):
         if mode_lower in ("cholesky", "df"):
             psi4.set_options({"scf_type": "pk", "read_scf_3index": False})
 
-        set_blas_threads(N_THREADS)
+        corr_blas_threads = N_THREADS if mode_lower == "exact" else 1
+        set_blas_threads(corr_blas_threads)
+        if (not is_uhf) and p["method"].upper() == "OMP3" and mode_lower in ("cholesky", "df"):
+            psi4.set_options({"do_diis": False})
+        else:
+            psi4.set_options({"do_diis": True})
         psi4.energy(p["method"].lower(), ref_wfn=scf_wfn, molecule=mol)
         set_blas_threads(1)
 
@@ -315,11 +365,14 @@ def compute_psi4_suite():
             if mode_lower in ("cholesky", "df"):
                 psi4.set_options({"scf_type": "pk", "read_scf_3index": False})
 
-            set_blas_threads(N_THREADS)
-            need_iter_log = is_uhf and mode_lower in ("exact", "df")
+            # occ/libdpd (EXACT) serial di outer-loop -> BLAS multi-thread.
+            # dfocc (CHOLESKY/DF) paralel OpenMP di outer-loop -> BLAS 1 thread.
+            corr_blas_threads = N_THREADS if mode_lower == "exact" else 1
+            set_blas_threads(corr_blas_threads)
             try:
                 for m_key, m_call, m_lbl in (("MP2", "mp2", f"{ref_lbl}MP2"), ("MP3", "mp3", f"{ref_lbl}MP3")):
                     try:
+                        set_blas_threads(corr_blas_threads)
                         t0 = time.perf_counter()
                         e_val = float(psi4.energy(m_call, ref_wfn=scf_wfn, molecule=mol))
                         t_val = time.perf_counter() - t0
@@ -333,17 +386,25 @@ def compute_psi4_suite():
 
                 for m_key, m_call in (("OMP2", "omp2"), ("OMP3", "omp3")):
                     try:
-                        if need_iter_log:
-                            psi4.core.set_output_file(tmp_log, False)
+                        set_blas_threads(corr_blas_threads)
+                        if (not is_uhf) and m_call == "omp3" and mode_lower in ("cholesky", "df"):
+                            psi4.set_options({"do_diis": False})
+                        else:
+                            psi4.set_options({"do_diis": True})
+
+                        if os.path.exists(tmp_log):
+                            os.remove(tmp_log)
+                        psi4.core.set_output_file(tmp_log, False)
+
                         t0 = time.perf_counter()
                         e_val, opt_wfn = psi4.energy(m_call, ref_wfn=scf_wfn, molecule=mol, return_wfn=True)
                         t_val = time.perf_counter() - t0
-                        it_cnt = 0
-                        if need_iter_log:
-                            psi4.core.flush_outfile()
-                            psi4.core.be_quiet()
-                            log_txt = Path(tmp_log).read_text(errors="replace") if os.path.exists(tmp_log) else ""
-                            it_cnt = parse_occ_iterations(log_txt)
+
+                        psi4.core.flush_outfile()
+                        psi4.core.be_quiet()
+                        log_txt = Path(tmp_log).read_text(errors="replace") if os.path.exists(tmp_log) else ""
+                        it_cnt = parse_occ_iterations(log_txt)
+
                         _, s2_val = calc_s2_wfn(opt_wfn, is_uhf)
                         entry[m_key] = {"e": float(e_val), "t": float(t_val), "iter": it_cnt, "s2": s2_val}
                         tot_solver_s += t_val

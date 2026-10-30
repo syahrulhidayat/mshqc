@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
+# ==============================================================================
+# Git Commit: align(benchmark): Implement robust isolated worker & GDB backtrace for MSHQC runner
+# ==============================================================================
 """
-Simplified MSHQC Universal Validation Runner (Safe C++ Lifetime, Auto-GDB Backtrace & Real-Time Output)
+Simplified MSHQC Universal Validation Runner (JOSS-Compliant Fair Benchmark, Isolated Worker & Real-Time Output)
 Output: mshqc_universal_raw.json
 """
 
@@ -9,8 +12,11 @@ import gc
 import sys
 import time
 import json
+import math
+import ctypes
 import shutil
 import signal
+import tempfile
 import argparse
 import subprocess
 
@@ -258,7 +264,6 @@ def run_mshqc_system(spec, actual_basis: str, eri_mode: str) -> dict:
 
 
 def run_gdb_backtrace(sys_name: str, actual_basis: str, eri_mode: str):
-    """Menjalankan ulang sistem yang crash di bawah gdb --args dengan bt full untuk mendiagnosis sinyal C++."""
     gdb_bin = shutil.which("gdb")
     if not gdb_bin:
         print(f"  [GDB] Binary 'gdb' tidak ditemukan di PATH; lewati pengambilan stacktrace.", flush=True)
@@ -287,7 +292,6 @@ def run_gdb_backtrace(sys_name: str, actual_basis: str, eri_mode: str):
 
 
 def run_isolated_worker(sys_name: str, actual_basis: str, eri_mode: str, tmp_json: str) -> dict:
-    """Menjalankan 1 sistem dalam subprocess terisolasi agar jika terjadi SIGSEGV, bisa di-debug via GDB & lanjut."""
     if os.path.exists(tmp_json):
         os.remove(tmp_json)
 
@@ -330,7 +334,6 @@ if __name__ == "__main__":
     parser.add_argument("--single-out", default=None)
     args = parser.parse_args()
 
-    # Mode eksekusi sistem tunggal (untuk subprocess worker & gdb --args)
     if args.single_system:
         spec = SYSTEMS[args.single_system]
         res = run_mshqc_system(spec, args.single_basis, args.single_mode)

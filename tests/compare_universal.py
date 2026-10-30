@@ -65,9 +65,6 @@ def validate_and_report(name, eri_mode, msh_res, psi_res, psi_exact_cache, failu
     if psi_res is not None and "error" not in psi_res:
         if eri_mode == "EXACT":
             psi_exact_cache[cache_key] = psi_res
-        elif eri_mode == "CHOLESKY" and cache_key in psi_exact_cache and not is_closed and n_elec > 1:
-            if abs(psi_res.get("S2_OMP2", 0.0) - psi_res.get("S2_HF", 0.0)) < 1e-11:
-                psi_res["S2_OMP2"] = psi_exact_cache[cache_key]["S2_OMP2"]
 
         is_degen_atom = (name in DEGENERATE_OPEN_SHELL_ATOMS and n_atoms == 1)
         base_tol = 5e-5 if eri_mode == "DF" else 1e-5
@@ -105,6 +102,44 @@ def validate_and_report(name, eri_mode, msh_res, psi_res, psi_exact_cache, failu
                     f"Selisih energi {name} ({actual_basis} {eri_mode} {method}) melebihi batas terhadap Psi4! "
                     f"mshqc={val_m:.8f}, Psi4={val_p:.8f}, |dE|={diff:.2e} Ha"
                 )
+
+        if not is_closed:
+            s2_tol = 5e-4 if (is_degen_atom or eri_mode == "DF") else 5e-5
+            for s2_key in ("S2_HF", "S2_OMP2", "S2_OMP3"):
+                s2_m = float(msh_res.get(s2_key, float("nan")))
+                s2_p_raw = float(psi_res.get(s2_key, float("nan")))
+                s2_p_cmp = s2_p_raw
+                note_tag = ""
+
+                # Deteksi transparan bug Psi4 cd_omp2_manager() yang tidak memanggil save_mo_to_wfn()
+                if (
+                    eri_mode == "CHOLESKY"
+                    and s2_key == "S2_OMP2"
+                    and cache_key in psi_exact_cache
+                    and n_elec > 1
+                    and abs(s2_p_raw - float(psi_res.get("S2_HF", 0.0))) < 1e-11
+                ):
+                    s2_p_cmp = float(psi_exact_cache[cache_key].get("S2_OMP2", s2_p_raw))
+                    note_tag = f" [Psi4 raw={s2_p_raw:.6f} (UHF unrotated bug); ref EXACT={s2_p_cmp:.6f}]"
+
+                s2_diff = abs(s2_m - s2_p_cmp)
+                stats["total_checks"] += 1
+                passed = (not math.isnan(s2_diff)) and (s2_diff < s2_tol)
+                status_tag = "" if passed else " [FAIL]"
+                emit(
+                    f"  [{name:11s} | {actual_basis:9s} | {eri_mode:8s} | {s2_key:7s}] "
+                    f"mshqc: {s2_m:14.6f}          | "
+                    f"Psi4: {s2_p_cmp:14.6f}          | "
+                    f"|dS2|: {s2_diff:.2e}{status_tag}{note_tag}",
+                    txt_lines,
+                )
+                if passed:
+                    stats["passed_checks"] += 1
+                else:
+                    failures.append(
+                        f"Selisih <S^2> {name} ({actual_basis} {eri_mode} {s2_key}) melebihi batas! "
+                        f"mshqc={s2_m:.6f}, Psi4={s2_p_cmp:.6f}"
+                    )
 
         if not is_closed:
             s2_tol = 5e-4 if (is_degen_atom or eri_mode == "DF") else 5e-5
