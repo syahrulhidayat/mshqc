@@ -26,8 +26,9 @@ try:
 except Exception:
     pass
 
+# 1. Samakan alokasi thread default dengan benc.py (baris 24-26)
 CPU_AVAIL = os.cpu_count() or 4
-N_THREADS = int(os.environ.get("OMP_NUM_THREADS", str(min(4, CPU_AVAIL))))
+N_THREADS = int(os.environ.get("OMP_NUM_THREADS", str(min(6, CPU_AVAIL))))
 os.environ["OMP_NUM_THREADS"] = str(N_THREADS)
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"

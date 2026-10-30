@@ -11,8 +11,6 @@ import json
 import math
 from pathlib import Path
 
-DEGENERATE_OPEN_SHELL_ATOMS = {"B", "C", "O", "F", "Al", "Si", "S", "Cl"}
-
 # Metadata sistem: (charge, mult, na, nb, n_atoms, tier)
 SYSTEM_META = {
     "H": (0, 2, 1, 0, 1, "standard"), "He": (0, 1, 1, 1, 1, "standard"),
@@ -45,11 +43,10 @@ def emit(line: str, txt_lines: list):
     txt_lines.append(line)
 
 
-def validate_and_report(name, eri_mode, msh_res, psi_res, psi_exact_cache, failures, stats, md_rows, txt_lines):
-    _, mult, na, nb, n_atoms, _ = SYSTEM_META[name]
-    n_elec, is_closed = na + nb, (mult == 1)
+def validate_and_report(name, eri_mode, msh_res, psi_res, failures, stats, md_rows, txt_lines):
+    _, mult, na, nb, _, _ = SYSTEM_META[name]
+    is_closed = (mult == 1)
     actual_basis = (msh_res or {}).get("basis") or (psi_res or {}).get("basis") or "cc-pVDZ"
-    cache_key = f"{name}_{actual_basis}"
 
     if msh_res is None or "error" in msh_res:
         err_msg = msh_res.get("error", "Data mshqc tidak ditemukan") if msh_res else "Data mshqc kosong"
@@ -63,12 +60,7 @@ def validate_and_report(name, eri_mode, msh_res, psi_res, psi_exact_cache, failu
     mode_elapsed = 0.0
 
     if psi_res is not None and "error" not in psi_res:
-        if eri_mode == "EXACT":
-            psi_exact_cache[cache_key] = psi_res
-
-        is_degen_atom = (name in DEGENERATE_OPEN_SHELL_ATOMS and n_atoms == 1)
-        base_tol = 5e-5 if eri_mode == "DF" else 1e-5
-        tol = 2e-3 if is_degen_atom else base_tol
+        tol = 5e-5 if eri_mode == "DF" else 1e-5
 
         for method in ("HF", "MP2", "MP3", "OMP2", "OMP3"):
             val_m = float(msh_res.get(method, float("nan")))
@@ -104,45 +96,7 @@ def validate_and_report(name, eri_mode, msh_res, psi_res, psi_exact_cache, failu
                 )
 
         if not is_closed:
-            s2_tol = 5e-4 if (is_degen_atom or eri_mode == "DF") else 5e-5
-            for s2_key in ("S2_HF", "S2_OMP2", "S2_OMP3"):
-                s2_m = float(msh_res.get(s2_key, float("nan")))
-                s2_p_raw = float(psi_res.get(s2_key, float("nan")))
-                s2_p_cmp = s2_p_raw
-                note_tag = ""
-
-                # Deteksi transparan bug Psi4 cd_omp2_manager() yang tidak memanggil save_mo_to_wfn()
-                if (
-                    eri_mode == "CHOLESKY"
-                    and s2_key == "S2_OMP2"
-                    and cache_key in psi_exact_cache
-                    and n_elec > 1
-                    and abs(s2_p_raw - float(psi_res.get("S2_HF", 0.0))) < 1e-11
-                ):
-                    s2_p_cmp = float(psi_exact_cache[cache_key].get("S2_OMP2", s2_p_raw))
-                    note_tag = f" [Psi4 raw={s2_p_raw:.6f} (UHF unrotated bug); ref EXACT={s2_p_cmp:.6f}]"
-
-                s2_diff = abs(s2_m - s2_p_cmp)
-                stats["total_checks"] += 1
-                passed = (not math.isnan(s2_diff)) and (s2_diff < s2_tol)
-                status_tag = "" if passed else " [FAIL]"
-                emit(
-                    f"  [{name:11s} | {actual_basis:9s} | {eri_mode:8s} | {s2_key:7s}] "
-                    f"mshqc: {s2_m:14.6f}          | "
-                    f"Psi4: {s2_p_cmp:14.6f}          | "
-                    f"|dS2|: {s2_diff:.2e}{status_tag}{note_tag}",
-                    txt_lines,
-                )
-                if passed:
-                    stats["passed_checks"] += 1
-                else:
-                    failures.append(
-                        f"Selisih <S^2> {name} ({actual_basis} {eri_mode} {s2_key}) melebihi batas! "
-                        f"mshqc={s2_m:.6f}, Psi4={s2_p_cmp:.6f}"
-                    )
-
-        if not is_closed:
-            s2_tol = 5e-4 if (is_degen_atom or eri_mode == "DF") else 5e-5
+            s2_tol = 5e-4 if eri_mode == "DF" else 5e-5
             for s2_key in ("S2_HF", "S2_OMP2", "S2_OMP3"):
                 s2_m = float(msh_res.get(s2_key, float("nan")))
                 s2_p = float(psi_res.get(s2_key, float("nan")))
@@ -162,7 +116,7 @@ def validate_and_report(name, eri_mode, msh_res, psi_res, psi_exact_cache, failu
                 else:
                     failures.append(
                         f"Selisih <S^2> {name} ({actual_basis} {eri_mode} {s2_key}) melebihi batas! "
-                        f"mshqc={s2_m:.6f}, Psi4={s2_p:.6f}"
+                        f"mshqc={s2_m:.6f}, Psi4={s2_p:.6f}, |dS2|={s2_diff:.2e}"
                     )
     else:
         err_info = psi_res.get("error", "Data Psi4 tidak ditemukan") if psi_res else "Data Psi4 kosong"
@@ -202,7 +156,6 @@ def main():
     selected_names = [k for k, v in SYSTEM_META.items() if tier == "full" or v[5] == "standard"]
     failures = []
     stats = {"total_checks": 0, "passed_checks": 0, "mshqc_time": 0.0, "psi4_time": 0.0}
-    psi_exact_cache = {}
     md_rows = [
         f"## Universal Validation Summary (`{tier.upper()}`, Basis: `{basis_name}`)",
         "",
@@ -218,13 +171,12 @@ def main():
             if key in msh_db or key in psi_db:
                 mode_time += validate_and_report(
                     sys_name, mode, msh_db.get(key), psi_db.get(key),
-                    psi_exact_cache, failures, stats, md_rows, txt_lines
+                    failures, stats, md_rows, txt_lines
                 )
         emit(f"--- Selesai Mode {mode} dalam {mode_time:.2f} detik ---", txt_lines)
 
     if basis_name.lower() != "cc-pvdz":
         emit("\n>>> Menguji Cabang SAD Double-Zeta (Basis: cc-pVDZ) <<<", txt_lines)
-        psi_dz_cache = {}
         dz_time = 0.0
         for mode in ["EXACT", "DF"]:
             for sys_name in ["Ne", "H2O", "OH", "NH3"]:
@@ -232,7 +184,7 @@ def main():
                 if key in msh_db or key in psi_db:
                     dz_time += validate_and_report(
                         sys_name, mode, msh_db.get(key), psi_db.get(key),
-                        psi_dz_cache, failures, stats, md_rows, txt_lines
+                        failures, stats, md_rows, txt_lines
                     )
         emit(f"--- Selesai Cabang SAD Double-Zeta dalam {dz_time:.2f} detik ---", txt_lines)
 

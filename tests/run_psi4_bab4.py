@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Runner Mandiri Psi4 untuk Benchmark Bab IV (Simplified, Zero-Redundancy & Real-Time UI)
+Runner Mandiri Psi4 untuk Benchmark Bab IV (Full Abelian Symmetry on EXACT, DIIS Enabled & Real-Time UI)
 Output: psi4_bab4_raw.json, psi4_bab4_runner.log, psi4_bab4_test.txt
 """
 
@@ -23,7 +23,7 @@ except Exception:
     pass
 
 CPU_AVAIL = os.cpu_count() or 4
-N_THREADS = int(os.environ.get("OMP_NUM_THREADS", str(min(4, CPU_AVAIL))))
+N_THREADS = int(os.environ.get("OMP_NUM_THREADS", str(min(6, CPU_AVAIL))))
 os.environ.update({
     "OMP_NUM_THREADS": str(N_THREADS),
     "OPENBLAS_NUM_THREADS": "1",
@@ -190,14 +190,18 @@ def get_scratch_mb(folder: str) -> float:
 
 
 def build_psi4_mol(sys_name: str, mode_lower: str):
+    """
+    Membangun molekul Psi4:
+    - Mode EXACT menggunakan simetri grup titik Abelian penuh (D2h, C2v, Cs) seperti pada benc.py.
+    - Mode DF & CHOLESKY menggunakan symmetry c1 karena modul dfocc Psi4 mewajibkan C1.
+    """
     info = SYSTEMS[sys_name]
     lines = [
         f"{info['charge']} {info['mult']}",
         "units bohr",
-        "symmetry c1",
-        "no_reorient",
-        "no_com",
     ]
+    if mode_lower in ("df", "cholesky"):
+        lines.append("symmetry c1")
     for sym, x, y, z in info["atoms"]:
         lines.append(f"{sym} {x * ANG_TO_BOHR:.12f} {y * ANG_TO_BOHR:.12f} {z * ANG_TO_BOHR:.12f}")
     return psi4.geometry("\n".join(lines))
@@ -215,7 +219,6 @@ def configure_psi4(mode_lower: str, is_uhf: bool, basis: str = "cc-pVTZ", aux: s
         "mp2_type": corr_t,
         "mp_type": corr_t,
         "cc_type": corr_t,
-        "hess_type": "approx_diag",
         "freeze_core": False,
         "r_convergence": 1e-6,
         "rms_mograd_convergence": 1e-5,
@@ -233,22 +236,41 @@ def configure_psi4(mode_lower: str, is_uhf: bool, basis: str = "cc-pVTZ", aux: s
 
 
 def snapshot_wfn(wfn):
-    snap = {"e": float(wfn.energy()), "Ca": wfn.Ca().clone(), "Da": wfn.Da().clone(), "Fa": wfn.Fa().clone(), "ea": wfn.epsilon_a().clone()}
+    snap = {
+        "e": float(wfn.energy()),
+        "Ca": wfn.Ca().clone(),
+        "Da": wfn.Da().clone(),
+        "Fa": wfn.Fa().clone(),
+        "ea": wfn.epsilon_a().clone(),
+    }
     if wfn.Cb() is not None:
-        snap.update({"Cb": wfn.Cb().clone(), "Db": wfn.Db().clone(), "Fb": wfn.Fb().clone(), "eb": wfn.epsilon_b().clone()})
+        snap.update({
+            "Cb": wfn.Cb().clone(),
+            "Db": wfn.Db().clone(),
+            "Fb": wfn.Fb().clone(),
+            "eb": wfn.epsilon_b().clone(),
+        })
     return snap
 
 
 def restore_wfn(wfn, snap):
     wfn.set_energy(snap["e"])
-    for k, g in (("Ca", wfn.Ca), ("Da", wfn.Da), ("Fa", wfn.Fa), ("ea", wfn.epsilon_a)):
-        g().copy(snap[k])
+    wfn.Ca().copy(snap["Ca"])
+    wfn.Da().copy(snap["Da"])
+    wfn.Fa().copy(snap["Fa"])
+    wfn.epsilon_a().copy(snap["ea"])
     if "Cb" in snap and wfn.Cb() is not None:
-        for k, g in (("Cb", wfn.Cb), ("Db", wfn.Db), ("Fb", wfn.Fb), ("eb", wfn.epsilon_b)):
-            g().copy(snap[k])
+        wfn.Cb().copy(snap["Cb"])
+        wfn.Db().copy(snap["Db"])
+        wfn.Fb().copy(snap["Fb"])
+        wfn.epsilon_b().copy(snap["eb"])
 
 
 def calc_s2_wfn(wfn, is_uhf: bool):
+    """
+    Menghitung <S^2> secara eksak baik untuk simetri C1 maupun simetri Abelian multi-irrep (D2h/C2v).
+    Menjumlahkan kontribusi tumpang-tindih orbital terisi per blok irrep h.
+    """
     if not is_uhf:
         return 0.0, 0.0
     na, nb = wfn.nalpha(), wfn.nbeta()
@@ -257,10 +279,26 @@ def calc_s2_wfn(wfn, is_uhf: bool):
     if na == nb or na == 0 or nb == 0 or wfn.Cb() is None:
         return s_ideal, s_ideal
     try:
-        Ca = np.asarray(wfn.Ca().to_array(dense=True), dtype=np.float64)[:, :na]
-        Cb = np.asarray(wfn.Cb().to_array(dense=True), dtype=np.float64)[:, :nb]
-        S = np.asarray(wfn.S().to_array(dense=True), dtype=np.float64)
-        return s_ideal, float(s_ideal + nb - np.sum((Ca.T @ S @ Cb) ** 2))
+        nalphapi = wfn.nalphapi()
+        nbetapi = wfn.nbetapi()
+        nirrep = wfn.nirrep()
+        Ca_blocks = wfn.Ca().nph
+        Cb_blocks = wfn.Cb().nph
+        S_blocks = wfn.S().nph
+
+        overlap_sq_sum = 0.0
+        for h in range(nirrep):
+            oa_h = nalphapi[h]
+            ob_h = nbetapi[h]
+            if oa_h == 0 or ob_h == 0:
+                continue
+            Ca_occ = np.asarray(Ca_blocks[h], dtype=np.float64)[:, :oa_h]
+            Cb_occ = np.asarray(Cb_blocks[h], dtype=np.float64)[:, :ob_h]
+            S_h = np.asarray(S_blocks[h], dtype=np.float64)
+            S_ab = Ca_occ.T @ S_h @ Cb_occ
+            overlap_sq_sum += float(np.sum(S_ab ** 2))
+
+        return s_ideal, float(s_ideal + nb - overlap_sq_sum)
     except Exception:
         return s_ideal, s_ideal
 
@@ -302,10 +340,7 @@ def run_ram_worker(payload_str: str):
 
         corr_blas_threads = N_THREADS if mode_lower == "exact" else 1
         set_blas_threads(corr_blas_threads)
-        if (not is_uhf) and p["method"].upper() == "OMP3" and mode_lower in ("cholesky", "df"):
-            psi4.set_options({"do_diis": False})
-        else:
-            psi4.set_options({"do_diis": True})
+        psi4.set_options({"do_diis": True})
         psi4.energy(p["method"].lower(), ref_wfn=scf_wfn, molecule=mol)
         set_blas_threads(1)
 
@@ -387,10 +422,7 @@ def compute_psi4_suite():
                 for m_key, m_call in (("OMP2", "omp2"), ("OMP3", "omp3")):
                     try:
                         set_blas_threads(corr_blas_threads)
-                        if (not is_uhf) and m_call == "omp3" and mode_lower in ("cholesky", "df"):
-                            psi4.set_options({"do_diis": False})
-                        else:
-                            psi4.set_options({"do_diis": True})
+                        psi4.set_options({"do_diis": True})
 
                         if os.path.exists(tmp_log):
                             os.remove(tmp_log)
