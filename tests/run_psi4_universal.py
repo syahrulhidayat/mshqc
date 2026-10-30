@@ -1,3 +1,7 @@
+# ==============================================================================
+# Git Commit: fix(benchmark): fix indentation error in post-HF loop and remove duplicate imports
+# ==============================================================================
+
 #!/usr/bin/env python3
 """
 Simplified PSI4 Universal Validation Runner (JOSS-Compliant Fair Benchmark, Clean Wfn State & Real-Time Output)
@@ -15,8 +19,6 @@ import signal
 import tempfile
 import argparse
 import subprocess
-import argparse
-import sys
 import numpy as np
 
 try:
@@ -32,7 +34,6 @@ os.environ["MKL_NUM_THREADS"] = str(N_THREADS)
 os.environ["OMP_MAX_ACTIVE_LEVELS"] = "1"
 os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
-import numpy as np
 import psi4
 
 ANG_TO_BOHR = 1.8897261246257702
@@ -121,13 +122,11 @@ SYSTEMS = {
     "O2": (0, 3, 9, 7, [(8, "O", 0.0, 0.0, -0.6035 * ANG_TO_BOHR), (8, "O", 0.0, 0.0, 0.6035 * ANG_TO_BOHR)], "standard"),
 }
 
-
 def select_basis_for_system(spec, requested_basis: str) -> str:
     if requested_basis.lower().startswith("cc-pv"):
         if any(z not in CC_PV_SUPPORTED_Z for z, _, _, _, _ in spec[4]):
             return "def2-SVP" if "dz" in requested_basis.lower() else "def2-TZVP"
     return requested_basis
-
 
 def compute_s2_from_wfn(wfn, S_mat: np.ndarray, na: int, nb: int, is_closed: bool) -> float:
     if is_closed or na == nb:
@@ -147,9 +146,7 @@ def compute_s2_from_wfn(wfn, S_mat: np.ndarray, na: int, nb: int, is_closed: boo
     except Exception:
         return ideal
 
-
 def snapshot_scf_wfn(wfn) -> dict:
-    """Menyimpan state kanonik SCF agar tidak tertimpa secara in-place oleh modul occ/dfocc."""
     return {
         "Ca": wfn.Ca().clone(),
         "Cb": wfn.Cb().clone(),
@@ -161,9 +158,7 @@ def snapshot_scf_wfn(wfn) -> dict:
         "eb": wfn.epsilon_b().clone(),
     }
 
-
 def restore_scf_wfn(wfn, snap: dict):
-    """Merestorasi orbital dan matriks Fock kanonik HF sebelum eksekusi metode post-HF berikutnya."""
     wfn.Ca().copy(snap["Ca"])
     wfn.Cb().copy(snap["Cb"])
     wfn.Da().copy(snap["Da"])
@@ -173,11 +168,9 @@ def restore_scf_wfn(wfn, snap: dict):
     wfn.epsilon_a().copy(snap["ea"])
     wfn.epsilon_b().copy(snap["eb"])
 
-
 def assert_finite(name: str, val: float):
     if val is None or not math.isfinite(float(val)):
         raise RuntimeError(f"Psi4 returned non-finite energy ({val}) for {name}")
-
 
 def run_psi4_system(spec, actual_basis: str, eri_mode: str) -> dict:
     charge, mult, na, nb, atoms, _ = spec
@@ -186,7 +179,6 @@ def run_psi4_system(spec, actual_basis: str, eri_mode: str) -> dict:
     aux_basis = f"{actual_basis.lower()}-ri"
     ref_type = "rhf" if is_closed else "uhf"
 
-    # Ca (Z=20) memiliki basis utama cc-pVDZ/cc-pVTZ di Psi4 tetapi tidak memiliki file cc-pvXz-ri di pustaka Psi4
     has_ca = any(z == 20 for z, _, _, _, _ in atoms)
     mp2_aux = "def2-svp-ri" if (has_ca and aux_basis.startswith("cc-pv")) else aux_basis
     scf_aux = "def2-universal-jkfit" if (has_ca and aux_basis.startswith("cc-pv")) else aux_basis
@@ -209,7 +201,6 @@ def run_psi4_system(spec, actual_basis: str, eri_mode: str) -> dict:
             geom_lines.append(f"{sym} {x:.12f} {y:.12f} {zc:.12f}")
         mol = psi4.geometry("\n".join(geom_lines))
 
-        # Konfigurasi yang setara 1-ke-1 dengan mshqc
         base_opts = {
             "basis": actual_basis,
             "reference": ref_type,
@@ -245,7 +236,6 @@ def run_psi4_system(spec, actual_basis: str, eri_mode: str) -> dict:
             e_hf, scf_wfn = psi4.energy("scf", molecule=mol, return_wfn=True)
             t_hf = time.perf_counter() - t0_hf
         except psi4.SCFConvergenceError:
-            # Setara persis dengan blok if not scf_res.converged: max_iterations = 400 di mshqc
             psi4.core.clean()
             psi4.set_options({"maxiter": 400})
             t0_hf = time.perf_counter()
@@ -266,17 +256,6 @@ def run_psi4_system(spec, actual_basis: str, eri_mode: str) -> dict:
         }
 
         if n_elec > 1:
-            # Setara persis dengan MP2Config di mshqc (threshold=1e-9, gradient_threshold=1e-5, max_iterations=50)
-            post_hf_opts = dict(base_opts)
-            post_hf_opts.update({
-                "e_convergence": 1e-9,
-                "r_convergence": 1e-5,
-                "rms_mograd_convergence": 1e-5,
-                "max_mograd_convergence": 1e-4,
-                "mo_maxiter": 50,
-            })
-
-            if n_elec > 1:
             post_hf_opts = dict(base_opts)
             post_hf_opts.update({
                 "e_convergence": 1e-9,
@@ -288,14 +267,10 @@ def run_psi4_system(spec, actual_basis: str, eri_mode: str) -> dict:
 
             def run_single_post_hf(method_label: str):
                 restore_scf_wfn(scf_wfn, scf_snap)
-                
-                # JANGAN panggil psi4.core.clean() di sini! 
-                # clean() menghapus berkas integral PSIO (file 100+) yang dibutuhkan post-HF DF.
                 psi4.core.clean_variables()
                 psi4.core.clean_options()
                 
                 opts = dict(post_hf_opts)
-                # Hapus injeksi "dfocc", biarkan driver Psi4 menangani dispatch secara native
                 psi4.set_options(opts)
 
                 t0 = time.perf_counter()
@@ -344,9 +319,7 @@ def run_psi4_system(spec, actual_basis: str, eri_mode: str) -> dict:
     finally:
         shutil.rmtree(scratch_dir, ignore_errors=True)
 
-
 def run_gdb_backtrace(sys_name: str, actual_basis: str, eri_mode: str):
-    """Menjalankan ulang sistem yang crash di bawah gdb --args dengan bt full untuk mendiagnosis sinyal C++."""
     gdb_bin = shutil.which("gdb")
     if not gdb_bin:
         print(f"  [GDB] Binary 'gdb' tidak ditemukan di PATH; lewati pengambilan stacktrace.", flush=True)
@@ -372,7 +345,6 @@ def run_gdb_backtrace(sys_name: str, actual_basis: str, eri_mode: str):
     ]
     subprocess.run(cmd, check=False)
     print("!" * 110 + "\n", flush=True)
-
 
 def run_isolated_worker(sys_name: str, actual_basis: str, eri_mode: str, tmp_json: str, debug_nan: bool = False) -> dict:
     if os.path.exists(tmp_json):
@@ -408,7 +380,6 @@ def run_isolated_worker(sys_name: str, actual_basis: str, eri_mode: str, tmp_jso
 
     return {"error": err_msg, "basis": actual_basis}
 
-
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Simplified PSI4 Universal Validation Runner")
     parser.add_argument("--tier", choices=["standard", "full"], default="standard")
@@ -421,10 +392,8 @@ if __name__ == "__main__":
     parser.add_argument("--single-mode", default=None)
     parser.add_argument("--single-out", default=None)
 
-    # Menggunakan parse_known_args agar tidak crash jika wrapper GDB/CI menambahkan argumen tak terduga
     args, unknown_args = parser.parse_known_args()
 
-    # Trap floating point exception jika --debug-nan aktif
     if args.debug_nan:
         np.seterr(all="raise")
 
@@ -433,7 +402,6 @@ if __name__ == "__main__":
         os.environ["OMP_NUM_THREADS"] = str(N_THREADS)
         os.environ["MKL_NUM_THREADS"] = str(N_THREADS)
 
-    # Mode eksekusi sistem tunggal (untuk subprocess worker & gdb --args)
     if args.single_system:
         spec = SYSTEMS[args.single_system]
         res = run_psi4_system(spec, args.single_basis, args.single_mode)
