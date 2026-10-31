@@ -124,7 +124,7 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
         "cc_type": corr_type,
         "hess_type": "approx_diag",
         "freeze_core": "false",
-        "r_convergence": 1e-6,
+        "r_convergence": 1e-5,
         "rms_mograd_convergence": 1e-5,
         "max_mograd_convergence": 1e-4,
         "maxiter": 200,

@@ -92,7 +92,7 @@ _BLAS_SETTERS = _load_blas_setters()
 
 
 def set_blas_threads(num_t: int):
-    """Mengatur jumlah thread BLAS secara dinamis."""
+    """Mengatur jumlah thread BLAS secara dinamis khusus untuk modul serial-outer-loop (occ/libdpd)."""
     for fn in _BLAS_SETTERS:
         try:
             fn(int(num_t))
@@ -228,8 +228,10 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
     if eri_mode in ["cholesky", "df"]:
         psi4.set_options({"scf_type": "pk", "read_scf_3index": False})
 
-    # Berikan n_threads penuh pada BLAS (C_DGEMM) untuk semua mode korelasi (occ maupun dfocc)
-    set_blas_threads(n_threads)
+    # occ/libdpd (EXACT) serial di outer-loop -> BLAS multi-thread (n_threads).
+    # dfocc (CHOLESKY/DF) paralel OpenMP (n_threads) di outer-loop -> BLAS 1 thread.
+    corr_blas_threads = n_threads if eri_mode == "exact" else 1
+    set_blas_threads(corr_blas_threads)
 
     try:
         # --- 2. MP2 ---
