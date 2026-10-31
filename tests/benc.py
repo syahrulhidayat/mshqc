@@ -92,7 +92,7 @@ _BLAS_SETTERS = _load_blas_setters()
 
 
 def set_blas_threads(num_t: int):
-    """Mengatur jumlah thread BLAS secara dinamis khusus untuk modul serial-outer-loop (occ/libdpd)."""
+    """Mengatur jumlah thread BLAS secara dinamis untuk kontraksi C_DGEMM (occ & dfocc)."""
     for fn in _BLAS_SETTERS:
         try:
             fn(int(num_t))
@@ -101,7 +101,7 @@ def set_blas_threads(num_t: int):
 
 
 # ==============================================================================
-# 2. KONFIGURASI GLOBAL PSI4 (BEST-VS-BEST APPLE-TO-APPLE DENGAN MSHQC)
+# 2. KONFIGURASI GLOBAL PSI4 (APPLE-TO-APPLE C1 DENGAN MSHQC)
 # ==============================================================================
 BASIS_NAME = "cc-pVTZ"
 AUX_BASIS  = "cc-pVTZ-RI"
@@ -126,14 +126,14 @@ SYSTEMS = [
 RESULTS_DB = []
 
 
-def build_psi4_mol(atoms, chg, mult, eri_mode="exact"):
+def build_psi4_mol(atoms, chg, mult, eri_mode="exact", force_c1=True):
     """
-    Membangun objek molekul Psi4 pada kekuatan maksimal:
-    - Mode EXACT menggunakan simetri Abelian penuh (D2h untuk atom, C2v untuk H2O).
-    - Mode DF & CHOLESKY menggunakan symmetry c1 (karena modul dfocc Psi4 hanya mendukung C1).
+    Membangun objek molekul Psi4 secara apple-to-apple:
+    - Default force_c1=True menyamakan simetri C1 di semua mode (EXACT, CHOLESKY, DF)
+      agar dimensi tensor (O, V) identik dengan MSHQC.
     """
     lines = [f"{chg} {mult}", "units bohr"]
-    if eri_mode in ["df", "cholesky"]:
+    if force_c1 or eri_mode in ["df", "cholesky"]:
         lines.append("symmetry c1")
     for z, x, y, z_c in atoms:
         lines.append(f"{Z_TO_SYM[z]} {x:.12f} {y:.12f} {z_c:.12f}")
@@ -175,7 +175,7 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
     psi4.core.clean()
     psi4.core.clean_options()
 
-    mol = build_psi4_mol(atoms, chg, mult, eri_mode)
+    mol = build_psi4_mol(atoms, chg, mult, eri_mode, force_c1=True)
 
     if eri_mode == "exact":
         scf_type, corr_type = "pk", "conv"
@@ -228,10 +228,9 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
     if eri_mode in ["cholesky", "df"]:
         psi4.set_options({"scf_type": "pk", "read_scf_3index": False})
 
-    # occ/libdpd (EXACT) serial di outer-loop -> BLAS multi-thread (n_threads).
-    # dfocc (CHOLESKY/DF) paralel OpenMP (n_threads) di outer-loop -> BLAS 1 thread.
-    corr_blas_threads = n_threads if eri_mode == "exact" else 1
-    set_blas_threads(corr_blas_threads)
+    # Baik occ/libdpd (EXACT) maupun dfocc (CHOLESKY/DF) mengeksekusi kontraksi tensor
+    # utama melalui C_DGEMM (Tensor2d::gemm / contract*) -> berikan n_threads penuh!
+    set_blas_threads(n_threads)
 
     try:
         # --- 2. MP2 ---
@@ -288,7 +287,7 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
 
 def main():
     print("==========================================================================================================", flush=True)
-    print("  PSI4 BENCHMARK (APPLE-TO-APPLE) | EXACT vs CHOLESKY vs DF (HF, MP2, MP3, OMP2, OMP3)", flush=True)
+    print(f"  PSI4 BENCHMARK (APPLE-TO-APPLE C1) | THREADS: {n_threads} | EXACT vs CHOLESKY vs DF (HF, MP2, MP3, OMP2, OMP3)", flush=True)
     print(f"  Basis: {BASIS_NAME} | Aux Basis: {AUX_BASIS} | Chol Tol: {CHOLESKY_THRESH} | E_conv: 1e-09 | Grad_conv: 1e-05", flush=True)
     print("==========================================================================================================", flush=True)
 
@@ -306,7 +305,7 @@ def main():
             if e_scf is not None: RESULTS_DB.append({"sys": sys_name, "eri": eri_mode.upper(), "method": ref_label, "psi4_e": e_scf, "psi4_t": t_scf})
             if e_mp2 is not None: RESULTS_DB.append({"sys": sys_name, "eri": eri_mode.upper(), "method": mp2_label, "psi4_e": e_mp2, "psi4_t": t_mp2})
             if e_mp3 is not None: RESULTS_DB.append({"sys": sys_name, "eri": eri_mode.upper(), "method": mp3_label, "psi4_e": e_mp3, "psi4_t": t_mp3})
-            if e_omp2 is not None: RESULTS_DB.append({"sys": sys_name, "eri": eri_mode.upper(), "method": "OMP2", "psi4_e": e_omp2, "psi4_t": t_mp2})
+            if e_omp2 is not None: RESULTS_DB.append({"sys": sys_name, "eri": eri_mode.upper(), "method": "OMP2", "psi4_e": e_omp2, "psi4_t": t_omp2})
             if e_omp3 is not None: RESULTS_DB.append({"sys": sys_name, "eri": eri_mode.upper(), "method": "OMP3", "psi4_e": e_omp3, "psi4_t": t_omp3})
 
     print("\n===============================================================================", flush=True)

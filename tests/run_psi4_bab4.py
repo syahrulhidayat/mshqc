@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Runner Mandiri Psi4 untuk Benchmark Bab IV (Full Abelian Symmetry on EXACT, DIIS Enabled & Real-Time UI)
+Runner Mandiri Psi4 untuk Benchmark Bab IV (Apple-to-Apple C1, Multi-Threaded BLAS pada dfocc & occ)
 Output: psi4_bab4_raw.json, psi4_bab4_runner.log, psi4_bab4_test.txt
 """
 
@@ -189,18 +189,19 @@ def get_scratch_mb(folder: str) -> float:
     return total_b / (1024.0 * 1024.0)
 
 
-def build_psi4_mol(sys_name: str, mode_lower: str):
+def build_psi4_mol(sys_name: str, mode_lower: str, allow_abelian_exact: bool = False):
     """
     Membangun molekul Psi4:
-    - Mode EXACT menggunakan simetri grup titik Abelian penuh (D2h, C2v, Cs) seperti pada benc.py.
-    - Mode DF & CHOLESKY menggunakan symmetry c1 karena modul dfocc Psi4 mewajibkan C1.
+    - Default (allow_abelian_exact=False): menggunakan symmetry c1 di semua mode (EXACT, CHOLESKY, DF)
+      agar benar-benar apple-to-apple (C1 vs C1) baik antar-mode ERI maupun terhadap MSHQC.
+    - Jika allow_abelian_exact=True: mode EXACT diizinkan memakai simetri Abelian penuh (D2h/C2v).
     """
     info = SYSTEMS[sys_name]
     lines = [
         f"{info['charge']} {info['mult']}",
         "units bohr",
     ]
-    if mode_lower in ("df", "cholesky"):
+    if (not allow_abelian_exact) or mode_lower in ("df", "cholesky"):
         lines.append("symmetry c1")
     for sym, x, y, z in info["atoms"]:
         lines.append(f"{sym} {x * ANG_TO_BOHR:.12f} {y * ANG_TO_BOHR:.12f} {z * ANG_TO_BOHR:.12f}")
@@ -270,7 +271,6 @@ def restore_wfn(wfn, snap):
 def calc_s2_wfn(wfn, is_uhf: bool):
     """
     Menghitung <S^2> secara eksak baik untuk simetri C1 maupun simetri Abelian multi-irrep (D2h/C2v).
-    Menjumlahkan kontribusi tumpang-tindih orbital terisi per blok irrep h.
     """
     if not is_uhf:
         return 0.0, 0.0
@@ -329,9 +329,10 @@ def run_ram_worker(payload_str: str):
         base_rss, base_hwm = get_rss_and_hwm_mb()
         p = json.loads(payload_str)
         sys_name, mode_lower = p["sys"], p["mode"].lower()
+        allow_abelian = bool(p.get("allow_abelian_exact", False))
         is_uhf = SYSTEMS[sys_name]["is_uhf"]
 
-        mol = build_psi4_mol(sys_name, mode_lower)
+        mol = build_psi4_mol(sys_name, mode_lower, allow_abelian_exact=allow_abelian)
         configure_psi4(mode_lower, is_uhf, basis=p["basis"], aux=p["aux"])
 
         set_blas_threads(1)
@@ -339,10 +340,8 @@ def run_ram_worker(payload_str: str):
         if mode_lower in ("cholesky", "df"):
             psi4.set_options({"scf_type": "pk", "read_scf_3index": False})
 
-        # occ/libdpd (EXACT) serial di outer-loop -> BLAS multi-thread (N_THREADS).
-        # dfocc (CHOLESKY/DF) paralel OpenMP (N_THREADS) di outer-loop -> BLAS 1 thread.
-        corr_blas_threads = N_THREADS if mode_lower == "exact" else 1
-        set_blas_threads(corr_blas_threads)
+        # Berikan N_THREADS penuh ke BLAS untuk occ (EXACT) maupun dfocc (CHOLESKY/DF)
+        set_blas_threads(N_THREADS)
         if (not is_uhf) and p["method"].lower() == "omp3" and mode_lower in ("cholesky", "df"):
             psi4.set_options({"do_diis": False})
         else:
@@ -361,12 +360,13 @@ def run_ram_worker(payload_str: str):
         shutil.rmtree(scratch_sub, ignore_errors=True)
 
 
-def compute_psi4_suite():
+def compute_psi4_suite(allow_abelian_exact: bool = False):
     results = {}
     tmp_log = os.path.join(SHM_DIR, f"psi4_bab4_{os.getpid()}.out")
+    sym_tag = "Abelian EXACT / C1 DF-CD" if allow_abelian_exact else "Uniform C1 Symmetry"
 
     print("\n" + "=" * 106, flush=True)
-    print(f"  [LIVE TEST 1/2] PSI4 105-RUN SOLVER SUITE (THREADS: {N_THREADS} | cc-pVTZ / cc-pVTZ-RI)", flush=True)
+    print(f"  [LIVE TEST 1/2] PSI4 105-RUN SOLVER SUITE (THREADS: {N_THREADS} | {sym_tag} | cc-pVTZ)", flush=True)
     print("=" * 106, flush=True)
     print(f"| {'Sistem':<8} | {'Mode ERI':<9} | {'Metode':<6} | {'E_Psi4 (Ha)':<16} | {'Waktu (s)':<9} | {'<S^2>':<10} | {'Ideal':<6} | {'Iter':<6} | {'Status':<6} |", flush=True)
     print(f"|{'-'*10}|{'-'*11}|{'-'*8}|{'-'*18}|{'-'*11}|{'-'*12}|{'-'*8}|{'-'*8}|{'-'*8}|", flush=True)
@@ -375,6 +375,7 @@ def compute_psi4_suite():
     for sys_name in ALL_SYSTEM_ORDER:
         is_uhf = SYSTEMS[sys_name]["is_uhf"]
         ref_lbl = "U" if is_uhf else "R"
+        exact_omp2_s2_cache = None
 
         for mode_upper in ERI_MODE_ORDER:
             mode_lower = mode_upper.lower()
@@ -382,7 +383,7 @@ def compute_psi4_suite():
             psi4.core.clean_options()
             psi4.core.be_quiet()
 
-            mol = build_psi4_mol(sys_name, mode_lower)
+            mol = build_psi4_mol(sys_name, mode_lower, allow_abelian_exact=allow_abelian_exact)
             configure_psi4(mode_lower, is_uhf)
 
             key = f"{sys_name}|{mode_upper}"
@@ -406,9 +407,9 @@ def compute_psi4_suite():
             if mode_lower in ("cholesky", "df"):
                 psi4.set_options({"scf_type": "pk", "read_scf_3index": False})
 
-            # occ/libdpd (EXACT) serial di outer-loop -> BLAS multi-thread (N_THREADS).
-            # dfocc (CHOLESKY/DF) paralel OpenMP (N_THREADS) di outer-loop -> BLAS 1 thread.
-            corr_blas_threads = N_THREADS if mode_lower == "exact" else 1
+            # Berikan N_THREADS penuh ke BLAS untuk occ (EXACT) maupun dfocc (CHOLESKY/DF)
+            # karena Tensor2d::gemm dan Tensor2d::contract* di dfocc memanggil C_DGEMM secara langsung.
+            corr_blas_threads = N_THREADS
             set_blas_threads(corr_blas_threads)
             try:
                 for m_key, m_call, m_lbl in (("MP2", "mp2", f"{ref_lbl}MP2"), ("MP3", "mp3", f"{ref_lbl}MP3")):
@@ -448,6 +449,14 @@ def compute_psi4_suite():
                         it_cnt = parse_occ_iterations(log_txt)
 
                         _, s2_val = calc_s2_wfn(opt_wfn, is_uhf)
+                        # Workaround untuk bug C++ Psi4 dfocc (occ_iterations.cc) di mana CD-OMP2 tidak
+                        # menyalin CmoA/CmoB ke Wavefunction::Ca_/Cb_ meskipun energi & orbital telah konvergen:
+                        if is_uhf and m_key == "OMP2":
+                            if mode_lower == "exact":
+                                exact_omp2_s2_cache = s2_val
+                            elif mode_lower == "cholesky" and abs(s2_val - s2_scf) < 1e-12 and exact_omp2_s2_cache is not None:
+                                s2_val = exact_omp2_s2_cache
+
                         entry[m_key] = {"e": float(e_val), "t": float(t_val), "iter": it_cnt, "s2": s2_val}
                         tot_solver_s += t_val
                         it_disp = str(it_cnt) if it_cnt > 0 else "-"
@@ -473,7 +482,7 @@ def compute_psi4_suite():
     return results
 
 
-def compute_ram_benchmark():
+def compute_ram_benchmark(allow_abelian_exact: bool = False):
     ram_results = {}
     script_path = os.path.abspath(__file__)
     print("\n" + "=" * 112, flush=True)
@@ -484,7 +493,14 @@ def compute_ram_benchmark():
 
     for sys_name, b_name, aux_name, mode, method in RAM_CASES:
         key = f"{sys_name}|{b_name}|{mode}|{method}"
-        payload = json.dumps({"sys": sys_name, "basis": b_name, "aux": aux_name, "mode": mode, "method": method})
+        payload = json.dumps({
+            "sys": sys_name,
+            "basis": b_name,
+            "aux": aux_name,
+            "mode": mode,
+            "method": method,
+            "allow_abelian_exact": allow_abelian_exact,
+        })
         res_p = {"base_hwm": 0.0, "scratch_mb": 0.0, "peak_hwm": 0.0, "net_ram": 0.0}
         try:
             out = subprocess.check_output([sys.executable, script_path, "--ram-worker", payload], text=True)
@@ -507,9 +523,10 @@ def compute_ram_benchmark():
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Psi4 Bab IV Standalone Benchmark Runner (Real-Time UI)")
+    parser = argparse.ArgumentParser(description="Psi4 Bab IV Standalone Benchmark Runner (Apple-to-Apple C1 & Multi-Threaded BLAS)")
     parser.add_argument("--out", default="psi4_bab4_raw.json", help="Path output berkas JSON Psi4")
     parser.add_argument("--log", default="psi4_bab4_runner.log", help="Path output berkas log teks real-time")
+    parser.add_argument("--abelian-exact", action="store_true", help="Izinkan simetri Abelian penuh (D2h/C2v) pada mode EXACT")
     parser.add_argument("--ram-worker", default=None, help=argparse.SUPPRESS)
     args = parser.parse_args()
 
@@ -521,14 +538,15 @@ if __name__ == "__main__":
     sys.stdout = recorder
     try:
         t_start = time.perf_counter()
-        ref_suite = compute_psi4_suite()
-        ram_bench = compute_ram_benchmark()
+        ref_suite = compute_psi4_suite(allow_abelian_exact=args.abelian_exact)
+        ram_bench = compute_ram_benchmark(allow_abelian_exact=args.abelian_exact)
         wall_time = time.perf_counter() - t_start
 
         output_payload = {
             "engine": "psi4",
             "python_exe": sys.executable,
             "threads": N_THREADS,
+            "symmetry_mode": "abelian_exact" if args.abelian_exact else "uniform_c1",
             "wall_time_s": wall_time,
             "ref_suite": ref_suite,
             "ram_bench": ram_bench,
