@@ -1,6 +1,28 @@
 #!/usr/bin/env python3
+import os
 import time
+
+try:
+    os.sched_setaffinity(0, set(range(os.cpu_count() or 4)))
+except Exception:
+    pass
+
+CPU_AVAIL = os.cpu_count() or 4
+N_THREADS = int(os.environ.get("OMP_NUM_THREADS", str(min(6, CPU_AVAIL))))
+os.environ["OMP_NUM_THREADS"] = str(N_THREADS)
+os.environ["TBLIS_NUM_THREADS"] = str(N_THREADS)
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OMP_MAX_ACTIVE_LEVELS"] = "1"
+os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
+
 import mshqc
+
+BASIS_NAME = "cc-pVTZ"
+AUX_BASIS  = "cc-pVTZ-RI"
+THRESHOLD  = 1e-9
+CHOLESKY_THRESH = 1e-9
+GRAD_THRESH = 1e-5
 
 SYSTEMS = [
     ("Neon",    [("Ne", 0.0, 0.0,  0.0000)], 0, 1, "R"),
@@ -18,7 +40,7 @@ ERI_MODES = ["exact", "cholesky", "df"]
 def run_benchmark():
     print("==========================================================================================================", flush=True)
     print("  MSHQC BENCHMARK (APPLE-TO-APPLE) | COMPARISON: EXACT vs CHOLESKY vs DF (HF, MP2, MP3, OMP2, OMP3)", flush=True)
-    print("  Base: cc-pVTZ | Aux Base: cc-pVTZ-RI | Chol Tol: 1e-09 | E_conv: 1e-09 | Grad_conv: 1e-05", flush=True)
+    print(f"  Base: {BASIS_NAME} | Aux Base: {AUX_BASIS} | Chol Tol: {CHOLESKY_THRESH} | E_conv: {THRESHOLD} | Grad_conv: {GRAD_THRESH}", flush=True)
     print("==========================================================================================================", flush=True)
 
     results = []
@@ -28,7 +50,7 @@ def run_benchmark():
         for sym, x, y, z in atoms:
             mol.add_atom(sym, x, y, z, units="angstrom")
 
-        basis     = mshqc.BasisSet("cc-pVTZ", mol)
+        basis     = mshqc.BasisSet(BASIS_NAME, mol)
         integrals = mshqc.IntegralEngine(mol, basis)
 
         scf_cls = mshqc.RHF if ref == "R" else mshqc.UHF
@@ -38,8 +60,26 @@ def run_benchmark():
         for mode in ERI_MODES:
             print(f"Running: {sys_name:<9}-> {ref}HF, {ref}MP2, {ref}MP3, OMP2, & OMP3 (Integral: {mode.upper()})", flush=True)
 
-            scf_conf = mshqc.SCFConfig(eri_method=mode, threshold=1e-9, max_iterations=200)
-            mp2_conf = mshqc.MP2Config(eri_method=mode, threshold=1e-9, gradient_threshold=1e-5, max_iterations=50)
+            scf_conf = mshqc.SCFConfig(
+                eri_method=mode,
+                threshold=THRESHOLD,
+                aux_basis_name=AUX_BASIS,
+                max_iterations=200,
+            )
+            scf_conf.cholesky_threshold = CHOLESKY_THRESH
+            scf_conf.df_threshold = THRESHOLD
+
+            mp2_conf = mshqc.MP2Config(
+                eri_method=mode,
+                threshold=THRESHOLD,
+                gradient_threshold=GRAD_THRESH,
+                aux_basis_name=AUX_BASIS,
+                max_iterations=50,
+            )
+            if hasattr(mp2_conf, "cholesky_threshold"):
+                mp2_conf.cholesky_threshold = CHOLESKY_THRESH
+            if hasattr(mp2_conf, "df_threshold"):
+                mp2_conf.df_threshold = THRESHOLD
 
             # 1. HF (RHF / UHF)
             t0 = time.perf_counter()

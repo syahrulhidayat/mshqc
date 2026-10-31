@@ -14,6 +14,21 @@ import argparse
 import subprocess
 from pathlib import Path
 from contextlib import contextmanager
+
+try:
+    os.sched_setaffinity(0, set(range(os.cpu_count() or 4)))
+except Exception:
+    pass
+
+CPU_AVAIL = os.cpu_count() or 4
+N_THREADS = int(os.environ.get("OMP_NUM_THREADS", str(min(6, CPU_AVAIL))))
+os.environ["OMP_NUM_THREADS"] = str(N_THREADS)
+os.environ["TBLIS_NUM_THREADS"] = str(N_THREADS)
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OMP_MAX_ACTIVE_LEVELS"] = "1"
+os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
+
 import numpy as np
 import mshqc
 
@@ -173,7 +188,14 @@ def run_ram_worker(payload_str: str):
     ints = mshqc.IntegralEngine(mol, basis)
 
     scf_conf = mshqc.SCFConfig(eri_method=mode_lower, threshold=1e-9, aux_basis_name=p["aux"])
+    scf_conf.cholesky_threshold = 1e-9
+    scf_conf.df_threshold = 1e-9
+
     mp2_conf = mshqc.MP2Config(eri_method=mode_lower, threshold=1e-9, gradient_threshold=1e-5, aux_basis_name=p["aux"])
+    if hasattr(mp2_conf, "cholesky_threshold"):
+        mp2_conf.cholesky_threshold = 1e-9
+    if hasattr(mp2_conf, "df_threshold"):
+        mp2_conf.df_threshold = 1e-9
 
     scf_cls = mshqc.UHF if SYSTEMS[p["sys"]]["is_uhf"] else mshqc.RHF
     with capture_c_stdout():
@@ -192,7 +214,7 @@ def run_ram_worker(payload_str: str):
 def compute_mshqc_suite():
     ref_suite, traces = {}, {}
     print("\n" + "=" * 106, flush=True)
-    print("  [LIVE TEST 1/5] MSHQC 105-RUN SOLVER SUITE (HF, MP2, MP3, OMP2, OMP3 | cc-pVTZ / cc-pVTZ-RI)", flush=True)
+    print(f"  [LIVE TEST 1/5] MSHQC 105-RUN SOLVER SUITE (THREADS: {N_THREADS} | cc-pVTZ / cc-pVTZ-RI)", flush=True)
     print("=" * 106, flush=True)
     print(f"| {'Sistem':<8} | {'Mode ERI':<9} | {'Metode':<6} | {'E_mshqc (Ha)':<16} | {'Waktu (s)':<9} | {'<S^2>':<10} | {'Ideal':<6} | {'Iter':<6} | {'Status':<6} |", flush=True)
     print(f"|{'-'*10}|{'-'*11}|{'-'*8}|{'-'*18}|{'-'*11}|{'-'*12}|{'-'*8}|{'-'*8}|{'-'*8}|", flush=True)
@@ -210,14 +232,20 @@ def compute_mshqc_suite():
         mp3_cls = mshqc.UMP3 if is_uhf else mshqc.RMP3
 
         for mode in ERI_MODE_ORDER:
-            # PENTING: C++ mshqc mengharuskan eri_method dalam huruf kecil ("exact", "cholesky", "df")
             mode_lower = mode.lower()
             scf_conf = mshqc.SCFConfig(
                 eri_method=mode_lower, threshold=1e-9, max_iterations=200, aux_basis_name="cc-pVTZ-RI"
             )
+            scf_conf.cholesky_threshold = 1e-9
+            scf_conf.df_threshold = 1e-9
+
             mp2_conf = mshqc.MP2Config(
                 eri_method=mode_lower, threshold=1e-9, gradient_threshold=1e-5, max_iterations=50, aux_basis_name="cc-pVTZ-RI"
             )
+            if hasattr(mp2_conf, "cholesky_threshold"):
+                mp2_conf.cholesky_threshold = 1e-9
+            if hasattr(mp2_conf, "df_threshold"):
+                mp2_conf.df_threshold = 1e-9
 
             with capture_c_stdout():
                 t0 = time.perf_counter()
@@ -244,6 +272,10 @@ def compute_mshqc_suite():
                 eri_method=mode_lower, threshold=1e-9, gradient_threshold=1e-5,
                 max_iterations=50, aux_basis_name="cc-pVTZ-RI", print_level=1 if need_trace else 0
             )
+            if hasattr(omp_conf, "cholesky_threshold"):
+                omp_conf.cholesky_threshold = 1e-9
+            if hasattr(omp_conf, "df_threshold"):
+                omp_conf.df_threshold = 1e-9
 
             with capture_c_stdout() as buf_o2:
                 t0 = time.perf_counter()
@@ -433,6 +465,7 @@ if __name__ == "__main__":
 
         atomic_write_text(args.out, json.dumps({
             "engine": "mshqc",
+            "threads": N_THREADS,
             "wall_time_s": wall_time,
             "ref_suite": ref_suite,
             "table1": t1_rows,

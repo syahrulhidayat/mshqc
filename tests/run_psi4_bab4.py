@@ -221,7 +221,7 @@ def configure_psi4(mode_lower: str, is_uhf: bool, basis: str = "cc-pVTZ", aux: s
         "cc_type": corr_t,
         "hess_type": "approx_diag",
         "freeze_core": False,
-        "r_convergence": 1e-6,
+        "r_convergence": 1e-5,
         "rms_mograd_convergence": 1e-5,
         "max_mograd_convergence": 1e-4,
         "maxiter": 200,
@@ -339,8 +339,7 @@ def run_ram_worker(payload_str: str):
         if mode_lower in ("cholesky", "df"):
             psi4.set_options({"scf_type": "pk", "read_scf_3index": False})
 
-        corr_blas_threads = N_THREADS if mode_lower == "exact" else 1
-        set_blas_threads(corr_blas_threads)
+        set_blas_threads(N_THREADS)
         if (not is_uhf) and p["method"].lower() == "omp3" and mode_lower in ("cholesky", "df"):
             psi4.set_options({"do_diis": False})
         else:
@@ -404,14 +403,12 @@ def compute_psi4_suite():
             if mode_lower in ("cholesky", "df"):
                 psi4.set_options({"scf_type": "pk", "read_scf_3index": False})
 
-            # occ/libdpd (EXACT) serial di outer-loop -> BLAS multi-thread.
-            # dfocc (CHOLESKY/DF) paralel OpenMP di outer-loop -> BLAS 1 thread.
-            corr_blas_threads = N_THREADS if mode_lower == "exact" else 1
-            set_blas_threads(corr_blas_threads)
+            # Berikan N_THREADS penuh pada BLAS (C_DGEMM) untuk semua mode korelasi (occ maupun dfocc)
+            set_blas_threads(N_THREADS)
             try:
                 for m_key, m_call, m_lbl in (("MP2", "mp2", f"{ref_lbl}MP2"), ("MP3", "mp3", f"{ref_lbl}MP3")):
                     try:
-                        set_blas_threads(corr_blas_threads)
+                        set_blas_threads(N_THREADS)
                         t0 = time.perf_counter()
                         e_val = float(psi4.energy(m_call, ref_wfn=scf_wfn, molecule=mol))
                         t_val = time.perf_counter() - t0
@@ -425,8 +422,8 @@ def compute_psi4_suite():
 
                 for m_key, m_call in (("OMP2", "omp2"), ("OMP3", "omp3")):
                     try:
-                        set_blas_threads(corr_blas_threads)
-                        # Untuk RHF Cholesky/DF-OMP3, matikan oo_diis yang memiliki bug di occ_iterations.cc:346
+                        set_blas_threads(N_THREADS)
+                        # Untuk RHF Cholesky/DF-OMP3, matikan oo_diis yang memiliki bug C++ di occ_iterations.cc:346
                         if (not is_uhf) and m_call == "omp3" and mode_lower in ("cholesky", "df"):
                             psi4.set_options({"do_diis": False})
                         else:

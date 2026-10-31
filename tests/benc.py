@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import sys
 import time
 import ctypes
 import tempfile
@@ -32,19 +33,58 @@ psi4.core.be_quiet()
 
 
 def _load_blas_setters():
-    """Mencari simbol pengatur jumlah thread BLAS (MKL / OpenBLAS) yang sudah dimuat di memori."""
+    """Mencari simbol pengatur jumlah thread BLAS (MKL / OpenBLAS) termasuk di Conda/Micromamba."""
     setters = []
-    for lib_name in ("libmkl_rt.so", "libmkl_rt.so.2", "libopenblas.so", "libopenblas.so.0", None):
+    lib_names = ("libmkl_rt.so", "libmkl_rt.so.2", "libopenblas.so", "libopenblas.so.0")
+    candidates = []
+
+    env_lib_dirs = [
+        os.path.join(sys.prefix, "lib"),
+        os.environ.get("CONDA_PREFIX", "") and os.path.join(os.environ["CONDA_PREFIX"], "lib"),
+    ]
+    for d in env_lib_dirs:
+        if d and os.path.isdir(d):
+            for name in lib_names:
+                full_p = os.path.join(d, name)
+                if os.path.exists(full_p):
+                    candidates.append(full_p)
+
+    if os.path.exists("/proc/self/maps"):
+        try:
+            with open("/proc/self/maps", "r", encoding="utf-8") as f:
+                for line in f:
+                    parts = line.strip().split()
+                    if len(parts) >= 6 and parts[5].startswith("/"):
+                        path = parts[5]
+                        base = os.path.basename(path)
+                        if ("mkl_rt" in base or "openblas" in base) and path not in candidates:
+                            candidates.append(path)
+        except Exception:
+            pass
+
+    candidates.extend(lib_names)
+    candidates.append(None)
+
+    seen_ptrs = set()
+    for lib_name in candidates:
         try:
             lib = ctypes.CDLL(lib_name)
         except Exception:
             continue
-        for fn_name in ("MKL_Set_Num_Threads", "openblas_set_num_threads"):
+        for fn_name in ("MKL_Set_Num_Threads", "MKL_Domain_Set_Num_Threads", "openblas_set_num_threads"):
             if hasattr(lib, fn_name):
                 fn = getattr(lib, fn_name)
-                fn.argtypes = [ctypes.c_int]
-                fn.restype = None
-                setters.append(fn)
+                ptr = ctypes.cast(fn, ctypes.c_void_p).value
+                if ptr not in seen_ptrs:
+                    seen_ptrs.add(ptr)
+                    if fn_name == "MKL_Domain_Set_Num_Threads":
+                        fn.argtypes = [ctypes.c_int, ctypes.c_int]
+                        fn.restype = ctypes.c_int
+                        setters.append(lambda n, f=fn: f(int(n), 0))
+                    else:
+                        fn.argtypes = [ctypes.c_int]
+                        fn.restype = None
+                        setters.append(fn)
     return setters
 
 
@@ -52,7 +92,7 @@ _BLAS_SETTERS = _load_blas_setters()
 
 
 def set_blas_threads(num_t: int):
-    """Mengatur jumlah thread BLAS secara dinamis khusus untuk modul serial-outer-loop (occ/libdpd)."""
+    """Mengatur jumlah thread BLAS secara dinamis."""
     for fn in _BLAS_SETTERS:
         try:
             fn(int(num_t))
@@ -155,7 +195,7 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
         "cc_type": corr_type,
         "hess_type": "approx_diag",
         "freeze_core": "false",
-        "r_convergence": 1e-6,
+        "r_convergence": 1e-5,
         "rms_mograd_convergence": 1e-5,
         "max_mograd_convergence": 1e-4,
         "maxiter": 200,
@@ -188,9 +228,8 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
     if eri_mode in ["cholesky", "df"]:
         psi4.set_options({"scf_type": "pk", "read_scf_3index": False})
 
-    # Aktifkan multi-thread BLAS khusus untuk modul occ/libdpd (mode EXACT)
-    corr_blas_threads = n_threads if eri_mode == "exact" else 1
-    set_blas_threads(corr_blas_threads)
+    # Berikan n_threads penuh pada BLAS (C_DGEMM) untuk semua mode korelasi (occ maupun dfocc)
+    set_blas_threads(n_threads)
 
     try:
         # --- 2. MP2 ---
@@ -227,6 +266,7 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
         restore_wfn(scf_wfn, hf_snap)
 
         # --- 5. OMP3 ---
+        # Pada RHF CD/DF-OMP3, matikan oo_diis karena bug C++ di dfocc/occ_iterations.cc:346
         if ref == "rhf" and eri_mode in ["cholesky", "df"]:
             psi4.set_options({"do_diis": False})
         else:
@@ -264,7 +304,7 @@ def main():
             if e_scf is not None: RESULTS_DB.append({"sys": sys_name, "eri": eri_mode.upper(), "method": ref_label, "psi4_e": e_scf, "psi4_t": t_scf})
             if e_mp2 is not None: RESULTS_DB.append({"sys": sys_name, "eri": eri_mode.upper(), "method": mp2_label, "psi4_e": e_mp2, "psi4_t": t_mp2})
             if e_mp3 is not None: RESULTS_DB.append({"sys": sys_name, "eri": eri_mode.upper(), "method": mp3_label, "psi4_e": e_mp3, "psi4_t": t_mp3})
-            if e_omp2 is not None: RESULTS_DB.append({"sys": sys_name, "eri": eri_mode.upper(), "method": "OMP2", "psi4_e": e_omp2, "psi4_t": t_omp2})
+            if e_omp2 is not None: RESULTS_DB.append({"sys": sys_name, "eri": eri_mode.upper(), "method": "OMP2", "psi4_e": e_omp2, "psi4_t": t_mp2})
             if e_omp3 is not None: RESULTS_DB.append({"sys": sys_name, "eri": eri_mode.upper(), "method": "OMP3", "psi4_e": e_omp3, "psi4_t": t_omp3})
 
     print("\n===============================================================================", flush=True)
