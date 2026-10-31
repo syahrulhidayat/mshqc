@@ -17,8 +17,9 @@ n_threads = int(os.environ.get("OMP_NUM_THREADS", str(min(6, cpu_avail))))
 os.environ["OMP_NUM_THREADS"] = str(n_threads)
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["MKL_DYNAMIC"] = "FALSE"
 os.environ["OMP_MAX_ACTIVE_LEVELS"] = "1"
-
+os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
 shm_dir = "/dev/shm" if os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK) else tempfile.gettempdir()
 os.environ["PSI_SCRATCH"] = shm_dir
@@ -147,7 +148,7 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
         "basis": basis_name,
         "reference": ref,
         "e_convergence": THRESHOLD,
-        "d_convergence": THRESHOLD,
+        "d_convergence": 1e-8,
         "scf_type": scf_type,
         "mp2_type": corr_type,
         "mp_type": corr_type,
@@ -179,7 +180,7 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
     except Exception as e:
         print(f"  [!] SCF gagal untuk {sys_name} ({eri_mode.upper()}): {e}", flush=True)
         psi4.core.clean()
-        return None, 0.0, None, None, 0.0, None, 0.0, None, 0.0, None, 0.0
+        return None, 0.0, None, None, 0.0, None, 0.0, None, 0.0, None, 0.0, 0.0
 
     hf_snap = snapshot_wfn(scf_wfn)
 
@@ -196,7 +197,7 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
         mp2_label = "RMP2" if ref == "rhf" else "UMP2"
         t0_mp2 = time.perf_counter()
         try:
-            e_mp2 = psi4.energy("mp2", ref_wfn=scf_wfn, molecule=mol)
+            e_mp2 = float(psi4.energy("mp2", ref_wfn=scf_wfn, molecule=mol))
             t_mp2 = time.perf_counter() - t0_mp2
         except Exception:
             e_mp2, t_mp2 = None, 0.0
@@ -207,7 +208,7 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
         mp3_label = "RMP3" if ref == "rhf" else "UMP3"
         t0_mp3 = time.perf_counter()
         try:
-            e_mp3 = psi4.energy("mp3", ref_wfn=scf_wfn, molecule=mol)
+            e_mp3 = float(psi4.energy("mp3", ref_wfn=scf_wfn, molecule=mol))
             t_mp3 = time.perf_counter() - t0_mp3
         except Exception:
             e_mp3, t_mp3 = None, 0.0
@@ -215,9 +216,10 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
         restore_wfn(scf_wfn, hf_snap)
 
         # --- 4. OMP2 ---
+        psi4.set_options({"do_diis": True})
         t0_omp2 = time.perf_counter()
         try:
-            e_omp2 = psi4.energy("omp2", ref_wfn=scf_wfn, molecule=mol)
+            e_omp2 = float(psi4.energy("omp2", ref_wfn=scf_wfn, molecule=mol))
             t_omp2 = time.perf_counter() - t0_omp2
         except Exception:
             e_omp2, t_omp2 = None, 0.0
@@ -225,9 +227,13 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
         restore_wfn(scf_wfn, hf_snap)
 
         # --- 5. OMP3 ---
+        if ref == "rhf" and eri_mode in ["cholesky", "df"]:
+            psi4.set_options({"do_diis": False})
+        else:
+            psi4.set_options({"do_diis": True})
         t0_omp3 = time.perf_counter()
         try:
-            e_omp3 = psi4.energy("omp3", ref_wfn=scf_wfn, molecule=mol)
+            e_omp3 = float(psi4.energy("omp3", ref_wfn=scf_wfn, molecule=mol))
             t_omp3 = time.perf_counter() - t0_omp3
         except Exception:
             e_omp3, t_omp3 = None, 0.0

@@ -214,11 +214,12 @@ def configure_psi4(mode_lower: str, is_uhf: bool, basis: str = "cc-pVTZ", aux: s
         "basis": basis,
         "reference": "uhf" if is_uhf else "rhf",
         "e_convergence": 1e-9,
-        "d_convergence": 1e-9,
+        "d_convergence": 1e-8,
         "scf_type": scf_t,
         "mp2_type": corr_t,
         "mp_type": corr_t,
         "cc_type": corr_t,
+        "hess_type": "approx_diag",
         "freeze_core": False,
         "r_convergence": 1e-6,
         "rms_mograd_convergence": 1e-5,
@@ -340,7 +341,10 @@ def run_ram_worker(payload_str: str):
 
         corr_blas_threads = N_THREADS if mode_lower == "exact" else 1
         set_blas_threads(corr_blas_threads)
-        psi4.set_options({"do_diis": True})
+        if (not is_uhf) and p["method"].lower() == "omp3" and mode_lower in ("cholesky", "df"):
+            psi4.set_options({"do_diis": False})
+        else:
+            psi4.set_options({"do_diis": True})
         psi4.energy(p["method"].lower(), ref_wfn=scf_wfn, molecule=mol)
         set_blas_threads(1)
 
@@ -422,6 +426,7 @@ def compute_psi4_suite():
                 for m_key, m_call in (("OMP2", "omp2"), ("OMP3", "omp3")):
                     try:
                         set_blas_threads(corr_blas_threads)
+                        # Untuk RHF Cholesky/DF-OMP3, matikan oo_diis yang memiliki bug di occ_iterations.cc:346
                         if (not is_uhf) and m_call == "omp3" and mode_lower in ("cholesky", "df"):
                             psi4.set_options({"do_diis": False})
                         else:
