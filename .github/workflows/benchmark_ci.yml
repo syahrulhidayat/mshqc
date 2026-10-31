@@ -1,4 +1,4 @@
-name: Validation & Universal Benchmark Suite (mshqc vs Psi4)
+name: Validation & Universal Benchmark Suite (mshqc vs Psi4)  run
 
 on:
   push:
