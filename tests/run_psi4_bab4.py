@@ -422,7 +422,10 @@ def compute_psi4_suite():
                 for m_key, m_call in (("OMP2", "omp2"), ("OMP3", "omp3")):
                     try:
                         set_blas_threads(corr_blas_threads)
-                        psi4.set_options({"do_diis": True})
+                        if (not is_uhf) and m_call == "omp3" and mode_lower in ("cholesky", "df"):
+                            psi4.set_options({"do_diis": False})
+                        else:
+                            psi4.set_options({"do_diis": True})
 
                         if os.path.exists(tmp_log):
                             os.remove(tmp_log)
