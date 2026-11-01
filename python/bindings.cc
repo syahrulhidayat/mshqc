@@ -351,7 +351,7 @@ NB_MODULE(_mshqc, m) {
     nb::class_<DIIS>(m, "DIIS")
         .def(nb::init<int>(), nb::arg("max_vectors") = 8)
         .def("clear", &DIIS::clear)
-        .def("add_iteration", &DIIS::add_iteration, nb::arg("F"), nb::arg("err"), nb::arg("P"))
+        .def("add_iteration", &DIIS::add_iteration, nb::arg("F"), nb::arg("err"))
         .def("extrapolate", &DIIS::extrapolate);
 
     nb::class_<mshqc::integrals::ShellPair>(m, "ShellPair")
