@@ -22,7 +22,6 @@
  */
 
 #include "mshqc/scf/diis.h"
-#include <iostream>
 #include <vector>
 #include <Eigen/SVD>
 #ifdef I
@@ -46,9 +45,7 @@ void DIIS::clear() {
     B_matrix_.setZero();
 }
 
-void DIIS::add_iteration(const Eigen::MatrixXd& F, 
-                         const Eigen::MatrixXd& err, 
-                         const Eigen::MatrixXd& /*P*/) // Parameter P diabaikan (Unused)
+void DIIS::add_iteration(const Eigen::MatrixXd& F, const Eigen::MatrixXd& err)
 {
     // 1. Jika buffer penuh, buang elemen terlama (index 0)
     if (fock_history_.size() >= max_vectors_) {
@@ -161,9 +158,5 @@ Eigen::MatrixXd DIIS::extrapolate() {
     return F_ext;
 }
 
-// Stub function untuk kompatibilitas interface lama
-double DIIS::compute_ediis_element(int, int) const { return 0.0; }
-Eigen::VectorXd DIIS::solve_cdiis(const Eigen::MatrixXd&) { return Eigen::VectorXd(); }
-Eigen::VectorXd DIIS::solve_ediis() { return Eigen::VectorXd(); }
 
 } // namespace mshqc

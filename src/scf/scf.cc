@@ -28,11 +28,9 @@
 #include <iomanip>
 #include <cmath>
 #include <algorithm>
-#include <numeric>
 #include <chrono>
 #include <omp.h>
 #include "mshqc/utils/hdf5_io.h"
-#include <tblis/tblis.h>
 #include <memory>
 #include <vector>
 #ifdef I
@@ -626,7 +624,7 @@ SCFResult BaseSCF::compute() {
                 bool strict_conv  = (dE < e_tol && dP < p_tol && err_rms < p_tol);
                 bool plateau_conv = (iter_scf_ > 24 && dE < e_tol && dP < 1e-10 && err_rms < 1e-10);
                 if (iter_scf_ > 2 && (strict_conv || plateau_conv)) {
-                    converged = true;
+                    trial_conv = true;
                     break;
                 }
             }
