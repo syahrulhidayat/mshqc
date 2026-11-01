@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Runner Mandiri Psi4 untuk Benchmark Bab IV (Apple-to-Apple C1, Multi-Threaded BLAS pada dfocc & occ)
+Runner Mandiri Psi4 untuk Benchmark Bab IV (Simetri Abelian Maksimal & Full Multi-Threaded BLAS pada SCF, dfocc, dan occ)
 Output: psi4_bab4_raw.json, psi4_bab4_runner.log, psi4_bab4_test.txt
 """
 
@@ -26,8 +26,11 @@ CPU_AVAIL = os.cpu_count() or 4
 N_THREADS = int(os.environ.get("OMP_NUM_THREADS", str(min(6, CPU_AVAIL))))
 os.environ.update({
     "OMP_NUM_THREADS": str(N_THREADS),
-    "OPENBLAS_NUM_THREADS": "1",
-    "MKL_NUM_THREADS": "1",
+    "OPENBLAS_NUM_THREADS": str(N_THREADS),
+    "MKL_NUM_THREADS": str(N_THREADS),
+    "BLIS_NUM_THREADS": str(N_THREADS),
+    "VECLIB_MAXIMUM_THREADS": str(N_THREADS),
+    "NUMEXPR_NUM_THREADS": str(N_THREADS),
     "MKL_DYNAMIC": "FALSE",
     "OMP_MAX_ACTIVE_LEVELS": "1",
     "HDF5_USE_FILE_LOCKING": "FALSE",
@@ -148,7 +151,7 @@ def _load_blas_setters():
                     if fn_name == "MKL_Domain_Set_Num_Threads":
                         fn.argtypes = [ctypes.c_int, ctypes.c_int]
                         fn.restype = ctypes.c_int
-                        setters.append(lambda n, f=fn: f(int(n), 0))
+                        setters.append(lambda n, f=fn: (f(int(n), 0), f(int(n), 1)))
                     else:
                         fn.argtypes = [ctypes.c_int]
                         fn.restype = None
@@ -165,6 +168,9 @@ def set_blas_threads(num_t: int):
             fn(int(num_t))
         except Exception:
             pass
+
+
+set_blas_threads(N_THREADS)
 
 
 def get_rss_and_hwm_mb():
@@ -189,12 +195,12 @@ def get_scratch_mb(folder: str) -> float:
     return total_b / (1024.0 * 1024.0)
 
 
-def build_psi4_mol(sys_name: str, mode_lower: str, allow_abelian_exact: bool = False):
+def build_psi4_mol(sys_name: str, mode_lower: str, allow_abelian_exact: bool = True):
     """
     Membangun molekul Psi4:
-    - Default (allow_abelian_exact=False): menggunakan symmetry c1 di semua mode (EXACT, CHOLESKY, DF)
-      agar benar-benar apple-to-apple (C1 vs C1) baik antar-mode ERI maupun terhadap MSHQC.
-    - Jika allow_abelian_exact=True: mode EXACT diizinkan memakai simetri Abelian penuh (D2h/C2v).
+    - Default (allow_abelian_exact=True): mode EXACT menggunakan simetri Abelian penuh (D2h/C2v),
+      sedangkan DF & CHOLESKY menggunakan C1 karena modul dfocc hanya mendukung C1.
+    - Jika allow_abelian_exact=False: menggunakan symmetry c1 di semua mode.
     """
     info = SYSTEMS[sys_name]
     lines = [
@@ -228,6 +234,7 @@ def configure_psi4(mode_lower: str, is_uhf: bool, basis: str = "cc-pVTZ", aux: s
         "maxiter": 200,
         "mo_maxiter": 50,
         "cachelevel": 2,
+        "df_ints_num_threads": N_THREADS,
         "read_scf_3index": False,
     }
     if mode_lower == "df":
@@ -314,7 +321,7 @@ def parse_occ_iterations(log_text: str) -> int:
 
 
 def run_ram_worker(payload_str: str):
-    """Worker terisolasi untuk mengukur Peak RSS + Scratch /dev/shm Psi4 tanpa duplikasi kode."""
+    """Worker terisolasi untuk mengukur Peak RSS + Scratch /dev/shm Psi4."""
     scratch_sub = tempfile.mkdtemp(prefix="psi4_ram_", dir=SHM_DIR)
     os.environ["PSI_SCRATCH"] = scratch_sub
     psi4.core.IOManager.shared_object().set_default_path(scratch_sub + "/")
@@ -329,25 +336,26 @@ def run_ram_worker(payload_str: str):
         base_rss, base_hwm = get_rss_and_hwm_mb()
         p = json.loads(payload_str)
         sys_name, mode_lower = p["sys"], p["mode"].lower()
-        allow_abelian = bool(p.get("allow_abelian_exact", False))
+        allow_abelian = bool(p.get("allow_abelian_exact", True))
         is_uhf = SYSTEMS[sys_name]["is_uhf"]
+
+        psi4.set_num_threads(N_THREADS)
+        set_blas_threads(N_THREADS)
 
         mol = build_psi4_mol(sys_name, mode_lower, allow_abelian_exact=allow_abelian)
         configure_psi4(mode_lower, is_uhf, basis=p["basis"], aux=p["aux"])
 
-        set_blas_threads(1)
+        set_blas_threads(N_THREADS)
         _, scf_wfn = psi4.energy("scf", molecule=mol, return_wfn=True)
         if mode_lower in ("cholesky", "df"):
             psi4.set_options({"scf_type": "pk", "read_scf_3index": False})
 
-        # Berikan N_THREADS penuh ke BLAS untuk occ (EXACT) maupun dfocc (CHOLESKY/DF)
         set_blas_threads(N_THREADS)
         if (not is_uhf) and p["method"].lower() == "omp3" and mode_lower in ("cholesky", "df"):
             psi4.set_options({"do_diis": False})
         else:
             psi4.set_options({"do_diis": True})
         psi4.energy(p["method"].lower(), ref_wfn=scf_wfn, molecule=mol)
-        set_blas_threads(1)
 
         curr_rss, peak_hwm = get_rss_and_hwm_mb()
         scratch_ram = get_scratch_mb(scratch_sub)
@@ -360,7 +368,7 @@ def run_ram_worker(payload_str: str):
         shutil.rmtree(scratch_sub, ignore_errors=True)
 
 
-def compute_psi4_suite(allow_abelian_exact: bool = False):
+def compute_psi4_suite(allow_abelian_exact: bool = True):
     results = {}
     tmp_log = os.path.join(SHM_DIR, f"psi4_bab4_{os.getpid()}.out")
     sym_tag = "Abelian EXACT / C1 DF-CD" if allow_abelian_exact else "Uniform C1 Symmetry"
@@ -382,6 +390,8 @@ def compute_psi4_suite(allow_abelian_exact: bool = False):
             psi4.core.clean()
             psi4.core.clean_options()
             psi4.core.be_quiet()
+            psi4.set_num_threads(N_THREADS)
+            set_blas_threads(N_THREADS)
 
             mol = build_psi4_mol(sys_name, mode_lower, allow_abelian_exact=allow_abelian_exact)
             configure_psi4(mode_lower, is_uhf)
@@ -389,7 +399,7 @@ def compute_psi4_suite(allow_abelian_exact: bool = False):
             key = f"{sys_name}|{mode_upper}"
             entry = {}
 
-            set_blas_threads(1)
+            set_blas_threads(N_THREADS)
             try:
                 t0 = time.perf_counter()
                 e_scf, scf_wfn = psi4.energy("scf", molecule=mol, return_wfn=True)
@@ -408,66 +418,62 @@ def compute_psi4_suite(allow_abelian_exact: bool = False):
                 psi4.set_options({"scf_type": "pk", "read_scf_3index": False})
 
             # Berikan N_THREADS penuh ke BLAS untuk occ (EXACT) maupun dfocc (CHOLESKY/DF)
-            # karena Tensor2d::gemm dan Tensor2d::contract* di dfocc memanggil C_DGEMM secara langsung.
             corr_blas_threads = N_THREADS
             set_blas_threads(corr_blas_threads)
-            try:
-                for m_key, m_call, m_lbl in (("MP2", "mp2", f"{ref_lbl}MP2"), ("MP3", "mp3", f"{ref_lbl}MP3")):
-                    try:
-                        set_blas_threads(corr_blas_threads)
-                        t0 = time.perf_counter()
-                        e_val = float(psi4.energy(m_call, ref_wfn=scf_wfn, molecule=mol))
-                        t_val = time.perf_counter() - t0
-                        entry[m_key] = {"e": e_val, "t": t_val}
-                        tot_solver_s += t_val
-                        print(f"| {sys_name:<8} | {mode_upper:<9} | {m_lbl:<6} | {e_val:<16.8f} | {t_val:<9.3f} | {'-':<10} | {s_ideal:<6.2f} | {'-':<6} | {'OK':<6} |", flush=True)
-                    except Exception:
-                        pass
-                    psi4.core.clean()
+            for m_key, m_call, m_lbl in (("MP2", "mp2", f"{ref_lbl}MP2"), ("MP3", "mp3", f"{ref_lbl}MP3")):
+                try:
+                    set_blas_threads(corr_blas_threads)
+                    t0 = time.perf_counter()
+                    e_val = float(psi4.energy(m_call, ref_wfn=scf_wfn, molecule=mol))
+                    t_val = time.perf_counter() - t0
+                    entry[m_key] = {"e": e_val, "t": t_val}
+                    tot_solver_s += t_val
+                    print(f"| {sys_name:<8} | {mode_upper:<9} | {m_lbl:<6} | {e_val:<16.8f} | {t_val:<9.3f} | {'-':<10} | {s_ideal:<6.2f} | {'-':<6} | {'OK':<6} |", flush=True)
+                except Exception:
+                    pass
+                psi4.core.clean()
+                restore_wfn(scf_wfn, hf_snap)
+
+            for m_key, m_call in (("OMP2", "omp2"), ("OMP3", "omp3")):
+                try:
+                    set_blas_threads(corr_blas_threads)
+                    # Untuk RHF Cholesky/DF-OMP3, matikan oo_diis yang memiliki bug C++ di occ_iterations.cc:346
+                    if (not is_uhf) and m_call == "omp3" and mode_lower in ("cholesky", "df"):
+                        psi4.set_options({"do_diis": False})
+                    else:
+                        psi4.set_options({"do_diis": True})
+
+                    if os.path.exists(tmp_log):
+                        os.remove(tmp_log)
+                    psi4.core.set_output_file(tmp_log, False)
+
+                    t0 = time.perf_counter()
+                    e_val, opt_wfn = psi4.energy(m_call, ref_wfn=scf_wfn, molecule=mol, return_wfn=True)
+                    t_val = time.perf_counter() - t0
+
+                    psi4.core.flush_outfile()
+                    psi4.core.be_quiet()
+                    log_txt = Path(tmp_log).read_text(errors="replace") if os.path.exists(tmp_log) else ""
+                    it_cnt = parse_occ_iterations(log_txt)
+
+                    _, s2_val = calc_s2_wfn(opt_wfn, is_uhf)
+                    # Workaround untuk bug C++ Psi4 dfocc (occ_iterations.cc) di mana CD-OMP2 tidak
+                    # menyalin CmoA/CmoB ke Wavefunction::Ca_/Cb_ meskipun energi & orbital telah konvergen:
+                    if is_uhf and m_key == "OMP2":
+                        if mode_lower == "exact":
+                            exact_omp2_s2_cache = s2_val
+                        elif mode_lower == "cholesky" and abs(s2_val - s2_scf) < 1e-12 and exact_omp2_s2_cache is not None:
+                            s2_val = exact_omp2_s2_cache
+
+                    entry[m_key] = {"e": float(e_val), "t": float(t_val), "iter": it_cnt, "s2": s2_val}
+                    tot_solver_s += t_val
+                    it_disp = str(it_cnt) if it_cnt > 0 else "-"
+                    print(f"| {sys_name:<8} | {mode_upper:<9} | {m_key:<6} | {float(e_val):<16.8f} | {t_val:<9.3f} | {s2_val:<10.6f} | {s_ideal:<6.2f} | {it_disp:<6} | {'OK':<6} |", flush=True)
+                except Exception:
+                    psi4.core.be_quiet()
+                psi4.core.clean()
+                if m_key == "OMP2":
                     restore_wfn(scf_wfn, hf_snap)
-
-                for m_key, m_call in (("OMP2", "omp2"), ("OMP3", "omp3")):
-                    try:
-                        set_blas_threads(corr_blas_threads)
-                        # Untuk RHF Cholesky/DF-OMP3, matikan oo_diis yang memiliki bug C++ di occ_iterations.cc:346
-                        if (not is_uhf) and m_call == "omp3" and mode_lower in ("cholesky", "df"):
-                            psi4.set_options({"do_diis": False})
-                        else:
-                            psi4.set_options({"do_diis": True})
-
-                        if os.path.exists(tmp_log):
-                            os.remove(tmp_log)
-                        psi4.core.set_output_file(tmp_log, False)
-
-                        t0 = time.perf_counter()
-                        e_val, opt_wfn = psi4.energy(m_call, ref_wfn=scf_wfn, molecule=mol, return_wfn=True)
-                        t_val = time.perf_counter() - t0
-
-                        psi4.core.flush_outfile()
-                        psi4.core.be_quiet()
-                        log_txt = Path(tmp_log).read_text(errors="replace") if os.path.exists(tmp_log) else ""
-                        it_cnt = parse_occ_iterations(log_txt)
-
-                        _, s2_val = calc_s2_wfn(opt_wfn, is_uhf)
-                        # Workaround untuk bug C++ Psi4 dfocc (occ_iterations.cc) di mana CD-OMP2 tidak
-                        # menyalin CmoA/CmoB ke Wavefunction::Ca_/Cb_ meskipun energi & orbital telah konvergen:
-                        if is_uhf and m_key == "OMP2":
-                            if mode_lower == "exact":
-                                exact_omp2_s2_cache = s2_val
-                            elif mode_lower == "cholesky" and abs(s2_val - s2_scf) < 1e-12 and exact_omp2_s2_cache is not None:
-                                s2_val = exact_omp2_s2_cache
-
-                        entry[m_key] = {"e": float(e_val), "t": float(t_val), "iter": it_cnt, "s2": s2_val}
-                        tot_solver_s += t_val
-                        it_disp = str(it_cnt) if it_cnt > 0 else "-"
-                        print(f"| {sys_name:<8} | {mode_upper:<9} | {m_key:<6} | {float(e_val):<16.8f} | {t_val:<9.3f} | {s2_val:<10.6f} | {s_ideal:<6.2f} | {it_disp:<6} | {'OK':<6} |", flush=True)
-                    except Exception:
-                        psi4.core.be_quiet()
-                    psi4.core.clean()
-                    if m_key == "OMP2":
-                        restore_wfn(scf_wfn, hf_snap)
-            finally:
-                set_blas_threads(1)
 
             results[key] = entry
 
@@ -482,7 +488,7 @@ def compute_psi4_suite(allow_abelian_exact: bool = False):
     return results
 
 
-def compute_ram_benchmark(allow_abelian_exact: bool = False):
+def compute_ram_benchmark(allow_abelian_exact: bool = True):
     ram_results = {}
     script_path = os.path.abspath(__file__)
     print("\n" + "=" * 112, flush=True)
@@ -523,10 +529,11 @@ def compute_ram_benchmark(allow_abelian_exact: bool = False):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Psi4 Bab IV Standalone Benchmark Runner (Apple-to-Apple C1 & Multi-Threaded BLAS)")
+    parser = argparse.ArgumentParser(description="Psi4 Bab IV Standalone Benchmark Runner (Abelian Symmetry & Full Multi-Threaded BLAS)")
     parser.add_argument("--out", default="psi4_bab4_raw.json", help="Path output berkas JSON Psi4")
     parser.add_argument("--log", default="psi4_bab4_runner.log", help="Path output berkas log teks real-time")
-    parser.add_argument("--abelian-exact", action="store_true", help="Izinkan simetri Abelian penuh (D2h/C2v) pada mode EXACT")
+    parser.add_argument("--abelian-exact", dest="abelian_exact", action="store_true", default=True, help="Aktifkan simetri Abelian penuh (D2h/C2v) pada mode EXACT (Default: True)")
+    parser.add_argument("--force-c1", dest="abelian_exact", action="store_false", help="Paksa simetri C1 seragam pada seluruh mode ERI")
     parser.add_argument("--ram-worker", default=None, help=argparse.SUPPRESS)
     args = parser.parse_args()
 
