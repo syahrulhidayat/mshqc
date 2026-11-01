@@ -16,9 +16,9 @@ cpu_avail = os.cpu_count() or 4
 n_threads = int(os.environ.get("OMP_NUM_THREADS", str(min(6, cpu_avail))))
 os.environ["OMP_NUM_THREADS"] = str(n_threads)
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = str(n_threads)
 os.environ["OMP_MAX_ACTIVE_LEVELS"] = "1"
-
+os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
 shm_dir = "/dev/shm" if os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK) else tempfile.gettempdir()
 os.environ["PSI_SCRATCH"] = shm_dir
@@ -51,7 +51,7 @@ _BLAS_SETTERS = _load_blas_setters()
 
 
 def set_blas_threads(num_t: int):
-    """Mengatur jumlah thread BLAS secara dinamis khusus untuk modul serial-outer-loop (occ/libdpd)."""
+    """Mengatur jumlah thread BLAS secara dinamis untuk modul korelasi pasca-HF (occ & dfocc)."""
     for fn in _BLAS_SETTERS:
         try:
             fn(int(num_t))
@@ -178,7 +178,7 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
     except Exception as e:
         print(f"  [!] SCF gagal untuk {sys_name} ({eri_mode.upper()}): {e}", flush=True)
         psi4.core.clean()
-        return None, 0.0, None, None, 0.0, None, 0.0, None, 0.0, None, 0.0
+        return None, 0.0, None, None, 0.0, None, 0.0, None, 0.0, None, 0.0, 0.0
 
     hf_snap = snapshot_wfn(scf_wfn)
 
@@ -186,9 +186,8 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
     if eri_mode in ["cholesky", "df"]:
         psi4.set_options({"scf_type": "pk", "read_scf_3index": False})
 
-    # Aktifkan multi-thread BLAS khusus untuk modul occ/libdpd (mode EXACT)
-    corr_blas_threads = n_threads if eri_mode == "exact" else 1
-    set_blas_threads(corr_blas_threads)
+    # Aktifkan multi-thread BLAS untuk seluruh modul pasca-HF (occ maupun dfocc)
+    set_blas_threads(n_threads)
 
     try:
         # --- 2. MP2 ---

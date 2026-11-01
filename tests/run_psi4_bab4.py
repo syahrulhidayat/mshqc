@@ -220,10 +220,13 @@ def calc_s2_wfn(wfn, is_uhf: bool):
         return s_ideal, s_ideal
 
 
+_ITER_RE = re.compile(r"^\s*(\d+)\s+-?\d+\.\d+\s+[-+]?\d+\.\d+(?:[eE][-+]?\d+)?")
+
+
 def parse_occ_iterations(log_text: str) -> int:
     iters = 0
     for line in log_text.splitlines():
-        m = re.match(r"^\s*(\d+)\s+-?\d+\.\d+\s+-?\d+\.\d+", line)
+        m = _ITER_RE.match(line)
         if m:
             iters = max(iters, int(m.group(1)))
     return iters
@@ -316,7 +319,6 @@ def compute_psi4_suite():
                 psi4.set_options({"scf_type": "pk", "read_scf_3index": False})
 
             set_blas_threads(N_THREADS)
-            need_iter_log = is_uhf and mode_lower in ("exact", "df")
             try:
                 for m_key, m_call, m_lbl in (("MP2", "mp2", f"{ref_lbl}MP2"), ("MP3", "mp3", f"{ref_lbl}MP3")):
                     try:
@@ -333,17 +335,16 @@ def compute_psi4_suite():
 
                 for m_key, m_call in (("OMP2", "omp2"), ("OMP3", "omp3")):
                     try:
-                        if need_iter_log:
-                            psi4.core.set_output_file(tmp_log, False)
+                        psi4.core.set_output_file(tmp_log, False)
                         t0 = time.perf_counter()
                         e_val, opt_wfn = psi4.energy(m_call, ref_wfn=scf_wfn, molecule=mol, return_wfn=True)
                         t_val = time.perf_counter() - t0
-                        it_cnt = 0
-                        if need_iter_log:
-                            psi4.core.flush_outfile()
-                            psi4.core.be_quiet()
-                            log_txt = Path(tmp_log).read_text(errors="replace") if os.path.exists(tmp_log) else ""
-                            it_cnt = parse_occ_iterations(log_txt)
+
+                        psi4.core.flush_outfile()
+                        psi4.core.be_quiet()
+                        log_txt = Path(tmp_log).read_text(errors="replace") if os.path.exists(tmp_log) else ""
+                        it_cnt = parse_occ_iterations(log_txt)
+
                         _, s2_val = calc_s2_wfn(opt_wfn, is_uhf)
                         entry[m_key] = {"e": float(e_val), "t": float(t_val), "iter": it_cnt, "s2": s2_val}
                         tot_solver_s += t_val
