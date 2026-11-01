@@ -104,7 +104,7 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
     psi4.core.clean()
     psi4.core.clean_options()
 
-    mol = build_psi4_mol(atoms, chg, mult, eri_mode)
+    mol = build_psi4_mol(atoms, chg, mult, eri_mode, force_c1=True)
 
     if eri_mode == "exact":
         scf_type, corr_type = "pk", "conv"
@@ -117,7 +117,7 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
         "basis": basis_name,
         "reference": ref,
         "e_convergence": THRESHOLD,
-        "d_convergence": THRESHOLD,
+        "d_convergence": 1e-8,
         "scf_type": scf_type,
         "mp2_type": corr_type,
         "mp_type": corr_type,
@@ -129,7 +129,9 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
         "max_mograd_convergence": 1e-4,
         "maxiter": 200,
         "mo_maxiter": 50,
-        "read_scf_3index": False,
+        "cachelevel": 2,
+        # Pada mode DF, gunakan ulang integral 3-indeks dari SCF (Unit 97) seperti MSHQC!
+        "read_scf_3index": True if eri_mode == "df" else False,
     }
 
     if eri_mode == "df":
@@ -140,6 +142,7 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
     psi4.set_options(opts)
 
     # --- 1. SCF ---
+    set_blas_threads(1)
     t0_scf = time.perf_counter()
     try:
         e_scf, scf_wfn = psi4.energy("scf", molecule=mol, return_wfn=True)
@@ -147,58 +150,68 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
     except Exception as e:
         print(f"  [!] SCF gagal untuk {sys_name} ({eri_mode.upper()}): {e}", flush=True)
         psi4.core.clean()
-        return None, 0.0, None, None, 0.0, None, 0.0, None, 0.0, None, 0.0
+        return None, 0.0, None, None, 0.0, None, 0.0, None, 0.0, None, 0.0, 0.0
 
     hf_snap = snapshot_wfn(scf_wfn)
 
-    # Wajib agar dfocc tidak mengalami PSIO_ERROR pada Unit 97 (PSIF_DFSCF_BJ)
-    if eri_mode in ["cholesky", "df"]:
+    # Hanya Cholesky yang perlu mematikan read_scf_3index; DF tetap membaca Unit 97 dari SCF!
+    if eri_mode == "cholesky":
         psi4.set_options({"scf_type": "pk", "read_scf_3index": False})
 
-    # --- 2. MP2 ---
-    mp2_label = "RMP2" if ref == "rhf" else "UMP2"
-    t0_mp2 = time.perf_counter()
-    try:
-        e_mp2 = psi4.energy("mp2", ref_wfn=scf_wfn, molecule=mol)
-        t_mp2 = time.perf_counter() - t0_mp2
-    except Exception:
-        e_mp2, t_mp2 = None, 0.0
-    psi4.core.clean()
-    restore_wfn(scf_wfn, hf_snap)
+    set_blas_threads(n_threads)
 
-    # --- 3. MP3 ---
-    mp3_label = "RMP3" if ref == "rhf" else "UMP3"
-    t0_mp3 = time.perf_counter()
     try:
-        e_mp3 = psi4.energy("mp3", ref_wfn=scf_wfn, molecule=mol)
-        t_mp3 = time.perf_counter() - t0_mp3
-    except Exception:
-        e_mp3, t_mp3 = None, 0.0
-    psi4.core.clean()
-    restore_wfn(scf_wfn, hf_snap)
+        # --- 2. MP2 (Tanpa psi4.core.clean() agar Unit 97 DF tidak terhapus!) ---
+        mp2_label = "RMP2" if ref == "rhf" else "UMP2"
+        t0_mp2 = time.perf_counter()
+        try:
+            e_mp2 = float(psi4.energy("mp2", ref_wfn=scf_wfn, molecule=mol))
+            t_mp2 = time.perf_counter() - t0_mp2
+        except Exception:
+            e_mp2, t_mp2 = None, 0.0
+        restore_wfn(scf_wfn, hf_snap)
 
-    # --- 4. OMP2 ---
-    t0_omp2 = time.perf_counter()
-    try:
-        e_omp2 = psi4.energy("omp2", ref_wfn=scf_wfn, molecule=mol)
-        t_omp2 = time.perf_counter() - t0_omp2
-    except Exception:
-        e_omp2, t_omp2 = None, 0.0
-    psi4.core.clean()
-    restore_wfn(scf_wfn, hf_snap)
+        # --- 3. MP3 ---
+        mp3_label = "RMP3" if ref == "rhf" else "UMP3"
+        t0_mp3 = time.perf_counter()
+        try:
+            e_mp3 = float(psi4.energy("mp3", ref_wfn=scf_wfn, molecule=mol))
+            t_mp3 = time.perf_counter() - t0_mp3
+        except Exception:
+            e_mp3, t_mp3 = None, 0.0
+        restore_wfn(scf_wfn, hf_snap)
 
-    # --- 5. OMP3 ---
-    t0_omp3 = time.perf_counter()
-    try:
-        e_omp3 = psi4.energy("omp3", ref_wfn=scf_wfn, molecule=mol)
-        t_omp3 = time.perf_counter() - t0_omp3
-    except Exception:
-        e_omp3, t_omp3 = None, 0.0
-    psi4.core.clean()
+        # --- 4. OMP2 ---
+        psi4.set_options({"do_diis": True})
+        t0_omp2 = time.perf_counter()
+        try:
+            e_omp2 = float(psi4.energy("omp2", ref_wfn=scf_wfn, molecule=mol))
+            t_omp2 = time.perf_counter() - t0_omp2
+        except Exception:
+            e_omp2, t_omp2 = None, 0.0
+
+        # Untuk UHF dan EXACT RHF (di mana do_diis=True berjalan normal), restore ke HF murni.
+        # Untuk RHF CD/DF (di mana oo_diis Psi4 bug), biarkan orbital OMP2 di scf_wfn agar tidak
+        # tercekik 40 iterasi steepest-descent, atau restore jika ingin menguji cold-start murni.
+        if not (ref == "rhf" and eri_mode in ["cholesky", "df"]):
+            restore_wfn(scf_wfn, hf_snap)
+
+        # --- 5. OMP3 ---
+        if ref == "rhf" and eri_mode in ["cholesky", "df"]:
+            psi4.set_options({"do_diis": False})
+        else:
+            psi4.set_options({"do_diis": True})
+        t0_omp3 = time.perf_counter()
+        try:
+            e_omp3 = float(psi4.energy("omp3", ref_wfn=scf_wfn, molecule=mol))
+            t_omp3 = time.perf_counter() - t0_omp3
+        except Exception:
+            e_omp3, t_omp3 = None, 0.0
+    finally:
+        set_blas_threads(1)
+        psi4.core.clean()  
 
     return e_scf, t_scf, mp2_label, e_mp2, t_mp2, mp3_label, e_mp3, t_mp3, e_omp2, t_omp2, e_omp3, t_omp3
-
-
 def main():
     print("==========================================================================================================", flush=True)
     print("  PSI4 BENCHMARK (APPLE-TO-APPLE) | EXACT vs CHOLESKY vs DF (HF, MP2, MP3, OMP2, OMP3)", flush=True)
