@@ -201,10 +201,6 @@ Eigen::MatrixXd SADGuess::build(const Molecule& mol, const BasisSet& basis) {
         current_shell_idx += shells_for_this_atom;
     }
 
-    if (P_sad.norm() < 1e-6) {
-        return Eigen::MatrixXd::Zero(0, 0);
-    }
-
     return P_sad;
 }
 
