@@ -127,11 +127,7 @@ RESULTS_DB = []
 
 
 def build_psi4_mol(atoms, chg, mult, eri_mode="exact", force_c1=True):
-    """
-    Membangun objek molekul Psi4 secara apple-to-apple:
-    - Default force_c1=True menyamakan simetri C1 di semua mode (EXACT, CHOLESKY, DF)
-      agar dimensi tensor (O, V) identik dengan MSHQC.
-    """
+    """Membangun objek molekul Psi4 dengan simetri C1 seragam (apple-to-apple dengan MSHQC)."""
     lines = [f"{chg} {mult}", "units bohr"]
     if force_c1 or eri_mode in ["df", "cholesky"]:
         lines.append("symmetry c1")
@@ -201,8 +197,7 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
         "maxiter": 200,
         "mo_maxiter": 50,
         "cachelevel": 2,
-        # Pada mode DF, gunakan ulang integral 3-indeks dari SCF (Unit 97) seperti MSHQC!
-        "read_scf_3index": True if eri_mode == "df" else False,
+        "read_scf_3index": False,
     }
 
     if eri_mode == "df":
@@ -212,7 +207,7 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
 
     psi4.set_options(opts)
 
-    # --- 1. SCF ---
+    # --- 1. SCF (OpenMP paralel di dalam libfock -> BLAS = 1 thread) ---
     set_blas_threads(1)
     t0_scf = time.perf_counter()
     try:
@@ -225,14 +220,16 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
 
     hf_snap = snapshot_wfn(scf_wfn)
 
-    # Hanya Cholesky yang perlu mematikan read_scf_3index; DF tetap membaca Unit 97 dari SCF!
-    if eri_mode == "cholesky":
+    # Wajib: MemDFJK (SCF) tidak menulis entri (Q|mn) ke disk Unit 97 (PSIF_DFSCF_BJ),
+    # sehingga dfocc harus membangun tensor 3-indeksnya sendiri (read_scf_3index=False).
+    if eri_mode in ["cholesky", "df"]:
         psi4.set_options({"scf_type": "pk", "read_scf_3index": False})
 
+    # Berikan n_threads penuh ke BLAS untuk occ (EXACT) maupun dfocc (CHOLESKY/DF)
     set_blas_threads(n_threads)
 
     try:
-        # --- 2. MP2 (Tanpa psi4.core.clean() agar Unit 97 DF tidak terhapus!) ---
+        # --- 2. MP2 ---
         mp2_label = "RMP2" if ref == "rhf" else "UMP2"
         t0_mp2 = time.perf_counter()
         try:
@@ -240,6 +237,7 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
             t_mp2 = time.perf_counter() - t0_mp2
         except Exception:
             e_mp2, t_mp2 = None, 0.0
+        psi4.core.clean()
         restore_wfn(scf_wfn, hf_snap)
 
         # --- 3. MP3 ---
@@ -250,6 +248,7 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
             t_mp3 = time.perf_counter() - t0_mp3
         except Exception:
             e_mp3, t_mp3 = None, 0.0
+        psi4.core.clean()
         restore_wfn(scf_wfn, hf_snap)
 
         # --- 4. OMP2 ---
@@ -260,14 +259,11 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
             t_omp2 = time.perf_counter() - t0_omp2
         except Exception:
             e_omp2, t_omp2 = None, 0.0
-
-        # Untuk UHF dan EXACT RHF (di mana do_diis=True berjalan normal), restore ke HF murni.
-        # Untuk RHF CD/DF (di mana oo_diis Psi4 bug), biarkan orbital OMP2 di scf_wfn agar tidak
-        # tercekik 40 iterasi steepest-descent, atau restore jika ingin menguji cold-start murni.
-        if not (ref == "rhf" and eri_mode in ["cholesky", "df"]):
-            restore_wfn(scf_wfn, hf_snap)
+        psi4.core.clean()
+        restore_wfn(scf_wfn, hf_snap)
 
         # --- 5. OMP3 ---
+        # Pada RHF CD/DF-OMP3, matikan oo_diis karena bug C++ di dfocc/occ_iterations.cc:346
         if ref == "rhf" and eri_mode in ["cholesky", "df"]:
             psi4.set_options({"do_diis": False})
         else:
@@ -278,11 +274,12 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
             t_omp3 = time.perf_counter() - t0_omp3
         except Exception:
             e_omp3, t_omp3 = None, 0.0
+        psi4.core.clean()
     finally:
         set_blas_threads(1)
-        psi4.core.clean()  # Bersihkan scratch 1 kali saja di akhir sistem!
 
     return e_scf, t_scf, mp2_label, e_mp2, t_mp2, mp3_label, e_mp3, t_mp3, e_omp2, t_omp2, e_omp3, t_omp3
+
 
 def main():
     print("==========================================================================================================", flush=True)
