@@ -18,7 +18,6 @@
  */
 
 #include "mshqc/scf/sad.h"
-#include <iostream>
 #include <algorithm>
 #include <string>
 #include <vector>
@@ -112,14 +111,10 @@ Eigen::MatrixXd SADGuess::build(const Molecule& mol, const BasisSet& basis) {
     std::string bname = basis.name();
     std::transform(bname.begin(), bname.end(), bname.begin(), ::tolower);
 
-    SadBasisType btype = SadBasisType::DOUBLE_ZETA;
-    if (bname.find("sto") != std::string::npos ||
-        bname.find("min") != std::string::npos ||
-        bname.find("3-21g") != std::string::npos) {
-        btype = SadBasisType::MINIMAL;
-    }
-
-    bool allow_valence_split = (btype != SadBasisType::MINIMAL);
+    bool is_minimal = (bname.find("sto") != std::string::npos ||
+                       bname.find("min") != std::string::npos ||
+                       bname.find("3-21g") != std::string::npos);
+    bool allow_valence_split = !is_minimal;
 
     int current_shell_idx = 0;
     int current_bf_offset = 0;
@@ -199,10 +194,6 @@ Eigen::MatrixXd SADGuess::build(const Molecule& mol, const BasisSet& basis) {
 
         current_bf_offset += n_atom_bf;
         current_shell_idx += shells_for_this_atom;
-    }
-
-    if (P_sad.norm() < 1e-6) {
-        return Eigen::MatrixXd::Zero(0, 0);
     }
 
     return P_sad;

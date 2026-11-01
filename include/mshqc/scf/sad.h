@@ -29,14 +29,6 @@ namespace mshqc {
 
 
 
-enum class SadBasisType { 
-    MINIMAL, 
-    DOUBLE_ZETA, 
-    UNKNOWN 
-};
-
-
-
 class SADGuess {
 public:
     /**
@@ -54,8 +46,7 @@ private:
      */
     
 
-    static Eigen::MatrixXd get_atomic_density(int Z, SadBasisType btype, int n_bf);
-};
+    };
 
 } 
 

@@ -26,8 +26,9 @@ try:
 except Exception:
     pass
 
+# 1. Samakan alokasi thread default dengan benc.py (baris 24-26)
 CPU_AVAIL = os.cpu_count() or 4
-N_THREADS = int(os.environ.get("OMP_NUM_THREADS", str(min(4, CPU_AVAIL))))
+N_THREADS = int(os.environ.get("OMP_NUM_THREADS", str(min(6, CPU_AVAIL))))
 os.environ["OMP_NUM_THREADS"] = str(N_THREADS)
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
@@ -572,7 +573,10 @@ if __name__ == "__main__":
         for sys_name, spec in selected_systems.items():
             actual_basis = select_basis_for_system(spec, args.basis)
             key = f"{args.basis}|{mode}|{sys_name}"
-            res = run_isolated_worker(sys_name, actual_basis, mode, tmp_worker_json, debug_nan=args.debug_nan)
+            try:
+                res = run_psi4_system(spec, actual_basis, mode)
+            except Exception as e:
+                res = {"error": str(e), "basis": actual_basis}
             results_db[key] = res
             if "error" not in res:
                 t_sum = sum(res["TIME"].values())
@@ -594,7 +598,10 @@ if __name__ == "__main__":
                 spec = SYSTEMS[sys_name]
                 actual_basis = select_basis_for_system(spec, "cc-pVDZ")
                 key = f"cc-pVDZ|{mode}|{sys_name}"
-                res = run_isolated_worker(sys_name, actual_basis, mode, tmp_worker_json, debug_nan=args.debug_nan)
+                try:
+                    res = run_psi4_system(spec, actual_basis, mode)
+                except Exception as e:
+                    res = {"error": str(e), "basis": actual_basis}
                 results_db[key] = res
                 if "error" not in res:
                     t_sum = sum(res["TIME"].values())

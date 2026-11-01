@@ -38,9 +38,7 @@ public:
 
     
 
-    void add_iteration(const Eigen::MatrixXd& F, 
-                       const Eigen::MatrixXd& err,
-                       const Eigen::MatrixXd& P);
+    void add_iteration(const Eigen::MatrixXd& F, const Eigen::MatrixXd& err);
 
     
 
@@ -58,14 +56,12 @@ private:
 
     
 
-    Eigen::VectorXd solve_cdiis(const Eigen::MatrixXd& B);
     Eigen::VectorXd solve_ediis(); 
 
     Eigen::MatrixXd B_matrix_;
 
     
 
-    double compute_ediis_element(int i, int j) const;
     Eigen::VectorXd solve_svd(const Eigen::MatrixXd& A);
 };
 

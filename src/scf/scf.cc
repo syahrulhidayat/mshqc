@@ -28,11 +28,9 @@
 #include <iomanip>
 #include <cmath>
 #include <algorithm>
-#include <numeric>
 #include <chrono>
 #include <omp.h>
 #include "mshqc/utils/hdf5_io.h"
-#include <tblis/tblis.h>
 #include <memory>
 #include <vector>
 #ifdef I
@@ -626,7 +624,7 @@ SCFResult BaseSCF::compute() {
                 bool strict_conv  = (dE < e_tol && dP < p_tol && err_rms < p_tol);
                 bool plateau_conv = (iter_scf_ > 24 && dE < e_tol && dP < 1e-10 && err_rms < 1e-10);
                 if (iter_scf_ > 2 && (strict_conv || plateau_conv)) {
-                    converged = true;
+                    trial_conv = true;
                     break;
                 }
             }
@@ -766,27 +764,10 @@ RHF::RHF(const Molecule& mol, const BasisSet& basis, std::shared_ptr<IntegralEng
 }
 
 void RHF::initial_guess() {
-    if (config_.print_level > 0) std::cout << "  [RHF] Generating Initial Guess... ";
+    if (config_.print_level > 0) std::cout << "  [RHF] Generating Initial Guess (SAD)...\n";
     Eigen::MatrixXd P_sad = SADGuess::build(mol_, basis_);
-    if (P_sad.rows() == nbasis_ && P_sad.norm() > 1e-6) {
-        if (config_.print_level > 0) std::cout << "Using SAD.\n";
-        P_alpha_ = 0.5 * P_sad;
-        P_beta_  = P_alpha_;
-        C_alpha_.resize(0, 0);
-        C_beta_.resize(0, 0);
-        energy_ = 0.0;
-        return;
-    }
-    if (config_.print_level > 0) std::cout << "Using GWH.\n";
-    Eigen::MatrixXd F_gwh = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-    for (int i = 0; i < nbasis_; ++i)
-        for (int j = 0; j < nbasis_; ++j)
-            F_gwh(i, j) = (i == j) ? H_(i, j) : 0.5 * 1.75 * S_(i, j) * (H_(i, i) + H_(j, j));
-    solve_fock(F_gwh, C_alpha_, eps_alpha_);
-    C_beta_ = C_alpha_;
-    eps_beta_ = eps_alpha_;
-    occ_numbers_alpha_.resize(0);
-    update_densities();
+    P_alpha_ = 0.5 * P_sad;
+    P_beta_  = P_alpha_;
     C_alpha_.resize(0, 0);
     C_beta_.resize(0, 0);
     energy_ = 0.0;
@@ -1135,40 +1116,21 @@ UHF::UHF(const Molecule& mol, const BasisSet& basis, std::shared_ptr<IntegralEng
 }
 
 void UHF::initial_guess() {
-    if (config_.print_level > 0) std::cout << "  [UHF] Generating Initial Guess... ";
+    if (config_.print_level > 0) std::cout << "  [UHF] Generating Initial Guess (SAD)...\n";
     Eigen::MatrixXd P_sad = SADGuess::build(mol_, basis_);
-    if (P_sad.rows() == nbasis_ && P_sad.norm() > 1e-6) {
-        if (config_.print_level > 0) std::cout << "Using SAD.\n";
-        P_alpha_ = 0.5 * P_sad;
-        P_beta_  = 0.5 * P_sad;
+    P_alpha_ = 0.5 * P_sad;
+    P_beta_  = 0.5 * P_sad;
 
-        if (mol_.n_atoms() == 1) {
-            solve_fock(H_, C_alpha_, eps_alpha_);
-            solve_fock(H_, C_beta_, eps_beta_);
-            occ_numbers_alpha_ = smear_electrons(eps_alpha_, n_alpha_);
-            occ_numbers_beta_  = smear_electrons(eps_beta_, n_beta_);
-        } else {
-            C_alpha_.resize(0, 0);
-            C_beta_.resize(0, 0);
-        }
-
-        energy_ = 0.0;
-        return;
+    if (mol_.n_atoms() == 1) {
+        solve_fock(H_, C_alpha_, eps_alpha_);
+        solve_fock(H_, C_beta_, eps_beta_);
+        occ_numbers_alpha_ = smear_electrons(eps_alpha_, n_alpha_);
+        occ_numbers_beta_  = smear_electrons(eps_beta_, n_beta_);
+    } else {
+        C_alpha_.resize(0, 0);
+        C_beta_.resize(0, 0);
     }
 
-    if (config_.print_level > 0) std::cout << "Using GWH.\n";
-    Eigen::MatrixXd F_gwh = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-    for (int i = 0; i < nbasis_; ++i) {
-        for (int j = 0; j < nbasis_; ++j) {
-            F_gwh(i, j) = (i == j) ? H_(i, j) : 0.5 * 1.75 * S_(i, j) * (H_(i, i) + H_(j, j));
-        }
-    }
-    solve_fock(F_gwh, C_alpha_, eps_alpha_);
-    C_beta_ = C_alpha_;
-    eps_beta_ = eps_alpha_;
-    occ_numbers_alpha_ = smear_electrons(eps_alpha_, n_alpha_);
-    occ_numbers_beta_  = smear_electrons(eps_beta_, n_beta_);
-    update_densities();
     energy_ = 0.0;
 }
 
@@ -1204,30 +1166,13 @@ ROHF::ROHF(const Molecule& mol, const BasisSet& basis, std::shared_ptr<IntegralE
 }
 
 void ROHF::initial_guess() {
-    if (config_.print_level > 0) std::cout << "  [ROHF] Generating Initial Guess... ";
+    if (config_.print_level > 0) std::cout << "  [ROHF] Generating Initial Guess (SAD)...\n";
     Eigen::MatrixXd P_sad = SADGuess::build(mol_, basis_);
-    if (P_sad.rows() == nbasis_ && P_sad.norm() > 1e-6) {
-        if (config_.print_level > 0) std::cout << "Using SAD.\n";
-        double n_tot = static_cast<double>(n_alpha_ + n_beta_);
-        double frac_a = (n_tot > 0.0) ? (static_cast<double>(n_alpha_) / n_tot) : 0.5;
-        double frac_b = (n_tot > 0.0) ? (static_cast<double>(n_beta_)  / n_tot) : 0.5;
-        P_alpha_ = frac_a * P_sad;
-        P_beta_  = frac_b * P_sad;
-        C_alpha_.resize(0, 0);
-        C_beta_.resize(0, 0);
-        energy_ = 0.0;
-        return;
-    }
-    Eigen::MatrixXd F_gwh = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-    for (int i = 0; i < nbasis_; ++i)
-        for (int j = 0; j < nbasis_; ++j)
-            F_gwh(i, j) = (i == j) ? H_(i, j) : 0.5 * 1.75 * S_(i, j) * (H_(i, i) + H_(j, j));
-    solve_fock(F_gwh, C_alpha_, eps_alpha_);
-    C_beta_ = C_alpha_;
-    eps_beta_ = eps_alpha_;
-    occ_numbers_alpha_.resize(0);
-    occ_numbers_beta_.resize(0);
-    update_densities();
+    double n_tot = static_cast<double>(n_alpha_ + n_beta_);
+    double frac_a = (n_tot > 0.0) ? (static_cast<double>(n_alpha_) / n_tot) : 0.5;
+    double frac_b = (n_tot > 0.0) ? (static_cast<double>(n_beta_)  / n_tot) : 0.5;
+    P_alpha_ = frac_a * P_sad;
+    P_beta_  = frac_b * P_sad;
     C_alpha_.resize(0, 0);
     C_beta_.resize(0, 0);
     energy_ = 0.0;
