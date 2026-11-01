@@ -498,13 +498,13 @@ SCFResult BaseSCF::compute() {
         if (iter_scf_ > 1) {
             Eigen::MatrixXd FPS_a = F_alpha_ * P_alpha_ * S_;
             Eigen::MatrixXd err_a = X_.transpose() * (FPS_a - FPS_a.transpose()) * X_;
-            diis_a.add_iteration(F_alpha_, err_a, P_alpha_);
+            diis_a.add_iteration(F_alpha_, err_a);
             F_eff_a = diis_a.extrapolate();
 
             if (is_uhf) {
                 Eigen::MatrixXd FPS_b = F_beta_ * P_beta_ * S_;
                 Eigen::MatrixXd err_b = X_.transpose() * (FPS_b - FPS_b.transpose()) * X_;
-                diis_b.add_iteration(F_beta_, err_b, P_beta_);
+                diis_b.add_iteration(F_beta_, err_b);
                 F_eff_b = diis_b.extrapolate();
                 err_rms = std::hypot(err_a.norm(), err_b.norm()) / nbasis_;
             } else {
@@ -599,12 +599,12 @@ SCFResult BaseSCF::compute() {
                 if (iter_scf_ > 1) {
                     Eigen::MatrixXd FPS_a = F_alpha_ * P_alpha_ * S_;
                     Eigen::MatrixXd err_a = X_.transpose() * (FPS_a - FPS_a.transpose()) * X_;
-                    trial_diis_a.add_iteration(F_alpha_, err_a, P_alpha_);
+                    trial_diis_a.add_iteration(F_alpha_, err_a);
                     F_eff_a = trial_diis_a.extrapolate();
 
                     Eigen::MatrixXd FPS_b = F_beta_ * P_beta_ * S_;
                     Eigen::MatrixXd err_b = X_.transpose() * (FPS_b - FPS_b.transpose()) * X_;
-                    trial_diis_b.add_iteration(F_beta_, err_b, P_beta_);
+                    trial_diis_b.add_iteration(F_beta_, err_b);
                     F_eff_b = trial_diis_b.extrapolate();
                     err_rms = std::hypot(err_a.norm(), err_b.norm()) / nbasis_;
                 }
@@ -1426,7 +1426,7 @@ SCFResult ROHF::compute() {
         Eigen::MatrixXd SC = S_ * C_alpha_;
         Eigen::MatrixXd F_eff_ao = SC * F_uni * SC.transpose();
         Eigen::MatrixXd FPS = F_eff_ao * P_alpha_ * S_;
-        diis.add_iteration(F_eff_ao, FPS - FPS.transpose(), P_alpha_);
+        diis.add_iteration(F_eff_ao, FPS - FPS.transpose());
         solve_fock((iter_scf_ <= 1) ? 0.7 * F_eff_ao + 0.3 * H_ : diis.extrapolate(), C_alpha_, eps_alpha_);
         C_beta_ = C_alpha_;
         eps_beta_ = eps_alpha_;

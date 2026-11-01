@@ -46,21 +46,11 @@ public:
 
 private:
     int max_vectors_;
-    
-    
 
     std::deque<Eigen::MatrixXd> fock_history_;
     std::deque<Eigen::MatrixXd> error_history_;
-    std::deque<Eigen::MatrixXd> density_history_; 
-
-
-    
-
-    Eigen::VectorXd solve_ediis(); 
 
     Eigen::MatrixXd B_matrix_;
-
-    
 
     Eigen::VectorXd solve_svd(const Eigen::MatrixXd& A);
 };

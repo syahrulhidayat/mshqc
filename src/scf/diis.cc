@@ -152,7 +152,7 @@ Eigen::MatrixXd DIIS::extrapolate() {
 
     Eigen::MatrixXd F_ext = Eigen::MatrixXd::Zero(fock_history_[0].rows(), fock_history_[0].cols());
     for (int i = 0; i < n; i++) {
-        F_ext += coeffs(i) * fock_history_[i];
+        F_ext.noalias() += coeffs(i) * fock_history_[i];
     }
 
     return F_ext;
