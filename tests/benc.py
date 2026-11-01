@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 import os
-import sys
 import time
 import ctypes
 import tempfile
 
 # =====================================================================
-# 1. KONFIGURASI HPC & LINGKUNGAN (Full Multi-Threaded BLAS & OpenMP)
+# 1. KONFIGURASI HPC & LINGKUNGAN (Bebas Nested Thread Contention)
 # =====================================================================
 try:
     os.sched_setaffinity(0, set(range(os.cpu_count() or 4)))
@@ -16,12 +15,8 @@ except Exception:
 cpu_avail = os.cpu_count() or 4
 n_threads = int(os.environ.get("OMP_NUM_THREADS", str(min(6, cpu_avail))))
 os.environ["OMP_NUM_THREADS"] = str(n_threads)
-os.environ["OPENBLAS_NUM_THREADS"] = str(n_threads)
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = str(n_threads)
-os.environ["BLIS_NUM_THREADS"] = str(n_threads)
-os.environ["VECLIB_MAXIMUM_THREADS"] = str(n_threads)
-os.environ["NUMEXPR_NUM_THREADS"] = str(n_threads)
-os.environ["MKL_DYNAMIC"] = "FALSE"
 os.environ["OMP_MAX_ACTIVE_LEVELS"] = "1"
 os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
@@ -36,59 +31,19 @@ psi4.core.be_quiet()
 
 
 def _load_blas_setters():
-    """Mencari simbol pengatur jumlah thread BLAS (MKL / OpenBLAS) termasuk di Conda/Micromamba."""
+    """Mencari simbol pengatur jumlah thread BLAS (MKL / OpenBLAS) yang sudah dimuat di memori."""
     setters = []
-    lib_names = ("libmkl_rt.so", "libmkl_rt.so.2", "libopenblas.so", "libopenblas.so.0")
-    candidates = []
-
-    env_lib_dirs = [
-        os.path.join(sys.prefix, "lib"),
-        os.environ.get("CONDA_PREFIX", "") and os.path.join(os.environ["CONDA_PREFIX"], "lib"),
-    ]
-    for d in env_lib_dirs:
-        if d and os.path.isdir(d):
-            for name in lib_names:
-                full_p = os.path.join(d, name)
-                if os.path.exists(full_p):
-                    candidates.append(full_p)
-
-    if os.path.exists("/proc/self/maps"):
-        try:
-            with open("/proc/self/maps", "r", encoding="utf-8") as f:
-                for line in f:
-                    parts = line.strip().split()
-                    if len(parts) >= 6 and parts[5].startswith("/"):
-                        path = parts[5]
-                        base = os.path.basename(path)
-                        if ("mkl_rt" in base or "openblas" in base) and path not in candidates:
-                            candidates.append(path)
-        except Exception:
-            pass
-
-    candidates.extend(lib_names)
-    candidates.append(None)
-
-    seen_ptrs = set()
-    for lib_name in candidates:
+    for lib_name in ("libmkl_rt.so", "libmkl_rt.so.2", "libopenblas.so", "libopenblas.so.0", None):
         try:
             lib = ctypes.CDLL(lib_name)
         except Exception:
             continue
-        for fn_name in ("MKL_Set_Num_Threads", "MKL_Domain_Set_Num_Threads", "openblas_set_num_threads"):
+        for fn_name in ("MKL_Set_Num_Threads", "openblas_set_num_threads"):
             if hasattr(lib, fn_name):
                 fn = getattr(lib, fn_name)
-                ptr = ctypes.cast(fn, ctypes.c_void_p).value
-                if ptr not in seen_ptrs:
-                    seen_ptrs.add(ptr)
-                    if fn_name == "MKL_Domain_Set_Num_Threads":
-                        fn.argtypes = [ctypes.c_int, ctypes.c_int]
-                        fn.restype = ctypes.c_int
-                        # Set untuk MKL_DOMAIN_ALL (0) dan MKL_DOMAIN_BLAS (1)
-                        setters.append(lambda n, f=fn: (f(int(n), 0), f(int(n), 1)))
-                    else:
-                        fn.argtypes = [ctypes.c_int]
-                        fn.restype = None
-                        setters.append(fn)
+                fn.argtypes = [ctypes.c_int]
+                fn.restype = None
+                setters.append(fn)
     return setters
 
 
@@ -96,7 +51,7 @@ _BLAS_SETTERS = _load_blas_setters()
 
 
 def set_blas_threads(num_t: int):
-    """Mengatur jumlah thread BLAS secara dinamis untuk seluruh operasi matriks dan kontraksi C_DGEMM."""
+    """Mengatur jumlah thread BLAS secara dinamis untuk modul korelasi pasca-HF (occ & dfocc)."""
     for fn in _BLAS_SETTERS:
         try:
             fn(int(num_t))
@@ -104,10 +59,8 @@ def set_blas_threads(num_t: int):
             pass
 
 
-set_blas_threads(n_threads)
-
 # ==============================================================================
-# 2. KONFIGURASI GLOBAL PSI4 (SIMETRI ABELIAN MAKSIMAL & MULTI-THREADED BLAS)
+# 2. KONFIGURASI GLOBAL PSI4 (BEST-VS-BEST APPLE-TO-APPLE DENGAN MSHQC)
 # ==============================================================================
 BASIS_NAME = "cc-pVTZ"
 AUX_BASIS  = "cc-pVTZ-RI"
@@ -132,14 +85,14 @@ SYSTEMS = [
 RESULTS_DB = []
 
 
-def build_psi4_mol(atoms, chg, mult, eri_mode="exact", force_c1=False):
+def build_psi4_mol(atoms, chg, mult, eri_mode="exact"):
     """
-    Membangun objek molekul Psi4:
-    - Mode 'exact' menggunakan simetri grup titik Abelian penuh (D2h/C2v) saat force_c1=False.
-    - Mode 'df' dan 'cholesky' menggunakan C1 karena modul dfocc Psi4 hanya mendukung 1 irrep (C1).
+    Membangun objek molekul Psi4 pada kekuatan maksimal:
+    - Mode EXACT menggunakan simetri Abelian penuh (D2h untuk atom, C2v untuk H2O).
+    - Mode DF & CHOLESKY menggunakan symmetry c1 (karena modul dfocc Psi4 hanya mendukung C1).
     """
     lines = [f"{chg} {mult}", "units bohr"]
-    if force_c1 or eri_mode in ["df", "cholesky"]:
+    if eri_mode in ["df", "cholesky"]:
         lines.append("symmetry c1")
     for z, x, y, z_c in atoms:
         lines.append(f"{Z_TO_SYM[z]} {x:.12f} {y:.12f} {z_c:.12f}")
@@ -177,13 +130,11 @@ def restore_wfn(wfn, snap):
         wfn.epsilon_b().copy(snap["eb"])
 
 
-def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode, force_c1=False):
+def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
     psi4.core.clean()
     psi4.core.clean_options()
-    psi4.set_num_threads(n_threads)
-    set_blas_threads(n_threads)
 
-    mol = build_psi4_mol(atoms, chg, mult, eri_mode, force_c1=force_c1)
+    mol = build_psi4_mol(atoms, chg, mult, eri_mode)
 
     if eri_mode == "exact":
         scf_type, corr_type = "pk", "conv"
@@ -196,20 +147,18 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode, force_
         "basis": basis_name,
         "reference": ref,
         "e_convergence": THRESHOLD,
-        "d_convergence": 1e-8,
+        "d_convergence": THRESHOLD,
         "scf_type": scf_type,
         "mp2_type": corr_type,
         "mp_type": corr_type,
         "cc_type": corr_type,
-        "hess_type": "approx_diag",
         "freeze_core": "false",
-        "r_convergence": 1e-5,
+        "r_convergence": 1e-6,
         "rms_mograd_convergence": 1e-5,
         "max_mograd_convergence": 1e-4,
         "maxiter": 200,
         "mo_maxiter": 50,
         "cachelevel": 2,
-        "df_ints_num_threads": n_threads,
         "read_scf_3index": False,
     }
 
@@ -220,8 +169,8 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode, force_
 
     psi4.set_options(opts)
 
-    # --- 1. SCF (Full N_THREADS untuk OpenMP & BLAS) ---
-    set_blas_threads(n_threads)
+    # --- 1. SCF (OpenMP paralel di dalam libfock -> BLAS = 1 thread) ---
+    set_blas_threads(1)
     t0_scf = time.perf_counter()
     try:
         e_scf, scf_wfn = psi4.energy("scf", molecule=mol, return_wfn=True)
@@ -233,71 +182,63 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode, force_
 
     hf_snap = snapshot_wfn(scf_wfn)
 
-    # Wajib: MemDFJK (SCF) tidak menulis entri (Q|mn) ke disk Unit 97 (PSIF_DFSCF_BJ),
-    # sehingga dfocc harus membangun tensor 3-indeksnya sendiri (read_scf_3index=False).
+    # Wajib agar dfocc tidak mengalami PSIO_ERROR pada Unit 97 (PSIF_DFSCF_BJ)
     if eri_mode in ["cholesky", "df"]:
         psi4.set_options({"scf_type": "pk", "read_scf_3index": False})
 
-    # Pastikan n_threads penuh aktif pada BLAS untuk occ (EXACT) maupun dfocc (CHOLESKY/DF)
+    # Aktifkan multi-thread BLAS untuk seluruh modul pasca-HF (occ maupun dfocc)
     set_blas_threads(n_threads)
 
-    # --- 2. MP2 ---
-    mp2_label = "RMP2" if ref == "rhf" else "UMP2"
-    set_blas_threads(n_threads)
-    t0_mp2 = time.perf_counter()
     try:
-        e_mp2 = float(psi4.energy("mp2", ref_wfn=scf_wfn, molecule=mol))
-        t_mp2 = time.perf_counter() - t0_mp2
-    except Exception:
-        e_mp2, t_mp2 = None, 0.0
-    psi4.core.clean()
-    restore_wfn(scf_wfn, hf_snap)
+        # --- 2. MP2 ---
+        mp2_label = "RMP2" if ref == "rhf" else "UMP2"
+        t0_mp2 = time.perf_counter()
+        try:
+            e_mp2 = psi4.energy("mp2", ref_wfn=scf_wfn, molecule=mol)
+            t_mp2 = time.perf_counter() - t0_mp2
+        except Exception:
+            e_mp2, t_mp2 = None, 0.0
+        psi4.core.clean()
+        restore_wfn(scf_wfn, hf_snap)
 
-    # --- 3. MP3 ---
-    mp3_label = "RMP3" if ref == "rhf" else "UMP3"
-    set_blas_threads(n_threads)
-    t0_mp3 = time.perf_counter()
-    try:
-        e_mp3 = float(psi4.energy("mp3", ref_wfn=scf_wfn, molecule=mol))
-        t_mp3 = time.perf_counter() - t0_mp3
-    except Exception:
-        e_mp3, t_mp3 = None, 0.0
-    psi4.core.clean()
-    restore_wfn(scf_wfn, hf_snap)
+        # --- 3. MP3 ---
+        mp3_label = "RMP3" if ref == "rhf" else "UMP3"
+        t0_mp3 = time.perf_counter()
+        try:
+            e_mp3 = psi4.energy("mp3", ref_wfn=scf_wfn, molecule=mol)
+            t_mp3 = time.perf_counter() - t0_mp3
+        except Exception:
+            e_mp3, t_mp3 = None, 0.0
+        psi4.core.clean()
+        restore_wfn(scf_wfn, hf_snap)
 
-    # --- 4. OMP2 ---
-    psi4.set_options({"do_diis": True})
-    set_blas_threads(n_threads)
-    t0_omp2 = time.perf_counter()
-    try:
-        e_omp2 = float(psi4.energy("omp2", ref_wfn=scf_wfn, molecule=mol))
-        t_omp2 = time.perf_counter() - t0_omp2
-    except Exception:
-        e_omp2, t_omp2 = None, 0.0
-    psi4.core.clean()
-    restore_wfn(scf_wfn, hf_snap)
+        # --- 4. OMP2 ---
+        t0_omp2 = time.perf_counter()
+        try:
+            e_omp2 = psi4.energy("omp2", ref_wfn=scf_wfn, molecule=mol)
+            t_omp2 = time.perf_counter() - t0_omp2
+        except Exception:
+            e_omp2, t_omp2 = None, 0.0
+        psi4.core.clean()
+        restore_wfn(scf_wfn, hf_snap)
 
-    # --- 5. OMP3 ---
-    # Pada RHF CD/DF-OMP3, matikan oo_diis karena bug C++ di dfocc/occ_iterations.cc:346
-    if ref == "rhf" and eri_mode in ["cholesky", "df"]:
-        psi4.set_options({"do_diis": False})
-    else:
-        psi4.set_options({"do_diis": True})
-    set_blas_threads(n_threads)
-    t0_omp3 = time.perf_counter()
-    try:
-        e_omp3 = float(psi4.energy("omp3", ref_wfn=scf_wfn, molecule=mol))
-        t_omp3 = time.perf_counter() - t0_omp3
-    except Exception:
-        e_omp3, t_omp3 = None, 0.0
-    psi4.core.clean()
+        # --- 5. OMP3 ---
+        t0_omp3 = time.perf_counter()
+        try:
+            e_omp3 = psi4.energy("omp3", ref_wfn=scf_wfn, molecule=mol)
+            t_omp3 = time.perf_counter() - t0_omp3
+        except Exception:
+            e_omp3, t_omp3 = None, 0.0
+        psi4.core.clean()
+    finally:
+        set_blas_threads(1)
 
     return e_scf, t_scf, mp2_label, e_mp2, t_mp2, mp3_label, e_mp3, t_mp3, e_omp2, t_omp2, e_omp3, t_omp3
 
 
 def main():
     print("==========================================================================================================", flush=True)
-    print(f"  PSI4 BENCHMARK (ABELIAN SYMMETRY + FULL BLAS) | THREADS: {n_threads} | EXACT vs CHOLESKY vs DF (HF..OMP3)", flush=True)
+    print("  PSI4 BENCHMARK (APPLE-TO-APPLE) | EXACT vs CHOLESKY vs DF (HF, MP2, MP3, OMP2, OMP3)", flush=True)
     print(f"  Basis: {BASIS_NAME} | Aux Basis: {AUX_BASIS} | Chol Tol: {CHOLESKY_THRESH} | E_conv: 1e-09 | Grad_conv: 1e-05", flush=True)
     print("==========================================================================================================", flush=True)
 
@@ -309,7 +250,7 @@ def main():
         for eri_mode in ERI_MODES:
             print(f"Running: {sys_name:<8} -> {ref_label}, {mp2_lbl}, {mp3_lbl}, OMP2, & OMP3 (Integral: {eri_mode.upper()})", flush=True)
 
-            res = run_psi4_bench(sys_name, atoms, chg, mult, ref, BASIS_NAME, eri_mode, force_c1=False)
+            res = run_psi4_bench(sys_name, atoms, chg, mult, ref, BASIS_NAME, eri_mode)
             e_scf, t_scf, mp2_label, e_mp2, t_mp2, mp3_label, e_mp3, t_mp3, e_omp2, t_omp2, e_omp3, t_omp3 = res
 
             if e_scf is not None: RESULTS_DB.append({"sys": sys_name, "eri": eri_mode.upper(), "method": ref_label, "psi4_e": e_scf, "psi4_t": t_scf})
