@@ -6,7 +6,9 @@
 venv/
 .venv/
 env/
+
 tunning/
+.local_archive/
 ActiveState.venv
 environment.yml.user
 
