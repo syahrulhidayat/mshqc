@@ -253,7 +253,7 @@ def compute_mshqc_suite():
                 t_scf = time.perf_counter() - t0
             na, nb = scf_res.n_occ_alpha, scf_res.n_occ_beta
             s_ideal, s2_uhf = compute_spin_s2(ints, scf_res, na, nb)
-            print(f"| {sys_name:<8} | {mode:<9} | {ref_lbl+'HF':<6} | {scf_res.energy_total:<16.8f} | {t_scf:<9.3f} | {s2_uhf:<10.6f} | {s_ideal:<6.2f} | {int(scf_res.iterations):<6} | {'OK':<6} |", flush=True)
+            print(f"| {sys_name:<8} | {mode:<9} | {ref_lbl+'HF':<6} | {scf_res.energy_total:<16.8f} | {t_scf:<9.3f} | {s2_uhf:<10.6f} | {s_ideal:<6.2f} | {'-':<6} | {'OK':<6} |", flush=True)
 
             rohf_entry = None
             t_rohf = 0.0
@@ -263,12 +263,11 @@ def compute_mshqc_suite():
                     rohf_res = mshqc.ROHF(mol, basis, ints, scf_conf).compute()
                     t_rohf = time.perf_counter() - t0
                 _, s2_rohf = compute_spin_s2(ints, rohf_res, rohf_res.n_occ_alpha, rohf_res.n_occ_beta)
-                print(f"| {sys_name:<8} | {mode:<9} | {'ROHF':<6} | {rohf_res.energy_total:<16.8f} | {t_rohf:<9.3f} | {s2_rohf:<10.6f} | {s_ideal:<6.2f} | {int(rohf_res.iterations):<6} | {'OK':<6} |", flush=True)
+                print(f"| {sys_name:<8} | {mode:<9} | {'ROHF':<6} | {rohf_res.energy_total:<16.8f} | {t_rohf:<9.3f} | {s2_rohf:<10.6f} | {s_ideal:<6.2f} | {'-':<6} | {'OK':<6} |", flush=True)
                 rohf_entry = {
                     "e": float(rohf_res.energy_total),
                     "t": t_rohf,
                     "s2": s2_rohf,
-                    "iter": int(rohf_res.iterations),
                 }
 
             with capture_c_stdout():
@@ -314,7 +313,7 @@ def compute_mshqc_suite():
             tot_solver_s += (t_scf + t_rohf + t_mp2 + t_mp3 + t_omp2 + t_omp3)
             entry_dict = {
                 "s_ideal": s_ideal,
-                "SCF":  {"e": float(scf_res.energy_total),  "t": t_scf,  "s2": s2_uhf, "iter": int(scf_res.iterations)},
+                "SCF":  {"e": float(scf_res.energy_total),  "t": t_scf,  "s2": s2_uhf},
                 "MP2":  {"e": float(res_mp2.energy_total),  "t": t_mp2},
                 "MP3":  {"e": float(res_mp3.energy_total),  "t": t_mp3},
                 "OMP2": {"e": float(res_omp2.energy_total), "t": t_omp2, "iter": int(res_omp2.iterations), "s2": s2_omp2},
@@ -328,6 +327,7 @@ def compute_mshqc_suite():
     print("=" * 106, flush=True)
     print(f"  Total Waktu Solver MSHQC (120 Run): {tot_solver_s:.3f} s", flush=True)
     return ref_suite, traces
+
 
 def compute_table1_and_table2():
     table1_rows, table2_rows = [], []
