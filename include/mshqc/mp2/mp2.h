@@ -67,6 +67,7 @@ struct MP2Result {
     double energy_mp2_ss = 0.0;
     double energy_mp2_os = 0.0;
     double energy_total = 0.0;
+    double energy_mp2_singles = 0.0;
     
     
 
@@ -199,7 +200,7 @@ public:
     
     T2Amplitudes get_t2_amplitudes() const;
     
-private:
+protected:
     Eigen::Tensor<double, 4> eri_aaaa_;  
     Eigen::Tensor<double, 4> eri_bbbb_;  
     Eigen::Tensor<double, 4> eri_aabb_;  
@@ -213,8 +214,6 @@ private:
     double compute_os();
 };
 
-// Di dalam struct MP2Result (include/mshqc/mp2/mp2.h):
-double energy_mp2_singles = 0.0;
 
 // Deklarasi kelas ROMP2 (setelah deklarasi kelas UMP2):
 class ROMP2 : public UMP2 {
