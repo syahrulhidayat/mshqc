@@ -201,6 +201,59 @@ def restore_wfn(wfn, snap):
         for k, g in (("Cb", wfn.Cb), ("Db", wfn.Db), ("Fb", wfn.Fb), ("eb", wfn.epsilon_b)):
             g().copy(snap[k])
 
+def semicanonicalize_rohf_wfn(wfn) -> float:
+    """Rotasi orbital ROHF ke basis semikanonik (per-irrep) dan hitung E_singles (MP2)."""
+    e_singles = 0.0
+    nalphapi = wfn.nalphapi()
+    nbetapi = wfn.nbetapi()
+    for h in range(wfn.nirrep()):
+        nso = wfn.Ca().nph[h].shape[0]
+        if nso == 0:
+            continue
+
+        # Kanal spin Alpha (DOCC + SOCC vs VIR)
+        na = nalphapi[h]
+        va = nso - na
+        Ca_h = np.array(wfn.Ca().nph[h], copy=True)
+        Fa_h = np.asarray(wfn.Fa().nph[h])
+        if na > 0:
+            Foo_a = Ca_h[:, :na].T @ Fa_h @ Ca_h[:, :na]
+            eo_a, Uo_a = np.linalg.eigh(0.5 * (Foo_a + Foo_a.T))
+            Ca_h[:, :na] = Ca_h[:, :na] @ Uo_a
+            wfn.epsilon_a().nph[h][:na] = eo_a
+        if va > 0:
+            Fvv_a = Ca_h[:, na:].T @ Fa_h @ Ca_h[:, na:]
+            ev_a, Uv_a = np.linalg.eigh(0.5 * (Fvv_a + Fvv_a.T))
+            Ca_h[:, na:] = Ca_h[:, na:] @ Uv_a
+            wfn.epsilon_a().nph[h][na:] = ev_a
+        wfn.Ca().nph[h][:, :] = Ca_h
+        if na > 0 and va > 0:
+            Fov_a = Ca_h[:, :na].T @ Fa_h @ Ca_h[:, na:]
+            denom_a = wfn.epsilon_a().nph[h][:na, None] - wfn.epsilon_a().nph[h][None, na:]
+            e_singles += float(np.sum((Fov_a ** 2) / denom_a))
+
+        # Kanal spin Beta (DOCC vs SOCC + VIR)
+        nb = nbetapi[h]
+        vb = nso - nb
+        Cb_h = np.array(wfn.Cb().nph[h], copy=True)
+        Fb_h = np.asarray(wfn.Fb().nph[h])
+        if nb > 0:
+            Foo_b = Cb_h[:, :nb].T @ Fb_h @ Cb_h[:, :nb]
+            eo_b, Uo_b = np.linalg.eigh(0.5 * (Foo_b + Foo_b.T))
+            Cb_h[:, :nb] = Cb_h[:, :nb] @ Uo_b
+            wfn.epsilon_b().nph[h][:nb] = eo_b
+        if vb > 0:
+            Fvv_b = Cb_h[:, nb:].T @ Fb_h @ Cb_h[:, nb:]
+            ev_b, Uv_b = np.linalg.eigh(0.5 * (Fvv_b + Fvv_b.T))
+            Cb_h[:, nb:] = Cb_h[:, nb:] @ Uv_b
+            wfn.epsilon_b().nph[h][nb:] = ev_b
+        wfn.Cb().nph[h][:, :] = Cb_h
+        if nb > 0 and vb > 0:
+            Fov_b = Cb_h[:, :nb].T @ Fb_h @ Cb_h[:, nb:]
+            denom_b = wfn.epsilon_b().nph[h][:nb, None] - wfn.epsilon_b().nph[h][None, nb:]
+            e_singles += float(np.sum((Fov_b ** 2) / denom_b))
+
+    return e_singles
 
 def calc_s2_wfn(wfn, is_uhf: bool):
     if not is_uhf:
@@ -334,13 +387,19 @@ def compute_psi4_suite():
                     for ro_key, ro_call in (("ROMP2", "mp2"), ("ROMP3", "mp3")):
                         try:
                             t0 = time.perf_counter()
-                            e_ro_val = float(psi4.energy(ro_call, ref_wfn=rohf_wfn, molecule=mol))
+                            if ro_key == "ROMP2":
+                                psi4.set_options({"reference": "rohf"})
+                                e_ro_val = float(psi4.energy(ro_call, ref_wfn=rohf_wfn, molecule=mol))
+                            else:
+                                e_singles_ro = semicanonicalize_rohf_wfn(rohf_wfn)
+                                psi4.set_options({"reference": "uhf"})
+                                e_ro_val = float(psi4.energy(ro_call, ref_wfn=rohf_wfn, molecule=mol)) + e_singles_ro
                             t_ro_val = time.perf_counter() - t0
                             entry[ro_key] = {"e": e_ro_val, "t": t_ro_val}
                             tot_solver_s += t_ro_val
                             print(f"| {sys_name:<8} | {mode_upper:<9} | {ro_key:<6} | {e_ro_val:<16.8f} | {t_ro_val:<9.3f} | {'-':<10} | {s_ideal:<6.2f} | {'-':<6} | {'OK':<6} |", flush=True)
-                        except Exception:
-                            pass
+                        except Exception as ex:
+                            print(f"| {sys_name:<8} | {mode_upper:<9} | {ro_key:<6} | {'ERROR':<16} | {0.0:<9.3f} | {'-':<10} | {s_ideal:<6.2f} | {'-':<6} | {'FAIL':<6} | ({ex})", flush=True)
                         psi4.core.clean()
                         restore_wfn(rohf_wfn, rohf_snap)
                     set_blas_threads(1)
