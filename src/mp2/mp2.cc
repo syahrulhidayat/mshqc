@@ -440,6 +440,139 @@ T2Amplitudes UMP2::get_t2_amplitudes() const {
     amps.t2_ab = t2_ab_;
     return amps;
 }
+void ROMP2::semicanonicalize() {
+    // Pastikan matriks Fock AO fisik tersedia; jika belum ada, bangun dari matriks densitas ROHF
+    if (scf_.F_alpha.rows() != nbf_ || scf_.F_beta.rows() != nbf_) {
+        throw std::runtime_error("ROMP2 Error: F_alpha / F_beta AO matrices are missing in SCFResult.");
+    }
+
+    auto diag_subspaces = [&](const Eigen::MatrixXd& F_ao, Eigen::MatrixXd& C,
+                              Eigen::VectorXd& eps, int nocc, int nvir) {
+        if (nocc <= 0 || nvir <= 0) return;
+        Eigen::MatrixXd C_occ = C.leftCols(nocc);
+        Eigen::MatrixXd C_vir = C.rightCols(nvir);
+
+        Eigen::MatrixXd F_oo = C_occ.transpose() * F_ao * C_occ;
+        Eigen::MatrixXd F_vv = C_vir.transpose() * F_ao * C_vir;
+
+        Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_o(0.5 * (F_oo + F_oo.transpose()));
+        Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_v(0.5 * (F_vv + F_vv.transpose()));
+
+        C.leftCols(nocc).noalias()  = C_occ * es_o.eigenvectors();
+        C.rightCols(nvir).noalias() = C_vir * es_v.eigenvectors();
+
+        eps.resize(nocc + nvir);
+        eps.head(nocc) = es_o.eigenvalues();
+        eps.tail(nvir) = es_v.eigenvalues();
+    };
+
+    // Semikanonikalisasi kanal spin Alpha (DOCC + SOCC vs VIR)
+    diag_subspaces(scf_.F_alpha, scf_.C_alpha, scf_.orbital_energies_alpha, nocc_a_, nvir_a_);
+    scf_.P_alpha.noalias() = scf_.C_alpha.leftCols(nocc_a_) * scf_.C_alpha.leftCols(nocc_a_).transpose();
+
+    // Semikanonikalisasi kanal spin Beta (DOCC vs SOCC + VIR)
+    if (nocc_b_ > 0 && nvir_b_ > 0) {
+        diag_subspaces(scf_.F_beta, scf_.C_beta, scf_.orbital_energies_beta, nocc_b_, nvir_b_);
+        scf_.P_beta.noalias() = scf_.C_beta.leftCols(nocc_b_) * scf_.C_beta.leftCols(nocc_b_).transpose();
+    }
+}
+
+double ROMP2::compute_singles_energy() const {
+    double e_singles = 0.0;
+
+    if (nocc_a_ > 0 && nvir_a_ > 0) {
+        const Eigen::MatrixXd& Ca_occ = scf_.C_alpha.leftCols(nocc_a_);
+        const Eigen::MatrixXd& Ca_vir = scf_.C_alpha.rightCols(nvir_a_);
+        Eigen::MatrixXd F_ov_a = Ca_occ.transpose() * scf_.F_alpha * Ca_vir;
+        const auto& eps_a = scf_.orbital_energies_alpha;
+
+        for (int i = n_frozen_; i < nocc_a_; ++i) {
+            for (int a = 0; a < nvir_a_; ++a) {
+                double denom = eps_a(i) - eps_a(nocc_a_ + a);
+                if (std::abs(denom) > 1e-12) {
+                    e_singles += (F_ov_a(i, a) * F_ov_a(i, a)) / denom;
+                }
+            }
+        }
+    }
+
+    if (nocc_b_ > 0 && nvir_b_ > 0) {
+        const Eigen::MatrixXd& Cb_occ = scf_.C_beta.leftCols(nocc_b_);
+        const Eigen::MatrixXd& Cb_vir = scf_.C_beta.rightCols(nvir_b_);
+        Eigen::MatrixXd F_ov_b = Cb_occ.transpose() * scf_.F_beta * Cb_vir;
+        const auto& eps_b = scf_.orbital_energies_beta;
+
+        for (int i = n_frozen_; i < nocc_b_; ++i) {
+            for (int a = 0; a < nvir_b_; ++a) {
+                double denom = eps_b(i) - eps_b(nocc_b_ + a);
+                if (std::abs(denom) > 1e-12) {
+                    e_singles += (F_ov_b(i, a) * F_ov_b(i, a)) / denom;
+                }
+            }
+        }
+    }
+
+    return e_singles;
+}
+
+MP2Result ROMP2::compute() {
+    auto start_time = std::chrono::high_resolution_clock::now();
+
+    // 1. Rotasi satu langkah ke basis semikanonik untuk menghapus artefak level-shift ROHF
+    semicanonicalize();
+
+    // 2. Transformasi integral 3-indeks (DF/Cholesky) atau persiapan Exact
+    transform_integrals();
+    if (config_.eri_method != "exact" && nocc_a_ == nocc_b_ && B_ia_P_beta_.rows() == 0) {
+        B_ia_P_beta_ = B_ia_P_alpha_;
+    }
+
+    // 3. Evaluasi energi Singles (non-Brillouin) dan Doubles (AA, BB, AB)
+    double e_singles = compute_singles_energy();
+    double e_ss_aa   = compute_ss_alpha();
+    double e_ss_bb   = compute_ss_beta();
+    double e_os      = compute_os();
+    double e_corr    = e_singles + e_ss_aa + e_ss_bb + e_os;
+
+    auto end_time = std::chrono::high_resolution_clock::now();
+
+    MP2Result result;
+    result.converged               = true;
+    result.iterations              = 1;
+    result.energy_scf              = scf_.energy_total;
+    result.energy_mp2_singles      = e_singles;
+    result.energy_mp2_ss           = e_ss_aa + e_ss_bb;
+    result.energy_mp2_os           = e_os;
+    result.energy_mp2_corr         = e_corr;
+    result.energy_total            = scf_.energy_total + e_corr;
+    result.t2_aa                   = t2_aa_;
+    result.t2_bb                   = t2_bb_;
+    result.t2_ab                   = t2_ab_;
+    result.B_ia_P_alpha            = B_ia_P_alpha_;
+    result.B_ia_P_beta             = B_ia_P_beta_;
+    result.C_alpha                 = scf_.C_alpha;
+    result.C_beta                  = scf_.C_beta;
+    result.orbital_energies_alpha  = scf_.orbital_energies_alpha;
+    result.orbital_energies_beta   = scf_.orbital_energies_beta;
+    result.n_occ_alpha  = nocc_a_;
+    result.n_occ_beta   = nocc_b_;
+    result.n_virt_alpha = nvir_a_;
+    result.n_virt_beta  = nvir_b_;
+
+    if (config_.print_level > 0 && omp_get_thread_num() == 0) {
+        std::cout << "\n=== ROMP2 Results (" << config_.eri_method << ") ===\n";
+        std::cout << std::fixed << std::setprecision(8);
+        std::cout << "ROHF Energy:     " << std::setw(14) << result.energy_scf << " Ha\n";
+        std::cout << "Singles Energy:  " << std::setw(14) << e_singles << " Ha\n";
+        std::cout << "SS Energy (AA):  " << std::setw(14) << e_ss_aa << " Ha\n";
+        std::cout << "SS Energy (BB):  " << std::setw(14) << e_ss_bb << " Ha\n";
+        std::cout << "OS Energy (AB):  " << std::setw(14) << e_os << " Ha\n";
+        std::cout << "Correlation E:   " << std::setw(14) << e_corr << " Ha\n";
+        std::cout << "Total ROMP2:     " << std::setw(14) << result.energy_total << " Ha\n";
+        std::cout << "Time:            " << std::chrono::duration<double>(end_time - start_time).count() << " s\n";
+    }
+    return result;
+}
 
 OMP2::OMP2(const Molecule& mol, const BasisSet& basis, 
            std::shared_ptr<IntegralEngine> integrals, 

@@ -78,6 +78,15 @@ public:
     using BaseMP3::BaseMP3;
     MP3Result compute() override;
 };
+// Deklarasi kelas ROMP3 (setelah deklarasi kelas UMP3):
+class ROMP3 : public UMP3 {
+public:
+    ROMP3(const SCFResult& scf, const MP2Result& mp2,
+          const MP2Config& config, std::shared_ptr<IntegralEngine> ints);
+    ~ROMP3() override = default;
+
+    MP3Result compute() override;
+};
 } 
 
 #endif

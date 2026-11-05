@@ -903,6 +903,39 @@ MP3Result UMP3::compute() {
     }
     return res;
 }
+ROMP3::ROMP3(const SCFResult& scf, const MP2Result& mp2,
+             const MP2Config& config, std::shared_ptr<IntegralEngine> ints)
+    : UMP3(scf, mp2, config, ints)
+{
+    // Gunakan orbital dan energi semikanonik yang sudah dihitung oleh ROMP2
+    if (mp2_.C_alpha.rows() == nbf_ && mp2_.C_beta.rows() == nbf_) {
+        scf_.C_alpha = mp2_.C_alpha;
+        scf_.C_beta  = mp2_.C_beta;
+    }
+    if (mp2_.orbital_energies_alpha.size() == nbf_) {
+        scf_.orbital_energies_alpha = mp2_.orbital_energies_alpha;
+    }
+    if (mp2_.orbital_energies_beta.size() == nbf_) {
+        scf_.orbital_energies_beta = mp2_.orbital_energies_beta;
+    }
+    if (config_.eri_method != "exact" && no_a_ == no_b_ && mp2_.B_ia_P_beta.rows() == 0) {
+        mp2_.B_ia_P_beta = mp2_.B_ia_P_alpha;
+    }
+}
+
+MP3Result ROMP3::compute() {
+    if (omp_get_thread_num() == 0 && config_.print_level > 0) {
+        std::cout << "\n=== ROMP3 (Single-Shot Semicanonical TBLIS) ===\n";
+    }
+    MP3Result res = UMP3::compute();
+    res.converged  = true;
+    res.iterations = 1;
+    res.C_alpha    = scf_.C_alpha;
+    res.C_beta     = scf_.C_beta;
+    res.n_occ_alpha = no_a_;
+    res.n_occ_beta  = no_b_;
+    return res;
+}
 
 
 

@@ -213,7 +213,21 @@ private:
     double compute_os();
 };
 
+// Di dalam struct MP2Result (include/mshqc/mp2/mp2.h):
+double energy_mp2_singles = 0.0;
 
+// Deklarasi kelas ROMP2 (setelah deklarasi kelas UMP2):
+class ROMP2 : public UMP2 {
+public:
+    using UMP2::UMP2;
+    ~ROMP2() override = default;
+
+    MP2Result compute() override;
+
+protected:
+    void semicanonicalize();
+    double compute_singles_energy() const;
+};
 
 
 

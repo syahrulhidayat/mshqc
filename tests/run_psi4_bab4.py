@@ -77,7 +77,6 @@ RAM_CASES = [
 
 
 class TeeRecorder:
-    """Menampilkan output secara real-time ke terminal dan merekamnya untuk disimpan ke berkas."""
     def __init__(self):
         self.terminal = sys.stdout
         self.chunks = []
@@ -233,7 +232,6 @@ def parse_occ_iterations(log_text: str) -> int:
 
 
 def run_ram_worker(payload_str: str):
-    """Worker terisolasi untuk mengukur Peak RSS + Scratch /dev/shm Psi4 tanpa duplikasi kode."""
     scratch_sub = tempfile.mkdtemp(prefix="psi4_ram_", dir=SHM_DIR)
     os.environ["PSI_SCRATCH"] = scratch_sub
     psi4.core.IOManager.shared_object().set_default_path(scratch_sub + "/")
@@ -278,7 +276,7 @@ def compute_psi4_suite():
     tmp_log = os.path.join(SHM_DIR, f"psi4_bab4_{os.getpid()}.out")
 
     print("\n" + "=" * 106, flush=True)
-    print(f"  [LIVE TEST 1/2] PSI4 120-RUN SOLVER SUITE (THREADS: {N_THREADS} | cc-pVTZ / cc-pVTZ-RI)", flush=True)
+    print(f"  [LIVE TEST 1/2] PSI4 SOLVER SUITE (THREADS: {N_THREADS} | cc-pVTZ / cc-pVTZ-RI)", flush=True)
     print("=" * 106, flush=True)
     print(f"| {'Sistem':<8} | {'Mode ERI':<9} | {'Metode':<6} | {'E_Psi4 (Ha)':<16} | {'Waktu (s)':<9} | {'<S^2>':<10} | {'Ideal':<6} | {'Iter':<6} | {'Status':<6} |", flush=True)
     print(f"|{'-'*10}|{'-'*11}|{'-'*8}|{'-'*18}|{'-'*11}|{'-'*12}|{'-'*8}|{'-'*8}|{'-'*8}|", flush=True)
@@ -316,7 +314,7 @@ def compute_psi4_suite():
 
             hf_snap = snapshot_wfn(scf_wfn)
 
-            # Evaluasi ROHF untuk sistem kulit terbuka tanpa mengganggu scf_wfn UHF
+            # Evaluasi ROHF, ROMP2, dan ROMP3 untuk sistem kulit terbuka (tanpa mengganggu scf_wfn UHF)
             if is_uhf:
                 try:
                     psi4.set_options({"reference": "rohf"})
@@ -327,9 +325,29 @@ def compute_psi4_suite():
                     entry["ROHF"] = {"e": float(e_rohf), "t": float(t_rohf), "s2": s2_rohf}
                     tot_solver_s += t_rohf
                     print(f"| {sys_name:<8} | {mode_upper:<9} | {'ROHF':<6} | {float(e_rohf):<16.8f} | {t_rohf:<9.3f} | {s2_rohf:<10.6f} | {s_ideal:<6.2f} | {'-':<6} | {'OK':<6} |", flush=True)
+
+                    rohf_snap = snapshot_wfn(rohf_wfn)
+                    if mode_lower in ("cholesky", "df"):
+                        psi4.set_options({"scf_type": "pk", "read_scf_3index": False})
+
+                    set_blas_threads(N_THREADS)
+                    for ro_key, ro_call in (("ROMP2", "mp2"), ("ROMP3", "mp3")):
+                        try:
+                            t0 = time.perf_counter()
+                            e_ro_val = float(psi4.energy(ro_call, ref_wfn=rohf_wfn, molecule=mol))
+                            t_ro_val = time.perf_counter() - t0
+                            entry[ro_key] = {"e": e_ro_val, "t": t_ro_val}
+                            tot_solver_s += t_ro_val
+                            print(f"| {sys_name:<8} | {mode_upper:<9} | {ro_key:<6} | {e_ro_val:<16.8f} | {t_ro_val:<9.3f} | {'-':<10} | {s_ideal:<6.2f} | {'-':<6} | {'OK':<6} |", flush=True)
+                        except Exception:
+                            pass
+                        psi4.core.clean()
+                        restore_wfn(rohf_wfn, rohf_snap)
+                    set_blas_threads(1)
                 except Exception:
                     pass
                 finally:
+                    set_blas_threads(1)
                     psi4.core.clean()
                     configure_psi4(mode_lower, is_uhf)
                     restore_wfn(scf_wfn, hf_snap)
@@ -386,7 +404,7 @@ def compute_psi4_suite():
             pass
 
     print("=" * 106, flush=True)
-    print(f"  Total Waktu Solver Psi4 (120 Run): {tot_solver_s:.3f} s", flush=True)
+    print(f"  Total Waktu Solver Psi4: {tot_solver_s:.3f} s", flush=True)
     return results
 
 def compute_ram_benchmark():
