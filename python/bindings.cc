@@ -574,7 +574,8 @@ NB_MODULE(_mshqc, m) {
         .def_rw("C_alpha", &MP2Result::C_alpha)
         .def_rw("C_beta", &MP2Result::C_beta)
         .def_rw("orbital_energies_alpha", &MP2Result::orbital_energies_alpha)
-        .def_rw("orbital_energies_beta", &MP2Result::orbital_energies_beta);
+        .def_rw("orbital_energies_beta", &MP2Result::orbital_energies_beta)
+        .def_rw("energy_mp2_singles", &MP2Result::energy_mp2_singles);
 
     nb::class_<foundation::RMP2>(m, "RMP2")
         .def("__init__", [](foundation::RMP2 *t, const Molecule& mol, const BasisSet& basis,
@@ -596,6 +597,17 @@ NB_MODULE(_mshqc, m) {
         }, nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
            nb::arg("config") = MP2Config(), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
         .def("compute", &mshqc::UMP2::compute, nb::call_guard<nb::gil_scoped_release>())
+        .def("set_frozen_core", &mshqc::BaseMP2::set_frozen_core, nb::arg("n_frozen"));
+
+    nb::class_<mshqc::ROMP2, mshqc::UMP2>(m, "ROMP2")
+        .def("__init__", [](mshqc::ROMP2 *t, const Molecule& mol, const BasisSet& basis,
+                            std::shared_ptr<IntegralEngine> integrals, const SCFResult& scf_guess,
+                            const MP2Config& config, std::shared_ptr<PointGroup> pg, std::shared_ptr<PetiteList> pl) {
+            new (t) mshqc::ROMP2(mol, basis, integrals, scf_guess,
+                                 mshqc_auto_tune::normalize_mp2_config(config, basis, scf_guess), pg, pl);
+        }, nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
+           nb::arg("config") = MP2Config(), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
+        .def("compute", &mshqc::ROMP2::compute, nb::call_guard<nb::gil_scoped_release>())
         .def("set_frozen_core", &mshqc::BaseMP2::set_frozen_core, nb::arg("n_frozen"));
 
     nb::class_<OMP2>(m, "OMP2")
@@ -657,6 +669,20 @@ NB_MODULE(_mshqc, m) {
         }, nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
            nb::arg("config") = MP2Config(), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
         .def("compute", &UMP3::compute, nb::call_guard<nb::gil_scoped_release>());
+        
+    nb::class_<ROMP3, UMP3>(m, "ROMP3")
+        .def(nb::init<const SCFResult&, const MP2Result&, const MP2Config&, std::shared_ptr<IntegralEngine>>(),
+             nb::arg("scf_guess"), nb::arg("mp2_guess"), nb::arg("config"), nb::arg("integrals"))
+        .def("__init__", [](ROMP3 *t, const Molecule& mol, const BasisSet& basis,
+                            std::shared_ptr<IntegralEngine> integrals, const SCFResult& scf_guess,
+                            const MP2Config& config, std::shared_ptr<PointGroup> pg, std::shared_ptr<PetiteList> pl) {
+            auto norm_conf = mshqc_auto_tune::normalize_mp2_config(config, basis, scf_guess);
+            mshqc::ROMP2 romp2_solver(mol, basis, integrals, scf_guess, norm_conf, pg, pl);
+            MP2Result mp2_res = romp2_solver.compute();
+            new (t) ROMP3(scf_guess, mp2_res, norm_conf, integrals);
+        }, nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
+           nb::arg("config") = MP2Config(), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
+        .def("compute", &ROMP3::compute, nb::call_guard<nb::gil_scoped_release>());
 
     nb::class_<OMP3>(m, "OMP3")
         .def("__init__", [](OMP3 *t, const Molecule& mol, const BasisSet& basis,

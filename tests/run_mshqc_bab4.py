@@ -77,7 +77,6 @@ RAM_CASES = [
 
 
 class TeeLogger:
-    """Menampilkan output secara real-time ke terminal sekaligus menyimpannya ke berkas log."""
     def __init__(self, log_path: str):
         self.terminal = sys.__stdout__
         self.log_file = open(log_path, "w", encoding="utf-8", buffering=1)
@@ -171,7 +170,6 @@ def compute_spin_s2(ints, res, na: int, nb: int):
 
 
 def run_ram_worker(payload_str: str):
-    """Worker subproses terisolasi untuk mengukur VmHWM & Net Working RAM tanpa redundansi kode."""
     mol_w = mshqc.Molecule(0, 1)
     mol_w.add_atom("He", 0.0, 0.0, 0.0)
     bas_w = mshqc.BasisSet("cc-pvdz", mol_w)
@@ -214,7 +212,7 @@ def run_ram_worker(payload_str: str):
 def compute_mshqc_suite():
     ref_suite, traces = {}, {}
     print("\n" + "=" * 106, flush=True)
-    print(f"  [LIVE TEST 1/5] MSHQC 105-RUN SOLVER SUITE (THREADS: {N_THREADS} | cc-pVTZ / cc-pVTZ-RI)", flush=True)
+    print(f"  [LIVE TEST 1/5] MSHQC SOLVER SUITE (THREADS: {N_THREADS} | cc-pVTZ / cc-pVTZ-RI)", flush=True)
     print("=" * 106, flush=True)
     print(f"| {'Sistem':<8} | {'Mode ERI':<9} | {'Metode':<6} | {'E_mshqc (Ha)':<16} | {'Waktu (s)':<9} | {'<S^2>':<10} | {'Ideal':<6} | {'Iter':<6} | {'Status':<6} |", flush=True)
     print(f"|{'-'*10}|{'-'*11}|{'-'*8}|{'-'*18}|{'-'*11}|{'-'*12}|{'-'*8}|{'-'*8}|{'-'*8}|", flush=True)
@@ -255,6 +253,42 @@ def compute_mshqc_suite():
             s_ideal, s2_uhf = compute_spin_s2(ints, scf_res, na, nb)
             print(f"| {sys_name:<8} | {mode:<9} | {ref_lbl+'HF':<6} | {scf_res.energy_total:<16.8f} | {t_scf:<9.3f} | {s2_uhf:<10.6f} | {s_ideal:<6.2f} | {'-':<6} | {'OK':<6} |", flush=True)
 
+            rohf_entry, romp2_entry, romp3_entry = None, None, None
+            t_rohf, t_romp2, t_romp3 = 0.0, 0.0, 0.0
+            if is_uhf:
+                with capture_c_stdout():
+                    t0 = time.perf_counter()
+                    rohf_res = mshqc.ROHF(mol, basis, ints, scf_conf).compute()
+                    t_rohf = time.perf_counter() - t0
+                _, s2_rohf = compute_spin_s2(ints, rohf_res, rohf_res.n_occ_alpha, rohf_res.n_occ_beta)
+                print(f"| {sys_name:<8} | {mode:<9} | {'ROHF':<6} | {rohf_res.energy_total:<16.8f} | {t_rohf:<9.3f} | {s2_rohf:<10.6f} | {s_ideal:<6.2f} | {'-':<6} | {'OK':<6} |", flush=True)
+                rohf_entry = {
+                    "e": float(rohf_res.energy_total),
+                    "t": t_rohf,
+                    "s2": s2_rohf,
+                }
+
+                with capture_c_stdout():
+                    t0 = time.perf_counter()
+                    res_romp2 = mshqc.ROMP2(mol, basis, ints, rohf_res, mp2_conf).compute()
+                    t_romp2 = time.perf_counter() - t0
+                print(f"| {sys_name:<8} | {mode:<9} | {'ROMP2':<6} | {res_romp2.energy_total:<16.8f} | {t_romp2:<9.3f} | {'-':<10} | {s_ideal:<6.2f} | {'-':<6} | {'OK':<6} |", flush=True)
+                romp2_entry = {
+                    "e": float(res_romp2.energy_total),
+                    "e_singles": float(getattr(res_romp2, "energy_mp2_singles", 0.0)),
+                    "t": t_romp2,
+                }
+
+                with capture_c_stdout():
+                    t0 = time.perf_counter()
+                    res_romp3 = mshqc.ROMP3(rohf_res, res_romp2, mp2_conf, ints).compute()
+                    t_romp3 = time.perf_counter() - t0
+                print(f"| {sys_name:<8} | {mode:<9} | {'ROMP3':<6} | {res_romp3.energy_total:<16.8f} | {t_romp3:<9.3f} | {'-':<10} | {s_ideal:<6.2f} | {'-':<6} | {'OK':<6} |", flush=True)
+                romp3_entry = {
+                    "e": float(res_romp3.energy_total),
+                    "t": t_romp3,
+                }
+
             with capture_c_stdout():
                 t0 = time.perf_counter()
                 res_mp2 = mp2_cls(mol, basis, ints, scf_res, mp2_conf).compute()
@@ -267,7 +301,6 @@ def compute_mshqc_suite():
                 t_mp3 = time.perf_counter() - t0
             print(f"| {sys_name:<8} | {mode:<9} | {ref_lbl+'MP3':<6} | {res_mp3.energy_total:<16.8f} | {t_mp3:<9.3f} | {'-':<10} | {s_ideal:<6.2f} | {'-':<6} | {'OK':<6} |", flush=True)
 
-            # Seluruh pengukuran waktu OMP2 & OMP3 menggunakan print_level=0 (bebas I/O pipe overhead)
             with capture_c_stdout():
                 t0 = time.perf_counter()
                 res_omp2 = mshqc.OMP2(mol, basis, ints, scf_res, mp2_conf).compute()
@@ -277,7 +310,6 @@ def compute_mshqc_suite():
                 res_omp3 = mshqc.OMP3(mol, basis, ints, scf_res, mp2_conf).compute()
                 t_omp3 = time.perf_counter() - t0
 
-            # Jika termasuk TRACE_CASES, rekam log iterasi di luar pengukuran waktu benchmark
             if (sys_name, mode) in TRACE_CASES:
                 trace_conf = mshqc.MP2Config(
                     eri_method=mode_lower, threshold=1e-9, gradient_threshold=1e-5,
@@ -297,8 +329,8 @@ def compute_mshqc_suite():
             print(f"| {sys_name:<8} | {mode:<9} | {'OMP2':<6} | {res_omp2.energy_total:<16.8f} | {t_omp2:<9.3f} | {s2_omp2:<10.6f} | {s_ideal:<6.2f} | {int(res_omp2.iterations):<6} | {'OK':<6} |", flush=True)
             print(f"| {sys_name:<8} | {mode:<9} | {'OMP3':<6} | {res_omp3.energy_total:<16.8f} | {t_omp3:<9.3f} | {s2_omp3:<10.6f} | {s_ideal:<6.2f} | {int(res_omp3.iterations):<6} | {'OK':<6} |", flush=True)
 
-            tot_solver_s += (t_scf + t_mp2 + t_mp3 + t_omp2 + t_omp3)
-            ref_suite[f"{sys_name}|{mode}"] = {
+            tot_solver_s += (t_scf + t_rohf + t_romp2 + t_romp3 + t_mp2 + t_mp3 + t_omp2 + t_omp3)
+            entry_dict = {
                 "s_ideal": s_ideal,
                 "SCF":  {"e": float(scf_res.energy_total),  "t": t_scf,  "s2": s2_uhf},
                 "MP2":  {"e": float(res_mp2.energy_total),  "t": t_mp2},
@@ -306,10 +338,15 @@ def compute_mshqc_suite():
                 "OMP2": {"e": float(res_omp2.energy_total), "t": t_omp2, "iter": int(res_omp2.iterations), "s2": s2_omp2},
                 "OMP3": {"e": float(res_omp3.energy_total), "t": t_omp3, "iter": int(res_omp3.iterations), "s2": s2_omp3},
             }
+            if rohf_entry is not None:
+                entry_dict["ROHF"] = rohf_entry
+                entry_dict["ROMP2"] = romp2_entry
+                entry_dict["ROMP3"] = romp3_entry
+            ref_suite[f"{sys_name}|{mode}"] = entry_dict
             gc.collect()
 
     print("=" * 106, flush=True)
-    print(f"  Total Waktu Solver MSHQC (105 Run): {tot_solver_s:.3f} s", flush=True)
+    print(f"  Total Waktu Solver MSHQC: {tot_solver_s:.3f} s", flush=True)
     return ref_suite, traces
 
 

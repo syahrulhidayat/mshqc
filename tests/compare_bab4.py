@@ -19,7 +19,6 @@ IS_UHF_MAP = {
 
 
 class TeeRecorder:
-    """Menampilkan laporan real-time ke terminal dan menyimpannya ke berkas teks."""
     def __init__(self):
         self.terminal = sys.stdout
         self.chunks = []
@@ -155,22 +154,43 @@ def print_table_5_and_build_md(mshqc_db, psi4_db):
 
     for sys_name in ALL_SYSTEM_ORDER:
         is_uhf = IS_UHF_MAP[sys_name]
-        method_pairs = [
-            ("UHF" if is_uhf else "RHF", "SCF"),
+        
+        # Susun daftar perbandingan secara dinamis
+        method_pairs = [("UHF" if is_uhf else "RHF", "SCF")]
+        if is_uhf:
+            method_pairs.append(("ROHF", "ROHF"))
+        
+        method_pairs.extend([
             ("UMP2" if is_uhf else "RMP2", "MP2"),
             ("UMP3" if is_uhf else "RMP3", "MP3"),
+        ])
+        
+        if is_uhf:
+            method_pairs.extend([
+                ("ROMP2", "ROMP2"),
+                ("ROMP3", "ROMP3"),
+            ])
+            
+        method_pairs.extend([
             ("OMP2", "OMP2"),
             ("OMP3", "OMP3"),
-        ]
+        ])
+
         for mode in ERI_MODE_ORDER:
             m_entry = mshqc_db.get(f"{sys_name}|{mode}", {})
             p_entry = psi4_db.get(f"{sys_name}|{mode}", {})
             if not m_entry:
                 continue
+                
             for m_label, key in method_pairs:
+                # Lewati jika key belum didukung pada output JSON
+                if key not in m_entry:
+                    continue
+                    
                 em, tm = m_entry[key]["e"], m_entry[key]["t"]
                 p_info = p_entry.get(key, {})
                 ep, tp = p_info.get("e", float("nan")), p_info.get("t", 0.0)
+                
                 de_uha = abs(em - ep) * 1e6 if not math.isnan(ep) else float("nan")
                 sp = (tp / max(tm, 1e-4)) if tp > 0 else 0.0
 
@@ -181,14 +201,17 @@ def print_table_5_and_build_md(mshqc_db, psi4_db):
                 if not math.isnan(de_uha):
                     max_de_all = max(max_de_all, de_uha)
 
+                ep_str = f"{ep:.8f}" if not math.isnan(ep) else "-"
+                de_str = f"{de_uha:.2f}" if not math.isnan(de_uha) else "-"
+
                 print(
                     f"| {sys_name:<8} | {mode:<9} | {m_label:<6} | {em:<16.8f} | "
-                    f"{ep:<16.8f} | {de_uha:<10.2f} | {tm:<9.3f} | {tp:<9.3f} | {sp:<7.2f} x |",
+                    f"{ep_str:>16} | {de_str:>10} | {tm:<9.3f} | {tp:<9.3f} | {sp:<7.2f} x |",
                     flush=True,
                 )
                 md_lines.append(
-                    f"| {sys_name} | `{mode.lower()}` | `{m_label}` | `{em:.8f}` | `{ep:.8f}` | "
-                    f"`{de_uha:.2f}` | `{tm:.3f}` | `{tp:.3f}` | **{sp:.2f}x** |"
+                    f"| {sys_name} | `{mode.lower()}` | `{m_label}` | `{em:.8f}` | `{ep_str}` | "
+                    f"`{de_str}` | `{tm:.3f}` | `{tp:.3f}` | **{sp:.2f}x** |"
                 )
 
     tot_sp = (tot_psi4_s / max(tot_mshqc_s, 1e-4)) if tot_psi4_s > 0 else 0.0
@@ -201,7 +224,7 @@ def print_table_5_and_build_md(mshqc_db, psi4_db):
     print(f"| {'TOTAL':<8} | {'ALL MODES':<9} | {'ALL':<6} | {'-':<16} | {'-':<16} | {max_de_all:<10.2f} | {tot_mshqc_s:<9.3f} | {tot_psi4_s:<9.3f} | {tot_sp:<7.2f} x |", flush=True)
     print("=" * 124, flush=True)
     print(
-        f"  Total Waktu Solver Tabel 5A (7 Sistem x 3 Mode x 5 Metode = 105 Run):\n"
+        f"  Total Waktu Solver Tabel 5A:\n"
         f"  -> mshqc = {tot_mshqc_s:.3f} s | Psi4 = {tot_psi4_s:.3f} s | Speedup Kumulatif = {tot_sp:.2f}x",
         flush=True,
     )
@@ -272,7 +295,7 @@ def main():
         print("\n" + "=" * 126, flush=True)
         print("  RINGKASAN AKHIR BENCHMARK BAB IV (MSHQC vs PSI4 | cc-pVTZ / cc-pVTZ-RI)", flush=True)
         print("=" * 126, flush=True)
-        print(f"  Total Waktu Solver (105 Run) : mshqc = {tot_m:.3f} s | Psi4 = {tot_p:.3f} s | Speedup Kumulatif = {sp:.2f}x", flush=True)
+        print(f"  Total Waktu Solver: mshqc = {tot_m:.3f} s | Psi4 = {tot_p:.3f} s | Speedup Kumulatif = {sp:.2f}x", flush=True)
         print(f"  Total Waktu Wall-Clock Suite : {tot_wall:.2f} s", flush=True)
         print("=" * 126, flush=True)
     finally:

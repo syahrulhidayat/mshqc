@@ -554,6 +554,10 @@ MP2Result ROMP2::compute() {
     result.C_beta                  = scf_.C_beta;
     result.orbital_energies_alpha  = scf_.orbital_energies_alpha;
     result.orbital_energies_beta   = scf_.orbital_energies_beta;
+    result.n_occ_alpha  = nocc_a_;
+    result.n_occ_beta   = nocc_b_;
+    result.n_virt_alpha = nvir_a_;
+    result.n_virt_beta  = nvir_b_;
 
     if (config_.print_level > 0 && omp_get_thread_num() == 0) {
         std::cout << "\n=== ROMP2 Results (" << config_.eri_method << ") ===\n";
