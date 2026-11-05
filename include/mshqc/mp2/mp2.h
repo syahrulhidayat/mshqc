@@ -214,6 +214,21 @@ private:
 };
 
 
+double energy_mp2_singles = 0.0;
+
+
+class ROMP2 : public UMP2 {
+public:
+    using UMP2::UMP2;
+    ~ROMP2() override = default;
+
+    MP2Result compute() override;
+
+protected:
+    void semicanonicalize();
+    double compute_singles_energy() const;
+};
+
 
 
 
