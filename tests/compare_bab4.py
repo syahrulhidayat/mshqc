@@ -73,16 +73,16 @@ def print_table_2(table2_rows):
 
 
 def print_table_3(mshqc_db, psi4_db):
-    print("\n" + "=" * 144, flush=True)
-    print("  3. TABEL PEMULIHAN SIMETRI SPIN <S^2> SEBELUM (UHF) DAN SESUDAH OPTIMISASI ORBITAL: MSHQC vs PSI4 (cc-pVTZ)", flush=True)
-    print("=" * 144, flush=True)
+    print("\n" + "=" * 168, flush=True)
+    print("  3. TABEL PEMULIHAN SIMETRI SPIN <S^2> (UHF vs ROHF BEBAS KONTAMINASI vs STASIONER OMP2 & OMP3): MSHQC vs PSI4 (cc-pVTZ)", flush=True)
+    print("=" * 168, flush=True)
     print(
-        f"| {'Sistem':<7} | {'Mode':<5} | {'Ideal':<5} | {'<S^2> UHF (mshqc/Psi4)':<23} | "
+        f"| {'Sistem':<7} | {'Mode':<5} | {'Ideal':<5} | {'<S^2> ROHF (mshqc/Psi4)':<23} | {'<S^2> UHF (mshqc/Psi4)':<23} | "
         f"{'<S^2> OMP2 (mshqc/Psi4)':<23} | {'It OMP2(m/P)':<12} | {'Red OMP2':<8} | "
         f"{'<S^2> OMP3 (mshqc/Psi4)':<23} | {'It OMP3(m/P)':<12} | {'Red OMP3':<8} |",
         flush=True,
     )
-    print(f"|{'-'*9}|{'-'*7}|{'-'*7}|{'-'*25}|{'-'*25}|{'-'*14}|{'-'*10}|{'-'*25}|{'-'*14}|{'-'*10}|", flush=True)
+    print(f"|{'-'*9}|{'-'*7}|{'-'*7}|{'-'*25}|{'-'*25}|{'-'*25}|{'-'*14}|{'-'*10}|{'-'*25}|{'-'*14}|{'-'*10}|", flush=True)
 
     for sys_name in ["Lithium", "Carbon", "Oxygen", "OH", "O2"]:
         for mode in ["EXACT", "DF"]:
@@ -92,6 +92,7 @@ def print_table_3(mshqc_db, psi4_db):
                 continue
 
             s_ideal = m_entry["s_ideal"]
+            s2_rohf = m_entry.get("ROHF", {}).get("s2", s_ideal)
             s2_uhf  = m_entry["SCF"]["s2"]
             s2_omp2 = m_entry["OMP2"]["s2"]
             s2_omp3 = m_entry["OMP3"]["s2"]
@@ -102,14 +103,15 @@ def print_table_3(mshqc_db, psi4_db):
             red_omp2 = 100.0 * (d_uhf - max(0.0, s2_omp2 - s_ideal)) / d_uhf if d_uhf > 1e-12 else 0.0
             red_omp3 = 100.0 * (d_uhf - max(0.0, s2_omp3 - s_ideal)) / d_uhf if d_uhf > 1e-12 else 0.0
 
-            p_s2_uhf = p_entry.get("SCF", {}).get("s2", float("nan"))
-            p_s2_o2  = p_entry.get("OMP2", {}).get("s2", float("nan"))
-            p_it_o2  = p_entry.get("OMP2", {}).get("iter", 0)
-            p_s2_o3  = p_entry.get("OMP3", {}).get("s2", float("nan"))
-            p_it_o3  = p_entry.get("OMP3", {}).get("iter", 0)
+            p_s2_rohf = p_entry.get("ROHF", {}).get("s2", s_ideal)
+            p_s2_uhf  = p_entry.get("SCF", {}).get("s2", float("nan"))
+            p_s2_o2   = p_entry.get("OMP2", {}).get("s2", float("nan"))
+            p_it_o2   = p_entry.get("OMP2", {}).get("iter", 0)
+            p_s2_o3   = p_entry.get("OMP3", {}).get("s2", float("nan"))
+            p_it_o3   = p_entry.get("OMP3", {}).get("iter", 0)
 
             print(
-                f"| {sys_name:<7} | {mode:<5} | {s_ideal:<5.2f} | {f'{s2_uhf:.6f} / {p_s2_uhf:.6f}':<23} | "
+                f"| {sys_name:<7} | {mode:<5} | {s_ideal:<5.2f} | {f'{s2_rohf:.6f} / {p_s2_rohf:.6f}':<23} | {f'{s2_uhf:.6f} / {p_s2_uhf:.6f}':<23} | "
                 f"{f'{s2_omp2:.6f} / {p_s2_o2:.6f}':<23} | {f'{it_omp2:>2} / {p_it_o2:>2} it':<12} | {red_omp2:>6.2f} % | "
                 f"{f'{s2_omp3:.6f} / {p_s2_o3:.6f}':<23} | {f'{it_omp3:>2} / {p_it_o3:>2} it':<12} | {red_omp3:>6.2f} % |",
                 flush=True,
@@ -134,7 +136,7 @@ def print_table_4(traces, fd_logs):
 
 def print_table_5_and_build_md(mshqc_db, psi4_db):
     print("\n" + "=" * 124, flush=True)
-    print("  5A. TABEL VALIDASI HEAD-TO-HEAD METODE YANG SAMA: MSHQC vs PSI4 (HF, MP2, MP3, OMP2, OMP3 | cc-pVTZ)", flush=True)
+    print("  5A. TABEL VALIDASI HEAD-TO-HEAD METODE YANG SAMA: MSHQC vs PSI4 (RHF/UHF/ROHF, MP2, MP3, OMP2, OMP3 | cc-pVTZ)", flush=True)
     print("=" * 124, flush=True)
     print(
         f"| {'Sistem':<8} | {'Mode ERI':<9} | {'Metode':<6} | {'E_mshqc (Ha)':<16} | "
@@ -155,19 +157,23 @@ def print_table_5_and_build_md(mshqc_db, psi4_db):
 
     for sys_name in ALL_SYSTEM_ORDER:
         is_uhf = IS_UHF_MAP[sys_name]
-        method_pairs = [
-            ("UHF" if is_uhf else "RHF", "SCF"),
+        method_pairs = [("UHF" if is_uhf else "RHF", "SCF")]
+        if is_uhf:
+            method_pairs.append(("ROHF", "ROHF"))
+        method_pairs.extend([
             ("UMP2" if is_uhf else "RMP2", "MP2"),
             ("UMP3" if is_uhf else "RMP3", "MP3"),
             ("OMP2", "OMP2"),
             ("OMP3", "OMP3"),
-        ]
+        ])
         for mode in ERI_MODE_ORDER:
             m_entry = mshqc_db.get(f"{sys_name}|{mode}", {})
             p_entry = psi4_db.get(f"{sys_name}|{mode}", {})
             if not m_entry:
                 continue
             for m_label, key in method_pairs:
+                if key not in m_entry:
+                    continue
                 em, tm = m_entry[key]["e"], m_entry[key]["t"]
                 p_info = p_entry.get(key, {})
                 ep, tp = p_info.get("e", float("nan")), p_info.get("t", 0.0)
@@ -201,7 +207,7 @@ def print_table_5_and_build_md(mshqc_db, psi4_db):
     print(f"| {'TOTAL':<8} | {'ALL MODES':<9} | {'ALL':<6} | {'-':<16} | {'-':<16} | {max_de_all:<10.2f} | {tot_mshqc_s:<9.3f} | {tot_psi4_s:<9.3f} | {tot_sp:<7.2f} x |", flush=True)
     print("=" * 124, flush=True)
     print(
-        f"  Total Waktu Solver Tabel 5A (7 Sistem x 3 Mode x 5 Metode = 105 Run):\n"
+        f"  Total Waktu Solver Tabel 5A (120 Run: 105 Baseline + 15 ROHF):\n"
         f"  -> mshqc = {tot_mshqc_s:.3f} s | Psi4 = {tot_psi4_s:.3f} s | Speedup Kumulatif = {tot_sp:.2f}x",
         flush=True,
     )
@@ -212,7 +218,6 @@ def print_table_5_and_build_md(mshqc_db, psi4_db):
     )
     atomic_write_text("comparison_bab4_summary.md", "\n".join(md_lines) + "\n")
     return tot_mshqc_s, tot_psi4_s, tot_sp
-
 
 def print_table_6(mshqc_ram, psi4_ram):
     print("\n" + "=" * 126, flush=True)
