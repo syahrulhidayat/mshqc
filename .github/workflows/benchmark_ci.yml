@@ -1,8 +1,8 @@
-name: Validation & Benchmark Suite (mshqc vs Psi4)1
+name: Validation & Benchmark Suite (mshqc vs Psi4)
 
 on:
   push:
-  branch : ["benchmark"]
+  branches: [ "benchmark" ]
   workflow_dispatch:
 
 jobs:
