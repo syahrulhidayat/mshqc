@@ -108,22 +108,56 @@ namespace mshqc_auto_tune {
     #endif
     }
 
+#if defined(__linux__) || defined(__APPLE__)
+    #include <dlfcn.h>
+    #include <sched.h>
+#endif
+
+// Di dalam namespace mshqc_auto_tune pada bindings.cc:
     void initialize_hpc_environment() {
+    #if defined(__linux__)
+        // Pastikan proses tidak terkunci pada 1 core oleh scheduler
+        cpu_set_t mask;
+        CPU_ZERO(&mask);
+        unsigned int logical_cpus = std::max(1u, std::thread::hardware_concurrency());
+        for (unsigned int i = 0; i < logical_cpus; ++i) {
+            CPU_SET(i, &mask);
+        }
+        sched_setaffinity(0, sizeof(mask), &mask);
+    #endif
+
         int num_threads = get_physical_cores();
         if (const char* env_omp = std::getenv("OMP_NUM_THREADS")) {
-            num_threads = std::atoi(env_omp);
+            int parsed = std::atoi(env_omp);
+            if (parsed > 0) num_threads = parsed;
         }
 
-        omp_set_dynamic(0);
-        omp_set_num_threads(num_threads);
-
         std::string threads_str = std::to_string(num_threads);
+        set_env_if_empty("OMP_NUM_THREADS", threads_str.c_str());
         set_env_if_empty("TBLIS_NUM_THREADS", threads_str.c_str());
         set_env_if_empty("OPENBLAS_NUM_THREADS", "1");
         set_env_if_empty("MKL_NUM_THREADS", "1");
         set_env_if_empty("VECLIB_MAXIMUM_THREADS", "1");
         set_env_if_empty("NUMEXPR_NUM_THREADS", "1");
         set_env_if_empty("OMP_MAX_ACTIVE_LEVELS", "1");
+        set_env_if_empty("HDF5_USE_FILE_LOCKING", "FALSE");
+
+        omp_set_dynamic(0);
+        omp_set_num_threads(num_threads);
+        omp_set_max_active_levels(1);
+
+    #if defined(__linux__) || defined(__APPLE__)
+        using set_threads_fn = void (*)(int);
+        if (auto fn = reinterpret_cast<set_threads_fn>(dlsym(RTLD_DEFAULT, "openblas_set_num_threads"))) {
+            fn(1);
+        }
+        if (auto fn = reinterpret_cast<set_threads_fn>(dlsym(RTLD_DEFAULT, "MKL_Set_Num_Threads"))) {
+            fn(1);
+        }
+        if (auto fn = reinterpret_cast<set_threads_fn>(dlsym(RTLD_DEFAULT, "tblis_set_num_threads"))) {
+            fn(num_threads);
+        }
+    #endif
     }
 
     int symbol_to_z(const std::string& sym) {
