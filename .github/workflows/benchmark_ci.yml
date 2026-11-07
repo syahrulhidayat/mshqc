@@ -2,7 +2,7 @@ name: Validation & Benchmark Suite (mshqc vs Psi4)
 
 on:
   push:
-  branches: [ "benchmark" ]
+    branches: [ "benchmark" ]
   workflow_dispatch:
 
 jobs:
@@ -139,16 +139,10 @@ jobs:
             numpy
             scipy
 
-      # ===================================================================
-      # 1. PYTEST API VALIDATION
-      # ===================================================================
       - name: Run Automated Pytest Validation Suite (tests/test_mshqc.py)
         run: |
           ${{ github.workspace }}/mshqc_venv/bin/pytest tests/test_mshqc.py -v -s
 
-      # ===================================================================
-      # 2. SUITE A: 5-SYSTEM HEAD-TO-HEAD BENCHMARK (test_mshqc2 vs benc)
-      # ===================================================================
       - name: Run Standalone mshqc Benchmark (tests/test_mshqc2.py)
         run: |
           ${{ github.workspace }}/mshqc_venv/bin/python -u tests/test_mshqc2.py | tee mshqc_bench.txt
@@ -163,9 +157,6 @@ jobs:
         run: |
           ${{ github.workspace }}/mshqc_venv/bin/python tests/compare_mshqc_psi4.py mshqc_bench.txt psi4_bench.txt
 
-      # ===================================================================
-      # 3. SUITE B: BAB IV FULL BENCHMARK (105 RUNS + RAM + S2 + FD)
-      # ===================================================================
       - name: Run Isolated mshqc Bab 4 Suite (tests/run_mshqc_bab4.py)
         run: |
           ${{ github.workspace }}/mshqc_venv/bin/python -u tests/run_mshqc_bab4.py --out mshqc_bab4_raw.json --log mshqc_bab4_runner.log
@@ -183,9 +174,6 @@ jobs:
             cat comparison_bab4_summary.md >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      # ===================================================================
-      # 4. SUITE C: UNIVERSAL VALIDATION SUITE (ISOLATED RUNNERS + GDB)
-      # ===================================================================
       - name: Run Isolated mshqc Universal Validation (tests/run_mshqc_universal.py)
         run: |
           set -eo pipefail
@@ -234,9 +222,7 @@ jobs:
           if [ -f "comparison_universal_summary.md" ] && [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
             cat comparison_universal_summary.md >> "$GITHUB_STEP_SUMMARY"
           fi
-      # ===================================================================
-      # 5. UPLOAD ARTIFACTS
-      # ===================================================================
+
       - name: Upload Benchmark Logs & Comparison Tables as Artifacts
         if: always()
         uses: actions/upload-artifact@v4
