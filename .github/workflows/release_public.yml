@@ -3,12 +3,12 @@ name: Compile and Release Wheel to Public Repo
 on:
   push:
     branches: [ "master" ]
-    
     tags: [ "v*" ]
   workflow_dispatch:
 
 permissions:
   contents: write
+
 jobs:
   build_wheels:
     name: Build wheels on ${{ matrix.os }}
@@ -43,27 +43,32 @@ jobs:
         run: python -m cibuildwheel --output-dir wheelhouse
         env:
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
-          # Membangun untuk Python 3.10 - 3.13 di semua OS (64-bit)
           CIBW_BUILD: "cp310-* cp311-* cp312-* cp313-*"
           CIBW_SKIP: "*-win32 *-manylinux_i686 *-musllinux_*"
           CIBW_BUILD_FRONTEND: "pip; args: --no-build-isolation"
           CIBW_TEST_SKIP: "*"
+          CIBW_TEST_COMMAND: ""
 
-          # ==========================================
-          # 1. ISOLASI KONFIGURASI LINUX (TETAP SAMA)
-          # ==========================================
+          # ====================================================================
+          # 1. KONFIGURASI LINUX (TETAP UTUH 100%)
+          # ====================================================================
           CIBW_BEFORE_ALL_LINUX: >
             dnf install -y dnf-plugins-core epel-release &&
             dnf config-manager --set-enabled powertools &&
             dnf install -y git wget hdf5-devel eigen3-devel ninja-build patchelf libatomic gcc-toolset-12-libatomic-devel &&
             if [ -f "/project/.cache_deps/lib/libtblis.a" ] || [ -f "/project/.cache_deps/lib64/libtblis.a" ]; then
-              cp -rn /project/.cache_deps/* /usr/local/ && ldconfig
+              echo "Restoring cached libcint and TBLIS to /usr/local..." &&
+              cp -rn /project/.cache_deps/* /usr/local/ &&
+              ldconfig
             else
               mkdir -p /project/.cache_deps &&
               git clone --depth 1 -b v6.1.2 https://github.com/sunqm/libcint.git /tmp/libcint &&
               cd /tmp/libcint && mkdir build && cd build &&
               export CFLAGS="-O3 -fPIC -mavx2 -mfma -mno-avx512f -funroll-loops -fno-math-errno -Wno-incompatible-pointer-types -std=gnu17" &&
-              cmake -DCMAKE_INSTALL_PREFIX=/usr/local -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_C_FLAGS="$CFLAGS" -DENABLE_EXAMPLE=0 -DENABLE_TEST=0 -DBUILD_SHARED_LIBS=OFF .. &&
+              cmake -DCMAKE_INSTALL_PREFIX=/usr/local \
+                    -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+                    -DCMAKE_C_FLAGS="$CFLAGS" \
+                    -DENABLE_EXAMPLE=0 -DENABLE_TEST=0 -DBUILD_SHARED_LIBS=OFF .. &&
               make -j$(nproc) && make install &&
               git clone --depth 1 -b v1.2.0 https://github.com/devinamatthews/tblis.git /tmp/tblis &&
               cd /tmp/tblis && git submodule update --init --recursive &&
@@ -73,7 +78,9 @@ jobs:
               sed -i '1i #include <limits>' src/util/thread.h &&
               export CFLAGS="-O3 -fPIC -mno-avx512f -mno-avx512vl -mno-avx512dq -mno-avx512bw -mno-avx512cd -Wno-incompatible-pointer-types -std=gnu17" &&
               export CXXFLAGS="-O3 -fPIC -mno-avx512f -mno-avx512vl -mno-avx512dq -mno-avx512bw -mno-avx512cd -Wno-incompatible-pointer-types -std=gnu++17" &&
-              ./configure --prefix=/usr/local --enable-static --disable-shared --with-pic --without-hwloc --enable-config=haswell,zen,core2,sandybridge,bulldozer,piledriver,excavator,reference CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS" LIBS="-latomic" &&
+              ./configure --prefix=/usr/local --enable-static --disable-shared --with-pic --without-hwloc \
+                          --enable-config=haswell,zen,core2,sandybridge,bulldozer,piledriver,excavator,reference \
+                          CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS" LIBS="-latomic" &&
               make -j$(nproc) && make install &&
               cp -r /usr/local/include /usr/local/lib* /project/.cache_deps/ 2>/dev/null || true
             fi
@@ -96,52 +103,130 @@ jobs:
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
             auditwheel repair --exclude libmkl_rt.so.3 --exclude libmkl_rt.so.2 --exclude libmkl_rt.so --exclude libiomp5.so --exclude libtbb.so.12 -w {dest_dir} {wheel}
 
-          # ==========================================
-          # 2. KONFIGURASI MACOS (ARM64)
-          # ==========================================
+          # ====================================================================
+          # 2. KONFIGURASI MACOS (Apple Silicon ARM64)
+          # ====================================================================
           CIBW_BEFORE_ALL_MACOS: >
-            brew install cmake ninja eigen libomp hdf5 &&
+            brew install --quiet cmake ninja eigen libomp hdf5 openblas lapack || true &&
+            sudo mkdir -p /usr/local/include /usr/local/lib &&
             git clone --depth 1 -b v6.1.2 https://github.com/sunqm/libcint.git /tmp/libcint &&
-            cd /tmp/libcint && mkdir build && cd build &&
-            cmake -DCMAKE_INSTALL_PREFIX=/usr/local -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DENABLE_EXAMPLE=0 -DENABLE_TEST=0 -DBUILD_SHARED_LIBS=OFF .. &&
-            make -j$(sysctl -n hw.ncpu) && sudo make install &&
+            cmake -S /tmp/libcint -B /tmp/libcint/build \
+                  -DCMAKE_INSTALL_PREFIX=/usr/local \
+                  -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+                  -DCMAKE_C_FLAGS="-O3 -fPIC -Wno-incompatible-pointer-types -Wno-implicit-function-declaration" \
+                  -DENABLE_EXAMPLE=0 -DENABLE_TEST=0 -DBUILD_SHARED_LIBS=OFF &&
+            cmake --build /tmp/libcint/build -j$(sysctl -n hw.ncpu) &&
+            sudo cmake --install /tmp/libcint/build &&
             git clone --depth 1 -b v1.2.0 https://github.com/devinamatthews/tblis.git /tmp/tblis &&
             cd /tmp/tblis && git submodule update --init --recursive &&
-            ./configure --prefix=/usr/local --enable-static --disable-shared --with-pic --without-hwloc --enable-config=reference &&
+            perl -pi -e 's/SIGSTKSZ/8192/g' src/external/catch/catch.hpp &&
+            perl -pi -e 'print "#include <limits>\n" if $. == 1' src/external/marray/include/short_vector.hpp &&
+            perl -pi -e 'print "#include <limits>\n" if $. == 1' src/external/marray/include/range.hpp &&
+            perl -pi -e 'print "#include <limits>\n" if $. == 1' src/util/thread.h &&
+            ./configure --prefix=/usr/local --enable-static --disable-shared --with-pic --without-hwloc \
+                        --enable-config=reference \
+                        CFLAGS="-O3 -fPIC" CXXFLAGS="-O3 -fPIC -std=c++17" &&
             make -j$(sysctl -n hw.ncpu) && sudo make install
 
           CIBW_BEFORE_BUILD_MACOS: >
+            rm -rf build python/mshqc/*.so python/mshqc/*.dylib python/mshqc/*.a &&
             pip install --upgrade pip setuptools wheel nanobind cmake ninja numpy scipy
 
           CIBW_ENVIRONMENT_MACOS: >
             GITHUB_ACTIONS=true
             CIBUILDWHEEL=1
             CMAKE_BUILD_TYPE=Release
-            CMAKE_PREFIX_PATH="/usr/local;/opt/homebrew"
+            CMAKE_PREFIX_PATH="/usr/local;/opt/homebrew;/opt/homebrew/opt/libomp;/opt/homebrew/opt/openblas;/opt/homebrew/opt/lapack"
+            OpenMP_ROOT="/opt/homebrew/opt/libomp"
             TBLIS_DIR="/usr/local"
             CMAKE_BUILD_PARALLEL_LEVEL=4
 
-          # ==========================================
-          # 3. KONFIGURASI WINDOWS (MSVC x86_64)
-          # ==========================================
+          # ====================================================================
+          # 3. KONFIGURASI WINDOWS (Conda MSVC + MSYS2 MinGW64 Hybrid)
+          # ====================================================================
           CIBW_BEFORE_ALL_WINDOWS: >
-            git clone --depth 1 -b v6.1.2 https://github.com/sunqm/libcint.git C:\libcint &&
-            cd C:\libcint && mkdir build && cd build &&
-            cmake -G "Ninja" -DCMAKE_INSTALL_PREFIX=C:\deps -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DENABLE_EXAMPLE=0 -DENABLE_TEST=0 -DBUILD_SHARED_LIBS=OFF .. &&
-            cmake --build . --config Release --target install &&
-            vcpkg install eigen3:x64-windows hdf5:x64-windows
+            call %CONDA%\condabin\conda.bat create -p C:\deps -c conda-forge hdf5 eigen mkl-devel -y &&
+            C:\msys64\usr\bin\bash.exe -lc "
+            set -e &&
+            export MSYSTEM=MINGW64 &&
+            export PATH=/mingw64/bin:/usr/bin:\$PATH &&
+            mkdir -p /c/deps/Library/include /c/deps/Library/lib /c/deps/Library/bin &&
+            cp -f /mingw64/include/pthread*.h /mingw64/include/sched.h /c/deps/Library/include/ 2>/dev/null || true &&
+            git clone --depth 1 -b v6.1.2 https://github.com/sunqm/libcint.git /tmp/libcint &&
+            cmake -S /tmp/libcint -B /tmp/libcint/build -G 'MinGW Makefiles' \
+                  -DCMAKE_INSTALL_PREFIX=/c/deps/Library \
+                  -DCMAKE_C_COMPILER=/mingw64/bin/gcc.exe \
+                  -DCMAKE_C_FLAGS='-O3 -mavx2 -mfma -mno-avx512f -funroll-loops -fno-math-errno -Wno-incompatible-pointer-types -std=gnu17' \
+                  -DENABLE_EXAMPLE=0 -DENABLE_TEST=0 -DBUILD_SHARED_LIBS=ON &&
+            cmake --build /tmp/libcint/build -j4 --target install &&
+            cp -f /c/deps/Library/lib/libcint.dll.a /c/deps/Library/lib/cint.lib &&
+            git clone --depth 1 -b v1.2.0 https://github.com/devinamatthews/tblis.git /tmp/tblis &&
+            cd /tmp/tblis && git submodule update --init --recursive &&
+            sed -i 's/SIGSTKSZ/8192/g' src/external/catch/catch.hpp &&
+            sed -i '1i #include <limits>' src/external/marray/include/short_vector.hpp &&
+            sed -i '1i #include <limits>' src/external/marray/include/range.hpp &&
+            sed -i '1i #include <limits>' src/util/thread.h &&
+            export CFLAGS='-O3 -mno-avx512f -mno-avx512vl -mno-avx512dq -mno-avx512bw -mno-avx512cd -Wno-incompatible-pointer-types -std=gnu17' &&
+            export CXXFLAGS='-O3 -mno-avx512f -mno-avx512vl -mno-avx512dq -mno-avx512bw -mno-avx512cd -Wno-incompatible-pointer-types -std=gnu++17' &&
+            ./configure --prefix=/c/deps/Library --enable-shared --disable-static --without-hwloc \
+                        --enable-config=haswell,zen,core2,sandybridge,reference \
+                        CFLAGS=\"\$CFLAGS\" CXXFLAGS=\"\$CXXFLAGS\" &&
+            make -j4 && make install &&
+            cp -f /c/deps/Library/lib/libtblis.dll.a /c/deps/Library/lib/tblis.lib &&
+            cp -f /c/deps/Library/lib/libtci.dll.a /c/deps/Library/lib/tci.lib
+            "
 
           CIBW_BEFORE_BUILD_WINDOWS: >
-            pip install --upgrade pip setuptools wheel nanobind cmake ninja mkl mkl-devel mkl-include numpy scipy
+            if exist build rmdir /s /q build &&
+            del /q python\mshqc\*.pyd python\mshqc\*.dll 2>nul &
+            pip install --upgrade pip setuptools wheel nanobind cmake ninja mkl mkl-devel mkl-include numpy scipy delvewheel
 
           CIBW_ENVIRONMENT_WINDOWS: >
             GITHUB_ACTIONS=true
             CIBUILDWHEEL=1
             CMAKE_BUILD_TYPE=Release
-            CMAKE_PREFIX_PATH="C:/deps;C:/vcpkg/installed/x64-windows"
+            CMAKE_PREFIX_PATH="C:/deps/Library;C:/deps"
+            TBLIS_DIR="C:/deps/Library"
+            CMAKE_BUILD_PARALLEL_LEVEL=4
+
+          CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: >
+            delvewheel repair --add-path C:/deps/Library/bin;C:/msys64/mingw64/bin --no-dll mkl_rt.2.dll;mkl_rt.dll -w {dest_dir} -v {wheel}
 
       - name: Upload Wheels as Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: cibw-wheels-${{ matrix.os }}
           path: ./wheelhouse/*.whl
+
+  build_sdist:
+    name: Build source distribution
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Remove local cache dir if exists
+        run: rm -rf .cache_deps
+      - name: Build sdist
+        run: pipx run build --sdist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cibw-sdist
+          path: dist/*.tar.gz
+
+  upload_pypi:
+    name: Upload to PyPI
+    needs: [build_wheels, build_sdist]
+    runs-on: ubuntu-latest
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || github.event_name == 'workflow_dispatch'
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: cibw-*
+          path: dist
+          merge-multiple: true
+
+      - name: Publish package to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
