@@ -60,7 +60,7 @@ jobs:
                 -DCMAKE_INSTALL_PREFIX=/usr/local \
                 -DCMAKE_PREFIX_PATH="/opt/homebrew;/opt/homebrew/opt/openblas;/opt/homebrew/opt/lapack" \
                 -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-                -DCMAKE_C_FLAGS="-O3 -fPIC -Wno-incompatible-pointer-types -Wno-implicit-function-declaration" \
+                -DCMAKE_C_FLAGS="-O3 -fPIC -Wno-incompatible-pointer-types -Wno-implicit-function-declaration -Wno-deprecated-non-prototype" \
                 -DENABLE_EXAMPLE=0 -DENABLE_TEST=0 -DBUILD_SHARED_LIBS=OFF
           cmake --build /tmp/libcint/build -j$(sysctl -n hw.ncpu)
           sudo cmake --install /tmp/libcint/build
@@ -72,11 +72,15 @@ jobs:
           perl -pi -e 'print "#include <limits>\n" if $. == 1' src/external/marray/include/short_vector.hpp
           perl -pi -e 'print "#include <limits>\n" if $. == 1' src/external/marray/include/range.hpp
           perl -pi -e 'print "#include <limits>\n" if $. == 1' src/util/thread.h
+          perl -pi -e 'print "#include <stdlib.h>\n" if $. == 1' src/external/tci/tci/task_set.c
+          perl -pi -e 'print "#include <stdlib.h>\n" if $. == 1' src/external/tci/tci/internal.h
+
           ./configure --prefix=/usr/local --enable-static --disable-shared --with-pic --without-hwloc \
                       --enable-config=reference \
-                      CFLAGS="-O3 -fPIC" CXXFLAGS="-O3 -fPIC -std=c++17"
-          make -j$(sysctl -n hw.ncpu)
-          sudo make install
+                      CFLAGS="-O3 -fPIC -Wno-implicit-function-declaration -Wno-incompatible-function-pointer-types" \
+                      CXXFLAGS="-O3 -fPIC -std=c++17 -D_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION -D_LIBCPP_ENABLE_CXX17_REMOVED_RANDOM_SHUFFLE"
+          make -j$(sysctl -n hw.ncpu) bin_PROGRAMS= noinst_PROGRAMS= check_PROGRAMS=
+          sudo make install bin_PROGRAMS= noinst_PROGRAMS= check_PROGRAMS=
 
       # ========================================================================
       # STEP KHUSUS WINDOWS: Instalasi HDF5/MKL (Conda) & libcint/TBLIS (MSYS2)
@@ -100,6 +104,7 @@ jobs:
             diffutils \
             mingw-w64-x86_64-gcc \
             mingw-w64-x86_64-gcc-fortran \
+            mingw-w64-x86_64-libgomp \
             mingw-w64-x86_64-libatomic \
             mingw-w64-x86_64-make \
             mingw-w64-x86_64-cmake
@@ -133,8 +138,10 @@ jobs:
                 -DENABLE_EXAMPLE=0 -DENABLE_TEST=0 -DBUILD_SHARED_LIBS=ON
           /mingw64/bin/cmake.exe --build /tmp/libcint/build -j4 --target install
           cp -f /c/deps/Library/lib/*.dll /c/deps/Library/bin/ 2>/dev/null || true
+          cp -f /c/deps/Library/bin/libcint.dll /c/deps/Library/bin/cint.dll 2>/dev/null || true
           if [ -n "$LIB_EXE" ] && [ -f "/c/deps/Library/lib/cint.def" ]; then
-            "$LIB_EXE" //def:C:/deps/Library/lib/cint.def //out:C:/deps/Library/lib/cint.lib //machine:x64
+            sed -i '1i LIBRARY "libcint.dll"' /c/deps/Library/lib/cint.def
+            MSYS2_ARG_CONV_EXCL="*" "$LIB_EXE" /def:C:/deps/Library/lib/cint.def /out:C:/deps/Library/lib/cint.lib /machine:x64
           else
             cp -f /c/deps/Library/lib/libcint.dll.a /c/deps/Library/lib/cint.lib
           fi
@@ -148,10 +155,12 @@ jobs:
           sed -i '1i #include <limits>' src/external/marray/include/short_vector.hpp
           sed -i '1i #include <limits>' src/external/marray/include/range.hpp
           sed -i '1i #include <limits>' src/util/thread.h
+          sed -i '1i #include <stdlib.h>' src/external/tci/tci/task_set.c
+          sed -i '1i #include <stdlib.h>' src/external/tci/tci/internal.h
 
-          # Patch aligned_allocator.hpp agar menggunakan _aligned_malloc & _aligned_free di Windows
-          sed -i '/#include <cstdlib>/a #include <malloc.h>\n#ifdef _WIN32\nstatic inline int posix_memalign(void** p, size_t a, size_t s) { *p = _aligned_malloc(s, a); return *p ? 0 : 12; }\n#endif' src/memory/aligned_allocator.hpp
-          sed -i 's/free(ptr);/#ifdef _WIN32\n        _aligned_free(ptr);\n#else\n        free(ptr);\n#endif/g' src/memory/aligned_allocator.hpp
+          # Patch aligned_allocator.hpp satu baris agar tidak merusak blok if (ptr) free(ptr);
+          sed -i '/#include <cstdlib>/a #include <malloc.h>\nstatic inline int posix_memalign(void** p, size_t a, size_t s) { *p = _aligned_malloc(s, a); return *p ? 0 : 12; }' src/memory/aligned_allocator.hpp
+          sed -i 's/free(ptr);/_aligned_free(ptr);/g' src/memory/aligned_allocator.hpp
 
           export CC=/mingw64/bin/gcc.exe
           export CXX=/mingw64/bin/g++.exe
@@ -160,8 +169,8 @@ jobs:
           ./configure --prefix=/c/deps/Library --enable-static --disable-shared --without-hwloc \
                       --enable-config=haswell,zen,core2,sandybridge,reference \
                       CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS" LIBS="-latomic -lpthread"
-          make -j4 bin_PROGRAMS=
-          make install bin_PROGRAMS=
+          make -j4 bin_PROGRAMS= noinst_PROGRAMS= check_PROGRAMS=
+          make install bin_PROGRAMS= noinst_PROGRAMS= check_PROGRAMS=
 
           # Konversi libtci.a & libtblis.a menjadi DLL + MSVC .lib
           /mingw64/bin/g++.exe -shared -o /c/deps/Library/bin/libtci.dll \
@@ -178,9 +187,14 @@ jobs:
               -Wl,--whole-archive /c/deps/Library/lib/libtblis.a -Wl,--no-whole-archive \
               /c/deps/Library/lib/libtci.dll.a -lpthread -latomic
 
+          cp -f /c/deps/Library/bin/libtci.dll /c/deps/Library/bin/tci.dll
+          cp -f /c/deps/Library/bin/libtblis.dll /c/deps/Library/bin/tblis.dll
+
           if [ -n "$LIB_EXE" ]; then
-            "$LIB_EXE" //def:C:/deps/Library/lib/tci.def //out:C:/deps/Library/lib/tci.lib //machine:x64
-            "$LIB_EXE" //def:C:/deps/Library/lib/tblis.def //out:C:/deps/Library/lib/tblis.lib //machine:x64
+            sed -i '1i LIBRARY "libtci.dll"' /c/deps/Library/lib/tci.def
+            sed -i '1i LIBRARY "libtblis.dll"' /c/deps/Library/lib/tblis.def
+            MSYS2_ARG_CONV_EXCL="*" "$LIB_EXE" /def:C:/deps/Library/lib/tci.def /out:C:/deps/Library/lib/tci.lib /machine:x64
+            MSYS2_ARG_CONV_EXCL="*" "$LIB_EXE" /def:C:/deps/Library/lib/tblis.def /out:C:/deps/Library/lib/tblis.lib /machine:x64
           else
             cp -f /c/deps/Library/lib/libtci.dll.a /c/deps/Library/lib/tci.lib
             cp -f /c/deps/Library/lib/libtblis.dll.a /c/deps/Library/lib/tblis.lib
