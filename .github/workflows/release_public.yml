@@ -389,6 +389,7 @@ jobs:
           CIBW_ENVIRONMENT_MACOS: >
             GITHUB_ACTIONS=true
             CIBUILDWHEEL=1
+            MACOSX_DEPLOYMENT_TARGET=26.0
             CMAKE_BUILD_TYPE=Release
             CMAKE_PREFIX_PATH="/usr/local;/opt/homebrew;/opt/homebrew/opt/libomp;/opt/homebrew/opt/openblas;/opt/homebrew/opt/lapack;/opt/homebrew/opt/hdf5"
             OpenMP_ROOT="/opt/homebrew/opt/libomp"
@@ -400,10 +401,10 @@ jobs:
           # 3. KONFIGURASI WINDOWS
           # ====================================================================
           CIBW_BEFORE_BUILD_WINDOWS: >
-            if exist build rmdir /s /q build &&
+            python -c "import shutil, glob, os; shutil.rmtree('build', ignore_errors=True); [os.remove(p) for p in glob.glob('python/mshqc/*.pyd') + glob.glob('python/mshqc/*.dll')]" &&
             pip install --upgrade pip setuptools wheel nanobind cmake ninja mkl mkl-devel mkl-include numpy scipy delvewheel
 
-          CIBW_ENVIRONMENT_WINDOWS: >
+                    CIBW_ENVIRONMENT_WINDOWS: >
             GITHUB_ACTIONS=true
             CIBUILDWHEEL=1
             CMAKE_BUILD_TYPE=Release
