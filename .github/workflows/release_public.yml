@@ -2,7 +2,7 @@ name: Compile and Release Wheel to Public Repo
 
 on:
   push:
-    branches: [ "master" ]
+    branches: [ "master", "benchmark" ]
     tags: [ "v*" ]
   workflow_dispatch:
 
@@ -23,6 +23,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 1
+
+      - name: Fetch Basis Sets from mshqc-basis
+        shell: bash
+        run: |
+          git clone --depth 1 https://github.com/syahrulhidayat/mshqc-basis.git /tmp/mshqc-basis
+          mkdir -p data/basis
+          cp -rf /tmp/mshqc-basis/data/basis/* data/basis/
+          rm -rf /tmp/mshqc-basis
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -50,6 +58,7 @@ jobs:
           git clone --depth 1 -b v6.1.2 https://github.com/sunqm/libcint.git /tmp/libcint
           cmake -S /tmp/libcint -B /tmp/libcint/build \
                 -DCMAKE_INSTALL_PREFIX=/usr/local \
+                -DCMAKE_PREFIX_PATH="/opt/homebrew;/opt/homebrew/opt/openblas;/opt/homebrew/opt/lapack" \
                 -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
                 -DCMAKE_C_FLAGS="-O3 -fPIC -Wno-incompatible-pointer-types -Wno-implicit-function-declaration" \
                 -DENABLE_EXAMPLE=0 -DENABLE_TEST=0 -DBUILD_SHARED_LIBS=OFF
@@ -86,7 +95,16 @@ jobs:
           MSYS2_PATH_TYPE: inherit
         run: |
           export PATH="/mingw64/bin:/usr/bin:$PATH"
-          pacman -S --noconfirm --needed make diffutils
+          pacman -S --noconfirm --needed \
+            make \
+            diffutils \
+            git \
+            mingw-w64-x86_64-gcc \
+            mingw-w64-x86_64-gcc-fortran \
+            mingw-w64-x86_64-make \
+            mingw-w64-x86_64-cmake \
+            mingw-w64-x86_64-ninja \
+            mingw-w64-x86_64-tools-git
 
           mkdir -p /c/deps/Library/include /c/deps/Library/lib /c/deps/Library/bin
           cp -f /mingw64/include/pthread*.h /mingw64/include/sched.h /c/deps/Library/include/ 2>/dev/null || true
@@ -102,17 +120,18 @@ jobs:
           #endif
           EOF
 
+          rm -rf /tmp/libcint
           git clone --depth 1 -b v6.1.2 https://github.com/sunqm/libcint.git /tmp/libcint
-          cmake -S /tmp/libcint -B /tmp/libcint/build -G "MinGW Makefiles" \
+          /mingw64/bin/cmake.exe -S /tmp/libcint -B /tmp/libcint/build -G "MinGW Makefiles" \
                 -DCMAKE_INSTALL_PREFIX=/c/deps/Library \
                 -DCMAKE_C_COMPILER=/mingw64/bin/gcc.exe \
                 -DCMAKE_MAKE_PROGRAM=/mingw64/bin/mingw32-make.exe \
-                -DCMAKE_GNUtoMS=ON \
                 -DCMAKE_C_FLAGS="-O3 -mavx2 -mfma -mno-avx512f -funroll-loops -fno-math-errno -Wno-incompatible-pointer-types -std=gnu17" \
                 -DENABLE_EXAMPLE=0 -DENABLE_TEST=0 -DBUILD_SHARED_LIBS=ON
-          cmake --build /tmp/libcint/build -j4 --target install
+          /mingw64/bin/cmake.exe --build /tmp/libcint/build -j4 --target install
           cp -f /c/deps/Library/lib/libcint.dll.a /c/deps/Library/lib/cint.lib
 
+          rm -rf /tmp/tblis
           git clone --depth 1 -b v1.2.0 https://github.com/devinamatthews/tblis.git /tmp/tblis
           cd /tmp/tblis
           git submodule update --init --recursive
@@ -120,6 +139,8 @@ jobs:
           sed -i '1i #include <limits>' src/external/marray/include/short_vector.hpp
           sed -i '1i #include <limits>' src/external/marray/include/range.hpp
           sed -i '1i #include <limits>' src/util/thread.h
+          export CC=/mingw64/bin/gcc.exe
+          export CXX=/mingw64/bin/g++.exe
           export CFLAGS="-O3 -mno-avx512f -mno-avx512vl -mno-avx512dq -mno-avx512bw -mno-avx512cd -Wno-incompatible-pointer-types -std=gnu17"
           export CXXFLAGS="-O3 -mno-avx512f -mno-avx512vl -mno-avx512dq -mno-avx512bw -mno-avx512cd -Wno-incompatible-pointer-types -std=gnu++17"
           ./configure --prefix=/c/deps/Library --enable-shared --disable-static --without-hwloc \
@@ -210,7 +231,7 @@ jobs:
             GITHUB_ACTIONS=true
             CIBUILDWHEEL=1
             CMAKE_BUILD_TYPE=Release
-            CMAKE_PREFIX_PATH="/usr/local;/opt/homebrew;/opt/homebrew/opt/libomp;/opt/homebrew/opt/openblas;/opt/homebrew/opt/lapack"
+            CMAKE_PREFIX_PATH="/usr/local;/opt/homebrew;/opt/homebrew/opt/libomp;/opt/homebrew/opt/openblas;/opt/homebrew/opt/lapack;/opt/homebrew/opt/hdf5"
             OpenMP_ROOT="/opt/homebrew/opt/libomp"
             TBLIS_DIR="/usr/local"
             CMAKE_BUILD_PARALLEL_LEVEL=4
@@ -244,6 +265,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Fetch Basis Sets from mshqc-basis
+        run: |
+          git clone --depth 1 https://github.com/syahrulhidayat/mshqc-basis.git /tmp/mshqc-basis
+          mkdir -p data/basis
+          cp -rf /tmp/mshqc-basis/data/basis/* data/basis/
+          rm -rf /tmp/mshqc-basis
       - name: Remove local cache dir if exists
         run: rm -rf .cache_deps
       - name: Build sdist

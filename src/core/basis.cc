@@ -104,16 +104,43 @@ BasisSet::BasisSet(const std::string& basis_name, const Molecule& mol, const std
     
     std::string basis_lower = basis_name;
     std::transform(basis_lower.begin(), basis_lower.end(), basis_lower.begin(), ::tolower);
-    std::string resolved_dir = basis_dir;
-    const char* env_path = std::getenv("MSHQC_BASIS_PATH");
     
-    if (env_path != nullptr) {
-        resolved_dir = std::string(env_path);
-    } else if (resolved_dir.empty()) {
-        resolved_dir = "./basis"; 
+    std::string gbs_name = basis_lower;
+    if (gbs_name.size() < 4 || gbs_name.substr(gbs_name.size() - 4) != ".gbs") {
+        gbs_name += ".gbs";
     }
-    
-    std::string basis_file = resolved_dir + "/" + basis_lower + ".gbs";
+
+    std::vector<std::string> search_dirs;
+    if (const char* env_path = std::getenv("MSHQC_BASIS_PATH")) {
+        search_dirs.emplace_back(env_path);
+    }
+    if (const char* env_dir = std::getenv("MSHQC_BASIS_DIR")) {
+        search_dirs.emplace_back(env_dir);
+    }
+    if (!basis_dir.empty()) {
+        search_dirs.push_back(basis_dir);
+    }
+    search_dirs.push_back("data/basis");
+    search_dirs.push_back("../mshqc-basis/data/basis");
+    search_dirs.push_back("../../mshqc-basis/data/basis");
+    if (const char* home = std::getenv("HOME")) {
+        search_dirs.push_back(std::string(home) + "/mshqc-basis/data/basis");
+    }
+    if (const char* userprofile = std::getenv("USERPROFILE")) {
+        search_dirs.push_back(std::string(userprofile) + "/mshqc-basis/data/basis");
+    }
+    search_dirs.push_back("./basis");
+    search_dirs.push_back("python/mshqc/basis");
+
+    std::string basis_file = (basis_dir.empty() ? "./basis" : basis_dir) + "/" + gbs_name;
+    for (const auto& dir : search_dirs) {
+        std::string cand = dir + "/" + gbs_name;
+        std::ifstream f_check(cand);
+        if (f_check.good()) {
+            basis_file = cand;
+            break;
+        }
+    }
     
     if (!read_gbs(basis_file, mol)) {
         throw std::runtime_error("Failed to read basis set: " + basis_file);

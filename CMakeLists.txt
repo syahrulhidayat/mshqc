@@ -53,7 +53,7 @@ check_ipo_supported(RESULT ipo_supported OUTPUT error)
 set(Python_FIND_STRATEGY LOCATION)
 set(Python_FIND_VIRTUALENV FIRST)
 
-if(DEFINED ENV{CONDA_PREFIX})
+if(DEFINED ENV{CONDA_PREFIX} AND NOT "$ENV{CONDA_PREFIX}" STREQUAL "")
     set(Python_ROOT_DIR "$ENV{CONDA_PREFIX}")
     if(WIN32)
         set(Python_EXECUTABLE "$ENV{CONDA_PREFIX}/python.exe")
@@ -114,6 +114,7 @@ if(NOT MKL_LIBRARY)
             "${Python_ROOT_DIR}/lib"
             "${Python_ROOT_DIR}/Library/lib"
             "${Python3_ROOT_DIR}/lib"
+            "${Python3_ROOT_DIR}/Library/lib"
             "$ENV{CONDA_PREFIX}/lib"
             "$ENV{CONDA_PREFIX}/Library/lib"
             "C:/deps/Library/lib"
@@ -133,6 +134,7 @@ if(NOT MKL_INCLUDE_DIR)
             "${Python_ROOT_DIR}/include"
             "${Python_ROOT_DIR}/Library/include"
             "${Python3_ROOT_DIR}/include"
+            "${Python3_ROOT_DIR}/Library/include"
             "$ENV{CONDA_PREFIX}/include"
             "$ENV{CONDA_PREFIX}/Library/include"
             "$ENV{CONDA_PREFIX}/include/mkl"
@@ -148,7 +150,7 @@ if(MKL_LIBRARY AND MKL_INCLUDE_DIR)
     set(BLAS_LIBRARIES ${MKL_LIBRARY})
     set(LAPACK_LIBRARIES ${MKL_LIBRARY})
 else()
-    find_library(BLIS_LIBRARY NAMES blis-mt blis HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/homebrew/lib" "/usr/local/lib" "/usr/local/lib64" "/usr/lib64" "/usr/lib/x86_64-linux-gnu" "/usr/lib")
+    find_library(BLIS_LIBRARY NAMES blis-mt blis HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/homebrew/lib" "/opt/homebrew/opt/openblas/lib" "/usr/local/lib" "/usr/local/lib64" "/usr/lib64" "/usr/lib/x86_64-linux-gnu" "/usr/lib")
     find_library(FLAME_LIBRARY NAMES flame HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/homebrew/lib" "/usr/local/lib" "/usr/local/lib64" "/usr/lib64" "/usr/lib/x86_64-linux-gnu" "/usr/lib")
 
     if(BLIS_LIBRARY)
@@ -184,6 +186,7 @@ find_path(EIGEN3_INCLUDE_DIR
         "C:/deps/Library/include/eigen3"
         "C:/deps/Library/include"
         "/opt/homebrew/include/eigen3"
+        "/opt/homebrew/opt/eigen/include/eigen3"
         "/usr/local/include/eigen3"
         "/usr/local/include"
         "/usr/include/eigen3"
@@ -235,15 +238,15 @@ endif()
 # ==============================================================================
 find_library(HDF5_C_LIB
     NAMES hdf5 libhdf5 hdf5.lib libhdf5.lib
-    HINTS "$ENV{CONDA_PREFIX}/lib" "$ENV{CONDA_PREFIX}/Library/lib" "C:/deps/Library/lib" "/opt/homebrew/lib" "/usr/local/lib64" "/usr/local/lib" "/usr/lib64" "/usr/lib/x86_64-linux-gnu" "/usr/lib"
+    HINTS "$ENV{CONDA_PREFIX}/lib" "$ENV{CONDA_PREFIX}/Library/lib" "C:/deps/Library/lib" "/opt/homebrew/opt/hdf5/lib" "/opt/homebrew/lib" "/usr/local/lib64" "/usr/local/lib" "/usr/lib64" "/usr/lib/x86_64-linux-gnu" "/usr/lib"
 )
 find_library(HDF5_CXX_LIB
     NAMES hdf5_cpp libhdf5_cpp hdf5_cpp.lib libhdf5_cpp.lib
-    HINTS "$ENV{CONDA_PREFIX}/lib" "$ENV{CONDA_PREFIX}/Library/lib" "C:/deps/Library/lib" "/opt/homebrew/lib" "/usr/local/lib64" "/usr/local/lib" "/usr/lib64" "/usr/lib/x86_64-linux-gnu" "/usr/lib"
+    HINTS "$ENV{CONDA_PREFIX}/lib" "$ENV{CONDA_PREFIX}/Library/lib" "C:/deps/Library/lib" "/opt/homebrew/opt/hdf5/lib" "/opt/homebrew/lib" "/usr/local/lib64" "/usr/local/lib" "/usr/lib64" "/usr/lib/x86_64-linux-gnu" "/usr/lib"
 )
 find_path(HDF5_INCLUDE_DIR
     NAMES H5Cpp.h
-    HINTS "$ENV{CONDA_PREFIX}/include" "$ENV{CONDA_PREFIX}/Library/include" "C:/deps/Library/include" "/opt/homebrew/include" "/usr/local/include" "/usr/include" "/usr/include/hdf5/serial"
+    HINTS "$ENV{CONDA_PREFIX}/include" "$ENV{CONDA_PREFIX}/Library/include" "C:/deps/Library/include" "/opt/homebrew/opt/hdf5/include" "/opt/homebrew/include" "/usr/local/include" "/usr/include" "/usr/include/hdf5/serial"
 )
 
 if(HDF5_C_LIB AND HDF5_CXX_LIB)
@@ -312,23 +315,45 @@ endif()
 
 target_link_libraries(mshqc PUBLIC ${MSHQC_LINK_LIBS})
 
-target_include_directories(mshqc PUBLIC 
-    $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}/include>
-    $<BUILD_INTERFACE:${EIGEN3_INCLUDE_DIR}>
-    $<BUILD_INTERFACE:${CINT_INCLUDE_DIR}>
-    $<BUILD_INTERFACE:${TBLIS_INCLUDE_DIR}>
-    $<BUILD_INTERFACE:${HDF5_INCLUDE_DIR}>
-    $<BUILD_INTERFACE:${MKL_INCLUDE_DIR}>
-    $<BUILD_INTERFACE:${Python_ROOT_DIR}/include>
-    $<BUILD_INTERFACE:$ENV{CONDA_PREFIX}/include>
-    $<BUILD_INTERFACE:$ENV{CONDA_PREFIX}/Library/include>
-    $<BUILD_INTERFACE:C:/deps/Library/include>
-    $<INSTALL_INTERFACE:include>
+# Kumpulkan candidate include directories secara aman per-OS agar C:/ atau NOTFOUND tidak bocor ke Linux/macOS
+set(MSHQC_BUILD_INCLUDES
+    "${CMAKE_SOURCE_DIR}/include"
+    "${EIGEN3_INCLUDE_DIR}"
+    "${CINT_INCLUDE_DIR}"
+    "${TBLIS_INCLUDE_DIR}"
+    "${HDF5_INCLUDE_DIR}"
+    "${Python_ROOT_DIR}/include"
 )
+
+if(MKL_INCLUDE_DIR AND EXISTS "${MKL_INCLUDE_DIR}")
+    list(APPEND MSHQC_BUILD_INCLUDES "${MKL_INCLUDE_DIR}")
+endif()
+
+if(DEFINED ENV{CONDA_PREFIX} AND NOT "$ENV{CONDA_PREFIX}" STREQUAL "")
+    list(APPEND MSHQC_BUILD_INCLUDES
+        "$ENV{CONDA_PREFIX}/include"
+        "$ENV{CONDA_PREFIX}/Library/include"
+    )
+endif()
+
+if(WIN32)
+    list(APPEND MSHQC_BUILD_INCLUDES "C:/deps/Library/include")
+endif()
+
+target_include_directories(mshqc PUBLIC $<INSTALL_INTERFACE:include>)
+foreach(_inc IN LISTS MSHQC_BUILD_INCLUDES)
+    if(_inc AND IS_ABSOLUTE "${_inc}" AND EXISTS "${_inc}")
+        target_include_directories(mshqc PUBLIC $<BUILD_INTERFACE:${_inc}>)
+    endif()
+endforeach()
 
 nanobind_add_module(_mshqc "python/bindings.cc")
 
-target_include_directories(_mshqc PRIVATE "${EIGEN3_INCLUDE_DIR}" "${MKL_INCLUDE_DIR}" "C:/deps/Library/include")
+foreach(_inc IN LISTS MSHQC_BUILD_INCLUDES)
+    if(_inc AND IS_ABSOLUTE "${_inc}" AND EXISTS "${_inc}")
+        target_include_directories(_mshqc PRIVATE "${_inc}")
+    endif()
+endforeach()
 
 set(MSHQC_MODULE_LIBS mshqc ${CINT_LIBRARY} ${TBLIS_LIBRARY} ${TCI_LIBRARY} ${BLAS_LIBRARIES})
 if(UNIX AND NOT APPLE)
