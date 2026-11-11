@@ -7,10 +7,32 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-if(DEFINED ENV{GITHUB_ACTIONS} OR DEFINED ENV{CIBUILDWHEEL})
-    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -g -fno-omit-frame-pointer -mavx2 -mfma -mno-avx512f -funroll-loops -ftree-vectorize -mtune=generic -DNDEBUG -fno-math-errno")
+# ==============================================================================
+# 0. OS & COMPILER SPECIFIC FLAGS
+# ==============================================================================
+if(MSVC)
+    # Konfigurasi Windows (MSVC)
+    set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /O2 /Ob2 /Oi /Ot /arch:AVX2 /fp:fast /DNDEBUG /EHsc /bigobj")
+    add_compile_definitions(_USE_MATH_DEFINES NOMINMAX)
+elseif(APPLE)
+    # Konfigurasi macOS (Mendukung Apple Silicon ARM64 & Intel x86_64)
+    if(DEFINED ENV{GITHUB_ACTIONS} OR DEFINED ENV{CIBUILDWHEEL})
+        if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
+            set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -g -fno-omit-frame-pointer -funroll-loops -ftree-vectorize -DNDEBUG -fno-math-errno")
+        else()
+            set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -g -fno-omit-frame-pointer -mavx2 -mfma -funroll-loops -ftree-vectorize -mtune=generic -DNDEBUG -fno-math-errno")
+        endif()
+    else()
+        set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -g -fno-omit-frame-pointer -mcpu=native -funroll-loops -ftree-vectorize -DNDEBUG -fno-math-errno")
+    endif()
 else()
-    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -g -fno-omit-frame-pointer -march=native -funroll-loops -ftree-vectorize -DNDEBUG -fno-math-errno")
+    # Konfigurasi Linux (TETAP UTUH 100% SESUAI ASLINYA)
+    if(DEFINED ENV{GITHUB_ACTIONS} OR DEFINED ENV{CIBUILDWHEEL})
+        set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -g -fno-omit-frame-pointer -mavx2 -mfma -mno-avx512f -funroll-loops -ftree-vectorize -mtune=generic -DNDEBUG -fno-math-errno")
+    else()
+        set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -g -fno-omit-frame-pointer -march=native -funroll-loops -ftree-vectorize -DNDEBUG -fno-math-errno")
+    endif()
 endif()
 
 set(CMAKE_CXX_STANDARD 20)
@@ -28,9 +50,15 @@ check_ipo_supported(RESULT ipo_supported OUTPUT error)
 # ==============================================================================
 if(DEFINED ENV{CONDA_PREFIX})
     set(Python_ROOT_DIR "$ENV{CONDA_PREFIX}")
-    set(Python_EXECUTABLE "$ENV{CONDA_PREFIX}/bin/python")
-    set(Python3_EXECUTABLE "$ENV{CONDA_PREFIX}/bin/python")
-    link_directories("$ENV{CONDA_PREFIX}/lib")
+    if(WIN32)
+        set(Python_EXECUTABLE "$ENV{CONDA_PREFIX}/python.exe")
+        set(Python3_EXECUTABLE "$ENV{CONDA_PREFIX}/python.exe")
+        link_directories("$ENV{CONDA_PREFIX}/Library/lib" "$ENV{CONDA_PREFIX}/libs")
+    else()
+        set(Python_EXECUTABLE "$ENV{CONDA_PREFIX}/bin/python")
+        set(Python3_EXECUTABLE "$ENV{CONDA_PREFIX}/bin/python")
+        link_directories("$ENV{CONDA_PREFIX}/lib")
+    endif()
 elseif(EXISTS "/opt/conda")
     set(Python_ROOT_DIR "/opt/conda")
     link_directories("/opt/conda/lib")
@@ -52,15 +80,23 @@ find_package(OpenMP REQUIRED)
 # ==============================================================================
 # 2. BLAS / LAPACK / MKL DISCOVERY
 # ==============================================================================
-set(CMAKE_FIND_LIBRARY_SUFFIXES ".so" ".so.2" ".a")
+if(UNIX AND NOT APPLE)
+    set(CMAKE_FIND_LIBRARY_SUFFIXES ".so" ".so.2" ".a")
+elseif(APPLE)
+    set(CMAKE_FIND_LIBRARY_SUFFIXES ".dylib" ".a")
+elseif(WIN32)
+    set(CMAKE_FIND_LIBRARY_SUFFIXES ".lib" ".dll" ".a")
+endif()
 
 if(NOT MKL_LIBRARY)
     find_library(MKL_LIBRARY
-        NAMES mkl_rt libmkl_rt.so libmkl_rt.so.2
+        NAMES mkl_rt libmkl_rt.so libmkl_rt.so.2 libmkl_rt.dylib
         HINTS
             "${Python_ROOT_DIR}/lib"
+            "${Python_ROOT_DIR}/Library/lib"
             "${Python3_ROOT_DIR}/lib"
             "$ENV{CONDA_PREFIX}/lib"
+            "$ENV{CONDA_PREFIX}/Library/lib"
             "/opt/conda/lib"
             "/usr/local/lib"
             "/usr/local/lib64"
@@ -75,8 +111,10 @@ if(NOT MKL_INCLUDE_DIR)
         NAMES mkl.h
         HINTS
             "${Python_ROOT_DIR}/include"
+            "${Python_ROOT_DIR}/Library/include"
             "${Python3_ROOT_DIR}/include"
             "$ENV{CONDA_PREFIX}/include"
+            "$ENV{CONDA_PREFIX}/Library/include"
             "$ENV{CONDA_PREFIX}/include/mkl"
             "/opt/conda/include"
             "/usr/local/include"
@@ -89,8 +127,8 @@ if(MKL_LIBRARY AND MKL_INCLUDE_DIR)
     set(BLAS_LIBRARIES ${MKL_LIBRARY})
     set(LAPACK_LIBRARIES ${MKL_LIBRARY})
 else()
-    find_library(BLIS_LIBRARY NAMES blis-mt blis HINTS "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/local/lib64" "/usr/lib64" "/usr/lib/x86_64-linux-gnu" "/usr/lib")
-    find_library(FLAME_LIBRARY NAMES flame HINTS "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib" "/usr/local/lib64" "/usr/lib64" "/usr/lib/x86_64-linux-gnu" "/usr/lib")
+    find_library(BLIS_LIBRARY NAMES blis-mt blis HINTS "$ENV{CONDA_PREFIX}/lib" "$ENV{CONDA_PREFIX}/Library/lib" "/opt/homebrew/lib" "/usr/local/lib" "/usr/local/lib64" "/usr/lib64" "/usr/lib/x86_64-linux-gnu" "/usr/lib")
+    find_library(FLAME_LIBRARY NAMES flame HINTS "$ENV{CONDA_PREFIX}/lib" "$ENV{CONDA_PREFIX}/Library/lib" "/opt/homebrew/lib" "/usr/local/lib" "/usr/local/lib64" "/usr/lib64" "/usr/lib/x86_64-linux-gnu" "/usr/lib")
 
     if(BLIS_LIBRARY)
         set(BLAS_LIBRARIES ${BLIS_LIBRARY})
@@ -102,10 +140,10 @@ else()
         set(LAPACK_LIBRARIES ${FLAME_LIBRARY})
     else()
         find_package(LAPACK REQUIRED)
-        find_library(LAPACKE_LIBRARY NAMES lapacke HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/conda/lib" "/usr/lib64" "/usr/lib/x86_64-linux-gnu" "/usr/lib")
+        find_library(LAPACKE_LIBRARY NAMES lapacke HINTS "$ENV{CONDA_PREFIX}/lib" "$ENV{CONDA_PREFIX}/Library/lib" "/opt/conda/lib" "/opt/homebrew/opt/lapack/lib" "/opt/homebrew/opt/openblas/lib" "/usr/local/opt/lapack/lib" "/usr/lib64" "/usr/lib/x86_64-linux-gnu" "/usr/lib")
         if(LAPACKE_LIBRARY)
             list(APPEND LAPACK_LIBRARIES ${LAPACKE_LIBRARY})
-        else()
+        elseif(NOT APPLE)
             message(FATAL_ERROR "CRITICAL: LAPACKE tidak ditemukan di sistem!")
         endif()
     endif()
@@ -120,6 +158,9 @@ find_path(EIGEN3_INCLUDE_DIR
         "${CMAKE_SOURCE_DIR}/include/eigen-3.4.0"
         "$ENV{CONDA_PREFIX}/include/eigen3"
         "$ENV{CONDA_PREFIX}/include"
+        "$ENV{CONDA_PREFIX}/Library/include/eigen3"
+        "$ENV{CONDA_PREFIX}/Library/include"
+        "/opt/homebrew/include/eigen3"
         "/usr/local/include/eigen3"
         "/usr/local/include"
         "/usr/include/eigen3"
@@ -137,12 +178,12 @@ endif()
 # 4. LIBCINT & TBLIS DISCOVERY
 # ==============================================================================
 find_library(CINT_LIBRARY
-    NAMES cint libcint.a
-    HINTS "$ENV{CONDA_PREFIX}/lib" "$ENV{HOME}/libcint_install/lib64" "$ENV{HOME}/libcint_install/lib" "/usr/local/lib64" "/usr/local/lib" "/usr/lib64" "/usr/lib"
+    NAMES cint libcint.a libcint.lib
+    HINTS "$ENV{CONDA_PREFIX}/lib" "$ENV{CONDA_PREFIX}/Library/lib" "$ENV{HOME}/libcint_install/lib64" "$ENV{HOME}/libcint_install/lib" "/opt/homebrew/lib" "/usr/local/lib64" "/usr/local/lib" "/usr/lib64" "/usr/lib"
 )
 find_path(CINT_INCLUDE_DIR
     NAMES cint.h
-    HINTS "$ENV{CONDA_PREFIX}/include" "$ENV{HOME}/libcint_install/include" "/usr/local/include" "/usr/include"
+    HINTS "$ENV{CONDA_PREFIX}/include" "$ENV{CONDA_PREFIX}/Library/include" "$ENV{HOME}/libcint_install/include" "/opt/homebrew/include" "/usr/local/include" "/usr/include"
 )
 
 if(NOT CINT_LIBRARY OR NOT CINT_INCLUDE_DIR)
@@ -150,16 +191,16 @@ if(NOT CINT_LIBRARY OR NOT CINT_INCLUDE_DIR)
 endif()
 
 find_library(TBLIS_LIBRARY
-    NAMES tblis libtblis.a
-    HINTS "$ENV{TBLIS_DIR}/lib64" "$ENV{TBLIS_DIR}/lib" "$ENV{CONDA_PREFIX}/lib" "$ENV{HOME}/tblis_install/lib64" "$ENV{HOME}/tblis_install/lib" "/usr/local/lib64" "/usr/local/lib" "/usr/lib64" "/usr/lib"
+    NAMES tblis libtblis.a tblis.lib
+    HINTS "$ENV{TBLIS_DIR}/lib64" "$ENV{TBLIS_DIR}/lib" "$ENV{CONDA_PREFIX}/lib" "$ENV{CONDA_PREFIX}/Library/lib" "$ENV{HOME}/tblis_install/lib64" "$ENV{HOME}/tblis_install/lib" "/opt/homebrew/lib" "/usr/local/lib64" "/usr/local/lib" "/usr/lib64" "/usr/lib"
 )
 find_library(TCI_LIBRARY
-    NAMES tci libtci.a
-    HINTS "$ENV{TBLIS_DIR}/lib64" "$ENV{TBLIS_DIR}/lib" "$ENV{CONDA_PREFIX}/lib" "$ENV{HOME}/tblis_install/lib64" "$ENV{HOME}/tblis_install/lib" "/usr/local/lib64" "/usr/local/lib" "/usr/lib64" "/usr/lib"
+    NAMES tci libtci.a tci.lib
+    HINTS "$ENV{TBLIS_DIR}/lib64" "$ENV{TBLIS_DIR}/lib" "$ENV{CONDA_PREFIX}/lib" "$ENV{CONDA_PREFIX}/Library/lib" "$ENV{HOME}/tblis_install/lib64" "$ENV{HOME}/tblis_install/lib" "/opt/homebrew/lib" "/usr/local/lib64" "/usr/local/lib" "/usr/lib64" "/usr/lib"
 )
 find_path(TBLIS_INCLUDE_DIR
     NAMES tblis/tblis.h
-    HINTS "$ENV{TBLIS_DIR}/include" "$ENV{CONDA_PREFIX}/include" "$ENV{HOME}/tblis_install/include" "/usr/local/include" "/usr/include"
+    HINTS "$ENV{TBLIS_DIR}/include" "$ENV{CONDA_PREFIX}/include" "$ENV{CONDA_PREFIX}/Library/include" "$ENV{HOME}/tblis_install/include" "/opt/homebrew/include" "/usr/local/include" "/usr/include"
 )
 
 if(NOT TBLIS_LIBRARY OR NOT TBLIS_INCLUDE_DIR)
@@ -170,16 +211,16 @@ endif()
 # 5. HDF5 DISCOVERY
 # ==============================================================================
 find_library(HDF5_C_LIB
-    NAMES hdf5
-    HINTS "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib64" "/usr/local/lib" "/usr/lib64" "/usr/lib/x86_64-linux-gnu" "/usr/lib"
+    NAMES hdf5 libhdf5 hdf5.lib libhdf5.lib
+    HINTS "$ENV{CONDA_PREFIX}/lib" "$ENV{CONDA_PREFIX}/Library/lib" "/opt/homebrew/lib" "/usr/local/lib64" "/usr/local/lib" "/usr/lib64" "/usr/lib/x86_64-linux-gnu" "/usr/lib"
 )
 find_library(HDF5_CXX_LIB
-    NAMES hdf5_cpp
-    HINTS "$ENV{CONDA_PREFIX}/lib" "/usr/local/lib64" "/usr/local/lib" "/usr/lib64" "/usr/lib/x86_64-linux-gnu" "/usr/lib"
+    NAMES hdf5_cpp libhdf5_cpp hdf5_cpp.lib libhdf5_cpp.lib
+    HINTS "$ENV{CONDA_PREFIX}/lib" "$ENV{CONDA_PREFIX}/Library/lib" "/opt/homebrew/lib" "/usr/local/lib64" "/usr/local/lib" "/usr/lib64" "/usr/lib/x86_64-linux-gnu" "/usr/lib"
 )
 find_path(HDF5_INCLUDE_DIR
     NAMES H5Cpp.h
-    HINTS "$ENV{CONDA_PREFIX}/include" "/usr/local/include" "/usr/include" "/usr/include/hdf5/serial"
+    HINTS "$ENV{CONDA_PREFIX}/include" "$ENV{CONDA_PREFIX}/Library/include" "/opt/homebrew/include" "/usr/local/include" "/usr/include" "/usr/include/hdf5/serial"
 )
 
 if(HDF5_C_LIB AND HDF5_CXX_LIB)
@@ -212,8 +253,14 @@ set(ALL_SOURCES
 
 add_library(mshqc STATIC ${ALL_SOURCES})
 
+if(APPLE)
+    set(MSHQC_RPATH "@loader_path;@loader_path/../../..")
+else()
+    set(MSHQC_RPATH "$ORIGIN:$ORIGIN/../../..")
+endif()
+
 set_target_properties(mshqc PROPERTIES 
-    INSTALL_RPATH "$ORIGIN:$ORIGIN/../../.."
+    INSTALL_RPATH "${MSHQC_RPATH}"
     BUILD_WITH_INSTALL_RPATH TRUE
 )
 
@@ -229,10 +276,14 @@ set(MSHQC_LINK_LIBS
     ${HDF5_LIBRARIES} 
     ${BLAS_LIBRARIES}
     ${LAPACK_LIBRARIES}
-    OpenMP::OpenMP_CXX   
-    quadmath
-    atomic
+    OpenMP::OpenMP_CXX
 )
+
+# Hanya tambahkan quadmath dan atomic di Linux / GCC
+if(UNIX AND NOT APPLE)
+    list(APPEND MSHQC_LINK_LIBS quadmath atomic)
+endif()
+
 if(TCI_LIBRARY)
     list(APPEND MSHQC_LINK_LIBS ${TCI_LIBRARY})
 endif()
@@ -248,18 +299,24 @@ target_include_directories(mshqc PUBLIC
     $<BUILD_INTERFACE:${MKL_INCLUDE_DIR}>
     $<BUILD_INTERFACE:${Python_ROOT_DIR}/include>
     $<BUILD_INTERFACE:$ENV{CONDA_PREFIX}/include>
+    $<BUILD_INTERFACE:$ENV{CONDA_PREFIX}/Library/include>
     $<INSTALL_INTERFACE:include>
 )
 
 nanobind_add_module(_mshqc "python/bindings.cc")
 
 target_include_directories(_mshqc PRIVATE "${EIGEN3_INCLUDE_DIR}" "${MKL_INCLUDE_DIR}")
-target_link_libraries(_mshqc PRIVATE mshqc ${CINT_LIBRARY} ${TBLIS_LIBRARY} ${TCI_LIBRARY} ${BLAS_LIBRARIES} quadmath atomic)
+
+set(MSHQC_MODULE_LIBS mshqc ${CINT_LIBRARY} ${TBLIS_LIBRARY} ${TCI_LIBRARY} ${BLAS_LIBRARIES})
+if(UNIX AND NOT APPLE)
+    list(APPEND MSHQC_MODULE_LIBS quadmath atomic)
+endif()
+target_link_libraries(_mshqc PRIVATE ${MSHQC_MODULE_LIBS})
 
 set_target_properties(_mshqc PROPERTIES 
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/python/mshqc"
     PREFIX "" 
-    INSTALL_RPATH "$ORIGIN:$ORIGIN/../../.."
+    INSTALL_RPATH "${MSHQC_RPATH}"
     BUILD_WITH_INSTALL_RPATH TRUE
 )
 
@@ -267,6 +324,7 @@ if(ipo_supported AND NOT DEFINED ENV{CIBUILDWHEEL} AND NOT DEFINED ENV{GITHUB_AC
     set_target_properties(mshqc PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
     set_target_properties(_mshqc PROPERTIES INTERPROCEDURAL_OPTIMIZATION TRUE)
 endif()
+
 install(TARGETS mshqc _mshqc
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
