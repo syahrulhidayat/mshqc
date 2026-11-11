@@ -34,7 +34,6 @@ class CMakeBuild(build_ext):
         import nanobind
         nanobind_cmake_path = nanobind.cmake_dir()
 
-        # Cari semua kemungkinan prefix tempat pip/conda menginstal mkl-devel & mkl-include
         real_exe_root = os.path.dirname(os.path.dirname(os.path.realpath(sys.executable)))
         exe_root = os.path.dirname(os.path.dirname(os.path.abspath(sys.executable)))
         candidate_roots = [
@@ -73,7 +72,6 @@ class CMakeBuild(build_ext):
                     else:
                         matches = glob.glob(os.path.join(lib_dir, "libmkl_rt.so*"))
                         if matches:
-                            # Buat symlink libmkl_rt.so jika hanya ada libmkl_rt.so.2
                             so_link = os.path.join(lib_dir, "libmkl_rt.so")
                             if not os.path.exists(so_link):
                                 try:
@@ -113,7 +111,6 @@ class CMakeBuild(build_ext):
         if env_cmake_args:
             cmake_args.extend(shlex.split(env_cmake_args))
 
-        # Gunakan Ninja di Linux & macOS; di Windows gunakan generator bawaan Visual Studio (MSVC)
         if sys.platform != "win32" and shutil.which("ninja"):
             cmake_args.extend(["-G", "Ninja"])
 
@@ -139,7 +136,6 @@ class CMakeBuild(build_ext):
                 if "_mshqc" in os.path.basename(filepath):
                     shutil.copy2(filepath, extdir)
 
-        # Cari direktori basis baik di dalam repo maupun di repo terpisah mshqc-basis
         basis_candidates = [
             os.path.join(ext.sourcedir, "data", "basis"),
             os.path.join(os.path.dirname(ext.sourcedir), "mshqc-basis", "data", "basis"),

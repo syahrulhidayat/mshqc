@@ -49,7 +49,6 @@ check_ipo_supported(RESULT ipo_supported OUTPUT error)
 # ==============================================================================
 # 1. PYTHON & NANOBIND DISCOVERY
 # ==============================================================================
-# Wajib agar CMake di Windows/macOS memilih Python milik cibuildwheel (bukan Python 3.15 sistem)
 set(Python_FIND_STRATEGY LOCATION)
 set(Python_FIND_VIRTUALENV FIRST)
 
@@ -204,7 +203,7 @@ endif()
 # 4. LIBCINT & TBLIS DISCOVERY
 # ==============================================================================
 find_library(CINT_LIBRARY
-    NAMES cint libcint.a cint.lib libcint.dll.a
+    NAMES cint.lib libcint.dll.a cint libcint.a
     HINTS "$ENV{CONDA_PREFIX}/lib" "$ENV{CONDA_PREFIX}/Library/lib" "C:/deps/Library/lib" "$ENV{HOME}/libcint_install/lib64" "$ENV{HOME}/libcint_install/lib" "/opt/homebrew/lib" "/usr/local/lib64" "/usr/local/lib" "/usr/lib64" "/usr/lib"
 )
 find_path(CINT_INCLUDE_DIR
@@ -217,11 +216,11 @@ if(NOT CINT_LIBRARY OR NOT CINT_INCLUDE_DIR)
 endif()
 
 find_library(TBLIS_LIBRARY
-    NAMES tblis libtblis.a tblis.lib libtblis.dll.a
+    NAMES tblis.lib libtblis.dll.a tblis libtblis.a
     HINTS "$ENV{TBLIS_DIR}/lib64" "$ENV{TBLIS_DIR}/lib" "$ENV{CONDA_PREFIX}/lib" "$ENV{CONDA_PREFIX}/Library/lib" "C:/deps/Library/lib" "$ENV{HOME}/tblis_install/lib64" "$ENV{HOME}/tblis_install/lib" "/opt/homebrew/lib" "/usr/local/lib64" "/usr/local/lib" "/usr/lib64" "/usr/lib"
 )
 find_library(TCI_LIBRARY
-    NAMES tci libtci.a tci.lib libtci.dll.a
+    NAMES tci.lib libtci.dll.a tci libtci.a
     HINTS "$ENV{TBLIS_DIR}/lib64" "$ENV{TBLIS_DIR}/lib" "$ENV{CONDA_PREFIX}/lib" "$ENV{CONDA_PREFIX}/Library/lib" "C:/deps/Library/lib" "$ENV{HOME}/tblis_install/lib64" "$ENV{HOME}/tblis_install/lib" "/opt/homebrew/lib" "/usr/local/lib64" "/usr/local/lib" "/usr/lib64" "/usr/lib"
 )
 find_path(TBLIS_INCLUDE_DIR
@@ -315,7 +314,7 @@ endif()
 
 target_link_libraries(mshqc PUBLIC ${MSHQC_LINK_LIBS})
 
-# Kumpulkan candidate include directories secara aman per-OS agar C:/ atau NOTFOUND tidak bocor ke Linux/macOS
+# Validasi ketat direktori include agar tidak ada relative path lintas OS
 set(MSHQC_BUILD_INCLUDES
     "${CMAKE_SOURCE_DIR}/include"
     "${EIGEN3_INCLUDE_DIR}"
@@ -361,7 +360,6 @@ if(UNIX AND NOT APPLE)
 endif()
 target_link_libraries(_mshqc PRIVATE ${MSHQC_MODULE_LIBS})
 
-# Di Windows (MSVC), RUNTIME_OUTPUT_DIRECTORY_RELEASE wajib disetel agar file .pyd tidak masuk ke subfolder Release/
 set_target_properties(_mshqc PROPERTIES 
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/python/mshqc"
     LIBRARY_OUTPUT_DIRECTORY_RELEASE "${CMAKE_SOURCE_DIR}/python/mshqc"

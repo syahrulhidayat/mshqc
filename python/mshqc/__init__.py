@@ -120,3 +120,24 @@ __all__ = [
     "MSHQCCalculator", "MSHQCSession", "build_molecule", "run",
     "quick_calculation", "benchmark_basis_sets", "compare_methods",
 ]
+
+# --- Auto-resolve MSHQC_BASIS_PATH (mendukung repo terpisah mshqc-basis) ---
+def _resolve_mshqc_basis_dir() -> None:
+    import os as _os
+    from pathlib import Path as _Path
+    _pkg_dir = _Path(__file__).resolve().parent
+    _candidates = [
+        _pkg_dir / "basis",
+        _pkg_dir.parent.parent / "data" / "basis",
+        _pkg_dir.parent.parent.parent / "mshqc-basis" / "data" / "basis",
+        _Path.home() / "mshqc-basis" / "data" / "basis",
+    ]
+    _cur = _os.environ.get("MSHQC_BASIS_PATH", "")
+    if _cur and _Path(_cur).is_dir() and any(_Path(_cur).glob("*.gbs")):
+        return
+    for _cand in _candidates:
+        if _cand.is_dir() and any(_cand.glob("*.gbs")):
+            _os.environ["MSHQC_BASIS_PATH"] = str(_cand)
+            break
+
+_resolve_mshqc_basis_dir()

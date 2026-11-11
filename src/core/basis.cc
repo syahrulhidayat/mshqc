@@ -27,7 +27,7 @@
 #include <stdexcept>
 #include <cctype>
 #include <vector>
-#include <cstdlib> // Diperlukan untuk std::getenv
+#include <cstdlib>
 
 #ifdef I
 #undef I
@@ -37,20 +37,12 @@ namespace mshqc {
     
 constexpr double PI = 3.14159265358979323846;
 
-// ============================================================================
-// HELPERS
-// ============================================================================
-
 std::string sanitize_number(std::string str) {
     for (char &c : str) {
         if (c == 'D' || c == 'd') c = 'E';
     }
     return str;
 }
-
-// ============================================================================
-// Shell Implementation
-// ============================================================================
 
 Shell::Shell(AngularMomentum am, int center, const std::array<double, 3>& center_pos)
     : am_(am), center_(center), position_(center_pos), spherical_(true) {
@@ -92,10 +84,6 @@ void Shell::normalize() {
         }
     }
 }
-
-// ============================================================================
-// BasisSet Implementation (Constructors)
-// ============================================================================
 
 BasisSet::BasisSet() : name_("unknown"), spherical_(true) { }
 
@@ -146,10 +134,6 @@ BasisSet::BasisSet(const std::string& basis_name, const Molecule& mol, const std
         throw std::runtime_error("Failed to read basis set: " + basis_file);
     }
 }
-
-// ============================================================================
-// GBS Parsing Implementation
-// ============================================================================
 
 bool BasisSet::read_gbs(const std::string& basis_file, const Molecule& mol) {
     std::ifstream f(basis_file);
@@ -240,7 +224,6 @@ int BasisSet::parse_atom_basis(std::ifstream& file,
                 }
             }
             
-            // Eksekusi normalisasi kontraksi sebelum dimasukkan ke list paket
             s_sh.normalize();
             p_sh.normalize();
             

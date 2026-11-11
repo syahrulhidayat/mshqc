@@ -95,16 +95,13 @@ jobs:
           MSYS2_PATH_TYPE: inherit
         run: |
           export PATH="/mingw64/bin:/usr/bin:$PATH"
-          pacman -S --noconfirm --needed \
+          pacman -Sy --noconfirm --needed \
             make \
             diffutils \
-            git \
             mingw-w64-x86_64-gcc \
             mingw-w64-x86_64-gcc-fortran \
             mingw-w64-x86_64-make \
-            mingw-w64-x86_64-cmake \
-            mingw-w64-x86_64-ninja \
-            mingw-w64-x86_64-tools-git
+            mingw-w64-x86_64-cmake
 
           mkdir -p /c/deps/Library/include /c/deps/Library/lib /c/deps/Library/bin
           cp -f /mingw64/include/pthread*.h /mingw64/include/sched.h /c/deps/Library/include/ 2>/dev/null || true
@@ -120,17 +117,21 @@ jobs:
           #endif
           EOF
 
+          # 1. Build libcint (Shared DLL + Import Library untuk MSVC)
           rm -rf /tmp/libcint
           git clone --depth 1 -b v6.1.2 https://github.com/sunqm/libcint.git /tmp/libcint
           /mingw64/bin/cmake.exe -S /tmp/libcint -B /tmp/libcint/build -G "MinGW Makefiles" \
                 -DCMAKE_INSTALL_PREFIX=/c/deps/Library \
                 -DCMAKE_C_COMPILER=/mingw64/bin/gcc.exe \
                 -DCMAKE_MAKE_PROGRAM=/mingw64/bin/mingw32-make.exe \
+                -DCMAKE_SHARED_LINKER_FLAGS="-Wl,--export-all-symbols" \
                 -DCMAKE_C_FLAGS="-O3 -mavx2 -mfma -mno-avx512f -funroll-loops -fno-math-errno -Wno-incompatible-pointer-types -std=gnu17" \
                 -DENABLE_EXAMPLE=0 -DENABLE_TEST=0 -DBUILD_SHARED_LIBS=ON
           /mingw64/bin/cmake.exe --build /tmp/libcint/build -j4 --target install
+          cp -f /c/deps/Library/lib/*.dll /c/deps/Library/bin/ 2>/dev/null || true
           cp -f /c/deps/Library/lib/libcint.dll.a /c/deps/Library/lib/cint.lib
 
+          # 2. Build TBLIS (Kompilasi objek lalu konversi ke DLL + Import Library untuk MSVC)
           rm -rf /tmp/tblis
           git clone --depth 1 -b v1.2.0 https://github.com/devinamatthews/tblis.git /tmp/tblis
           cd /tmp/tblis
@@ -142,14 +143,30 @@ jobs:
           export CC=/mingw64/bin/gcc.exe
           export CXX=/mingw64/bin/g++.exe
           export CFLAGS="-O3 -mno-avx512f -mno-avx512vl -mno-avx512dq -mno-avx512bw -mno-avx512cd -Wno-incompatible-pointer-types -std=gnu17"
-          export CXXFLAGS="-O3 -mno-avx512f -mno-avx512vl -mno-avx512dq -mno-avx512bw -mno-avx512cd -Wno-incompatible-pointer-types -std=gnu++17"
-          ./configure --prefix=/c/deps/Library --enable-shared --disable-static --without-hwloc \
+          export CXXFLAGS="-O3 -mno-avx512f -mno-avx512vl -mno-avx512dq -mno-avx512bw -mno-avx512cd -std=gnu++17"
+          ./configure --prefix=/c/deps/Library --enable-static --disable-shared --without-hwloc \
                       --enable-config=haswell,zen,core2,sandybridge,reference \
-                      CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS"
+                      CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS" LIBS="-latomic -lpthread"
           make -j4
           make install
-          cp -f /c/deps/Library/lib/libtblis.dll.a /c/deps/Library/lib/tblis.lib
+
+          # Buat libtci.dll + tci.lib dan libtblis.dll + tblis.lib dengan semua simbol terekspor
+          /mingw64/bin/g++.exe -shared -o /c/deps/Library/bin/libtci.dll \
+              -Wl,--out-implib,/c/deps/Library/lib/libtci.dll.a \
+              -Wl,--export-all-symbols \
+              -Wl,--whole-archive /c/deps/Library/lib/libtci.a -Wl,--no-whole-archive \
+              -lpthread -latomic
           cp -f /c/deps/Library/lib/libtci.dll.a /c/deps/Library/lib/tci.lib
+
+          /mingw64/bin/g++.exe -shared -o /c/deps/Library/bin/libtblis.dll \
+              -Wl,--out-implib,/c/deps/Library/lib/libtblis.dll.a \
+              -Wl,--export-all-symbols \
+              -Wl,--whole-archive /c/deps/Library/lib/libtblis.a -Wl,--no-whole-archive \
+              /c/deps/Library/lib/libtci.dll.a -lpthread -latomic
+          cp -f /c/deps/Library/lib/libtblis.dll.a /c/deps/Library/lib/tblis.lib
+
+          # Hapus archive .a statis MinGW agar MSVC hanya memilih import library .lib / .dll.a
+          rm -f /c/deps/Library/lib/libtblis.a /c/deps/Library/lib/libtci.a
 
       - name: Install cibuildwheel
         run: python -m pip install --upgrade cibuildwheel
@@ -157,7 +174,6 @@ jobs:
       - name: Build wheels
         run: python -m cibuildwheel --output-dir wheelhouse
         env:
-          # Verbosity 1 menampilkan log kompilasi CMake & C++ secara langsung
           CIBW_BUILD_VERBOSITY: "1"
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
           CIBW_BUILD: "cp310-* cp311-* cp312-* cp313-*"
