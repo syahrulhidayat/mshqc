@@ -94,7 +94,16 @@ if(APPLE)
     set(OpenMP_omp_LIBRARY "${OpenMP_ROOT}/lib/libomp.dylib")
 endif()
 
+if(MSVC)
+    set(OpenMP_C_FLAGS "/openmp:llvm")
+    set(OpenMP_CXX_FLAGS "/openmp:llvm")
+endif()
+
 find_package(OpenMP REQUIRED)
+
+if(MSVC AND TARGET OpenMP::OpenMP_CXX)
+    set_target_properties(OpenMP::OpenMP_CXX PROPERTIES INTERFACE_COMPILE_OPTIONS "/openmp:llvm")
+endif()
 
 # ==============================================================================
 # 2. BLAS / LAPACK / MKL DISCOVERY
