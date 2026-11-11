@@ -73,7 +73,7 @@ jobs:
           perl -pi -e 'print "#include <limits>\n" if $. == 1' src/external/marray/include/range.hpp
           perl -pi -e 'print "#include <limits>\n" if $. == 1' src/util/thread.h
           perl -pi -e 'print "#include <stdlib.h>\n" if $. == 1' src/external/tci/tci/task_set.c
-          perl -pi -e 'print "#include <stdlib.h>\n" if $. == 1' src/external/tci/tci/internal.h
+          perl -pi -e 's|#include <x86intrin.h>|#if defined(__GNUC__) && (defined(__x86_64__) \|\| defined(__i386__))\n#include <x86intrin.h>\n#else\n#undef __AVX512F__\n#undef __AVX__\n#undef __SSE2__\n#endif|g' src/external/marray/include/expression.hpp
 
           ./configure --prefix=/usr/local --enable-static --disable-shared --with-pic --without-hwloc \
                       --enable-config=reference \
@@ -156,7 +156,9 @@ jobs:
           sed -i '1i #include <limits>' src/external/marray/include/range.hpp
           sed -i '1i #include <limits>' src/util/thread.h
           sed -i '1i #include <stdlib.h>' src/external/tci/tci/task_set.c
-          sed -i '1i #include <stdlib.h>' src/external/tci/tci/internal.h
+
+          # Guard x86intrin.h agar kompatibel saat header TBLIS/MArray dibaca oleh MSVC (cl.exe)
+          sed -i 's|#include <x86intrin.h>|#if defined(__GNUC__) \&\& (defined(__x86_64__) \|\| defined(__i386__))\n#include <x86intrin.h>\n#else\n#undef __AVX512F__\n#undef __AVX__\n#undef __SSE2__\n#endif|g' src/external/marray/include/expression.hpp
 
           # Patch aligned_allocator.hpp satu baris agar tidak merusak blok if (ptr) free(ptr);
           sed -i '/#include <cstdlib>/a #include <malloc.h>\nstatic inline int posix_memalign(void** p, size_t a, size_t s) { *p = _aligned_malloc(s, a); return *p ? 0 : 12; }' src/memory/aligned_allocator.hpp
