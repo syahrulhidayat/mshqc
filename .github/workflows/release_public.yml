@@ -2,7 +2,6 @@ name: Compile and Release Wheel to Public Repo
 
 on:
   push:
-    branches: [ "master" ]
     tags: [ "v*" ]
   workflow_dispatch:
 
@@ -36,12 +35,108 @@ jobs:
           path: .cache_deps
           key: manylinux_2_28-static-deps-v6.1.2-tblis-v1.2.0
 
+      # ========================================================================
+      # STEP KHUSUS MACOS: Kompilasi libcint & TBLIS langsung di Host macOS
+      # ========================================================================
+      - name: Build C/C++ Dependencies (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -e
+          brew install --quiet cmake ninja eigen libomp hdf5 openblas lapack || true
+          sudo mkdir -p /usr/local/include /usr/local/lib
+
+          git clone --depth 1 -b v6.1.2 https://github.com/sunqm/libcint.git /tmp/libcint
+          cmake -S /tmp/libcint -B /tmp/libcint/build \
+                -DCMAKE_INSTALL_PREFIX=/usr/local \
+                -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+                -DCMAKE_C_FLAGS="-O3 -fPIC -Wno-incompatible-pointer-types -Wno-implicit-function-declaration" \
+                -DENABLE_EXAMPLE=0 -DENABLE_TEST=0 -DBUILD_SHARED_LIBS=OFF
+          cmake --build /tmp/libcint/build -j$(sysctl -n hw.ncpu)
+          sudo cmake --install /tmp/libcint/build
+
+          git clone --depth 1 -b v1.2.0 https://github.com/devinamatthews/tblis.git /tmp/tblis
+          cd /tmp/tblis
+          git submodule update --init --recursive
+          perl -pi -e 's/SIGSTKSZ/8192/g' src/external/catch/catch.hpp
+          perl -pi -e 'print "#include <limits>\n" if $. == 1' src/external/marray/include/short_vector.hpp
+          perl -pi -e 'print "#include <limits>\n" if $. == 1' src/external/marray/include/range.hpp
+          perl -pi -e 'print "#include <limits>\n" if $. == 1' src/util/thread.h
+          ./configure --prefix=/usr/local --enable-static --disable-shared --with-pic --without-hwloc \
+                      --enable-config=reference \
+                      CFLAGS="-O3 -fPIC" CXXFLAGS="-O3 -fPIC -std=c++17"
+          make -j$(sysctl -n hw.ncpu)
+          sudo make install
+
+      # ========================================================================
+      # STEP KHUSUS WINDOWS: Instalasi HDF5/MKL (Conda) & libcint/TBLIS (MSYS2)
+      # ========================================================================
+      - name: Install MSVC Libraries via Conda (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          call %CONDA%\condabin\conda.bat create -p C:\deps -c conda-forge hdf5 eigen mkl-devel -y
+
+      - name: Build libcint & TBLIS via MSYS2 MinGW64 (Windows)
+        if: runner.os == 'Windows'
+        shell: C:\msys64\usr\bin\bash.exe --noprofile --norc -eo pipefail "{0}"
+        env:
+          MSYSTEM: MINGW64
+          MSYS2_PATH_TYPE: inherit
+        run: |
+          export PATH="/mingw64/bin:/usr/bin:$PATH"
+          pacman -S --noconfirm --needed make diffutils
+
+          mkdir -p /c/deps/Library/include /c/deps/Library/lib /c/deps/Library/bin
+          cp -f /mingw64/include/pthread*.h /mingw64/include/sched.h /c/deps/Library/include/ 2>/dev/null || true
+
+          # Buat header jembatan unistd.h agar MSVC mengenali tipe POSIX ssize_t saat membaca tblis.h
+          cat << 'EOF' > /c/deps/Library/include/unistd.h
+          #ifndef _UNISTD_H
+          #define _UNISTD_H
+          #include <io.h>
+          #include <process.h>
+          #include <BaseTsd.h>
+          typedef SSIZE_T ssize_t;
+          #endif
+          EOF
+
+          git clone --depth 1 -b v6.1.2 https://github.com/sunqm/libcint.git /tmp/libcint
+          cmake -S /tmp/libcint -B /tmp/libcint/build -G "MinGW Makefiles" \
+                -DCMAKE_INSTALL_PREFIX=/c/deps/Library \
+                -DCMAKE_C_COMPILER=/mingw64/bin/gcc.exe \
+                -DCMAKE_MAKE_PROGRAM=/mingw64/bin/mingw32-make.exe \
+                -DCMAKE_GNUtoMS=ON \
+                -DCMAKE_C_FLAGS="-O3 -mavx2 -mfma -mno-avx512f -funroll-loops -fno-math-errno -Wno-incompatible-pointer-types -std=gnu17" \
+                -DENABLE_EXAMPLE=0 -DENABLE_TEST=0 -DBUILD_SHARED_LIBS=ON
+          cmake --build /tmp/libcint/build -j4 --target install
+          cp -f /c/deps/Library/lib/libcint.dll.a /c/deps/Library/lib/cint.lib
+
+          git clone --depth 1 -b v1.2.0 https://github.com/devinamatthews/tblis.git /tmp/tblis
+          cd /tmp/tblis
+          git submodule update --init --recursive
+          sed -i 's/SIGSTKSZ/8192/g' src/external/catch/catch.hpp
+          sed -i '1i #include <limits>' src/external/marray/include/short_vector.hpp
+          sed -i '1i #include <limits>' src/external/marray/include/range.hpp
+          sed -i '1i #include <limits>' src/util/thread.h
+          export CFLAGS="-O3 -mno-avx512f -mno-avx512vl -mno-avx512dq -mno-avx512bw -mno-avx512cd -Wno-incompatible-pointer-types -std=gnu17"
+          export CXXFLAGS="-O3 -mno-avx512f -mno-avx512vl -mno-avx512dq -mno-avx512bw -mno-avx512cd -Wno-incompatible-pointer-types -std=gnu++17"
+          ./configure --prefix=/c/deps/Library --enable-shared --disable-static --without-hwloc \
+                      --enable-config=haswell,zen,core2,sandybridge,reference \
+                      CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS"
+          make -j4
+          make install
+          cp -f /c/deps/Library/lib/libtblis.dll.a /c/deps/Library/lib/tblis.lib
+          cp -f /c/deps/Library/lib/libtci.dll.a /c/deps/Library/lib/tci.lib
+
       - name: Install cibuildwheel
         run: python -m pip install --upgrade cibuildwheel
 
       - name: Build wheels
         run: python -m cibuildwheel --output-dir wheelhouse
         env:
+          # Verbosity 1 menampilkan log kompilasi CMake & C++ secara langsung
+          CIBW_BUILD_VERBOSITY: "1"
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
           CIBW_BUILD: "cp310-* cp311-* cp312-* cp313-*"
           CIBW_SKIP: "*-win32 *-manylinux_i686 *-musllinux_*"
@@ -104,30 +199,8 @@ jobs:
             auditwheel repair --exclude libmkl_rt.so.3 --exclude libmkl_rt.so.2 --exclude libmkl_rt.so --exclude libiomp5.so --exclude libtbb.so.12 -w {dest_dir} {wheel}
 
           # ====================================================================
-          # 2. KONFIGURASI MACOS (Apple Silicon ARM64)
+          # 2. KONFIGURASI MACOS
           # ====================================================================
-          CIBW_BEFORE_ALL_MACOS: >
-            brew install --quiet cmake ninja eigen libomp hdf5 openblas lapack || true &&
-            sudo mkdir -p /usr/local/include /usr/local/lib &&
-            git clone --depth 1 -b v6.1.2 https://github.com/sunqm/libcint.git /tmp/libcint &&
-            cmake -S /tmp/libcint -B /tmp/libcint/build \
-                  -DCMAKE_INSTALL_PREFIX=/usr/local \
-                  -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-                  -DCMAKE_C_FLAGS="-O3 -fPIC -Wno-incompatible-pointer-types -Wno-implicit-function-declaration" \
-                  -DENABLE_EXAMPLE=0 -DENABLE_TEST=0 -DBUILD_SHARED_LIBS=OFF &&
-            cmake --build /tmp/libcint/build -j$(sysctl -n hw.ncpu) &&
-            sudo cmake --install /tmp/libcint/build &&
-            git clone --depth 1 -b v1.2.0 https://github.com/devinamatthews/tblis.git /tmp/tblis &&
-            cd /tmp/tblis && git submodule update --init --recursive &&
-            perl -pi -e 's/SIGSTKSZ/8192/g' src/external/catch/catch.hpp &&
-            perl -pi -e 'print "#include <limits>\n" if $. == 1' src/external/marray/include/short_vector.hpp &&
-            perl -pi -e 'print "#include <limits>\n" if $. == 1' src/external/marray/include/range.hpp &&
-            perl -pi -e 'print "#include <limits>\n" if $. == 1' src/util/thread.h &&
-            ./configure --prefix=/usr/local --enable-static --disable-shared --with-pic --without-hwloc \
-                        --enable-config=reference \
-                        CFLAGS="-O3 -fPIC" CXXFLAGS="-O3 -fPIC -std=c++17" &&
-            make -j$(sysctl -n hw.ncpu) && sudo make install
-
           CIBW_BEFORE_BUILD_MACOS: >
             rm -rf build python/mshqc/*.so python/mshqc/*.dylib python/mshqc/*.a &&
             pip install --upgrade pip setuptools wheel nanobind cmake ninja numpy scipy
@@ -142,43 +215,10 @@ jobs:
             CMAKE_BUILD_PARALLEL_LEVEL=4
 
           # ====================================================================
-          # 3. KONFIGURASI WINDOWS (Conda MSVC + MSYS2 MinGW64 Hybrid)
+          # 3. KONFIGURASI WINDOWS
           # ====================================================================
-          CIBW_BEFORE_ALL_WINDOWS: >
-            call %CONDA%\condabin\conda.bat create -p C:\deps -c conda-forge hdf5 eigen mkl-devel -y &&
-            C:\msys64\usr\bin\bash.exe -lc "
-            set -e &&
-            export MSYSTEM=MINGW64 &&
-            export PATH=/mingw64/bin:/usr/bin:\$PATH &&
-            mkdir -p /c/deps/Library/include /c/deps/Library/lib /c/deps/Library/bin &&
-            cp -f /mingw64/include/pthread*.h /mingw64/include/sched.h /c/deps/Library/include/ 2>/dev/null || true &&
-            git clone --depth 1 -b v6.1.2 https://github.com/sunqm/libcint.git /tmp/libcint &&
-            cmake -S /tmp/libcint -B /tmp/libcint/build -G 'MinGW Makefiles' \
-                  -DCMAKE_INSTALL_PREFIX=/c/deps/Library \
-                  -DCMAKE_C_COMPILER=/mingw64/bin/gcc.exe \
-                  -DCMAKE_C_FLAGS='-O3 -mavx2 -mfma -mno-avx512f -funroll-loops -fno-math-errno -Wno-incompatible-pointer-types -std=gnu17' \
-                  -DENABLE_EXAMPLE=0 -DENABLE_TEST=0 -DBUILD_SHARED_LIBS=ON &&
-            cmake --build /tmp/libcint/build -j4 --target install &&
-            cp -f /c/deps/Library/lib/libcint.dll.a /c/deps/Library/lib/cint.lib &&
-            git clone --depth 1 -b v1.2.0 https://github.com/devinamatthews/tblis.git /tmp/tblis &&
-            cd /tmp/tblis && git submodule update --init --recursive &&
-            sed -i 's/SIGSTKSZ/8192/g' src/external/catch/catch.hpp &&
-            sed -i '1i #include <limits>' src/external/marray/include/short_vector.hpp &&
-            sed -i '1i #include <limits>' src/external/marray/include/range.hpp &&
-            sed -i '1i #include <limits>' src/util/thread.h &&
-            export CFLAGS='-O3 -mno-avx512f -mno-avx512vl -mno-avx512dq -mno-avx512bw -mno-avx512cd -Wno-incompatible-pointer-types -std=gnu17' &&
-            export CXXFLAGS='-O3 -mno-avx512f -mno-avx512vl -mno-avx512dq -mno-avx512bw -mno-avx512cd -Wno-incompatible-pointer-types -std=gnu++17' &&
-            ./configure --prefix=/c/deps/Library --enable-shared --disable-static --without-hwloc \
-                        --enable-config=haswell,zen,core2,sandybridge,reference \
-                        CFLAGS=\"\$CFLAGS\" CXXFLAGS=\"\$CXXFLAGS\" &&
-            make -j4 && make install &&
-            cp -f /c/deps/Library/lib/libtblis.dll.a /c/deps/Library/lib/tblis.lib &&
-            cp -f /c/deps/Library/lib/libtci.dll.a /c/deps/Library/lib/tci.lib
-            "
-
           CIBW_BEFORE_BUILD_WINDOWS: >
             if exist build rmdir /s /q build &&
-            del /q python\mshqc\*.pyd python\mshqc\*.dll 2>nul &
             pip install --upgrade pip setuptools wheel nanobind cmake ninja mkl mkl-devel mkl-include numpy scipy delvewheel
 
           CIBW_ENVIRONMENT_WINDOWS: >
