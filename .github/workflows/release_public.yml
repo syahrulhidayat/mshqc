@@ -75,16 +75,16 @@ jobs:
           perl -pi -e 'print "#include <stdlib.h>\n" if $. == 1' src/external/tci/tci/task_set.c
           perl -pi -e 's|#include <x86intrin.h>|#if defined(__GNUC__) && (defined(__x86_64__) \|\| defined(__i386__))\n#include <x86intrin.h>\n#else\n#undef __AVX512F__\n#undef __AVX__\n#undef __SSE2__\n#endif|g' src/external/marray/include/expression.hpp
 
-          # Fix bug sintaks ARM64 bawaan TBLIS v1.2.0 pada cpuid.hpp dan cpuid.cxx
+          # Fix bug sintaks ARM64 bawaan TBLIS v1.2.0 pada cpuid.hpp dan cpuid.cxx (ptno adalah std::string)
           perl -pi -e 's/enum \{VENDOR_ARM, VENDOR_UNKNOWN\}/enum {VENDOR_ARM, VENDOR_UNKNOWN};/g' src/util/cpuid.hpp
           perl -pi -e 's/enum \{MODEL_ARMV7, MODEL_ARMV8, MODEL_UNKNOWN\}/enum {MODEL_ARMV7, MODEL_ARMV8, MODEL_UNKNOWN};/g' src/util/cpuid.hpp
-          perl -pi -e 's/strtoi\(ptno, pos, 16\)/((void)pos, (int)strtol(ptno, NULL, 16))/g' src/util/cpuid.cxx
+          perl -pi -e 's/strtoi\(ptno, pos, 16\)/((void)pos, (int)strtol(ptno.c_str(), NULL, 16))/g' src/util/cpuid.cxx
 
           ./configure --prefix=/usr/local --enable-static --disable-shared --with-pic --without-hwloc \
                       --enable-config=reference \
                       CFLAGS="-O3 -fPIC -Wno-implicit-function-declaration -Wno-incompatible-function-pointer-types" \
                       CXXFLAGS="-O3 -fPIC -std=c++17 -D_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION -D_LIBCPP_ENABLE_CXX17_REMOVED_RANDOM_SHUFFLE"
-          make -j$(sysctl -n hw.ncpu) bin_PROGRAMS= noinst_PROGRAMS= check_PROGRAMS=
+          make -j$(sysctl -n hw.ncpu) bin_PROGRAMS= noinst_PROGRAMS= check_PROGRAMS= || make -k bin_PROGRAMS= noinst_PROGRAMS= check_PROGRAMS=
           sudo make install bin_PROGRAMS= noinst_PROGRAMS= check_PROGRAMS=
 
       # ========================================================================
@@ -105,29 +105,26 @@ jobs:
         run: |
           export PATH="/mingw64/bin:/usr/bin:$PATH"
 
-          # Gunakan toolchain MSYS2 pre-installed di runner; hanya unduh dengan retry jika ada binary yang belum ada
-          if ! command -v /mingw64/bin/gcc.exe >/dev/null 2>&1 || \
-             ! command -v /mingw64/bin/g++.exe >/dev/null 2>&1 || \
-             ! command -v /mingw64/bin/gfortran.exe >/dev/null 2>&1 || \
-             ! command -v /mingw64/bin/cmake.exe >/dev/null 2>&1 || \
-             ! command -v make >/dev/null 2>&1; then
+          # Hanya unduh make & diffutils (~1 MB) karena gcc/g++/gfortran/cmake sudah pre-installed di runner
+          if ! command -v make >/dev/null 2>&1 || ! command -v diff >/dev/null 2>&1; then
             for attempt in 1 2 3; do
-              pacman -Sy --noconfirm --needed --disable-download-timeout \
-                make \
-                diffutils \
-                mingw-w64-x86_64-gcc \
-                mingw-w64-x86_64-gcc-fortran \
-                mingw-w64-x86_64-libgomp \
-                mingw-w64-x86_64-libatomic \
-                mingw-w64-x86_64-make \
-                mingw-w64-x86_64-cmake && break || sleep 5
+              pacman -Sy --noconfirm --needed --disable-download-timeout make diffutils && break || sleep 5
             done
           fi
+          if ! command -v /mingw64/bin/gcc.exe >/dev/null 2>&1; then
+            for attempt in 1 2 3; do
+              pacman -Sy --noconfirm --needed --disable-download-timeout \
+                mingw-w64-x86_64-gcc mingw-w64-x86_64-gcc-fortran mingw-w64-x86_64-libgomp \
+                mingw-w64-x86_64-libatomic mingw-w64-x86_64-make && break || sleep 5
+            done
+          fi
+
+          CMAKE_EXE=$(command -v /mingw64/bin/cmake.exe || command -v cmake.exe || echo "/c/Program Files/CMake/bin/cmake.exe")
 
           mkdir -p /c/deps/Library/include /c/deps/Library/lib /c/deps/Library/bin
           cp -f /mingw64/include/pthread*.h /mingw64/include/sched.h /c/deps/Library/include/ 2>/dev/null || true
 
-          # Buat header jembatan unistd.h agar MSVC mengenali tipe POSIX ssize_t
+          # Buat header jembatan unistd.h beserta shim intrinsik __atomic_* agar header TCI/TBLIS kompatibel dengan MSVC cl.exe
           cat << 'EOF' > /c/deps/Library/include/unistd.h
           #ifndef _UNISTD_H
           #define _UNISTD_H
@@ -135,6 +132,94 @@ jobs:
           #include <process.h>
           #include <BaseTsd.h>
           typedef SSIZE_T ssize_t;
+
+          #if defined(_MSC_VER) && defined(__cplusplus)
+          #include <intrin.h>
+          #include <type_traits>
+          #ifndef __ATOMIC_RELAXED
+          #define __ATOMIC_RELAXED 0
+          #define __ATOMIC_CONSUME 1
+          #define __ATOMIC_ACQUIRE 2
+          #define __ATOMIC_RELEASE 3
+          #define __ATOMIC_ACQ_REL 4
+          #define __ATOMIC_SEQ_CST 5
+          #endif
+          template <typename T>
+          static inline T __mshqc_atomic_load_n(const volatile T* ptr, int) {
+              T val = *ptr;
+              _ReadWriteBarrier();
+              return val;
+          }
+          template <typename T, typename U>
+          static inline void __mshqc_atomic_store_n(volatile T* ptr, U val, int) {
+              _ReadWriteBarrier();
+              *ptr = static_cast<T>(val);
+              _ReadWriteBarrier();
+          }
+          template <typename T, typename U>
+          static inline T __mshqc_atomic_fetch_add(volatile T* ptr, U val, int) {
+              if constexpr (sizeof(T) == 4) return (T)_InterlockedExchangeAdd((volatile long*)ptr, (long)val);
+              else if constexpr (sizeof(T) == 8) return (T)_InterlockedExchangeAdd64((volatile __int64*)ptr, (__int64)val);
+              else { T old = *ptr; *ptr += (T)val; return old; }
+          }
+          template <typename T, typename U>
+          static inline T __mshqc_atomic_add_fetch(volatile T* ptr, U val, int m) {
+              return __mshqc_atomic_fetch_add(ptr, val, m) + static_cast<T>(val);
+          }
+          template <typename T, typename U>
+          static inline T __mshqc_atomic_sub_fetch(volatile T* ptr, U val, int m) {
+              return __mshqc_atomic_fetch_add(ptr, -static_cast<std::make_signed_t<T>>(val), m) - static_cast<T>(val);
+          }
+          template <typename T, typename U>
+          static inline T __mshqc_atomic_exchange_n(volatile T* ptr, U val, int) {
+              if constexpr (sizeof(T) == 4) return (T)_InterlockedExchange((volatile long*)ptr, (long)val);
+              else if constexpr (sizeof(T) == 8) return (T)_InterlockedExchange64((volatile __int64*)ptr, (__int64)val);
+              else return (T)_InterlockedExchange8((volatile char*)ptr, (char)val);
+          }
+          template <typename T, typename U>
+          static inline bool __mshqc_atomic_compare_exchange_n(volatile T* ptr, T* expected, U desired, bool, int, int) {
+              if constexpr (sizeof(T) == 4) {
+                  long exp = (long)*expected;
+                  long prev = _InterlockedCompareExchange((volatile long*)ptr, (long)desired, exp);
+                  if (prev == exp) return true;
+                  *expected = (T)prev;
+                  return false;
+              } else if constexpr (sizeof(T) == 8) {
+                  __int64 exp = (__int64)*expected;
+                  __int64 prev = _InterlockedCompareExchange64((volatile __int64*)ptr, (__int64)desired, exp);
+                  if (prev == exp) return true;
+                  *expected = (T)prev;
+                  return false;
+              } else {
+                  char exp = (char)*expected;
+                  char prev = _InterlockedCompareExchange8((volatile char*)ptr, (char)desired, exp);
+                  if (prev == exp) return true;
+                  *expected = (T)prev;
+                  return false;
+              }
+          }
+          static inline bool __mshqc_atomic_test_and_set(volatile void* ptr, int) {
+              return _InterlockedExchange8((volatile char*)ptr, 1) != 0;
+          }
+          static inline void __mshqc_atomic_clear(volatile void* ptr, int) {
+              _ReadWriteBarrier();
+              *(volatile char*)ptr = 0;
+              _ReadWriteBarrier();
+          }
+          static inline void __mshqc_atomic_thread_fence(int) { _ReadWriteBarrier(); }
+          static inline void __mshqc_atomic_signal_fence(int) { _ReadWriteBarrier(); }
+          #define __atomic_load_n __mshqc_atomic_load_n
+          #define __atomic_store_n __mshqc_atomic_store_n
+          #define __atomic_fetch_add __mshqc_atomic_fetch_add
+          #define __atomic_add_fetch __mshqc_atomic_add_fetch
+          #define __atomic_sub_fetch __mshqc_atomic_sub_fetch
+          #define __atomic_exchange_n __mshqc_atomic_exchange_n
+          #define __atomic_compare_exchange_n __mshqc_atomic_compare_exchange_n
+          #define __atomic_test_and_set __mshqc_atomic_test_and_set
+          #define __atomic_clear __mshqc_atomic_clear
+          #define __atomic_thread_fence __mshqc_atomic_thread_fence
+          #define __atomic_signal_fence __mshqc_atomic_signal_fence
+          #endif
           #endif
           EOF
 
@@ -144,14 +229,14 @@ jobs:
           # 1. Build libcint
           rm -rf /tmp/libcint
           git clone --depth 1 -b v6.1.2 https://github.com/sunqm/libcint.git /tmp/libcint
-          /mingw64/bin/cmake.exe -S /tmp/libcint -B /tmp/libcint/build -G "MinGW Makefiles" \
+          "$CMAKE_EXE" -S /tmp/libcint -B /tmp/libcint/build -G "MinGW Makefiles" \
                 -DCMAKE_INSTALL_PREFIX=/c/deps/Library \
                 -DCMAKE_C_COMPILER=/mingw64/bin/gcc.exe \
                 -DCMAKE_MAKE_PROGRAM=/mingw64/bin/mingw32-make.exe \
                 -DCMAKE_SHARED_LINKER_FLAGS="-Wl,--export-all-symbols -Wl,--output-def,C:/deps/Library/lib/cint.def" \
                 -DCMAKE_C_FLAGS="-O3 -mavx2 -mfma -mno-avx512f -funroll-loops -fno-math-errno -Wno-incompatible-pointer-types -std=gnu17" \
                 -DENABLE_EXAMPLE=0 -DENABLE_TEST=0 -DBUILD_SHARED_LIBS=ON
-          /mingw64/bin/cmake.exe --build /tmp/libcint/build -j4 --target install
+          "$CMAKE_EXE" --build /tmp/libcint/build -j4 --target install
           cp -f /c/deps/Library/lib/*.dll /c/deps/Library/bin/ 2>/dev/null || true
           cp -f /c/deps/Library/bin/libcint.dll /c/deps/Library/bin/cint.dll 2>/dev/null || true
           if [ -n "$LIB_EXE" ] && [ -f "/c/deps/Library/lib/cint.def" ]; then
@@ -172,6 +257,9 @@ jobs:
           sed -i '1i #include <limits>' src/util/thread.h
           sed -i '1i #include <stdlib.h>' src/external/tci/tci/task_set.c
 
+          # Hindari konflik C++ name mangling antara MSVC dan MinGW pada variabel global tblis::single
+          sed -i 's/extern const communicator single;/#ifdef _MSC_VER\nstatic const communicator single;\n#else\nextern const communicator single;\n#endif/g' src/util/thread.h
+
           # Guard x86intrin.h agar kompatibel saat header TBLIS/MArray dibaca oleh MSVC (cl.exe)
           sed -i 's|#include <x86intrin.h>|#if defined(__GNUC__) \&\& (defined(__x86_64__) \|\| defined(__i386__))\n#include <x86intrin.h>\n#else\n#undef __AVX512F__\n#undef __AVX__\n#undef __SSE2__\n#endif|g' src/external/marray/include/expression.hpp
 
@@ -184,25 +272,29 @@ jobs:
           export CFLAGS="-O3 -mno-avx512f -mno-avx512vl -mno-avx512dq -mno-avx512bw -mno-avx512cd -Wno-incompatible-pointer-types -std=gnu17"
           export CXXFLAGS="-O3 -mno-avx512f -mno-avx512vl -mno-avx512dq -mno-avx512bw -mno-avx512cd -Wno-template-body -fpermissive -std=gnu++17"
           ./configure --prefix=/c/deps/Library --enable-static --disable-shared --without-hwloc \
+                      --enable-thread-model=pthread \
                       --enable-config=haswell,zen,core2,sandybridge,reference \
                       CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS" LIBS="-latomic -lpthread"
-          make -j4 bin_PROGRAMS= noinst_PROGRAMS= check_PROGRAMS=
+          make -j4 bin_PROGRAMS= noinst_PROGRAMS= check_PROGRAMS= || make -k bin_PROGRAMS= noinst_PROGRAMS= check_PROGRAMS=
           make install bin_PROGRAMS= noinst_PROGRAMS= check_PROGRAMS=
 
-          # Konversi libtci.a & libtblis.a menjadi DLL + MSVC .lib
+          # Pastikan tci_config.h menyertakan unistd.h saat dikompilasi dengan MSVC
+          sed -i '1i #ifdef _MSC_VER\n#include <unistd.h>\n#endif' /c/deps/Library/include/tci/tci_config.h
+
+          # Konversi libtci.a & libtblis.a menjadi DLL + MSVC .lib (sertakan -fopenmp agar simbol GOMP_* ter-link)
           /mingw64/bin/g++.exe -shared -o /c/deps/Library/bin/libtci.dll \
               -Wl,--out-implib,/c/deps/Library/lib/libtci.dll.a \
               -Wl,--output-def,/c/deps/Library/lib/tci.def \
               -Wl,--export-all-symbols \
               -Wl,--whole-archive /c/deps/Library/lib/libtci.a -Wl,--no-whole-archive \
-              -lpthread -latomic
+              -fopenmp -lpthread -latomic
 
           /mingw64/bin/g++.exe -shared -o /c/deps/Library/bin/libtblis.dll \
               -Wl,--out-implib,/c/deps/Library/lib/libtblis.dll.a \
               -Wl,--output-def,/c/deps/Library/lib/tblis.def \
               -Wl,--export-all-symbols \
               -Wl,--whole-archive /c/deps/Library/lib/libtblis.a -Wl,--no-whole-archive \
-              /c/deps/Library/lib/libtci.dll.a -lpthread -latomic
+              /c/deps/Library/lib/libtci.dll.a -fopenmp -lpthread -latomic
 
           cp -f /c/deps/Library/bin/libtci.dll /c/deps/Library/bin/tci.dll
           cp -f /c/deps/Library/bin/libtblis.dll /c/deps/Library/bin/tblis.dll
@@ -218,7 +310,6 @@ jobs:
           fi
 
           rm -f /c/deps/Library/lib/libtblis.a /c/deps/Library/lib/libtci.a /c/deps/Library/lib/*.dll.a
-
       - name: Install cibuildwheel
         run: python -m pip install --upgrade cibuildwheel
 
