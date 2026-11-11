@@ -75,6 +75,11 @@ jobs:
           perl -pi -e 'print "#include <stdlib.h>\n" if $. == 1' src/external/tci/tci/task_set.c
           perl -pi -e 's|#include <x86intrin.h>|#if defined(__GNUC__) && (defined(__x86_64__) \|\| defined(__i386__))\n#include <x86intrin.h>\n#else\n#undef __AVX512F__\n#undef __AVX__\n#undef __SSE2__\n#endif|g' src/external/marray/include/expression.hpp
 
+          # Fix bug sintaks ARM64 bawaan TBLIS v1.2.0 pada cpuid.hpp dan cpuid.cxx
+          perl -pi -e 's/enum \{VENDOR_ARM, VENDOR_UNKNOWN\}/enum {VENDOR_ARM, VENDOR_UNKNOWN};/g' src/util/cpuid.hpp
+          perl -pi -e 's/enum \{MODEL_ARMV7, MODEL_ARMV8, MODEL_UNKNOWN\}/enum {MODEL_ARMV7, MODEL_ARMV8, MODEL_UNKNOWN};/g' src/util/cpuid.hpp
+          perl -pi -e 's/strtoi\(ptno, pos, 16\)/((void)pos, (int)strtol(ptno, NULL, 16))/g' src/util/cpuid.cxx
+
           ./configure --prefix=/usr/local --enable-static --disable-shared --with-pic --without-hwloc \
                       --enable-config=reference \
                       CFLAGS="-O3 -fPIC -Wno-implicit-function-declaration -Wno-incompatible-function-pointer-types" \
@@ -99,15 +104,25 @@ jobs:
           MSYS2_PATH_TYPE: inherit
         run: |
           export PATH="/mingw64/bin:/usr/bin:$PATH"
-          pacman -Sy --noconfirm --needed \
-            make \
-            diffutils \
-            mingw-w64-x86_64-gcc \
-            mingw-w64-x86_64-gcc-fortran \
-            mingw-w64-x86_64-libgomp \
-            mingw-w64-x86_64-libatomic \
-            mingw-w64-x86_64-make \
-            mingw-w64-x86_64-cmake
+
+          # Gunakan toolchain MSYS2 pre-installed di runner; hanya unduh dengan retry jika ada binary yang belum ada
+          if ! command -v /mingw64/bin/gcc.exe >/dev/null 2>&1 || \
+             ! command -v /mingw64/bin/g++.exe >/dev/null 2>&1 || \
+             ! command -v /mingw64/bin/gfortran.exe >/dev/null 2>&1 || \
+             ! command -v /mingw64/bin/cmake.exe >/dev/null 2>&1 || \
+             ! command -v make >/dev/null 2>&1; then
+            for attempt in 1 2 3; do
+              pacman -Sy --noconfirm --needed --disable-download-timeout \
+                make \
+                diffutils \
+                mingw-w64-x86_64-gcc \
+                mingw-w64-x86_64-gcc-fortran \
+                mingw-w64-x86_64-libgomp \
+                mingw-w64-x86_64-libatomic \
+                mingw-w64-x86_64-make \
+                mingw-w64-x86_64-cmake && break || sleep 5
+            done
+          fi
 
           mkdir -p /c/deps/Library/include /c/deps/Library/lib /c/deps/Library/bin
           cp -f /mingw64/include/pthread*.h /mingw64/include/sched.h /c/deps/Library/include/ 2>/dev/null || true
@@ -287,6 +302,7 @@ jobs:
             CMAKE_PREFIX_PATH="/usr/local;/opt/homebrew;/opt/homebrew/opt/libomp;/opt/homebrew/opt/openblas;/opt/homebrew/opt/lapack;/opt/homebrew/opt/hdf5"
             OpenMP_ROOT="/opt/homebrew/opt/libomp"
             TBLIS_DIR="/usr/local"
+            DYLD_LIBRARY_PATH="/usr/local/lib:/opt/homebrew/lib:/opt/homebrew/opt/libomp/lib:/opt/homebrew/opt/openblas/lib:/opt/homebrew/opt/lapack/lib:/opt/homebrew/opt/hdf5/lib:/opt/homebrew/opt/gcc/lib/gcc/current"
             CMAKE_BUILD_PARALLEL_LEVEL=4
 
           # ====================================================================
