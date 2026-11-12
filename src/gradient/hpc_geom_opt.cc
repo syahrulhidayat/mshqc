@@ -1,5 +1,17 @@
 // Copyright 2026 Muhamad Syahrul Hidayat
-// Licensed under the Apache License, Version 2.0
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
 #include "mshqc/gradient/hpc_geom_opt.h"
 #include "mshqc/ints/integrals.h"
 #include "mshqc/scf/scf.h"
@@ -744,5 +756,45 @@ std::vector<PESScanPoint> HPCGeometryOptimizer::scan_bond_pes(
     return pts;
 }
 
+
+OrbitalOptimizedDensityAO build_rhf_omp_ao_densities(
+    const Eigen::MatrixXd& C_mo,
+    const Eigen::MatrixXd& gamma_mo_total,
+    const Eigen::MatrixXd& F_gen_mo
+) {
+    OrbitalOptimizedDensityAO out;
+
+    Eigen::MatrixXd gamma_sym = 0.5 * (gamma_mo_total + gamma_mo_total.transpose());
+    out.P_eff_ao.noalias() = C_mo * gamma_sym * C_mo.transpose();
+
+
+    Eigen::MatrixXd F_gen_sym = 0.5 * (F_gen_mo + F_gen_mo.transpose());
+    out.W_eff_ao.noalias() = C_mo * F_gen_sym * C_mo.transpose();
+    return out;
+}
+
+OrbitalOptimizedDensityAO build_uhf_omp_ao_densities(
+    const Eigen::MatrixXd& C_alpha,
+    const Eigen::MatrixXd& C_beta,
+    const Eigen::MatrixXd& gamma_alpha_mo,
+    const Eigen::MatrixXd& gamma_beta_mo,
+    const Eigen::MatrixXd& F_gen_alpha_mo,
+    const Eigen::MatrixXd& F_gen_beta_mo
+) {
+    OrbitalOptimizedDensityAO out;
+    Eigen::MatrixXd ga_sym = 0.5 * (gamma_alpha_mo + gamma_alpha_mo.transpose());
+    Eigen::MatrixXd gb_sym = 0.5 * (gamma_beta_mo + gamma_beta_mo.transpose());
+
+
+    out.P_eff_ao.noalias() = C_alpha * ga_sym * C_alpha.transpose();
+    out.P_eff_ao.noalias() += C_beta * gb_sym * C_beta.transpose();
+
+    Eigen::MatrixXd Fa_sym = 0.5 * (F_gen_alpha_mo + F_gen_alpha_mo.transpose());
+    Eigen::MatrixXd Fb_sym = 0.5 * (F_gen_beta_mo + F_gen_beta_mo.transpose());
+
+    out.W_eff_ao.noalias() = C_alpha * Fa_sym * C_alpha.transpose();
+    out.W_eff_ao.noalias() += C_beta * Fb_sym * C_beta.transpose();
+    return out;
+}
 } // namespace gradient
 } // namespace mshqc

@@ -137,13 +137,22 @@ namespace mshqc_auto_tune {
 
         std::string threads_str = std::to_string(num_threads);
         set_env_if_empty("OMP_NUM_THREADS", threads_str.c_str());
+    #if defined(__APPLE__) || defined(_WIN32)
+        set_env_if_empty("TBLIS_NUM_THREADS", "1");
+        set_env_if_empty("OMP_WAIT_POLICY", "PASSIVE");
+        set_env_if_empty("KMP_BLOCKTIME", "0");
+    #else
         set_env_if_empty("TBLIS_NUM_THREADS", threads_str.c_str());
+    #endif
         set_env_if_empty("OPENBLAS_NUM_THREADS", "1");
         set_env_if_empty("MKL_NUM_THREADS", "1");
         set_env_if_empty("VECLIB_MAXIMUM_THREADS", "1");
         set_env_if_empty("NUMEXPR_NUM_THREADS", "1");
         set_env_if_empty("OMP_MAX_ACTIVE_LEVELS", "1");
         set_env_if_empty("HDF5_USE_FILE_LOCKING", "FALSE");
+
+        // Matikan multithreading internal Eigen agar tidak bertabrakan dengan OpenMP/TBLIS
+        Eigen::setNbThreads(1);
 
         omp_set_dynamic(0);
         omp_set_num_threads(num_threads);
@@ -158,7 +167,11 @@ namespace mshqc_auto_tune {
             fn(1);
         }
         if (auto fn = reinterpret_cast<set_threads_fn>(dlsym(RTLD_DEFAULT, "tblis_set_num_threads"))) {
+        #if defined(__APPLE__)
+            fn(1);
+        #else
             fn(num_threads);
+        #endif
         }
     #endif
     }
