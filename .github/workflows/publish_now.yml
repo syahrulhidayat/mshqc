@@ -1,0 +1,158 @@
+name: Instant Publish Artifacts to PyPI and GitHub Release
+
+on:
+  push:
+    branches: [""]
+    tags: [""]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "GitHub Actions Run ID yang memiliki artifact wheel"
+        required: false
+        default: "43217985325"
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish_existing_wheels:
+    name: Grab Artifacts, Inject README & Publish to PyPI
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository (ambil README.md & pyproject.toml terbaru)
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Extract Version from pyproject.toml (Tanpa awalan v)
+        id: meta
+        run: |
+          VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Target Release Version: $VERSION"
+
+      - name: Download Compiled Wheels & sdist from Run
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.run_id || '43217985325' }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pattern: cibw-*
+          path: dist
+          merge-multiple: true
+
+      - name: Inject GitHub README.md into All Wheels (Fix Windows CRLF & macOS MKL)
+        env:
+          TARGET_VER: ${{ steps.meta.outputs.version }}
+        run: |
+          python3 -m pip install --upgrade pip build twine
+          python3 - << 'EOF'
+          import base64, glob, hashlib, os, re, shutil, subprocess, sys, zipfile
+          from pathlib import Path
+
+          target_ver = os.environ["TARGET_VER"].strip()
+          readme_text = Path("README.md").read_text(encoding="utf-8").replace("\r\n", "\n").strip()
+
+          def b64_nopad(digest: bytes) -> str:
+              return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+
+          for whl_str in sorted(glob.glob("dist/*.whl")):
+              whl_path = Path(whl_str)
+              new_whl_name = re.sub(r"^mshqc-[^-]+-", f"mshqc-{target_ver}-", whl_path.name)
+              new_whl_path = whl_path.parent / new_whl_name
+              tmp_whl = whl_path.with_suffix(".whl.tmp")
+              new_dist_info = f"mshqc-{target_ver}.dist-info"
+              records = []
+
+              with zipfile.ZipFile(whl_path, "r") as zin, \
+                   zipfile.ZipFile(tmp_whl, "w", compression=zipfile.ZIP_DEFLATED) as zout:
+
+                  for item in zin.infolist():
+                      fname = item.filename
+                      if fname.endswith(".dist-info/RECORD"):
+                          continue
+
+                      data = zin.read(fname)
+                      if ".dist-info/" in fname:
+                          suffix = fname.split(".dist-info/", 1)[1]
+                          fname = f"{new_dist_info}/{suffix}"
+
+                      if fname == "mshqc/__init__.py":
+                          txt = data.decode("utf-8", errors="replace").replace("\r\n", "\n")
+                          txt = re.sub(r'__version__\s*=\s*"[^"]+"', f'__version__ = "{target_ver}"', txt)
+                          data = txt.encode("utf-8")
+
+                      if fname.endswith(".dist-info/METADATA"):
+                          # Normalisasi CRLF (\r\n) dari Windows ke LF (\n) sebelum split!
+                          raw_meta = data.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
+                          headers_block = raw_meta.split("\n\n", 1)[0].strip()
+
+                          clean_headers = []
+                          for line in headers_block.splitlines():
+                              if line.startswith("Version:"):
+                                  clean_headers.append(f"Version: {target_ver}")
+                              elif line.startswith("Requires-Dist:") and "mkl" in line:
+                                  clean_headers.append('Requires-Dist: mkl ; sys_platform != "darwin"')
+                              elif line.startswith("Description-Content-Type:"):
+                                  continue
+                              else:
+                                  clean_headers.append(line)
+
+                          clean_headers.append("Description-Content-Type: text/markdown")
+                          if not any("github.com/syahrulhidayat/mshqc" in h for h in clean_headers):
+                              clean_headers.append("Project-URL: Homepage, https://github.com/syahrulhidayat/mshqc")
+                              clean_headers.append("Project-URL: Repository, https://github.com/syahrulhidayat/mshqc")
+
+                          data = ("\n".join(clean_headers) + "\n\n" + readme_text + "\n").encode("utf-8")
+
+                      info_copy = zipfile.ZipInfo(filename=fname, date_time=item.date_time)
+                      info_copy.compress_type = zipfile.ZIP_DEFLATED
+                      info_copy.external_attr = item.external_attr
+                      zout.writestr(info_copy, data)
+
+                      sha = b64_nopad(hashlib.sha256(data).digest())
+                      records.append(f"{fname},sha256={sha},{len(data)}")
+
+                  rec_fname = f"{new_dist_info}/RECORD"
+                  records.append(f"{rec_fname},,")
+                  zout.writestr(rec_fname, ("\n".join(records) + "\n").encode("utf-8"))
+
+              whl_path.unlink()
+              tmp_whl.replace(new_whl_path)
+              print(f"[OK] Synced & Repacked: {new_whl_path.name}")
+
+          # Bangun ulang sdist (.tar.gz) agar versinya persis sama dengan pyproject.toml
+          for old_tar in glob.glob("dist/*.tar.gz"):
+              os.remove(old_tar)
+          subprocess.run(["git", "clone", "--depth", "1", "https://github.com/syahrulhidayat/mshqc-basis.git", "/tmp/mshqc-basis"], check=True)
+          Path("data/basis").mkdir(parents=True, exist_ok=True)
+          for gbs in Path("/tmp/mshqc-basis/data/basis").glob("*.gbs"):
+              shutil.copy2(gbs, Path("data/basis") / gbs.name)
+          shutil.rmtree("/tmp/mshqc-basis", ignore_errors=True)
+          subprocess.run([sys.executable, "-m", "build", "--sdist", "--outdir", "dist"], check=True)
+          EOF
+          python3 -m twine check dist/*
+          ls -lh dist/
+
+      - name: Publish Wheels & sdist to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          skip-existing: true
+
+      - name: Create GitHub Release (Tanpa awalan v)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.version }}
+          name: "mshqc ${{ steps.meta.outputs.version }}"
+          body_path: README.md
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

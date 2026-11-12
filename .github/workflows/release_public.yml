@@ -474,7 +474,7 @@ jobs:
             CMAKE_BUILD_PARALLEL_LEVEL=4
 
           CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: >
-            delvewheel repair --add-path C:/deps/Library/bin;C:/msys64/mingw64/bin --no-dll mkl_rt.2.dll;mkl_rt.dll -w {dest_dir} -v {wheel}
+            delvewheel repair --add-path C:/deps/Library/bin;C:/msys64/mingw64/bin --no-dll mkl_rt.3.dll;mkl_rt.2.dll;mkl_rt.dll -w {dest_dir} -v {wheel}
 
       - name: Upload Wheels as Artifacts
         uses: actions/upload-artifact@v4
@@ -506,7 +506,7 @@ jobs:
     name: Upload to PyPI & GitHub Release
     needs: [build_wheels, build_sdist]
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    if: always() && needs.build_wheels.result == 'success' && needs.build_sdist.result == 'success'
 
     steps:
       - name: Checkout Source Code (for version detection)

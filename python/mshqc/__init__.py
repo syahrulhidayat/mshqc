@@ -50,7 +50,19 @@ def _configure_environment():
     n_threads = os.environ.get("OMP_NUM_THREADS", str(n_phys_cores))
 
     os.environ.setdefault("OMP_NUM_THREADS", str(n_threads))
-    os.environ.setdefault("TBLIS_NUM_THREADS", str(n_threads))
+    # Di macOS & Windows, matikan dual-thread-pool TBLIS agar pthreads TCI tidak
+    # spin-lock melawan thread pool OpenMP (penyebab macOS 5 menit vs Linux 4 detik)
+    if sys.platform in ("darwin", "win32"):
+        os.environ.setdefault("TBLIS_NUM_THREADS", "1")
+        os.environ.setdefault("OMP_WAIT_POLICY", "PASSIVE")
+        os.environ.setdefault("KMP_BLOCKTIME", "0")
+        os.environ.setdefault("KMP_DUPLICATE_LIB_OK", "TRUE")
+    else:
+        os.environ.setdefault("TBLIS_NUM_THREADS", str(n_threads))
+
+    if sys.platform == "win32":
+        os.environ.setdefault("MKL_THREADING_LAYER", "SEQUENTIAL")
+
     os.environ.setdefault("OPENBLAS_NUM_THREADS", "1")
     os.environ.setdefault("MKL_NUM_THREADS", "1")
     os.environ.setdefault("VECLIB_MAXIMUM_THREADS", "1")
@@ -66,11 +78,56 @@ def _configure_environment():
             os.environ["MSHQC_BASIS_PATH"] = pkg_basis
         elif os.path.isdir(repo_basis):
             os.environ["MSHQC_BASIS_PATH"] = repo_basis
+
+
 def _preload_mkl():
     """
-    Preload MKL runtime libraries dari environment (sys.prefix/lib) 
-    agar _mshqc.so selalu menemukan simbol MKL tanpa perlu set LD_LIBRARY_PATH.
+    Preload MKL runtime libraries dari environment (Linux .so & Windows .dll)
+    agar _mshqc selalu menemukan simbol MKL tanpa perlu set LD_LIBRARY_PATH / PATH manual.
     """
+    if sys.platform == "win32":
+        _pkg_dir = Path(__file__).resolve().parent
+        _win_dirs = [
+            _pkg_dir,
+            _pkg_dir.parent / "mshqc.libs",
+            Path(sys.prefix) / "Library" / "bin",
+            Path(sys.prefix) / "bin",
+            Path(sys.prefix) / "Scripts",
+            Path(sys.base_prefix) / "Library" / "bin",
+            Path(sys.base_prefix) / "bin",
+        ]
+        _valid_dirs = []
+        for _d in _win_dirs:
+            if _d.is_dir():
+                _d_str = str(_d)
+                _valid_dirs.append(_d_str)
+                if hasattr(os, "add_dll_directory"):
+                    try:
+                        os.add_dll_directory(_d_str)
+                    except OSError:
+                        pass
+
+        # LoadLibraryA di dalam mkl_rt.3.dll wajib membaca dari PATH di Windows
+        if _valid_dirs:
+            os.environ["PATH"] = os.pathsep.join(_valid_dirs) + os.pathsep + os.environ.get("PATH", "")
+
+        _win_dlls = [
+            "libiomp5md.dll",
+            "mkl_core.3.dll", "mkl_core.2.dll", "mkl_core.dll",
+            "mkl_sequential.3.dll", "mkl_sequential.2.dll", "mkl_sequential.dll",
+            "mkl_intel_thread.3.dll", "mkl_intel_thread.2.dll", "mkl_intel_thread.dll",
+            "mkl_rt.3.dll", "mkl_rt.2.dll", "mkl_rt.dll",
+        ]
+        for _d_str in _valid_dirs:
+            for _dll in _win_dlls:
+                _dll_path = Path(_d_str) / _dll
+                if _dll_path.exists():
+                    try:
+                        ctypes.WinDLL(str(_dll_path))
+                    except OSError:
+                        pass
+        return
+
     _lib_dirs = [
         Path(sys.prefix) / "lib",
         Path(sys.prefix) / "lib64",
@@ -106,7 +163,7 @@ from .calculators import MSHQCCalculator, build_molecule, run
 from .session import MSHQCSession
 from .utils import quick_calculation, benchmark_basis_sets, compare_methods
 
-__version__ = "1.0.4.post17"
+__version__ = "1.0.4.post18"
 
 __all__ = [
     "Atom", "Molecule", "GaussianPrimitive", "Shell", "AngularMomentum",
@@ -146,3 +203,5 @@ _resolve_mshqc_basis_dir()
 for _sym in ("GeomOptConfig", "GeomOptResult", "VibThermoResult", "PESScanPoint"):
     if _sym in globals() and _sym not in __all__:
         __all__.append(_sym)
+from .geom_opt import UniversalGeomOptimizer, GeomOptResult, project_translation_rotation
+from .calculators import optimize_geometry_universal

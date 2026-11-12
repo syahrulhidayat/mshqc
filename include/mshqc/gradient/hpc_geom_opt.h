@@ -113,6 +113,28 @@ public:
         const GeomOptConfig& cfg = GeomOptConfig());
 };
 
+
+struct OrbitalOptimizedDensityAO {
+    Eigen::MatrixXd P_eff_ao; 
+    Eigen::MatrixXd W_eff_ao; 
+};
+
+
+OrbitalOptimizedDensityAO build_rhf_omp_ao_densities(
+    const Eigen::MatrixXd& C_mo,
+    const Eigen::MatrixXd& gamma_mo_total,
+    const Eigen::MatrixXd& F_gen_mo
+);
+
+OrbitalOptimizedDensityAO build_uhf_omp_ao_densities(
+    const Eigen::MatrixXd& C_alpha,
+    const Eigen::MatrixXd& C_beta,
+    const Eigen::MatrixXd& gamma_alpha_mo,
+    const Eigen::MatrixXd& gamma_beta_mo,
+    const Eigen::MatrixXd& F_gen_alpha_mo,
+    const Eigen::MatrixXd& F_gen_beta_mo
+);
+
 } // namespace gradient
 } // namespace mshqc
 

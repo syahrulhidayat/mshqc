@@ -10,7 +10,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mshqc"
-version = "1.0.4.post17"
+version = "1.0.4.post18"
 description = "mshqc: A C++20 Quantum Chemistry Engine for Orbital-Optimized Correlation Methods"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -30,7 +30,7 @@ classifiers = [
 dependencies = [
     "numpy>=1.22.0",
     "scipy>=1.8.0",
-    "mkl"
+    "mkl; sys_platform != 'darwin'"
 ]
 
 [project.optional-dependencies]

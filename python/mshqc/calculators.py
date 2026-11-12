@@ -247,3 +247,96 @@ def run(molecule: Union[mshqc.Molecule, str, List[Tuple]],
     if isinstance(method, str):
         return results[method]["result"]
     return results
+
+from .geom_opt import UniversalGeomOptimizer, GeomOptResult, ANGSTROM_TO_BOHR
+
+
+def optimize_geometry_universal(
+    atoms: list,
+    coords: "np.ndarray",
+    basis: str = "cc-pVDZ",
+    method: str = "omp2",
+    charge: int = 0,
+    multiplicity: int = 1,
+    units: str = "bohr",
+    integral_mode: str = "df",
+    single_point_runner=None,
+    max_iter: int = 50,
+    grad_rms_tol: float = 1.0e-5,
+    grad_max_tol: float = 3.0e-5,
+    fd_step_bohr: float = 1.0e-4,
+    **kwargs,
+) -> GeomOptResult:
+    """
+    Menjalankan optimasi geometri untuk metode apa pun yang tersedia di mshqc:
+      - 'rhf', 'uhf', 'rohf'
+      - 'rmp2', 'ump2', 'romp2', 'rmp3', 'ump3', 'romp3'
+      - 'omp2' ('rhf-omp2'), 'uhf-omp2'
+      - 'omp3' ('rhf-omp3'), 'uhf-omp3'
+      - 'mp3@omp2', 'ump3@uhf-omp2'
+    """
+    import numpy as np
+
+    coords_arr = np.asarray(coords, dtype=np.float64)
+    if units.strip().lower().startswith("ang"):
+        coords_bohr = coords_arr * ANGSTROM_TO_BOHR
+    else:
+        coords_bohr = coords_arr.copy()
+
+    def _default_energy_eval(c_bohr: np.ndarray) -> float:
+        if single_point_runner is not None:
+            return single_point_runner(c_bohr)
+
+        # Resolusi otomatis fungsi kalkulator yang ada di modul calculators.py
+        g_dict = globals()
+        m_low = method.strip().lower().replace("-", "_")
+
+        # 1. Cek apakah ada fungsi spesifik seperti run_omp3, run_omp2, dll.
+        for candidate in (f"run_{m_low}", m_low, "calculate", "single_point", "run"):
+            if candidate in g_dict and callable(g_dict[candidate]):
+                fn = g_dict[candidate]
+                try:
+                    return fn(
+                        atoms=atoms,
+                        coords=c_bohr,
+                        basis=basis,
+                        method=method,
+                        charge=charge,
+                        multiplicity=multiplicity,
+                        units="bohr",
+                        **kwargs,
+                    )
+                except TypeError:
+                    pass
+
+        # 2. Cek apakah ada kelas Calculator di calculators.py
+        if "Calculator" in g_dict:
+            calc_obj = g_dict["Calculator"](
+                atoms=atoms,
+                coords=c_bohr,
+                basis=basis,
+                charge=charge,
+                multiplicity=multiplicity,
+                units="bohr",
+                **kwargs,
+            )
+            if hasattr(calc_obj, "run"):
+                return calc_obj.run(method=method)
+            if hasattr(calc_obj, m_low):
+                return getattr(calc_obj, m_low)()
+
+        raise RuntimeError(
+            "Berikan argumen single_point_runner=lambda coords_bohr: <energi> "
+            "sesuai pemanggilan single-point mshqc Anda."
+        )
+
+    opt = UniversalGeomOptimizer(
+        energy_fn=_default_energy_eval,
+        method=method,
+        integral_mode=integral_mode,
+        fd_step_bohr=fd_step_bohr,
+        max_iter=max_iter,
+        grad_rms_tol=grad_rms_tol,
+        grad_max_tol=grad_max_tol,
+    )
+    return opt.run(coords_bohr)
