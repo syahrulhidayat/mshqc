@@ -2,14 +2,18 @@ name: Validation & Universal Benchmark Suite (mshqc vs Psi4)
 
 on:
   push:
-    branches: [ "" ]
-
+    branches: ["test"]
   workflow_dispatch:
 
 jobs:
   universal_benchmark:
-    name: Run Pytest & Benchmark Suite (mshqc Wheel vs Psi4)
-    runs-on: ubuntu-latest
+    name: Run Pytest & Benchmark (${{ matrix.os }} | PyPI Wheel vs Psi4)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
     env:
       OMP_NUM_THREADS: "4"
       TBLIS_NUM_THREADS: "4"
@@ -17,6 +21,7 @@ jobs:
       OPENBLAS_NUM_THREADS: "1"
       HDF5_USE_FILE_LOCKING: "FALSE"
       PYTHONUNBUFFERED: "1"
+      PYTHONIOENCODING: "utf-8"
 
     steps:
       - name: Checkout Repository
@@ -27,29 +32,58 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install Precompiled mshqc Wheel from PyPI (No C++ Recompile)
+      - name: Install Precompiled mshqc Wheel from PyPI (Linux, macOS & Windows)
+        shell: bash -eo pipefail {0}
         run: |
-          python3 -m venv /tmp/mshqc_venv
-          /tmp/mshqc_venv/bin/pip install --upgrade pip
-          /tmp/mshqc_venv/bin/pip uninstall -y mshqc || true
-          /tmp/mshqc_venv/bin/pip install mshqc --no-cache-dir pytest
+          python -m venv mshqc_venv
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            VENV_PY="$PWD/mshqc_venv/Scripts/python.exe"
+            VENV_PYTEST="$PWD/mshqc_venv/Scripts/pytest.exe"
+            echo "$PWD/mshqc_venv/Scripts" >> "$GITHUB_PATH"
+            echo "$PWD/mshqc_venv/Lib/site-packages/Library/bin" >> "$GITHUB_PATH"
+            echo "$PWD/mshqc_venv/Library/bin" >> "$GITHUB_PATH"
+          else
+            VENV_PY="$PWD/mshqc_venv/bin/python"
+            VENV_PYTEST="$PWD/mshqc_venv/bin/pytest"
+          fi
+
+          echo "VENV_PY=$VENV_PY" >> "$GITHUB_ENV"
+          echo "VENV_PYTEST=$VENV_PYTEST" >> "$GITHUB_ENV"
+
+          "$VENV_PY" -m pip install --upgrade pip
+          "$VENV_PY" -m pip uninstall -y mshqc || true
+          "$VENV_PY" -m pip install mshqc --no-cache-dir pytest numpy scipy
+
+          # Pastikan folder data/basis lokal tersedia dari wheel PyPI
+          "$VENV_PY" -c "
+          import os, shutil, pathlib, mshqc
+          pkg_basis = pathlib.Path(mshqc.__file__).resolve().parent / 'basis'
+          dst_basis = pathlib.Path('data/basis')
+          dst_basis.mkdir(parents=True, exist_ok=True)
+          if pkg_basis.is_dir():
+              for gbs in pkg_basis.glob('*.gbs'):
+                  shutil.copy2(gbs, dst_basis / gbs.name)
+          print('Installed mshqc version:', getattr(mshqc, '__version__', 'unknown'))
+          print('Bundled basis count:', len(list(dst_basis.glob('*.gbs'))))
+          "
 
       # --- 1. RUN PYTEST UNTUK MSHQC (Simpan log tampilan ke .txt) ---
       - name: Run Automated Pytest Validation Suite (test_mshqc.py)
         shell: bash -eo pipefail {0}
         run: |
-          /tmp/mshqc_venv/bin/pytest tests/test_mshqc.py -v -s 2>&1 | tee 01_pytest_mshqc_log.txt
+          "$VENV_PY" -m pytest tests/test_mshqc.py -v -s 2>&1 | tee 01_pytest_mshqc_log.txt
 
       # --- 2. JALANKAN TEST MSHQC2 (Tampil real-time & simpan ke .txt) ---
       - name: Run mshqc Benchmark (test_mshqc2.py)
         shell: bash -eo pipefail {0}
         run: |
-          /tmp/mshqc_venv/bin/python -u tests/test_mshqc2.py 2>&1 | tee 02_mshqc_out.txt
+          "$VENV_PY" -u tests/test_mshqc2.py 2>&1 | tee 02_mshqc_out.txt
           cp 02_mshqc_out.txt mshqc_out.txt
 
-      # --- 3. SET UP PSI4 ---
+      # --- 3. SET UP PSI4 (Linux & macOS via Conda-Forge) ---
       - name: Set up Micromamba & Install Psi4 (conda-forge)
         uses: mamba-org/setup-micromamba@v2
+        continue-on-error: true
         with:
           environment-name: psi4_env
           create-args: >-
@@ -64,61 +98,117 @@ jobs:
         shell: bash -el {0}
         run: |
           set -o pipefail
-          micromamba activate psi4_env
-          python -u tests/benc.py 2>&1 | tee 03_psi4_out.txt
-          cp 03_psi4_out.txt psi4_out.txt
+          if micromamba env list | grep -q "psi4_env"; then
+            micromamba activate psi4_env
+            if python -c "import psi4" >/dev/null 2>&1; then
+              python -u tests/benc.py 2>&1 | tee 03_psi4_out.txt
+              cp 03_psi4_out.txt psi4_out.txt
+            else
+              echo "Psi4 binary tidak tersedia untuk OS $RUNNER_OS di conda-forge." | tee 03_psi4_out.txt
+              cp 03_psi4_out.txt psi4_out.txt
+            fi
+          else
+            echo "Environment psi4_env dilewati pada OS $RUNNER_OS." | tee 03_psi4_out.txt
+            cp 03_psi4_out.txt psi4_out.txt
+          fi
 
       # --- 5. BANDINGKAN HASIL (TEST_MSHQC2 vs BENC.PY) ---
       - name: Compare Head-to-Head mshqc vs Psi4
         shell: bash {0}
         run: |
-          /tmp/mshqc_venv/bin/python -u tests/compare_mshqc_psi4.py mshqc_out.txt psi4_out.txt 2>&1 | tee 04_compare_mshqc_psi4_log.txt || true
+          "$VENV_PY" -u tests/compare_mshqc_psi4.py mshqc_out.txt psi4_out.txt 2>&1 | tee 04_compare_mshqc_psi4_log.txt || true
 
       # --- 6. UJI SKRIPSI BAB 4 ---
       - name: Run mshqc Bab 4 Benchmark
         shell: bash -eo pipefail {0}
         run: |
-          /tmp/mshqc_venv/bin/python -u tests/run_mshqc_bab4.py
-          cp mshqc_bab4_test.txt 05_mshqc_bab4_running_log.txt
+          "$VENV_PY" -u tests/run_mshqc_bab4.py 2>&1 | tee mshqc_bab4_stdout.txt
+          if [ -f mshqc_bab4_test.txt ]; then
+            cp mshqc_bab4_test.txt 05_mshqc_bab4_running_log.txt
+          else
+            cp mshqc_bab4_stdout.txt 05_mshqc_bab4_running_log.txt
+          fi
 
       - name: Run Psi4 Bab 4 Benchmark
         shell: bash -el {0}
         run: |
           set -o pipefail
-          micromamba activate psi4_env
-          python -u tests/run_psi4_bab4.py
-          cp psi4_bab4_test.txt 06_psi4_bab4_running_log.txt
+          if micromamba env list | grep -q "psi4_env"; then
+            micromamba activate psi4_env
+            if python -c "import psi4" >/dev/null 2>&1; then
+              python -u tests/run_psi4_bab4.py
+              cp psi4_bab4_test.txt 06_psi4_bab4_running_log.txt
+            else
+              echo "Psi4 Bab 4 dilewati pada OS $RUNNER_OS." > 06_psi4_bab4_running_log.txt
+            fi
+          else
+            echo "Psi4 Bab 4 dilewati pada OS $RUNNER_OS." > 06_psi4_bab4_running_log.txt
+          fi
 
       - name: Compare Bab 4 Results
         shell: bash {0}
         run: |
-          /tmp/mshqc_venv/bin/python -u tests/compare_bab4.py || true
-          cp test_bab4_benchmark.txt 07_compare_bab4_log.txt
+          "$VENV_PY" -u tests/compare_bab4.py 2>&1 | tee compare_bab4_stdout.txt || true
+          if [ -f test_bab4_benchmark.txt ]; then
+            cp test_bab4_benchmark.txt 07_compare_bab4_log.txt
+          else
+            cp compare_bab4_stdout.txt 07_compare_bab4_log.txt
+          fi
 
       # --- 7. RUNNER UNIVERSAL BAWAAN ---
       - name: Run mshqc Universal Benchmark
         shell: bash -eo pipefail {0}
         run: |
-          /tmp/mshqc_venv/bin/python -u tests/run_mshqc_universal.py 2>&1 | tee 08_mshqc_universal_running_log.txt
+          "$VENV_PY" -u tests/run_mshqc_universal.py 2>&1 | tee 08_mshqc_universal_running_log.txt
 
       - name: Run Psi4 Universal Reference Benchmark
         shell: bash -el {0}
         run: |
           set -o pipefail
-          micromamba activate psi4_env
-          python -u tests/run_psi4_universal.py 2>&1 | tee 09_psi4_universal_running_log.txt
+          if micromamba env list | grep -q "psi4_env"; then
+            micromamba activate psi4_env
+            if python -c "import psi4" >/dev/null 2>&1; then
+              python -u tests/run_psi4_universal.py 2>&1 | tee 09_psi4_universal_running_log.txt
+            else
+              echo "Psi4 Universal dilewati pada OS $RUNNER_OS." | tee 09_psi4_universal_running_log.txt
+            fi
+          else
+            echo "Psi4 Universal dilewati pada OS $RUNNER_OS." | tee 09_psi4_universal_running_log.txt
+          fi
 
       - name: Generate Universal Comparison Table
         shell: bash {0}
         run: |
-          /tmp/mshqc_venv/bin/python -u tests/compare_universal.py || true
-          cp test_universal_validation.txt 10_compare_universal_log.txt
+          "$VENV_PY" -u tests/compare_universal.py 2>&1 | tee compare_univ_stdout.txt || true
+          if [ -f test_universal_validation.txt ]; then
+            cp test_universal_validation.txt 10_compare_universal_log.txt
+          else
+            cp compare_univ_stdout.txt 10_compare_universal_log.txt
+          fi
 
-      # --- 8. UPLOAD SEMUA LOG DALAM FORMAT .TXT MURNI ---
+      # --- 8. BENCHMARK OPTIMISASI GEOMETRI & FREKUENSI VIBRASI (OMP2 & OMP3) ---
+      - name: Run Geometry Optimization & Vibrational Frequencies Benchmark (benchmark_geom_omp2_psi4.py)
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          if micromamba env list | grep -q "psi4_env"; then
+            micromamba activate psi4_env
+            if python -c "import psi4" >/dev/null 2>&1; then
+              python -m pip install mshqc --no-cache-dir >/dev/null 2>&1 || true
+            fi
+          fi
+          if python -c "import mshqc, psi4" >/dev/null 2>&1; then
+            python -u tests/benchmark_geom_omp2_psi4.py 2>&1 | tee 11_benchmark_geom_omp2_psi4_log.txt
+          else
+            "$VENV_PY" -u tests/benchmark_geom_omp2_psi4.py 2>&1 | tee 11_benchmark_geom_omp2_psi4_log.txt
+          fi
+
+      # --- 9. UPLOAD SEMUA LOG DALAM FORMAT .TXT MURNI PER SISTEM OPERASI ---
       - name: Upload All Running Logs (.txt only)
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: mshqc-vs-psi4-benchmark-logs-txt
+          name: mshqc-vs-psi4-benchmark-logs-${{ matrix.os }}
           path: |
             01_pytest_mshqc_log.txt
             02_mshqc_out.txt
@@ -130,3 +220,4 @@ jobs:
             08_mshqc_universal_running_log.txt
             09_psi4_universal_running_log.txt
             10_compare_universal_log.txt
+            11_benchmark_geom_omp2_psi4_log.txt

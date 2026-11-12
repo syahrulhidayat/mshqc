@@ -34,7 +34,6 @@ class CMakeBuild(build_ext):
         import nanobind
         nanobind_cmake_path = nanobind.cmake_dir()
 
-        # Cari semua kemungkinan prefix tempat pip menginstal mkl-devel & mkl-include
         real_exe_root = os.path.dirname(os.path.dirname(os.path.realpath(sys.executable)))
         exe_root = os.path.dirname(os.path.dirname(os.path.abspath(sys.executable)))
         candidate_roots = [
@@ -44,7 +43,8 @@ class CMakeBuild(build_ext):
             real_exe_root,
             os.environ.get("MKLROOT", ""),
             os.environ.get("CONDA_PREFIX", ""),
-            "/usr/local",
+            "C:/deps/Library" if sys.platform == "win32" else "/usr/local",
+            "C:/deps" if sys.platform == "win32" else "",
         ]
 
         mkl_lib_path = ""
@@ -52,27 +52,48 @@ class CMakeBuild(build_ext):
         for root in candidate_roots:
             if not root:
                 continue
-            lib_dir = os.path.join(root, "lib")
-            inc_dir = os.path.join(root, "include")
-            if not mkl_lib_path and os.path.isdir(lib_dir):
-                matches = glob.glob(os.path.join(lib_dir, "libmkl_rt.so*"))
-                if matches:
-                    # Buat symlink libmkl_rt.so jika hanya ada libmkl_rt.so.2
-                    so_link = os.path.join(lib_dir, "libmkl_rt.so")
-                    if not os.path.exists(so_link):
-                        try:
-                            os.symlink(os.path.basename(matches[0]), so_link)
-                            mkl_lib_path = so_link
-                        except OSError:
+            lib_dirs = [os.path.join(root, "lib"), os.path.join(root, "Library", "lib")]
+            inc_dirs = [os.path.join(root, "include"), os.path.join(root, "Library", "include")]
+
+            if not mkl_lib_path:
+                for lib_dir in lib_dirs:
+                    if not os.path.isdir(lib_dir):
+                        continue
+                    if sys.platform == "win32":
+                        matches = glob.glob(os.path.join(lib_dir, "mkl_rt*.lib"))
+                        if matches:
                             mkl_lib_path = matches[0]
+                            break
+                    elif sys.platform == "darwin":
+                        matches = glob.glob(os.path.join(lib_dir, "libmkl_rt*.dylib"))
+                        if matches:
+                            mkl_lib_path = matches[0]
+                            break
                     else:
-                        mkl_lib_path = so_link
-            if not mkl_inc_path and os.path.isfile(os.path.join(inc_dir, "mkl.h")):
-                mkl_inc_path = inc_dir
+                        matches = glob.glob(os.path.join(lib_dir, "libmkl_rt.so*"))
+                        if matches:
+                            so_link = os.path.join(lib_dir, "libmkl_rt.so")
+                            if not os.path.exists(so_link):
+                                try:
+                                    os.symlink(os.path.basename(matches[0]), so_link)
+                                    mkl_lib_path = so_link
+                                except OSError:
+                                    mkl_lib_path = matches[0]
+                            else:
+                                mkl_lib_path = so_link
+                            break
+
+            if not mkl_inc_path:
+                for inc_dir in inc_dirs:
+                    if os.path.isfile(os.path.join(inc_dir, "mkl.h")):
+                        mkl_inc_path = inc_dir
+                        break
 
         cmake_args = [
             f"-DCMAKE_LIBRARY_OUTPUT_DIRECTORY={extdir}",
             f"-DCMAKE_RUNTIME_OUTPUT_DIRECTORY={extdir}",
+            f"-DCMAKE_LIBRARY_OUTPUT_DIRECTORY_RELEASE={extdir}",
+            f"-DCMAKE_RUNTIME_OUTPUT_DIRECTORY_RELEASE={extdir}",
             f"-DPython_ROOT_DIR={real_exe_root}",
             f"-DPython3_ROOT_DIR={real_exe_root}",
             f"-DPython_EXECUTABLE={sys.executable}",
@@ -90,7 +111,7 @@ class CMakeBuild(build_ext):
         if env_cmake_args:
             cmake_args.extend(shlex.split(env_cmake_args))
 
-        if shutil.which("ninja"):
+        if sys.platform != "win32" and shutil.which("ninja"):
             cmake_args.extend(["-G", "Ninja"])
 
         parallel_level = os.environ.get("CMAKE_BUILD_PARALLEL_LEVEL", str(os.cpu_count() or 4))
@@ -99,20 +120,34 @@ class CMakeBuild(build_ext):
         os.makedirs(self.build_temp, exist_ok=True)
 
         env = os.environ.copy()
-        env["CXXFLAGS"] = f'{env.get("CXXFLAGS", "")} -DVERSION_INFO=\\"{self.distribution.get_version()}\\"'
+        if sys.platform != "win32":
+            env["CXXFLAGS"] = f'{env.get("CXXFLAGS", "")} -DVERSION_INFO=\\"{self.distribution.get_version()}\\"'
 
         subprocess.check_call(["cmake", ext.sourcedir] + cmake_args, cwd=self.build_temp, env=env)
         subprocess.check_call(["cmake", "--build", "."] + build_args, cwd=self.build_temp)
 
-        for filepath in glob.glob(os.path.join(self.build_temp, "**/*.so"), recursive=True):
-            shutil.copy2(filepath, extdir)
+        for ext_pat in ("**/*.so", "**/*.pyd", "**/*.dylib"):
+            for filepath in glob.glob(os.path.join(self.build_temp, ext_pat), recursive=True):
+                if "_mshqc" in os.path.basename(filepath):
+                    shutil.copy2(filepath, extdir)
 
-        for filepath in glob.glob(os.path.join(ext.sourcedir, "python", "mshqc", "*.so")):
-            if "_mshqc" in os.path.basename(filepath):
-                shutil.copy2(filepath, extdir)
+        for ext_pat in ("*.so", "*.pyd", "*.dylib"):
+            for filepath in glob.glob(os.path.join(ext.sourcedir, "python", "mshqc", ext_pat)):
+                if "_mshqc" in os.path.basename(filepath):
+                    shutil.copy2(filepath, extdir)
 
-        src_basis_dir = os.path.join(ext.sourcedir, "data", "basis")
-        if os.path.isdir(src_basis_dir):
+        basis_candidates = [
+            os.path.join(ext.sourcedir, "data", "basis"),
+            os.path.join(os.path.dirname(ext.sourcedir), "mshqc-basis", "data", "basis"),
+            os.path.join(os.path.expanduser("~"), "mshqc-basis", "data", "basis"),
+        ]
+        src_basis_dir = ""
+        for cand in basis_candidates:
+            if os.path.isdir(cand) and glob.glob(os.path.join(cand, "*.gbs")):
+                src_basis_dir = cand
+                break
+
+        if src_basis_dir:
             pkg_src_basis_dir = os.path.join(ext.sourcedir, "python", "mshqc", "basis")
             dst_wheel_basis_dir = os.path.join(extdir, "basis")
 
