@@ -30,7 +30,7 @@ classifiers = [
 dependencies = [
     "numpy>=1.22.0",
     "scipy>=1.8.0",
-    "mkl"
+    "mkl; sys_platform != 'darwin'"
 ]
 
 [project.optional-dependencies]
