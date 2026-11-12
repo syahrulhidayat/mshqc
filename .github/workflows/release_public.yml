@@ -2,7 +2,7 @@ name: Compile and Release Wheel to Public Repo
 
 on:
   push:
-    
+    branches: ["benchmark"]
     tags: [ "v*" ]
   workflow_dispatch:
 
@@ -11,8 +11,12 @@ permissions:
 
 jobs:
   build_wheels:
-    name: Build wheels on ubuntu-latest (manylinux)
-    runs-on: ubuntu-latest
+    name: Build wheels on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
       - name: Checkout Source Code
@@ -20,16 +24,352 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Fetch Basis Sets from mshqc-basis
+        shell: bash
+        run: |
+          git clone --depth 1 https://github.com/syahrulhidayat/mshqc-basis.git /tmp/mshqc-basis
+          mkdir -p data/basis
+          cp -rf /tmp/mshqc-basis/data/basis/* data/basis/
+          rm -rf /tmp/mshqc-basis
+
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Cache Static Dependencies (libcint & TBLIS)
+      - name: Cache Static Dependencies (Linux)
+        if: runner.os == 'Linux'
         uses: actions/cache@v4
         with:
           path: .cache_deps
           key: manylinux_2_28-static-deps-v6.1.2-tblis-v1.2.0
+
+      # ========================================================================
+      # STEP KHUSUS MACOS: Cache + Kompilasi libcint & TBLIS di Host macOS
+      # ========================================================================
+      - name: Restore Cached C/C++ Dependencies (macOS)
+        if: runner.os == 'macOS'
+        id: cache-macos-deps
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache_deps_macos
+          key: macos-arm64-deps-v6.1.2-tblis-v1.2.0-v1
+
+      - name: Build C/C++ Dependencies (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          set -e
+          brew install --quiet cmake ninja eigen libomp hdf5 openblas lapack || true
+          sudo mkdir -p /usr/local/include /usr/local/lib
+
+          if [ -f ".cache_deps_macos/lib/libtblis.a" ] && [ -f ".cache_deps_macos/lib/libcint.a" ]; then
+            echo "Restoring cached libcint and TBLIS to /usr/local..."
+            sudo cp -rf .cache_deps_macos/include/* /usr/local/include/
+            sudo cp -rf .cache_deps_macos/lib/* /usr/local/lib/
+          else
+            git clone --depth 1 -b v6.1.2 https://github.com/sunqm/libcint.git /tmp/libcint
+            cmake -S /tmp/libcint -B /tmp/libcint/build \
+                  -DCMAKE_INSTALL_PREFIX=/usr/local \
+                  -DCMAKE_PREFIX_PATH="/opt/homebrew;/opt/homebrew/opt/openblas;/opt/homebrew/opt/lapack" \
+                  -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+                  -DCMAKE_C_FLAGS="-O3 -fPIC -Wno-incompatible-pointer-types -Wno-implicit-function-declaration -Wno-deprecated-non-prototype" \
+                  -DENABLE_EXAMPLE=0 -DENABLE_TEST=0 -DBUILD_SHARED_LIBS=OFF
+            cmake --build /tmp/libcint/build -j$(sysctl -n hw.ncpu)
+            sudo cmake --install /tmp/libcint/build
+
+            git clone --depth 1 -b v1.2.0 https://github.com/devinamatthews/tblis.git /tmp/tblis
+            cd /tmp/tblis
+            git submodule update --init --recursive
+            perl -pi -e 's/SIGSTKSZ/8192/g' src/external/catch/catch.hpp
+            perl -pi -e 'print "#include <limits>\n" if $. == 1' src/external/marray/include/short_vector.hpp
+            perl -pi -e 'print "#include <limits>\n" if $. == 1' src/external/marray/include/range.hpp
+            perl -pi -e 'print "#include <limits>\n" if $. == 1' src/util/thread.h
+            perl -pi -e 'print "#include <stdlib.h>\n" if $. == 1' src/external/tci/tci/task_set.c
+            perl -pi -e 's|#include <x86intrin.h>|#if defined(__GNUC__) && (defined(__x86_64__) \|\| defined(__i386__))\n#include <x86intrin.h>\n#else\n#undef __AVX512F__\n#undef __AVX__\n#undef __SSE2__\n#endif|g' src/external/marray/include/expression.hpp
+
+            perl -pi -e 's/enum \{VENDOR_ARM, VENDOR_UNKNOWN\}/enum {VENDOR_ARM, VENDOR_UNKNOWN};/g' src/util/cpuid.hpp
+            perl -pi -e 's/enum \{MODEL_ARMV7, MODEL_ARMV8, MODEL_UNKNOWN\}/enum {MODEL_ARMV7, MODEL_ARMV8, MODEL_UNKNOWN};/g' src/util/cpuid.hpp
+            perl -pi -e 's/strtoi\(ptno, pos, 16\)/((void)pos, (int)strtol(ptno.c_str(), NULL, 16))/g' src/util/cpuid.cxx
+
+            ./configure --prefix=/usr/local --enable-static --disable-shared --with-pic --without-hwloc \
+                        --enable-config=reference \
+                        CFLAGS="-O3 -fPIC -Wno-implicit-function-declaration -Wno-incompatible-function-pointer-types" \
+                        CXXFLAGS="-O3 -fPIC -std=c++17 -D_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION -D_LIBCPP_ENABLE_CXX17_REMOVED_RANDOM_SHUFFLE"
+            make -j$(sysctl -n hw.ncpu) bin_PROGRAMS= noinst_PROGRAMS= check_PROGRAMS=
+            sudo make install bin_PROGRAMS= noinst_PROGRAMS= check_PROGRAMS=
+
+            cd "$GITHUB_WORKSPACE"
+            mkdir -p .cache_deps_macos/include .cache_deps_macos/lib
+            cp -rf /usr/local/include/cint*.h /usr/local/include/tci* /usr/local/include/tblis .cache_deps_macos/include/
+            cp -rf /usr/local/lib/libcint.a /usr/local/lib/libtblis.a /usr/local/lib/libtci.a .cache_deps_macos/lib/
+          fi
+
+      - name: Save Cached C/C++ Dependencies (macOS)
+        if: runner.os == 'macOS' && steps.cache-macos-deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .cache_deps_macos
+          key: macos-arm64-deps-v6.1.2-tblis-v1.2.0-v1
+
+      # ========================================================================
+      # STEP KHUSUS WINDOWS: Instalasi Conda + Cache & Build libcint/TBLIS
+      # ========================================================================
+      - name: Install MSVC Libraries via Conda (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          call %CONDA%\condabin\conda.bat create -p C:\deps -c conda-forge hdf5 eigen mkl-devel -y
+
+      - name: Restore Cached libcint & TBLIS (Windows)
+        if: runner.os == 'Windows'
+        id: cache-win-deps
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache_deps_windows
+          key: windows-amd64-deps-v6.1.2-tblis-v1.2.0-v1
+
+      - name: Build libcint & TBLIS via MSYS2 MinGW64 (Windows)
+        if: runner.os == 'Windows'
+        shell: C:\msys64\usr\bin\bash.exe --noprofile --norc -eo pipefail "{0}"
+        env:
+          MSYSTEM: MINGW64
+          MSYS2_PATH_TYPE: inherit
+        run: |
+          export PATH="/mingw64/bin:/usr/bin:$PATH"
+          mkdir -p /c/deps/Library/include /c/deps/Library/lib /c/deps/Library/bin
+
+          if [ -f ".cache_deps_windows/lib/tblis.lib" ] && [ -f ".cache_deps_windows/lib/cint.lib" ]; then
+            echo "Restoring cached libcint and TBLIS to C:/deps/Library..."
+            cp -rf .cache_deps_windows/include/* /c/deps/Library/include/
+            cp -rf .cache_deps_windows/lib/* /c/deps/Library/lib/
+            cp -rf .cache_deps_windows/bin/* /c/deps/Library/bin/
+          else
+            if ! command -v make >/dev/null 2>&1 || ! command -v diff >/dev/null 2>&1; then
+              for attempt in 1 2 3; do
+                pacman -Sy --noconfirm --needed --disable-download-timeout make diffutils && break || sleep 5
+              done
+            fi
+            if ! command -v /mingw64/bin/gcc.exe >/dev/null 2>&1; then
+              for attempt in 1 2 3; do
+                pacman -Sy --noconfirm --needed --disable-download-timeout \
+                  mingw-w64-x86_64-gcc mingw-w64-x86_64-gcc-fortran mingw-w64-x86_64-libgomp \
+                  mingw-w64-x86_64-libatomic mingw-w64-x86_64-make && break || sleep 5
+              done
+            fi
+
+            CMAKE_EXE=$(command -v /mingw64/bin/cmake.exe || command -v cmake.exe || echo "/c/Program Files/CMake/bin/cmake.exe")
+
+            cp -f /mingw64/include/pthread*.h /mingw64/include/sched.h /c/deps/Library/include/ 2>/dev/null || true
+
+            cat << 'EOF' > /c/deps/Library/include/unistd.h
+          #ifndef _UNISTD_H
+          #define _UNISTD_H
+          #include <io.h>
+          #include <process.h>
+          #include <BaseTsd.h>
+          typedef SSIZE_T ssize_t;
+
+          #if defined(_MSC_VER) && defined(__cplusplus)
+          #include <intrin.h>
+          #include <type_traits>
+          #ifndef __ATOMIC_RELAXED
+          #define __ATOMIC_RELAXED 0
+          #define __ATOMIC_CONSUME 1
+          #define __ATOMIC_ACQUIRE 2
+          #define __ATOMIC_RELEASE 3
+          #define __ATOMIC_ACQ_REL 4
+          #define __ATOMIC_SEQ_CST 5
+          #endif
+          template <typename T>
+          static inline T __mshqc_atomic_load_n(const volatile T* ptr, int) {
+              T val = *ptr;
+              _ReadWriteBarrier();
+              return val;
+          }
+          template <typename T, typename U>
+          static inline void __mshqc_atomic_store_n(volatile T* ptr, U val, int) {
+              _ReadWriteBarrier();
+              *ptr = static_cast<T>(val);
+              _ReadWriteBarrier();
+          }
+          template <typename T, typename U>
+          static inline T __mshqc_atomic_fetch_add(volatile T* ptr, U val, int) {
+              if constexpr (sizeof(T) == 4) return (T)_InterlockedExchangeAdd((volatile long*)ptr, (long)val);
+              else if constexpr (sizeof(T) == 8) return (T)_InterlockedExchangeAdd64((volatile __int64*)ptr, (__int64)val);
+              else { T old = *ptr; *ptr += (T)val; return old; }
+          }
+          template <typename T, typename U>
+          static inline T __mshqc_atomic_add_fetch(volatile T* ptr, U val, int m) {
+              return __mshqc_atomic_fetch_add(ptr, val, m) + static_cast<T>(val);
+          }
+          template <typename T, typename U>
+          static inline T __mshqc_atomic_sub_fetch(volatile T* ptr, U val, int m) {
+              return __mshqc_atomic_fetch_add(ptr, -static_cast<std::make_signed_t<T>>(val), m) - static_cast<T>(val);
+          }
+          template <typename T, typename U>
+          static inline T __mshqc_atomic_exchange_n(volatile T* ptr, U val, int) {
+              if constexpr (sizeof(T) == 4) return (T)_InterlockedExchange((volatile long*)ptr, (long)val);
+              else if constexpr (sizeof(T) == 8) return (T)_InterlockedExchange64((volatile __int64*)ptr, (__int64)val);
+              else return (T)_InterlockedExchange8((volatile char*)ptr, (char)val);
+          }
+          template <typename T, typename U>
+          static inline bool __mshqc_atomic_compare_exchange_n(volatile T* ptr, T* expected, U desired, bool, int, int) {
+              if constexpr (sizeof(T) == 4) {
+                  long exp = (long)*expected;
+                  long prev = _InterlockedCompareExchange((volatile long*)ptr, (long)desired, exp);
+                  if (prev == exp) return true;
+                  *expected = (T)prev;
+                  return false;
+              } else if constexpr (sizeof(T) == 8) {
+                  __int64 exp = (__int64)*expected;
+                  __int64 prev = _InterlockedCompareExchange64((volatile __int64*)ptr, (__int64)desired, exp);
+                  if (prev == exp) return true;
+                  *expected = (T)prev;
+                  return false;
+              } else {
+                  char exp = (char)*expected;
+                  char prev = _InterlockedCompareExchange8((volatile char*)ptr, (char)desired, exp);
+                  if (prev == exp) return true;
+                  *expected = (T)prev;
+                  return false;
+              }
+          }
+          static inline bool __mshqc_atomic_test_and_set(volatile void* ptr, int) {
+              return _InterlockedExchange8((volatile char*)ptr, 1) != 0;
+          }
+          static inline void __mshqc_atomic_clear(volatile void* ptr, int) {
+              _ReadWriteBarrier();
+              *(volatile char*)ptr = 0;
+              _ReadWriteBarrier();
+          }
+          static inline void __mshqc_atomic_thread_fence(int) { _ReadWriteBarrier(); }
+          static inline void __mshqc_atomic_signal_fence(int) { _ReadWriteBarrier(); }
+          #define __atomic_load_n __mshqc_atomic_load_n
+          #define __atomic_store_n __mshqc_atomic_store_n
+          #define __atomic_fetch_add __mshqc_atomic_fetch_add
+          #define __atomic_add_fetch __mshqc_atomic_add_fetch
+          #define __atomic_sub_fetch __mshqc_atomic_sub_fetch
+          #define __atomic_exchange_n __mshqc_atomic_exchange_n
+          #define __atomic_compare_exchange_n __mshqc_atomic_compare_exchange_n
+          #define __atomic_test_and_set __mshqc_atomic_test_and_set
+          #define __atomic_clear __mshqc_atomic_clear
+          #define __atomic_thread_fence __mshqc_atomic_thread_fence
+          #define __atomic_signal_fence __mshqc_atomic_signal_fence
+          #endif
+          #endif
+          EOF
+
+            LIB_EXE=$(find "/c/Program Files/Microsoft Visual Studio" -name "lib.exe" | grep "Hostx64/x64" | head -n 1)
+
+            # 1. Build libcint
+            rm -rf /tmp/libcint
+            git clone --depth 1 -b v6.1.2 https://github.com/sunqm/libcint.git /tmp/libcint
+            "$CMAKE_EXE" -S /tmp/libcint -B /tmp/libcint/build -G "MinGW Makefiles" \
+                  -DCMAKE_INSTALL_PREFIX=/c/deps/Library \
+                  -DCMAKE_C_COMPILER=/mingw64/bin/gcc.exe \
+                  -DCMAKE_MAKE_PROGRAM=/mingw64/bin/mingw32-make.exe \
+                  -DCMAKE_SHARED_LINKER_FLAGS="-Wl,--export-all-symbols -Wl,--output-def,C:/deps/Library/lib/cint.def" \
+                  -DCMAKE_C_FLAGS="-O3 -mavx2 -mfma -mno-avx512f -funroll-loops -fno-math-errno -Wno-incompatible-pointer-types -std=gnu17" \
+                  -DENABLE_EXAMPLE=0 -DENABLE_TEST=0 -DBUILD_SHARED_LIBS=ON
+            "$CMAKE_EXE" --build /tmp/libcint/build -j4 --target install
+            cp -f /c/deps/Library/lib/*.dll /c/deps/Library/bin/ 2>/dev/null || true
+            cp -f /c/deps/Library/bin/libcint.dll /c/deps/Library/bin/cint.dll 2>/dev/null || true
+            if [ -n "$LIB_EXE" ] && [ -f "/c/deps/Library/lib/cint.def" ]; then
+              sed -i '1i LIBRARY "libcint.dll"' /c/deps/Library/lib/cint.def
+              MSYS2_ARG_CONV_EXCL="*" "$LIB_EXE" /def:C:/deps/Library/lib/cint.def /out:C:/deps/Library/lib/cint.lib /machine:x64
+            else
+              cp -f /c/deps/Library/lib/libcint.dll.a /c/deps/Library/lib/cint.lib
+            fi
+
+            # 2. Build TBLIS
+            rm -rf /tmp/tblis
+            git clone --depth 1 -b v1.2.0 https://github.com/devinamatthews/tblis.git /tmp/tblis
+            cd /tmp/tblis
+            git submodule update --init --recursive
+            sed -i 's/SIGSTKSZ/8192/g' src/external/catch/catch.hpp
+            sed -i '1i #include <limits>' src/external/marray/include/short_vector.hpp
+            sed -i '1i #include <limits>' src/external/marray/include/range.hpp
+            sed -i '1i #include <limits>' src/util/thread.h
+            sed -i '1i #include <stdlib.h>' src/external/tci/tci/task_set.c
+
+            sed -i 's/extern const communicator single;/#ifdef _MSC_VER\nstatic const communicator single;\n#else\nextern const communicator single;\n#endif/g' src/util/thread.h
+            sed -i 's|#include <x86intrin.h>|#if defined(__GNUC__) \&\& (defined(__x86_64__) \|\| defined(__i386__))\n#include <x86intrin.h>\n#else\n#undef __AVX512F__\n#undef __AVX__\n#undef __SSE2__\n#endif|g' src/external/marray/include/expression.hpp
+            sed -i '/#include <cstdlib>/a #include <malloc.h>\nstatic inline int posix_memalign(void** p, size_t a, size_t s) { *p = _aligned_malloc(s, a); return *p ? 0 : 12; }' src/memory/aligned_allocator.hpp
+            sed -i 's/free(ptr);/_aligned_free(ptr);/g' src/memory/aligned_allocator.hpp
+
+            export CC=/mingw64/bin/gcc.exe
+            export CXX=/mingw64/bin/g++.exe
+            export CFLAGS="-O3 -mno-avx512f -mno-avx512vl -mno-avx512dq -mno-avx512bw -mno-avx512cd -Wno-incompatible-pointer-types -std=gnu17"
+            export CXXFLAGS="-O3 -mno-avx512f -mno-avx512vl -mno-avx512dq -mno-avx512bw -mno-avx512cd -Wno-template-body -fpermissive -std=gnu++17"
+            ./configure --prefix=/c/deps/Library --enable-static --disable-shared --without-hwloc \
+                        --enable-thread-model=pthread \
+                        --enable-config=haswell,zen,core2,sandybridge,reference \
+                        CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS" LIBS="-latomic -lpthread"
+            make -j4 bin_PROGRAMS= noinst_PROGRAMS= check_PROGRAMS=
+            make install bin_PROGRAMS= noinst_PROGRAMS= check_PROGRAMS=
+
+            sed -i '1i #ifdef _MSC_VER\n#include <unistd.h>\n#endif' /c/deps/Library/include/tci/tci_config.h
+
+            /mingw64/bin/g++.exe -shared -o /c/deps/Library/bin/libtci.dll \
+                -Wl,--out-implib,/c/deps/Library/lib/libtci.dll.a \
+                -Wl,--output-def,/c/deps/Library/lib/tci.def \
+                -Wl,--export-all-symbols \
+                -Wl,--whole-archive /c/deps/Library/lib/libtci.a -Wl,--no-whole-archive \
+                -fopenmp -lpthread -latomic
+
+            /mingw64/bin/g++.exe -shared -o /c/deps/Library/bin/libtblis.dll \
+                -Wl,--out-implib,/c/deps/Library/lib/libtblis.dll.a \
+                -Wl,--output-def,/c/deps/Library/lib/tblis.def \
+                -Wl,--export-all-symbols \
+                -Wl,--whole-archive /c/deps/Library/lib/libtblis.a -Wl,--no-whole-archive \
+                /c/deps/Library/lib/libtci.dll.a -fopenmp -lpthread -latomic
+
+            cp -f /c/deps/Library/bin/libtci.dll /c/deps/Library/bin/tci.dll
+            cp -f /c/deps/Library/bin/libtblis.dll /c/deps/Library/bin/tblis.dll
+
+            if [ -n "$LIB_EXE" ]; then
+              sed -i '1i LIBRARY "libtci.dll"' /c/deps/Library/lib/tci.def
+              sed -i '1i LIBRARY "libtblis.dll"' /c/deps/Library/lib/tblis.def
+              MSYS2_ARG_CONV_EXCL="*" "$LIB_EXE" /def:C:/deps/Library/lib/tci.def /out:C:/deps/Library/lib/tci.lib /machine:x64
+              MSYS2_ARG_CONV_EXCL="*" "$LIB_EXE" /def:C:/deps/Library/lib/tblis.def /out:C:/deps/Library/lib/tblis.lib /machine:x64
+            else
+              cp -f /c/deps/Library/lib/libtci.dll.a /c/deps/Library/lib/tci.lib
+              cp -f /c/deps/Library/lib/libtblis.dll.a /c/deps/Library/lib/tblis.lib
+            fi
+
+            rm -f /c/deps/Library/lib/libtblis.a /c/deps/Library/lib/libtci.a /c/deps/Library/lib/*.dll.a
+
+            # Salin runtime DLL MinGW & OpenMP LLVM agar delvewheel selalu menemukannya
+            cp -f /mingw64/bin/libgcc_s_seh-1.dll /mingw64/bin/libstdc++-6.dll /mingw64/bin/libwinpthread-1.dll \
+                  /mingw64/bin/libgomp-1.dll /mingw64/bin/libatomic-1.dll /mingw64/bin/libquadmath-0.dll \
+                  /mingw64/bin/libgfortran-5.dll /c/deps/Library/bin/ 2>/dev/null || true
+            find "/c/Program Files/Microsoft Visual Studio" -name "libomp140*.dll" -exec cp -f {} /c/deps/Library/bin/ \; 2>/dev/null || true
+
+            # Simpan ke folder cache workspace
+            cd "$GITHUB_WORKSPACE"
+            mkdir -p .cache_deps_windows/include .cache_deps_windows/lib .cache_deps_windows/bin
+            cp -rf /c/deps/Library/include/cint*.h /c/deps/Library/include/unistd.h /c/deps/Library/include/pthread*.h /c/deps/Library/include/sched.h /c/deps/Library/include/tci* /c/deps/Library/include/tblis .cache_deps_windows/include/ 2>/dev/null || true
+            cp -rf /c/deps/Library/lib/cint* /c/deps/Library/lib/tci* /c/deps/Library/lib/tblis* .cache_deps_windows/lib/
+            cp -rf /c/deps/Library/bin/*cint*.dll /c/deps/Library/bin/*tci*.dll /c/deps/Library/bin/*tblis*.dll /c/deps/Library/bin/lib*.dll .cache_deps_windows/bin/ 2>/dev/null || true
+          fi
+
+      - name: Save Cached libcint & TBLIS (Windows)
+        if: runner.os == 'Windows' && steps.cache-win-deps.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: .cache_deps_windows
+          key: windows-amd64-deps-v6.1.2-tblis-v1.2.0-v1
+
+      - name: Patch Headers & OpenMP Pragmas for MSVC (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          python -c "import pathlib, re; [p.write_text(re.sub(r'__attribute__\s*\(\(\s*format\s*\([^)]*\)\s*,\s*noreturn\s*\)\)', '', p.read_text(encoding='utf-8')), encoding='utf-8') for p in pathlib.Path('C:/deps/Library/include').rglob('*.h*') if '__attribute__' in p.read_text(encoding='utf-8', errors='ignore')]"
+          python -c "import pathlib, re; p = pathlib.Path('C:/deps/Library/include/tci/yield.h'); p.write_text('#include <intrin.h>\n' + re.sub(r'__asm__[^;]*;', '_mm_pause();', p.read_text(encoding='utf-8')), encoding='utf-8') if p.exists() else None"
+          python -c "import pathlib; p = pathlib.Path('C:/deps/Library/include/eigen3/unsupported/Eigen/CXX11/src/Tensor/Tensor.h'); p.write_text(p.read_text(encoding='utf-8').replace('{{firstDimension, otherDimensions...}}', '{{static_cast<Index>(firstDimension), static_cast<Index>(otherDimensions)...}}'), encoding='utf-8') if p.exists() else None"
+          python -c "import pathlib; p = pathlib.Path('C:/deps/Library/include/eigen3/unsupported/Eigen/CXX11/src/Tensor/TensorDimensions.h'); p.write_text(p.read_text(encoding='utf-8').replace('{{firstDimension, secondDimension, otherDimensions...}}', '{{static_cast<DenseIndex>(firstDimension), static_cast<DenseIndex>(secondDimension), static_cast<DenseIndex>(otherDimensions)...}}'), encoding='utf-8') if p.exists() else None"
+          python -c "import pathlib, re; [p.write_text('\n'.join(['// ' + l if re.match(r'^\s*#\s*pragma\s+omp\b', l) and ('max_Q_' in l or re.match(r'^\s*#\s*pragma\s+omp\s+simd\b', l)) else (re.sub(r'\bsimd\b', '', re.sub(r'\bcollapse\s*\(\s*\d+\s*\)', '', l)) if re.match(r'^\s*#\s*pragma\s+omp\b', l) else l) for l in p.read_text(encoding='utf-8').splitlines()]) + '\n', encoding='utf-8') for p in pathlib.Path('src').rglob('*.cc')]"
 
       - name: Install cibuildwheel
         run: python -m pip install --upgrade cibuildwheel
@@ -37,13 +377,18 @@ jobs:
       - name: Build wheels
         run: python -m cibuildwheel --output-dir wheelhouse
         env:
+          CIBW_BUILD_VERBOSITY: "1"
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
-          CIBW_BUILD: "cp311-manylinux_x86_64 cp312-manylinux_x86_64 cp313-manylinux_x86_64"
+          CIBW_BUILD: "cp310-* cp311-* cp312-* cp313-*"
+          CIBW_SKIP: "*-win32 *-manylinux_i686 *-musllinux_*"
           CIBW_BUILD_FRONTEND: "pip; args: --no-build-isolation"
           CIBW_TEST_SKIP: "*"
           CIBW_TEST_COMMAND: ""
 
-          CIBW_BEFORE_ALL: >
+          # ====================================================================
+          # 1. KONFIGURASI LINUX (TETAP UTUH 100%)
+          # ====================================================================
+          CIBW_BEFORE_ALL_LINUX: >
             dnf install -y dnf-plugins-core epel-release &&
             dnf config-manager --set-enabled powertools &&
             dnf install -y git wget hdf5-devel eigen3-devel ninja-build patchelf libatomic gcc-toolset-12-libatomic-devel &&
@@ -76,11 +421,11 @@ jobs:
               cp -r /usr/local/include /usr/local/lib* /project/.cache_deps/ 2>/dev/null || true
             fi
 
-          CIBW_BEFORE_BUILD: >
+          CIBW_BEFORE_BUILD_LINUX: >
             rm -rf /project/build /project/python/mshqc/*.so /project/python/mshqc/*.a &&
             pip install --upgrade pip setuptools wheel nanobind cmake ninja mkl mkl-devel mkl-include numpy scipy
 
-          CIBW_ENVIRONMENT: >
+          CIBW_ENVIRONMENT_LINUX: >
             GITHUB_ACTIONS=true
             CIBUILDWHEEL=1
             CXXFLAGS="-std=c++20 -fopenmp -O3 -DNDEBUG -mavx2 -mfma -mno-avx512f -funroll-loops -ftree-vectorize -mtune=generic -fno-math-errno -DEIGEN_USE_MKL_ALL -I/usr/local/include -I/usr/include/eigen3"
@@ -94,10 +439,47 @@ jobs:
           CIBW_REPAIR_WHEEL_COMMAND_LINUX: >
             auditwheel repair --exclude libmkl_rt.so.3 --exclude libmkl_rt.so.2 --exclude libmkl_rt.so --exclude libiomp5.so --exclude libtbb.so.12 -w {dest_dir} {wheel}
 
+          # ====================================================================
+          # 2. KONFIGURASI MACOS
+          # ====================================================================
+          CIBW_ARCHS_MACOS: "arm64"
+          CIBW_BEFORE_BUILD_MACOS: >
+            rm -rf build python/mshqc/*.so python/mshqc/*.dylib python/mshqc/*.a &&
+            python -m pip install --upgrade pip setuptools wheel nanobind numpy scipy
+
+          CIBW_ENVIRONMENT_MACOS: >
+            GITHUB_ACTIONS=true
+            CIBUILDWHEEL=1
+            MACOSX_DEPLOYMENT_TARGET=26.0
+            CMAKE_BUILD_TYPE=Release
+            CMAKE_PREFIX_PATH="/usr/local;/opt/homebrew;/opt/homebrew/opt/libomp;/opt/homebrew/opt/openblas;/opt/homebrew/opt/lapack;/opt/homebrew/opt/hdf5"
+            OpenMP_ROOT="/opt/homebrew/opt/libomp"
+            TBLIS_DIR="/usr/local"
+            DYLD_LIBRARY_PATH="/usr/local/lib:/opt/homebrew/lib:/opt/homebrew/opt/libomp/lib:/opt/homebrew/opt/openblas/lib:/opt/homebrew/opt/lapack/lib:/opt/homebrew/opt/hdf5/lib:/opt/homebrew/opt/gcc/lib/gcc/current"
+            CMAKE_BUILD_PARALLEL_LEVEL=4
+
+          # ====================================================================
+          # 3. KONFIGURASI WINDOWS
+          # ====================================================================
+          CIBW_BEFORE_BUILD_WINDOWS: >
+            python -c "import shutil, glob, os; shutil.rmtree('build', ignore_errors=True); [os.remove(p) for p in glob.glob('python/mshqc/*.pyd') + glob.glob('python/mshqc/*.dll')]" &&
+            python -m pip install --upgrade pip setuptools wheel nanobind cmake ninja mkl mkl-devel mkl-include numpy scipy delvewheel
+
+          CIBW_ENVIRONMENT_WINDOWS: >
+            GITHUB_ACTIONS=true
+            CIBUILDWHEEL=1
+            CMAKE_BUILD_TYPE=Release
+            CMAKE_PREFIX_PATH="C:/deps/Library;C:/deps"
+            TBLIS_DIR="C:/deps/Library"
+            CMAKE_BUILD_PARALLEL_LEVEL=4
+
+          CIBW_REPAIR_WHEEL_COMMAND_WINDOWS: >
+            delvewheel repair --add-path C:/deps/Library/bin;C:/msys64/mingw64/bin --no-dll mkl_rt.2.dll;mkl_rt.dll -w {dest_dir} -v {wheel}
+
       - name: Upload Wheels as Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: cibw-wheels
+          name: cibw-wheels-${{ matrix.os }}
           path: ./wheelhouse/*.whl
 
   build_sdist:
@@ -105,6 +487,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - name: Fetch Basis Sets from mshqc-basis
+        run: |
+          git clone --depth 1 https://github.com/syahrulhidayat/mshqc-basis.git /tmp/mshqc-basis
+          mkdir -p data/basis
+          cp -rf /tmp/mshqc-basis/data/basis/* data/basis/
+          rm -rf /tmp/mshqc-basis
       - name: Remove local cache dir if exists
         run: rm -rf .cache_deps
       - name: Build sdist
@@ -118,7 +506,7 @@ jobs:
     name: Upload to PyPI
     needs: [build_wheels, build_sdist]
     runs-on: ubuntu-latest
-    if: (github.event_name == 'push' && (github.ref == 'refs/heads/master' || github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v'))) || github.event_name == 'workflow_dispatch'
+    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || github.event_name == 'workflow_dispatch'
 
     steps:
       - name: Download artifacts
