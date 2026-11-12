@@ -2,7 +2,7 @@ name: Compile and Release Wheel to Public Repo
 
 on:
   push:
-    branches: ["master"]
+    branches: [""]
     tags: ["*"]
   workflow_dispatch:
 
@@ -506,7 +506,7 @@ jobs:
     name: Upload to PyPI & GitHub Release
     needs: [build_wheels, build_sdist]
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
+    if: always() && needs.build_wheels.result == 'success' && needs.build_sdist.result == 'success'
 
     steps:
       - name: Checkout Source Code (for version detection)
