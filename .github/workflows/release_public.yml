@@ -361,6 +361,16 @@ jobs:
           path: .cache_deps_windows
           key: windows-amd64-deps-v6.1.2-tblis-v1.2.0-v1
 
+      - name: Patch Headers & OpenMP Pragmas for MSVC (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          python -c "import pathlib, re; p = pathlib.Path('C:/deps/Library/include/tblis/util/basic_types.h'); p.write_text(re.sub(r'__attribute__\s*\(\(\s*format\s*\([^)]*\)\s*,\s*noreturn\s*\)\)', '', p.read_text(encoding='utf-8')), encoding='utf-8') if p.exists() else None"
+          python -c "import pathlib; p = pathlib.Path('C:/deps/Library/include/tci/yield.h'); txt = p.read_text(encoding='utf-8') if p.exists() else ''; p.write_text('#ifdef _MSC_VER\n#include <intrin.h>\n#endif\n' + txt.replace('__asm__ __volatile__ (\"pause\");', '#ifdef _MSC_VER\n    _mm_pause();\n#else\n    __asm__ __volatile__ (\"pause\");\n#endif'), encoding='utf-8') if p.exists() and '_mm_pause' not in txt else None"
+          python -c "import pathlib; p = pathlib.Path('C:/deps/Library/include/eigen3/unsupported/Eigen/CXX11/src/Tensor/Tensor.h'); p.write_text(p.read_text(encoding='utf-8').replace('{{firstDimension, otherDimensions...}}', '{{static_cast<Index>(firstDimension), static_cast<Index>(otherDimensions)...}}'), encoding='utf-8') if p.exists() else None"
+          python -c "import pathlib; p = pathlib.Path('C:/deps/Library/include/eigen3/unsupported/Eigen/CXX11/src/Tensor/TensorDimensions.h'); p.write_text(p.read_text(encoding='utf-8').replace('{{firstDimension, secondDimension, otherDimensions...}}', '{{static_cast<DenseIndex>(firstDimension), static_cast<DenseIndex>(secondDimension), static_cast<DenseIndex>(otherDimensions)...}}'), encoding='utf-8') if p.exists() else None"
+          python -c "import pathlib, re; [p.write_text('\n'.join(['// ' + l if re.match(r'^\s*#\s*pragma\s+omp\b', l) and ('max_Q_' in l or re.match(r'^\s*#\s*pragma\s+omp\s+simd\b', l)) else (re.sub(r'\bsimd\b', '', re.sub(r'\bcollapse\s*\(\s*\d+\s*\)', '', l)) if re.match(r'^\s*#\s*pragma\s+omp\b', l) else l) for l in p.read_text(encoding='utf-8').splitlines()]) + '\n', encoding='utf-8') for p in pathlib.Path('src').rglob('*.cc')]"
+
       - name: Install cibuildwheel
         run: python -m pip install --upgrade cibuildwheel
 

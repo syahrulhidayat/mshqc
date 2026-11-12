@@ -141,3 +141,38 @@ def _resolve_mshqc_basis_dir() -> None:
             break
 
 _resolve_mshqc_basis_dir()
+
+
+# === MSHQC HPC GEOMETRY OPTIMIZATION INJECTION ===
+from .geometry import (
+    optimize_geometry,
+    compute_frequencies as frequencies,
+    compute_nuclear_gradient as nuclear_gradient,
+    scan_pes,
+    GeometryOptimizationResult,
+    FrequencyThermochemResult,
+    attach_geometry_methods_to_molecule,
+)
+
+try:
+    if "Molecule" in globals():
+        attach_geometry_methods_to_molecule(globals()["Molecule"])
+except Exception:
+    pass
+
+# === MSHQC MOLECULE SUBCLASS WRAPPER ===
+if "Molecule" in globals():
+    _CppMoleculeBase = globals()["Molecule"]
+    if not hasattr(_CppMoleculeBase, "optimize_geometry"):
+        class Molecule(_CppMoleculeBase):  # type: ignore[misc,valid-type]
+            def optimize_geometry(self, method: str = "omp2", eri_mode: str = "df", **kwargs):
+                return optimize_geometry(self, method=method, eri_mode=eri_mode, **kwargs)
+
+            def frequencies(self, method: str = "omp2", eri_mode: str = "df", **kwargs):
+                return frequencies(self, method=method, eri_mode=eri_mode, **kwargs)
+
+            def gradient(self, method: str = "omp2", eri_mode: str = "df", **kwargs):
+                return nuclear_gradient(self, method=method, eri_mode=eri_mode, **kwargs)
+
+            def scan_pes(self, atom_i: int, atom_j: int, distances_angstrom, method: str = "omp2", eri_mode: str = "df", **kwargs):
+                return scan_pes(self, atom_i, atom_j, distances_angstrom, method=method, eri_mode=eri_mode, **kwargs)
