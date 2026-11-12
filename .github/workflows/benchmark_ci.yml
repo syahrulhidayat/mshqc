@@ -1,15 +1,14 @@
-name: Validation & Benchmark Suite (mshqc vs Psi4)
+name: Validation & Universal Benchmark Suite (mshqc vs Psi4)
 
 on:
   push:
-    branches: [ "master", "main", "build-pypi" ]
-  pull_request:
-    branches: [ "master", "main" ]
+    branches: [ "" ]
+
   workflow_dispatch:
 
 jobs:
-  apple_to_apple_benchmark:
-    name: Run Pytest & 60-Run Benchmark (mshqc Wheel vs Psi4)
+  universal_benchmark:
+    name: Run Pytest & Benchmark Suite (mshqc Wheel vs Psi4)
     runs-on: ubuntu-latest
     env:
       OMP_NUM_THREADS: "4"
@@ -17,6 +16,7 @@ jobs:
       MKL_NUM_THREADS: "1"
       OPENBLAS_NUM_THREADS: "1"
       HDF5_USE_FILE_LOCKING: "FALSE"
+      PYTHONUNBUFFERED: "1"
 
     steps:
       - name: Checkout Repository
@@ -31,17 +31,23 @@ jobs:
         run: |
           python3 -m venv /tmp/mshqc_venv
           /tmp/mshqc_venv/bin/pip install --upgrade pip
-          /tmp/mshqc_venv/bin/pip uninstall mshqc
+          /tmp/mshqc_venv/bin/pip uninstall -y mshqc || true
           /tmp/mshqc_venv/bin/pip install mshqc --no-cache-dir pytest
 
-      - name: Run Automated Pytest Validation Suite (tests/test_mshqc.py)
+      # --- 1. RUN PYTEST UNTUK MSHQC (Simpan log tampilan ke .txt) ---
+      - name: Run Automated Pytest Validation Suite (test_mshqc.py)
+        shell: bash -eo pipefail {0}
         run: |
-          /tmp/mshqc_venv/bin/pytest tests/test_mshqc.py -v -s
+          /tmp/mshqc_venv/bin/pytest tests/test_mshqc.py -v -s 2>&1 | tee 01_pytest_mshqc_log.txt
 
-      - name: Run Full 60-Run mshqc Benchmark (tests/test_mshqc2.py)
+      # --- 2. JALANKAN TEST MSHQC2 (Tampil real-time & simpan ke .txt) ---
+      - name: Run mshqc Benchmark (test_mshqc2.py)
+        shell: bash -eo pipefail {0}
         run: |
-          /tmp/mshqc_venv/bin/python tests/test_mshqc2.py | tee mshqc_bench.txt
+          /tmp/mshqc_venv/bin/python -u tests/test_mshqc2.py 2>&1 | tee 02_mshqc_out.txt
+          cp 02_mshqc_out.txt mshqc_out.txt
 
+      # --- 3. SET UP PSI4 ---
       - name: Set up Micromamba & Install Psi4 (conda-forge)
         uses: mamba-org/setup-micromamba@v2
         with:
@@ -53,21 +59,74 @@ jobs:
             numpy
             scipy
 
-      - name: Run Full 60-Run Psi4 Reference Benchmark (tests/benc.py)
+      # --- 4. JALANKAN BENC.PY PSI4 (Tampil real-time & simpan ke .txt) ---
+      - name: Run Psi4 Benchmark (benc.py)
         shell: bash -el {0}
         run: |
+          set -o pipefail
           micromamba activate psi4_env
-          python tests/benc.py | tee psi4_bench.txt
+          python -u tests/benc.py 2>&1 | tee 03_psi4_out.txt
+          cp 03_psi4_out.txt psi4_out.txt
 
-      - name: Generate Head-to-Head Comparison Table (mshqc vs Psi4)
+      # --- 5. BANDINGKAN HASIL (TEST_MSHQC2 vs BENC.PY) ---
+      - name: Compare Head-to-Head mshqc vs Psi4
+        shell: bash {0}
         run: |
-          /tmp/mshqc_venv/bin/python tests/compare_mshqc_psi4.py mshqc_bench.txt psi4_bench.txt
+          /tmp/mshqc_venv/bin/python -u tests/compare_mshqc_psi4.py mshqc_out.txt psi4_out.txt 2>&1 | tee 04_compare_mshqc_psi4_log.txt || true
 
-      - name: Upload Benchmark Logs & Comparison Table as Artifacts
+      # --- 6. UJI SKRIPSI BAB 4 ---
+      - name: Run mshqc Bab 4 Benchmark
+        shell: bash -eo pipefail {0}
+        run: |
+          /tmp/mshqc_venv/bin/python -u tests/run_mshqc_bab4.py
+          cp mshqc_bab4_test.txt 05_mshqc_bab4_running_log.txt
+
+      - name: Run Psi4 Bab 4 Benchmark
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate psi4_env
+          python -u tests/run_psi4_bab4.py
+          cp psi4_bab4_test.txt 06_psi4_bab4_running_log.txt
+
+      - name: Compare Bab 4 Results
+        shell: bash {0}
+        run: |
+          /tmp/mshqc_venv/bin/python -u tests/compare_bab4.py || true
+          cp test_bab4_benchmark.txt 07_compare_bab4_log.txt
+
+      # --- 7. RUNNER UNIVERSAL BAWAAN ---
+      - name: Run mshqc Universal Benchmark
+        shell: bash -eo pipefail {0}
+        run: |
+          /tmp/mshqc_venv/bin/python -u tests/run_mshqc_universal.py 2>&1 | tee 08_mshqc_universal_running_log.txt
+
+      - name: Run Psi4 Universal Reference Benchmark
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate psi4_env
+          python -u tests/run_psi4_universal.py 2>&1 | tee 09_psi4_universal_running_log.txt
+
+      - name: Generate Universal Comparison Table
+        shell: bash {0}
+        run: |
+          /tmp/mshqc_venv/bin/python -u tests/compare_universal.py || true
+          cp test_universal_validation.txt 10_compare_universal_log.txt
+
+      # --- 8. UPLOAD SEMUA LOG DALAM FORMAT .TXT MURNI ---
+      - name: Upload All Running Logs (.txt only)
         uses: actions/upload-artifact@v4
         with:
-          name: mshqc-vs-psi4-benchmark-results
+          name: mshqc-vs-psi4-benchmark-logs-txt
           path: |
-            mshqc_bench.txt
-            psi4_bench.txt
-            comparison_summary.md
+            01_pytest_mshqc_log.txt
+            02_mshqc_out.txt
+            03_psi4_out.txt
+            04_compare_mshqc_psi4_log.txt
+            05_mshqc_bab4_running_log.txt
+            06_psi4_bab4_running_log.txt
+            07_compare_bab4_log.txt
+            08_mshqc_universal_running_log.txt
+            09_psi4_universal_running_log.txt
+            10_compare_universal_log.txt

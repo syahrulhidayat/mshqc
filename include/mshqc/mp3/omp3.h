@@ -57,10 +57,7 @@ protected:
     Eigen::Tensor<double, 4> L2_aa_, L2_bb_, L2_ab_;
     Eigen::Tensor<double, 4> Waa_ladder_, Waa_ring_;
 
-    // 2-RDM untuk Exact OMP3 Gradient (Tahap 1 & 2)
-    Eigen::Tensor<double, 4> Gamma_vvvv_aa_, Gamma_oooo_aa_;
-    Eigen::Tensor<double, 4> Gamma_vvvv_bb_, Gamma_oooo_bb_;
-    Eigen::Tensor<double, 4> Gamma_vvvv_ab_, Gamma_oooo_ab_;
+    // 2-RDM dievaluasi secara on-the-fly tanpa menyimpan tensor O(V^4)
 
     void build_2rdm_omp3();
     void compute_mp3_correction();

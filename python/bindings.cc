@@ -56,6 +56,9 @@
 
 #include "mshqc/integrals/cholesky_eri.h"
 #include "mshqc/integrals/eri_transformer.h"
+#include "mshqc/gradient/hpc_geom_opt.h"
+#include <nanobind/stl/map.h>
+#include <nanobind/stl/pair.h>
 
 namespace nb = nanobind;
 using namespace mshqc;
@@ -108,25 +111,56 @@ namespace mshqc_auto_tune {
     #endif
     }
 
+#if defined(__linux__) || defined(__APPLE__)
+    #include <dlfcn.h>
+    #include <sched.h>
+#endif
+
+// Di dalam namespace mshqc_auto_tune pada bindings.cc:
     void initialize_hpc_environment() {
+    #if defined(__linux__)
+        // Pastikan proses tidak terkunci pada 1 core oleh scheduler
+        cpu_set_t mask;
+        CPU_ZERO(&mask);
+        unsigned int logical_cpus = std::max(1u, std::thread::hardware_concurrency());
+        for (unsigned int i = 0; i < logical_cpus; ++i) {
+            CPU_SET(i, &mask);
+        }
+        sched_setaffinity(0, sizeof(mask), &mask);
+    #endif
+
         int num_threads = get_physical_cores();
         if (const char* env_omp = std::getenv("OMP_NUM_THREADS")) {
-            num_threads = std::atoi(env_omp);
+            int parsed = std::atoi(env_omp);
+            if (parsed > 0) num_threads = parsed;
         }
 
-        omp_set_dynamic(0);
-        omp_set_num_threads(num_threads);
-
         std::string threads_str = std::to_string(num_threads);
+        set_env_if_empty("OMP_NUM_THREADS", threads_str.c_str());
         set_env_if_empty("TBLIS_NUM_THREADS", threads_str.c_str());
-        set_env_if_empty("OMP_WAIT_POLICY", "PASSIVE");
-        set_env_if_empty("GOMP_SPINCOUNT", "0");
-
         set_env_if_empty("OPENBLAS_NUM_THREADS", "1");
         set_env_if_empty("MKL_NUM_THREADS", "1");
         set_env_if_empty("VECLIB_MAXIMUM_THREADS", "1");
         set_env_if_empty("NUMEXPR_NUM_THREADS", "1");
         set_env_if_empty("OMP_MAX_ACTIVE_LEVELS", "1");
+        set_env_if_empty("HDF5_USE_FILE_LOCKING", "FALSE");
+
+        omp_set_dynamic(0);
+        omp_set_num_threads(num_threads);
+        omp_set_max_active_levels(1);
+
+    #if defined(__linux__) || defined(__APPLE__)
+        using set_threads_fn = void (*)(int);
+        if (auto fn = reinterpret_cast<set_threads_fn>(dlsym(RTLD_DEFAULT, "openblas_set_num_threads"))) {
+            fn(1);
+        }
+        if (auto fn = reinterpret_cast<set_threads_fn>(dlsym(RTLD_DEFAULT, "MKL_Set_Num_Threads"))) {
+            fn(1);
+        }
+        if (auto fn = reinterpret_cast<set_threads_fn>(dlsym(RTLD_DEFAULT, "tblis_set_num_threads"))) {
+            fn(num_threads);
+        }
+    #endif
     }
 
     int symbol_to_z(const std::string& sym) {
@@ -166,11 +200,7 @@ namespace mshqc_auto_tune {
             c.use_df = true;
         }
         if (c.use_df && (c.aux_basis_name.empty() || c.aux_basis_name == "cc-pVDZ-JKFIT")) {
-            if (!basis.name().empty() && basis.name() != "cc-pVDZ") {
-                c.aux_basis_name = basis.name() + "-RI";
-            } else if (c.aux_basis_name.empty()) {
-                c.aux_basis_name = "cc-pVTZ-RI";
-            }
+            c.aux_basis_name = basis.name().empty() ? "cc-pVTZ-RI" : (basis.name() + "-RI");
         }
         return c;
     }
@@ -245,7 +275,101 @@ NB_MODULE(_mshqc, m) {
         .def("set_charge", &Molecule::set_charge, nb::arg("q"))
         .def("multiplicity", &Molecule::multiplicity)
         .def("set_multiplicity", &Molecule::set_multiplicity, nb::arg("m"))
-        .def("nuclear_repulsion_energy", &Molecule::nuclear_repulsion_energy);
+        .def("nuclear_repulsion_energy", &Molecule::nuclear_repulsion_energy)
+        .def("set_atom_position", &Molecule::set_atom_position, nb::arg("i"), nb::arg("x"), nb::arg("y"), nb::arg("z"))
+        .def("optimize_geometry", [](Molecule& mol,
+                                     const std::string& method,
+                                     const std::string& eri_mode,
+                                     const std::string& eri_method,
+                                     const std::string& basis,
+                                     const std::string& reference,
+                                     int max_iter,
+                                     double g_rms_tol,
+                                     double fd_step_bohr,
+                                     bool verbose) {
+            mshqc::gradient::GeomOptConfig cfg;
+            cfg.method = method;
+            cfg.eri_method = !eri_method.empty() ? eri_method : eri_mode;
+            cfg.basis_name = basis;
+            cfg.reference = reference;
+            cfg.max_iter = max_iter;
+            cfg.g_rms_tol = g_rms_tol;
+            cfg.fd_step_bohr = fd_step_bohr;
+            cfg.verbose = verbose;
+            nb::gil_scoped_release release;
+            return mshqc::gradient::HPCGeometryOptimizer::optimize_molecule(mol, cfg);
+        }, nb::arg("method") = "omp2",
+           nb::arg("eri_mode") = "df",
+           nb::arg("eri_method") = "",
+           nb::arg("basis") = "cc-pVDZ",
+           nb::arg("reference") = "auto",
+           nb::arg("max_iter") = 40,
+           nb::arg("g_rms_tol") = 1.0e-5,
+           nb::arg("fd_step_bohr") = 1.0e-3,
+           nb::arg("verbose") = true,
+           "Optimize molecular geometry in C++20 and update coordinates in-place")
+        .def("frequencies", [](const Molecule& mol,
+                               const std::string& method,
+                               const std::string& eri_mode,
+                               const std::string& eri_method,
+                               const std::string& basis,
+                               const std::string& reference,
+                               double temperature_k,
+                               bool verbose) {
+            mshqc::gradient::GeomOptConfig cfg;
+            cfg.method = method;
+            cfg.eri_method = !eri_method.empty() ? eri_method : eri_mode;
+            cfg.basis_name = basis;
+            cfg.reference = reference;
+            cfg.verbose = verbose;
+            nb::gil_scoped_release release;
+            return mshqc::gradient::HPCGeometryOptimizer::compute_frequencies(mol, cfg, temperature_k, 1.0);
+        }, nb::arg("method") = "omp2",
+           nb::arg("eri_mode") = "df",
+           nb::arg("eri_method") = "",
+           nb::arg("basis") = "cc-pVDZ",
+           nb::arg("reference") = "auto",
+           nb::arg("temperature_k") = 298.15,
+           nb::arg("verbose") = true,
+           "Compute harmonic vibrational frequencies (cm^-1), ZPE, Enthalpy H, and Gibbs G")
+        .def("gradient", [](const Molecule& mol,
+                            const std::string& method,
+                            const std::string& eri_mode,
+                            const std::string& basis,
+                            const std::string& reference,
+                            double fd_step_bohr) {
+            mshqc::gradient::GeomOptConfig cfg;
+            cfg.method = method;
+            cfg.eri_method = eri_mode;
+            cfg.basis_name = basis;
+            cfg.reference = reference;
+            cfg.fd_step_bohr = fd_step_bohr;
+            cfg.verbose = false;
+            nb::gil_scoped_release release;
+            return mshqc::gradient::HPCGeometryOptimizer::compute_nuclear_gradient_cpp(mol, cfg);
+        }, nb::arg("method") = "omp2",
+           nb::arg("eri_mode") = "df",
+           nb::arg("basis") = "cc-pVDZ",
+           nb::arg("reference") = "auto",
+           nb::arg("fd_step_bohr") = 1.0e-3,
+           "Compute nuclear gradient vector dE/dR (Ha/Bohr)")
+        .def("scan_pes", [](const Molecule& mol,
+                            int atom_i,
+                            int atom_j,
+                            const std::vector<double>& distances_angstrom,
+                            const std::string& method,
+                            const std::string& eri_mode,
+                            const std::string& basis) {
+            mshqc::gradient::GeomOptConfig cfg;
+            cfg.method = method;
+            cfg.eri_method = eri_mode;
+            cfg.basis_name = basis;
+            cfg.verbose = false;
+            nb::gil_scoped_release release;
+            return mshqc::gradient::HPCGeometryOptimizer::scan_bond_pes(mol, atom_i, atom_j, distances_angstrom, cfg);
+        }, nb::arg("atom_i"), nb::arg("atom_j"), nb::arg("distances_angstrom"),
+           nb::arg("method") = "omp2", nb::arg("eri_mode") = "df", nb::arg("basis") = "cc-pVDZ",
+           "Scan bond dissociation Potential Energy Surface");
 
     nb::enum_<AngularMomentum>(m, "AngularMomentum")
         .value("S", AngularMomentum::S)
@@ -358,7 +482,7 @@ NB_MODULE(_mshqc, m) {
     nb::class_<DIIS>(m, "DIIS")
         .def(nb::init<int>(), nb::arg("max_vectors") = 8)
         .def("clear", &DIIS::clear)
-        .def("add_iteration", &DIIS::add_iteration, nb::arg("F"), nb::arg("err"), nb::arg("P"))
+        .def("add_iteration", &DIIS::add_iteration, nb::arg("F"), nb::arg("err"))
         .def("extrapolate", &DIIS::extrapolate);
 
     nb::class_<mshqc::integrals::ShellPair>(m, "ShellPair")
@@ -581,7 +705,8 @@ NB_MODULE(_mshqc, m) {
         .def_rw("C_alpha", &MP2Result::C_alpha)
         .def_rw("C_beta", &MP2Result::C_beta)
         .def_rw("orbital_energies_alpha", &MP2Result::orbital_energies_alpha)
-        .def_rw("orbital_energies_beta", &MP2Result::orbital_energies_beta);
+        .def_rw("orbital_energies_beta", &MP2Result::orbital_energies_beta)
+        .def_rw("energy_mp2_singles", &MP2Result::energy_mp2_singles);
 
     nb::class_<foundation::RMP2>(m, "RMP2")
         .def("__init__", [](foundation::RMP2 *t, const Molecule& mol, const BasisSet& basis,
@@ -603,6 +728,17 @@ NB_MODULE(_mshqc, m) {
         }, nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
            nb::arg("config") = MP2Config(), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
         .def("compute", &mshqc::UMP2::compute, nb::call_guard<nb::gil_scoped_release>())
+        .def("set_frozen_core", &mshqc::BaseMP2::set_frozen_core, nb::arg("n_frozen"));
+
+    nb::class_<mshqc::ROMP2, mshqc::UMP2>(m, "ROMP2")
+        .def("__init__", [](mshqc::ROMP2 *t, const Molecule& mol, const BasisSet& basis,
+                            std::shared_ptr<IntegralEngine> integrals, const SCFResult& scf_guess,
+                            const MP2Config& config, std::shared_ptr<PointGroup> pg, std::shared_ptr<PetiteList> pl) {
+            new (t) mshqc::ROMP2(mol, basis, integrals, scf_guess,
+                                 mshqc_auto_tune::normalize_mp2_config(config, basis, scf_guess), pg, pl);
+        }, nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
+           nb::arg("config") = MP2Config(), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
+        .def("compute", &mshqc::ROMP2::compute, nb::call_guard<nb::gil_scoped_release>())
         .def("set_frozen_core", &mshqc::BaseMP2::set_frozen_core, nb::arg("n_frozen"));
 
     nb::class_<OMP2>(m, "OMP2")
@@ -631,7 +767,11 @@ NB_MODULE(_mshqc, m) {
         .def_prop_ro("energy_mp2_corr", [](const MP3Result& r) { return r.e_mp2; })
         .def_prop_ro("energy_mp3_corr", [](const MP3Result& r) { return r.e_mp3; })
         .def_rw("converged", &MP3Result::converged)
-        .def_rw("iterations", &MP3Result::iterations);
+        .def_rw("iterations", &MP3Result::iterations)
+        .def_rw("C_alpha", &MP3Result::C_alpha)
+        .def_rw("C_beta", &MP3Result::C_beta)
+        .def_rw("n_occ_alpha", &MP3Result::n_occ_alpha)
+        .def_rw("n_occ_beta", &MP3Result::n_occ_beta);
 
     nb::class_<RMP3>(m, "RMP3")
         .def(nb::init<const SCFResult&, const MP2Result&, const MP2Config&, std::shared_ptr<IntegralEngine>>(),
@@ -660,6 +800,20 @@ NB_MODULE(_mshqc, m) {
         }, nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
            nb::arg("config") = MP2Config(), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
         .def("compute", &UMP3::compute, nb::call_guard<nb::gil_scoped_release>());
+        
+    nb::class_<ROMP3, UMP3>(m, "ROMP3")
+        .def(nb::init<const SCFResult&, const MP2Result&, const MP2Config&, std::shared_ptr<IntegralEngine>>(),
+             nb::arg("scf_guess"), nb::arg("mp2_guess"), nb::arg("config"), nb::arg("integrals"))
+        .def("__init__", [](ROMP3 *t, const Molecule& mol, const BasisSet& basis,
+                            std::shared_ptr<IntegralEngine> integrals, const SCFResult& scf_guess,
+                            const MP2Config& config, std::shared_ptr<PointGroup> pg, std::shared_ptr<PetiteList> pl) {
+            auto norm_conf = mshqc_auto_tune::normalize_mp2_config(config, basis, scf_guess);
+            mshqc::ROMP2 romp2_solver(mol, basis, integrals, scf_guess, norm_conf, pg, pl);
+            MP2Result mp2_res = romp2_solver.compute();
+            new (t) ROMP3(scf_guess, mp2_res, norm_conf, integrals);
+        }, nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
+           nb::arg("config") = MP2Config(), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
+        .def("compute", &ROMP3::compute, nb::call_guard<nb::gil_scoped_release>());
 
     nb::class_<OMP3>(m, "OMP3")
         .def("__init__", [](OMP3 *t, const Molecule& mol, const BasisSet& basis,
@@ -675,4 +829,63 @@ NB_MODULE(_mshqc, m) {
     m.def("angstrom_to_bohr", [](double angstrom) { return angstrom / 0.529177210903; }, "Convert Angstrom to Bohr");
     m.def("hartree_to_ev", [](double hartree) { return hartree * 27.211386245988; }, "Convert Hartree to eV");
     m.def("hartree_to_kcal", [](double hartree) { return hartree * 627.5094740631; }, "Convert Hartree to kcal/mol");
+    
+    nb::class_<mshqc::gradient::GeomOptConfig>(m, "GeomOptConfig")
+        .def(nb::init<>())
+        .def_rw("method", &mshqc::gradient::GeomOptConfig::method)
+        .def_rw("eri_method", &mshqc::gradient::GeomOptConfig::eri_method)
+        .def_rw("basis_name", &mshqc::gradient::GeomOptConfig::basis_name)
+        .def_rw("aux_basis_name", &mshqc::gradient::GeomOptConfig::aux_basis_name)
+        .def_rw("reference", &mshqc::gradient::GeomOptConfig::reference)
+        .def_rw("opt_method", &mshqc::gradient::GeomOptConfig::opt_method)
+        .def_rw("max_iter", &mshqc::gradient::GeomOptConfig::max_iter)
+        .def_rw("energy_thresh", &mshqc::gradient::GeomOptConfig::energy_thresh)
+        .def_rw("orb_grad_thresh", &mshqc::gradient::GeomOptConfig::orb_grad_thresh)
+        .def_rw("g_rms_tol", &mshqc::gradient::GeomOptConfig::g_rms_tol)
+        .def_rw("g_max_tol", &mshqc::gradient::GeomOptConfig::g_max_tol)
+        .def_rw("dx_rms_tol", &mshqc::gradient::GeomOptConfig::dx_rms_tol)
+        .def_rw("dx_max_tol", &mshqc::gradient::GeomOptConfig::dx_max_tol)
+        .def_rw("trust_radius_init", &mshqc::gradient::GeomOptConfig::trust_radius_init)
+        .def_rw("trust_radius_max", &mshqc::gradient::GeomOptConfig::trust_radius_max)
+        .def_rw("trust_radius_min", &mshqc::gradient::GeomOptConfig::trust_radius_min)
+        .def_rw("fd_step_bohr", &mshqc::gradient::GeomOptConfig::fd_step_bohr)
+        .def_rw("project_trans_rot", &mshqc::gradient::GeomOptConfig::project_trans_rot)
+        .def_rw("verbose", &mshqc::gradient::GeomOptConfig::verbose)
+        .def_rw("xyz_traj_file", &mshqc::gradient::GeomOptConfig::xyz_traj_file);
+
+    nb::class_<mshqc::gradient::GeomOptResult>(m, "GeomOptResult")
+        .def_ro("converged", &mshqc::gradient::GeomOptResult::converged)
+        .def_ro("iterations", &mshqc::gradient::GeomOptResult::iterations)
+        .def_ro("method", &mshqc::gradient::GeomOptResult::method)
+        .def_ro("eri_method", &mshqc::gradient::GeomOptResult::eri_method)
+        .def_ro("basis_name", &mshqc::gradient::GeomOptResult::basis_name)
+        .def_ro("initial_energy", &mshqc::gradient::GeomOptResult::initial_energy)
+        .def_ro("final_energy", &mshqc::gradient::GeomOptResult::final_energy)
+        .def_ro("final_g_rms", &mshqc::gradient::GeomOptResult::final_g_rms)
+        .def_ro("final_g_max", &mshqc::gradient::GeomOptResult::final_g_max)
+        .def_ro("wall_time_sec", &mshqc::gradient::GeomOptResult::wall_time_sec)
+        .def_ro("coordinates_bohr", &mshqc::gradient::GeomOptResult::coordinates_bohr)
+        .def_ro("coordinates_angstrom", &mshqc::gradient::GeomOptResult::coordinates_angstrom)
+        .def_ro("gradient_ha_bohr", &mshqc::gradient::GeomOptResult::gradient_ha_bohr)
+        .def_ro("energy_history", &mshqc::gradient::GeomOptResult::energy_history)
+        .def_ro("g_rms_history", &mshqc::gradient::GeomOptResult::g_rms_history)
+        .def_ro("bond_lengths_angstrom", &mshqc::gradient::GeomOptResult::bond_lengths_angstrom);
+
+    nb::class_<mshqc::gradient::VibThermoResult>(m, "VibThermoResult")
+        .def_ro("frequencies_cm1", &mshqc::gradient::VibThermoResult::frequencies_cm1)
+        .def_ro("normal_modes", &mshqc::gradient::VibThermoResult::normal_modes)
+        .def_ro("hessian_ha_bohr2", &mshqc::gradient::VibThermoResult::hessian_ha_bohr2)
+        .def_ro("electronic_energy_ha", &mshqc::gradient::VibThermoResult::electronic_energy_ha)
+        .def_ro("zpe_hartree", &mshqc::gradient::VibThermoResult::zpe_hartree)
+        .def_ro("zpe_kcal_mol", &mshqc::gradient::VibThermoResult::zpe_kcal_mol)
+        .def_ro("thermal_energy_ha", &mshqc::gradient::VibThermoResult::thermal_energy_ha)
+        .def_ro("enthalpy_ha", &mshqc::gradient::VibThermoResult::enthalpy_ha)
+        .def_ro("gibbs_free_energy_ha", &mshqc::gradient::VibThermoResult::gibbs_free_energy_ha)
+        .def_ro("temperature_k", &mshqc::gradient::VibThermoResult::temperature_k)
+        .def_ro("n_imaginary", &mshqc::gradient::VibThermoResult::n_imaginary);
+
+    nb::class_<mshqc::gradient::PESScanPoint>(m, "PESScanPoint")
+        .def_ro("r_angstrom", &mshqc::gradient::PESScanPoint::r_angstrom)
+        .def_ro("r_bohr", &mshqc::gradient::PESScanPoint::r_bohr)
+        .def_ro("energy_ha", &mshqc::gradient::PESScanPoint::energy_ha);
 }

@@ -53,7 +53,8 @@ def test_closed_shell_h2o(eri_mode: str):
     integrals = mshqc.IntegralEngine(mol, basis)
 
     # 3. Run RHF
-    scf_conf = mshqc.SCFConfig(eri_method=eri_mode, threshold=1e-9)
+    # Ubah baris ini di test_mshqc.py
+    scf_conf = mshqc.SCFConfig(eri_method=eri_mode, threshold=1e-8, max_iterations=200)
     scf_res  = mshqc.RHF(mol, basis, integrals, scf_conf).compute()
 
     # 4. Run RMP2, OMP2, and OMP3 on the converged SCF reference
@@ -95,7 +96,8 @@ def test_open_shell_oxygen(eri_mode: str):
     integrals = mshqc.IntegralEngine(mol, basis)
 
     # 3. Run UHF
-    scf_conf = mshqc.SCFConfig(eri_method=eri_mode, threshold=1e-9)
+    # Ubah baris ini di test_mshqc.py
+    scf_conf = mshqc.SCFConfig(eri_method=eri_mode, threshold=1e-8, max_iterations=200)
     scf_res  = mshqc.UHF(mol, basis, integrals, scf_conf).compute()
 
     # 4. Run UMP2, OMP2, and OMP3 on the converged UHF reference

@@ -7,7 +7,7 @@ from pathlib import Path
 ROW_RE = re.compile(
     r"^\|\s*(?P<sys>Neon|H2O|Lithium|Carbon|Oxygen)\s*"
     r"\|\s*(?P<eri>EXACT|CHOLESKY|DF)\s*"
-    r"\|\s*(?P<method>RHF|UHF|RMP2|UMP2|OMP2|OMP3)\s*"
+    r"\|\s*(?P<method>RHF|UHF|RMP2|UMP2|RMP3|UMP3|OMP2|OMP3)\s*"
     r"\|\s*(?P<energy>-?\d+\.\d+)\s*"
     r"\|\s*(?P<time>\d+\.\d+)\s*\|"
 )
@@ -54,6 +54,9 @@ def main():
 
     max_de_uha = 0.0
     sub_001_count = 0
+    total_mshqc_time = 0.0
+    total_psi4_time = 0.0
+    mp3_speedups = []
     omp2_speedups = []
     omp3_speedups = []
 
@@ -63,10 +66,15 @@ def main():
         de_uha = abs(e_m - e_p) * 1e6
         speedup = (t_p / max(t_m, 1e-4)) if t_p > 0 else 0.0
 
+        total_mshqc_time += t_m
+        total_psi4_time += t_p
         max_de_uha = max(max_de_uha, de_uha)
         if de_uha < 0.005:
             sub_001_count += 1
-        if method == "OMP2":
+            
+        if method in ["RMP3", "UMP3"]:
+            mp3_speedups.append(speedup)
+        elif method == "OMP2":
             omp2_speedups.append(speedup)
         elif method == "OMP3":
             omp3_speedups.append(speedup)
@@ -80,15 +88,30 @@ def main():
             f"`{de_uha:.2f}` | `{t_m:.3f}` | `{t_p:.3f}` | **{speedup:.2f}x** |"
         )
 
+    overall_speedup = (total_psi4_time / max(total_mshqc_time, 1e-4)) if total_psi4_time > 0 else 0.0
+    md_lines.append(
+        f"| **TOTAL** | **ALL** | **ALL** | **—** | **—** | **Max: `{max_de_uha:.2f}`** | "
+        f"**`{total_mshqc_time:.3f}`** | **`{total_psi4_time:.3f}`** | **`{overall_speedup:.2f}x`** |"
+    )
+
+    print("-" * len(hdr))
+    print(
+        f"| {'TOTAL':<8} | {'ALL':<9} | {'ALL':<6} | {'-':<16} | {'-':<16} | "
+        f"{max_de_uha:<9.2f} | {total_mshqc_time:<8.3f} | {total_psi4_time:<8.3f} | {overall_speedup:<7.2f}x |"
+    )
     print("-" * len(hdr))
     stats_line = (
         f"Total matched runs: {len(keys)} | Max |dE|: {max_de_uha:.2f} uHa | "
-        f"Runs with 0.00 uHa deviation: {sub_001_count}/{len(keys)}"
+        f"Runs with 0.00 uHa deviation: {sub_001_count}/{len(keys)}\n"
+        f"Total Solver Time : mshqc = {total_mshqc_time:.3f} s | Psi4 = {total_psi4_time:.3f} s | "
+        f"Cumulative Speedup = {overall_speedup:.2f}x"
     )
     print(stats_line)
-    if omp2_speedups and omp3_speedups:
+    
+    if omp2_speedups and omp3_speedups and mp3_speedups:
         sp_line = (
-            f"OMP2 Speedup Range: {min(omp2_speedups):.2f}x - {max(omp2_speedups):.2f}x | "
+            f"MP3 Speedup Range : {min(mp3_speedups):.2f}x - {max(mp3_speedups):.2f}x\n"
+            f"OMP2 Speedup Range: {min(omp2_speedups):.2f}x - {max(omp2_speedups):.2f}x\n"
             f"OMP3 Speedup Range: {min(omp3_speedups):.2f}x - {max(omp3_speedups):.2f}x"
         )
         print(sp_line)
@@ -96,11 +119,13 @@ def main():
 
     md_lines.extend([
         "",
-        f"- **Total Validated Runs:** `{len(keys)}` (`5 systems x 3 ERI modes x 4 methods`)",
+        f"- **Total Validated Runs:** `{len(keys)}` (`5 systems x 3 ERI modes x 5 methods`)",
+        f"- **Total Solver Execution Time:** `mshqc = {total_mshqc_time:.3f} s` vs `Psi4 = {total_psi4_time:.3f} s` (**Cumulative Speedup: `{overall_speedup:.2f}x`**)",
         f"- **Maximum Absolute Energy Deviation (`|dE|`):** `{max_de_uha:.2f} uHa` (`0.00 uHa` on `{sub_001_count}/{len(keys)}` runs at `1e-8 Ha` precision)",
     ])
-    if omp2_speedups and omp3_speedups:
+    if omp2_speedups and omp3_speedups and mp3_speedups:
         md_lines.extend([
+            f"- **`MP3` Speedup Range (`t_Psi4 / t_mshqc`):** `{min(mp3_speedups):.2f}x` to `{max(mp3_speedups):.2f}x`",
             f"- **`OMP2` Speedup Range (`t_Psi4 / t_mshqc`):** `{min(omp2_speedups):.2f}x` to `{max(omp2_speedups):.2f}x`",
             f"- **`OMP3` Speedup Range (`t_Psi4 / t_mshqc`):** `{min(omp3_speedups):.2f}x` to `{max(omp3_speedups):.2f}x`",
         ])

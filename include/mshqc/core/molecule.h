@@ -96,6 +96,16 @@ namespace mshqc
 
         const std::vector<Atom> &atoms() const { return atoms_; }
 
+        void set_atom_position(size_t i, double x_pos, double y_pos, double z_pos) {
+            if (i < atoms_.size()) {
+                atoms_[i].x = x_pos;
+                atoms_[i].y = y_pos;
+                atoms_[i].z = z_pos;
+            }
+        }
+
+        void clear_atoms() { atoms_.clear(); }
+
         
 
         

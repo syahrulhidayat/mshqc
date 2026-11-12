@@ -89,13 +89,25 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
         }
     }
 
-    // DGEMM Raksasa - O(N^3) Sangat efisien mengandalkan BLAS Level 3
-    Eigen::MatrixXd X_a = T2_aa * B_ia_P_alpha_;
-    Eigen::MatrixXd X_b;
-    
+    // Parallel Tiled DGEMM (bebas dari bottleneck single-thread saat OPENBLAS_NUM_THREADS=1)
+    auto parallel_gemm_ab = [](const Eigen::MatrixXd& A, const Eigen::MatrixXd& B, Eigen::MatrixXd& C, bool accum = false) {
+        const int m = A.rows();
+        if (!accum) C.resize(m, B.cols());
+        constexpr int tile = 64;
+        #pragma omp parallel for schedule(dynamic)
+        for (int i = 0; i < m; i += tile) {
+            int rows = std::min(tile, m - i);
+            if (accum) C.middleRows(i, rows).noalias() += A.middleRows(i, rows) * B;
+            else       C.middleRows(i, rows).noalias()  = A.middleRows(i, rows) * B;
+        }
+    };
+
+    Eigen::MatrixXd X_a, X_b;
+    parallel_gemm_ab(T2_aa, B_ia_P_alpha_, X_a, false);
     if (has_beta) {
-        X_a += T2_ab * B_ia_P_beta_;
-        X_b = T2_bb * B_ia_P_beta_ + T2_ab.transpose() * B_ia_P_alpha_;
+        parallel_gemm_ab(T2_ab, B_ia_P_beta_, X_a, true);
+        parallel_gemm_ab(T2_bb, B_ia_P_beta_, X_b, false);
+        parallel_gemm_ab(T2_ab.transpose(), B_ia_P_alpha_, X_b, true);
     }
 
     #pragma omp parallel

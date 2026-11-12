@@ -41,7 +41,6 @@ namespace mshqc {
 
 
 
-
 struct MP2Config {
     std::string scf_type = "incore";     
     std::string eri_method = "exact";    
@@ -50,7 +49,7 @@ struct MP2Config {
     std::string aux_basis_name = "";
     double df_threshold = 1e-9;
     double cholesky_threshold = 1e-9;
-    std::string opt_method = "lbfgs"; 
+    std::string opt_method = "soscf";
 
 
     int max_iterations = 50;
@@ -68,6 +67,7 @@ struct MP2Result {
     double energy_mp2_ss = 0.0;
     double energy_mp2_os = 0.0;
     double energy_total = 0.0;
+    double energy_mp2_singles = 0.0;
     
     
 
@@ -200,7 +200,7 @@ public:
     
     T2Amplitudes get_t2_amplitudes() const;
     
-private:
+protected:
     Eigen::Tensor<double, 4> eri_aaaa_;  
     Eigen::Tensor<double, 4> eri_bbbb_;  
     Eigen::Tensor<double, 4> eri_aabb_;  
@@ -215,6 +215,18 @@ private:
 };
 
 
+// Deklarasi kelas ROMP2 (setelah deklarasi kelas UMP2):
+class ROMP2 : public UMP2 {
+public:
+    using UMP2::UMP2;
+    ~ROMP2() override = default;
+
+    MP2Result compute() override;
+
+protected:
+    void semicanonicalize();
+    double compute_singles_energy() const;
+};
 
 
 
@@ -271,7 +283,6 @@ protected:
 
     Eigen::VectorXd orbital_gradient_;
     Eigen::VectorXd hessian_diag_;
-    Eigen::Tensor<double, 4> eri_ao_cached_;
 
    
     virtual double execute_micro_iterations();

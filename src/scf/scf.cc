@@ -15,7 +15,8 @@
 /**
  * @file src/scf/scf.cc
  * @brief Unified SCF Engine (BaseSCF, RHF, UHF, ROHF) in a single file.
- * @details Fully embeds Cholesky L_mat_ and SIMD In-Core for all methods.
+ * @details High-performance batched Level-3 BLAS Cholesky/DF Fock build,
+ *          low-rank PSD density factorization for Iteration 1, and CSAM-screened In-Core Fock build.
  */
 
 #include "mshqc/scf/scf.h"
@@ -27,12 +28,10 @@
 #include <iomanip>
 #include <cmath>
 #include <algorithm>
-#include <numeric>
 #include <chrono>
 #include <omp.h>
-#include "mshqc/utils/hdf5_io.h" 
-#include <tblis/tblis.h>         
-#include <memory>                
+#include "mshqc/utils/hdf5_io.h"
+#include <memory>
 #include <vector>
 #ifdef I
 #undef I
@@ -40,8 +39,187 @@
 
 namespace mshqc {
 
+namespace {
 
+// Mengekstrak faktor berperingkat rendah C_tilde (P = C_tilde * C_tilde^T) dari matriks
+// densitas simetris positif semidefinit (seperti P_sad) agar iterasi ke-1 Cholesky/DF
+// dapat langsung memakai algoritma MO O(M * N_bf^2 * r) tanpa alokasi tensor 3D N_bf^2 * M.
+Eigen::MatrixXd factorize_psd_density(const Eigen::MatrixXd& P, double tol = 1e-12) {
+    const int n = P.rows();
+    if (n == 0) return Eigen::MatrixXd(0, 0);
 
+    // Cek apakah P murni diagonal (kasus standar SAD tanpa simetrisasi grup titik)
+    double off_diag_norm = (P - P.diagonal().asDiagonal().toDenseMatrix()).cwiseAbs().maxCoeff();
+    if (off_diag_norm < 1e-13) {
+        std::vector<int> nz_cols;
+        nz_cols.reserve(n);
+        for (int i = 0; i < n; ++i) {
+            if (P(i, i) > tol) nz_cols.push_back(i);
+        }
+        Eigen::MatrixXd C_fac = Eigen::MatrixXd::Zero(n, static_cast<int>(nz_cols.size()));
+        for (size_t k = 0; k < nz_cols.size(); ++k) {
+            int idx = nz_cols[k];
+            C_fac(idx, static_cast<int>(k)) = std::sqrt(P(idx, idx));
+        }
+        return C_fac;
+    }
+
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(0.5 * (P + P.transpose()));
+    const Eigen::VectorXd& evals = es.eigenvalues();
+    const Eigen::MatrixXd& evecs = es.eigenvectors();
+    std::vector<int> pos_cols;
+    pos_cols.reserve(n);
+    for (int i = 0; i < n; ++i) {
+        if (evals(i) > tol) pos_cols.push_back(i);
+    }
+    Eigen::MatrixXd C_fac(n, static_cast<int>(pos_cols.size()));
+    for (size_t k = 0; k < pos_cols.size(); ++k) {
+        int idx = pos_cols[k];
+        C_fac.col(static_cast<int>(k)) = std::sqrt(evals(idx)) * evecs.col(idx);
+    }
+    return C_fac;
+}
+
+// Kontraksi Exchange berkecepatan tinggi berbasis Batch Level-3 BLAS (DGEMM)
+// untuk 1 kanal spin (RHF atau UHF saat P_alpha == P_beta).
+void compute_exchange_cholesky_single(
+    const double* L_ptr,
+    int nbasis,
+    int k_size,
+    const Eigen::MatrixXd& C_occ,
+    Eigen::MatrixXd& K_acc)
+{
+    const int n_occ = C_occ.cols();
+    if (n_occ <= 0 || k_size <= 0) return;
+
+    constexpr int BATCH_P = 32;
+    const int max_threads = omp_get_max_threads();
+    std::vector<Eigen::MatrixXd> K_tls(max_threads, Eigen::MatrixXd::Zero(nbasis, nbasis));
+
+    #pragma omp parallel
+    {
+        const int tid = omp_get_thread_num();
+        Eigen::MatrixXd T_batch(nbasis, n_occ * BATCH_P);
+        int count_in_batch = 0;
+
+        #pragma omp for schedule(static) nowait
+        for (int P = 0; P < k_size; ++P) {
+            Eigen::Map<const Eigen::MatrixXd> L_P(
+                L_ptr + static_cast<size_t>(P) * nbasis * nbasis, nbasis, nbasis);
+            T_batch.middleCols(count_in_batch * n_occ, n_occ).noalias() = L_P * C_occ;
+            count_in_batch++;
+
+            if (count_in_batch == BATCH_P) {
+                K_tls[tid].noalias() += T_batch * T_batch.transpose();
+                count_in_batch = 0;
+            }
+        }
+        if (count_in_batch > 0) {
+            auto T_rem = T_batch.leftCols(count_in_batch * n_occ);
+            K_tls[tid].noalias() += T_rem * T_rem.transpose();
+        }
+    }
+
+    for (int t = 0; t < max_threads; ++t) {
+        K_acc.noalias() += K_tls[t];
+    }
+}
+
+// Kontraksi Exchange berkecepatan tinggi berbasis Batch Level-3 BLAS (DGEMM)
+// untuk 2 kanal spin sekaligus (UHF / ROHF): membaca L_P hanya 1 kali per vektor P!
+void compute_exchange_cholesky_dual(
+    const double* L_ptr,
+    int nbasis,
+    int k_size,
+    const Eigen::MatrixXd& Ca_occ,
+    const Eigen::MatrixXd& Cb_occ,
+    Eigen::MatrixXd& Ka_acc,
+    Eigen::MatrixXd& Kb_acc)
+{
+    const int na = Ca_occ.cols();
+    const int nb = Cb_occ.cols();
+    if ((na + nb) <= 0 || k_size <= 0) return;
+    if (nb <= 0) {
+        compute_exchange_cholesky_single(L_ptr, nbasis, k_size, Ca_occ, Ka_acc);
+        return;
+    }
+
+    Eigen::MatrixXd Cab_occ(nbasis, na + nb);
+    Cab_occ.leftCols(na)  = Ca_occ;
+    Cab_occ.rightCols(nb) = Cb_occ;
+
+    constexpr int BATCH_P = 32;
+    const int max_threads = omp_get_max_threads();
+    std::vector<Eigen::MatrixXd> Ka_tls(max_threads, Eigen::MatrixXd::Zero(nbasis, nbasis));
+    std::vector<Eigen::MatrixXd> Kb_tls(max_threads, Eigen::MatrixXd::Zero(nbasis, nbasis));
+
+    #pragma omp parallel
+    {
+        const int tid = omp_get_thread_num();
+        Eigen::MatrixXd Tab_loc(nbasis, na + nb);
+        Eigen::MatrixXd Ta_batch(nbasis, na * BATCH_P);
+        Eigen::MatrixXd Tb_batch(nbasis, nb * BATCH_P);
+        int count_in_batch = 0;
+
+        #pragma omp for schedule(static) nowait
+        for (int P = 0; P < k_size; ++P) {
+            Eigen::Map<const Eigen::MatrixXd> L_P(
+                L_ptr + static_cast<size_t>(P) * nbasis * nbasis, nbasis, nbasis);
+            Tab_loc.noalias() = L_P * Cab_occ;
+            Ta_batch.middleCols(count_in_batch * na, na) = Tab_loc.leftCols(na);
+            Tb_batch.middleCols(count_in_batch * nb, nb) = Tab_loc.rightCols(nb);
+            count_in_batch++;
+
+            if (count_in_batch == BATCH_P) {
+                Ka_tls[tid].noalias() += Ta_batch * Ta_batch.transpose();
+                Kb_tls[tid].noalias() += Tb_batch * Tb_batch.transpose();
+                count_in_batch = 0;
+            }
+        }
+        if (count_in_batch > 0) {
+            auto Ta_rem = Ta_batch.leftCols(count_in_batch * na);
+            auto Tb_rem = Tb_batch.leftCols(count_in_batch * nb);
+            Ka_tls[tid].noalias() += Ta_rem * Ta_rem.transpose();
+            Kb_tls[tid].noalias() += Tb_rem * Tb_rem.transpose();
+        }
+    }
+
+    for (int t = 0; t < max_threads; ++t) {
+        Ka_acc.noalias() += Ka_tls[t];
+        Kb_acc.noalias() += Kb_tls[t];
+    }
+}
+
+// Menghitung matriks screening maksimum per blok shell P_max(M, N) untuk In-Core SCF
+Eigen::MatrixXd compute_shell_pmax(
+    int nshells,
+    const std::vector<int>& shell_starts,
+    const std::vector<int>& shell_sizes,
+    const Eigen::MatrixXd& dP_a,
+    const Eigen::MatrixXd* dP_b = nullptr)
+{
+    Eigen::MatrixXd P_max = Eigen::MatrixXd::Zero(nshells, nshells);
+    for (int i = 0; i < nshells; ++i) {
+        int start_i = shell_starts[i], size_i = shell_sizes[i];
+        for (int j = 0; j <= i; ++j) {
+            int start_j = shell_starts[j], size_j = shell_sizes[j];
+            double max_val = 0.0;
+            for (int m = 0; m < size_i; ++m) {
+                for (int n = 0; n < size_j; ++n) {
+                    double va = std::abs(dP_a(start_i + m, start_j + n));
+                    double vb = dP_b ? std::abs((*dP_b)(start_i + m, start_j + n)) : 0.0;
+                    if (va > max_val) max_val = va;
+                    if (vb > max_val) max_val = vb;
+                }
+            }
+            P_max(i, j) = max_val;
+            P_max(j, i) = max_val;
+        }
+    }
+    return P_max;
+}
+
+} // namespace
 
 BaseSCF::BaseSCF(const Molecule& mol, const BasisSet& basis,
                  std::shared_ptr<IntegralEngine> integrals,
@@ -52,7 +230,7 @@ BaseSCF::BaseSCF(const Molecule& mol, const BasisSet& basis,
     : mol_(mol), basis_(basis), integrals_(integrals),
       pg_(pg), pl_(pl), config_(config),
       nbasis_(basis.n_basis_functions()),
-      n_alpha_(n_alpha), n_beta_(n_beta) 
+      n_alpha_(n_alpha), n_beta_(n_beta)
 {
     if (pg_ && pl_) symmetrizer_ = std::make_unique<BasisSymmetrizer>(basis_, *pg_, *pl_);
 
@@ -60,27 +238,26 @@ BaseSCF::BaseSCF(const Molecule& mol, const BasisSet& basis,
     shell_starts_.resize(nshells);
     shell_sizes_.resize(nshells);
     int offset = 0;
-    for(int i = 0; i < nshells; ++i) {
+    for (int i = 0; i < nshells; ++i) {
         shell_starts_[i] = offset;
         shell_sizes_[i] = basis_.shell(i).n_functions();
         offset += shell_sizes_[i];
     }
 
     if (config_.use_df) {
-        BasisSet aux_basis(config_.aux_basis_name, mol_); 
+        BasisSet aux_basis(config_.aux_basis_name, mol_);
         BasisSet combined_basis = basis_;
         combined_basis.append(aux_basis);
         auto df_integrals = std::make_shared<IntegralEngine>(mol_, combined_basis);
         auto df_engine = std::make_shared<integrals::DensityFittingERI>(basis_, aux_basis, df_integrals, config_.df_threshold);
-        
+
         bool use_disk = (config_.scf_type != "incore");
-        df_engine->compute(use_disk); // Hanya tulis HDF5 jika BUKAN incore!
-        
+        df_engine->compute(use_disk);
+
         if (!use_disk) {
-            // Langsung salin dari RAM tanpa menyentuh SSD/HDF5 sama sekali!
-            this->L_mat_ = df_engine->get_B_mat();
+            this->L_mat_ = std::move(df_engine->get_B_mat());
         } else {
-            this->L_mat_.resize(0, df_engine->get_B_mat().cols()); 
+            this->L_mat_.resize(0, df_engine->get_B_mat().cols());
         }
     }
 }
@@ -96,7 +273,8 @@ void BaseSCF::init_integrals() {
     if (symmetrizer_) {
         SalcBuilder salc(symmetrizer_.get());
         auto salc_data = salc.build_salc(S_);
-        X_ = salc_data.first; salc_irreps_ = salc_data.second; 
+        X_ = salc_data.first;
+        salc_irreps_ = salc_data.second;
     } else {
         Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(S_);
         X_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
@@ -106,20 +284,25 @@ void BaseSCF::init_integrals() {
                 X_ += val * es.eigenvectors().col(i) * es.eigenvectors().col(i).transpose();
             }
         }
-        salc_irreps_.assign(nbasis_, 0); 
+        salc_irreps_.assign(nbasis_, 0);
     }
     if (config_.print_level > 0) std::cout << "Done.\n";
 
-    schwarz_ = precompute_shell_schwarz();
-
-    if (config_.eri_method == "cholesky" && !config_.use_df) init_integrals_cholesky();                   
-    else if (config_.scf_type == "incore") init_integrals_incore();
+    if (config_.eri_method == "df") config_.use_df = true;
+    if (!config_.use_df) {
+        if (config_.eri_method == "cholesky") {
+            init_integrals_cholesky();
+        } else {
+            schwarz_ = precompute_shell_schwarz();
+            if (config_.scf_type == "incore") init_integrals_incore();
+        }
+    }
 
     auto t_end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> elapsed = t_end - t_start;
     if (config_.print_level > 0) {
         std::string mode_str = (config_.scf_type == "incore") ? "In-Core" : "Direct";
-        std::cout << "  [SCF] Initialization Done. Mode: " << mode_str << " (" 
+        std::cout << "  [SCF] Initialization Done. Mode: " << mode_str << " ("
                   << std::fixed << std::setprecision(3) << elapsed.count() << "s)\n";
     }
 }
@@ -127,7 +310,7 @@ void BaseSCF::init_integrals() {
 Eigen::MatrixXd BaseSCF::precompute_shell_schwarz() {
     int nshells = basis_.n_shells();
     Eigen::MatrixXd Q = Eigen::MatrixXd::Zero(nshells, nshells);
-    
+
     #pragma omp parallel
     {
         std::vector<double> buf(10000);
@@ -154,12 +337,11 @@ void BaseSCF::init_integrals_incore() {
 
     incore_quartets_.clear();
     incore_eri_pool_.clear();
-    
+
     double shell_cutoff = 1e-12;
 
     if (pl_ && pl_->get_unique_quartets().empty()) pl_->build();
 
-    // 1. Kumpulkan metadata kuartet signifikan & hitung prefix-sum offset secara deterministik
     size_t total_ints = 0;
     auto register_quartet = [&](int M, int N, int P, int Q, double weight) {
         if (schwarz_(M, N) * schwarz_(P, Q) < shell_cutoff) return;
@@ -186,7 +368,6 @@ void BaseSCF::init_integrals_incore() {
         }
     }
 
-    // 2. Alokasi tunggal (Zero Reallocation) & Evaluasi ERI Paralel Tanpa Lock
     incore_eri_pool_.resize(total_ints, 0.0);
 
     #pragma omp parallel for schedule(dynamic, 16)
@@ -198,32 +379,37 @@ void BaseSCF::init_integrals_incore() {
     }
 
     if (config_.print_level > 0) {
-        std::cout << "Done. (Quartets: " << incore_quartets_.size() 
+        std::cout << "Done. (Quartets: " << incore_quartets_.size()
                   << " | RAM: " << (incore_eri_pool_.size() * 8.0 / (1024.0 * 1024.0)) << " MB)\n";
     }
 }
+
 void BaseSCF::init_integrals_cholesky() {
     if (config_.print_level > 0) std::cout << "  [SCF] Decomposing Integrals (Cholesky)... " << std::flush;
     internal_cholesky_ = std::make_unique<integrals::CholeskyERI>(basis_, integrals_);
     internal_cholesky_->set_threshold(config_.cholesky_threshold);
-    internal_cholesky_->compute(); 
-    
-    
-    L_mat_ = internal_cholesky_->get_L_mat();
-    
-    if (config_.print_level > 0) std::cout << " Done. Rank: " << L_vecs_.size() << "\n";
+    internal_cholesky_->compute();
+
+    L_mat_ = std::move(internal_cholesky_->get_L_mat());
+    internal_cholesky_.reset();
+
+    if (config_.print_level > 0) std::cout << " Done. Rank: " << L_mat_.cols() << "\n";
 }
 
 Eigen::VectorXd BaseSCF::smear_electrons(const Eigen::VectorXd& eps, int target_electrons) {
     Eigen::VectorXd occ = Eigen::VectorXd::Zero(nbasis_);
-    int electrons_left = target_electrons; double degen_tol = 1e-4; int i = 0;
+    int electrons_left = target_electrons;
+    double degen_tol = 1e-4;
+    int i = 0;
     while (i < nbasis_ && electrons_left > 0) {
-        int degen_count = 1; double current_e = eps(i);
+        int degen_count = 1;
+        double current_e = eps(i);
         while (i + degen_count < nbasis_ && std::abs(eps(i + degen_count) - current_e) < degen_tol) degen_count++;
-        int electrons_to_fill = std::min(electrons_left, degen_count); 
+        int electrons_to_fill = std::min(electrons_left, degen_count);
         double fraction = (double)electrons_to_fill / (double)degen_count;
         for (int k = 0; k < degen_count; ++k) occ(i + k) = fraction;
-        electrons_left -= electrons_to_fill; i += degen_count;
+        electrons_left -= electrons_to_fill;
+        i += degen_count;
     }
     return occ;
 }
@@ -231,23 +417,33 @@ Eigen::VectorXd BaseSCF::smear_electrons(const Eigen::VectorXd& eps, int target_
 void BaseSCF::solve_fock(const Eigen::MatrixXd& F, Eigen::MatrixXd& C, Eigen::VectorXd& eps) {
     Eigen::MatrixXd Fp = X_.transpose() * F * X_;
     if (symmetrizer_ && !salc_irreps_.empty()) {
-        Eigen::MatrixXd C_salc = Eigen::MatrixXd::Zero(nbasis_, nbasis_); eps.resize(nbasis_);
+        Eigen::MatrixXd C_salc = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+        eps.resize(nbasis_);
         int start_idx = 0;
         while (start_idx < nbasis_) {
-            int current_irrep = salc_irreps_[start_idx]; int size = 0;
+            int current_irrep = salc_irreps_[start_idx];
+            int size = 0;
             while (start_idx + size < nbasis_ && salc_irreps_[start_idx + size] == current_irrep) size++;
             Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(Fp.block(start_idx, start_idx, size, size));
-            C_salc.block(start_idx, start_idx, size, size) = es.eigenvectors(); eps.segment(start_idx, size) = es.eigenvalues();
+            C_salc.block(start_idx, start_idx, size, size) = es.eigenvectors();
+            eps.segment(start_idx, size) = es.eigenvalues();
             start_idx += size;
         }
         std::vector<std::pair<double, int>> sort_data(nbasis_);
         for (int i = 0; i < nbasis_; ++i) sort_data[i] = {eps(i), i};
         std::sort(sort_data.begin(), sort_data.end());
-        Eigen::MatrixXd C_sorted(nbasis_, nbasis_); Eigen::VectorXd eps_sorted(nbasis_);
-        for (int i = 0; i < nbasis_; ++i) { C_sorted.col(i) = C_salc.col(sort_data[i].second); eps_sorted(i) = sort_data[i].first; }
-        C.noalias() = X_ * C_sorted; eps = eps_sorted;
+        Eigen::MatrixXd C_sorted(nbasis_, nbasis_);
+        Eigen::VectorXd eps_sorted(nbasis_);
+        for (int i = 0; i < nbasis_; ++i) {
+            C_sorted.col(i) = C_salc.col(sort_data[i].second);
+            eps_sorted(i) = sort_data[i].first;
+        }
+        C.noalias() = X_ * C_sorted;
+        eps = eps_sorted;
     } else {
-        Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(Fp); eps = es.eigenvalues(); C.noalias() = X_ * es.eigenvectors();
+        Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(Fp);
+        eps = es.eigenvalues();
+        C.noalias() = X_ * es.eigenvectors();
     }
 }
 
@@ -261,49 +457,268 @@ void BaseSCF::print_final(const SCFResult& r) {
 }
 
 SCFResult BaseSCF::compute() {
-    init_integrals(); initial_guess(); 
-    DIIS diis_a(config_.diis_max_vectors); DIIS diis_b(config_.diis_max_vectors);
-    
+    init_integrals();
+    initial_guess();
+    DIIS diis_a(config_.diis_max_vectors);
+    DIIS diis_b(config_.diis_max_vectors);
+
     if (config_.scf_type == "direct") {
         fock_engine_ = std::make_unique<FockBuilder>(integrals_, basis_, H_, schwarz_);
         if (pl_) fock_engine_->set_petite_list(pl_.get());
     }
-    
-    bool converged = false; double thresh = 1e-5; bool is_uhf = (n_alpha_ != n_beta_);
-    if (config_.print_level > 0) printf("\n Iter       Energy (Ha)        Delta E    Delta P\n");
-    
+
+    bool converged = false;
+    bool is_uhf = (n_alpha_ != n_beta_);
+    if (config_.print_level > 0) {
+        printf("\n Iter       Energy (Ha)        Delta E    Delta P\n");
+    }
+
     for (iter_scf_ = 1; iter_scf_ <= config_.max_iterations; iter_scf_++) {
-        energy_old_ = energy_; Eigen::MatrixXd P_tot_snapshot = P_alpha_; if (is_uhf) P_tot_snapshot += P_beta_;
-        if (iter_scf_ > 2) { double de = std::abs(energy_ - energy_old_); if (de < 1e-3) thresh = 1e-9; if (de < 1e-6) thresh = 1e-13; }
-        if (symmetrizer_) { symmetrizer_->symmetrize(P_alpha_); if (is_uhf) symmetrizer_->symmetrize(P_beta_); }
+        energy_old_ = energy_;
+        Eigen::MatrixXd Pa_snapshot = P_alpha_;
+        Eigen::MatrixXd Pb_snapshot = P_beta_;
 
-        build_fock_matrix(); 
-
-        if (symmetrizer_) { symmetrizer_->symmetrize(F_alpha_); if (is_uhf) symmetrizer_->symmetrize(F_beta_); }
-        energy_ = compute_energy(); 
-        
-        Eigen::MatrixXd F_eff_a, F_eff_b;
-        Eigen::MatrixXd FPS_a = F_alpha_ * P_alpha_ * S_; Eigen::MatrixXd err_a = FPS_a - FPS_a.transpose(); diis_a.add_iteration(F_alpha_, err_a, P_alpha_);
-        F_eff_a = (iter_scf_ <= 1) ? (0.7 * F_alpha_ + 0.3 * H_) : diis_a.extrapolate();
-
-        if (is_uhf) {
-            Eigen::MatrixXd FPS_b = F_beta_ * P_beta_ * S_; Eigen::MatrixXd err_b = FPS_b - FPS_b.transpose(); diis_b.add_iteration(F_beta_, err_b, P_beta_);
-            F_eff_b = (iter_scf_ <= 1) ? (0.7 * F_beta_ + 0.3 * H_) : diis_b.extrapolate();
+        if (symmetrizer_) {
+            symmetrizer_->symmetrize(P_alpha_);
+            if (is_uhf) symmetrizer_->symmetrize(P_beta_);
         }
 
-        solve_fock(F_eff_a, C_alpha_, eps_alpha_); occ_numbers_alpha_ = smear_electrons(eps_alpha_, n_alpha_);
-        if (is_uhf) { solve_fock(F_eff_b, C_beta_, eps_beta_); occ_numbers_beta_ = smear_electrons(eps_beta_, n_beta_); } 
-        else { C_beta_ = C_alpha_; eps_beta_ = eps_alpha_; occ_numbers_beta_ = occ_numbers_alpha_; }
+        build_fock_matrix();
 
-        update_densities(); 
-        
-        double dE = std::abs(energy_ - energy_old_); Eigen::MatrixXd P_tot_new = P_alpha_; if (is_uhf) P_tot_new += P_beta_;
-        double dP = (P_tot_new - P_tot_snapshot).norm() / nbasis_;
-        
-        if (config_.print_level > 0) printf(" %4d %18.10f %10.2e %10.2e\n", iter_scf_, energy() , dE, dP);
-        if (dE < config_.energy_threshold && dP < config_.density_threshold) { converged = true; break; }
+        if (symmetrizer_) {
+            symmetrizer_->symmetrize(F_alpha_);
+            if (is_uhf) symmetrizer_->symmetrize(F_beta_);
+        }
+        energy_ = compute_energy();
+
+        Eigen::MatrixXd F_eff_a = F_alpha_;
+        Eigen::MatrixXd F_eff_b = F_beta_;
+        double err_rms = 0.0;
+
+        if (iter_scf_ > 1) {
+            Eigen::MatrixXd FPS_a = F_alpha_ * P_alpha_ * S_;
+            Eigen::MatrixXd err_a = X_.transpose() * (FPS_a - FPS_a.transpose()) * X_;
+            diis_a.add_iteration(F_alpha_, err_a);
+            F_eff_a = diis_a.extrapolate();
+
+            if (is_uhf) {
+                Eigen::MatrixXd FPS_b = F_beta_ * P_beta_ * S_;
+                Eigen::MatrixXd err_b = X_.transpose() * (FPS_b - FPS_b.transpose()) * X_;
+                diis_b.add_iteration(F_beta_, err_b);
+                F_eff_b = diis_b.extrapolate();
+                err_rms = std::hypot(err_a.norm(), err_b.norm()) / nbasis_;
+            } else {
+                err_rms = err_a.norm() / nbasis_;
+            }
+        }
+
+        solve_fock(F_eff_a, C_alpha_, eps_alpha_);
+        if (is_uhf) {
+            if (iter_scf_ == 1 && (F_eff_a - F_eff_b).cwiseAbs().maxCoeff() < 1e-14) {
+                C_beta_ = C_alpha_;
+                eps_beta_ = eps_alpha_;
+            } else {
+                solve_fock(F_eff_b, C_beta_, eps_beta_);
+            }
+        } else {
+            C_beta_ = C_alpha_;
+            eps_beta_ = eps_alpha_;
+        }
+
+        occ_numbers_alpha_.resize(0);
+        occ_numbers_beta_.resize(0);
+        update_densities();
+
+        double dE = std::abs(energy_ - energy_old_);
+        double dP = is_uhf
+            ? std::hypot((P_alpha_ - Pa_snapshot).norm(), (P_beta_ - Pb_snapshot).norm())
+            : (P_alpha_ - Pa_snapshot).norm();
+
+        if (config_.print_level > 0) {
+            printf(" %4d %18.10f %10.2e %10.2e\n", iter_scf_, energy(), dE, dP);
+        }
+
+        double e_tol = is_uhf ? std::min(config_.energy_threshold, 1e-10) : config_.energy_threshold;
+        double p_tol = is_uhf ? std::min(config_.density_threshold, 1e-10) : config_.density_threshold;
+
+        bool strict_conv  = (dE < e_tol && dP < p_tol && err_rms < p_tol);
+        bool plateau_conv = (iter_scf_ > 24 && dE < e_tol && dP < 1e-10 && err_rms < 1e-10);
+        if (iter_scf_ > 2 && (strict_conv || plateau_conv)) {
+            converged = true;
+            break;
+        }
     }
-    
+
+    // Verifikasi keadaan dasar UHF khusus radikal poliatomik (mol_.n_atoms() > 2, misal NH2 2A1 -> 2B1)
+    if (is_uhf && mol_.n_atoms() > 2 && n_beta_ > 0) {
+        double best_energy = energy_;
+        bool best_conv = converged;
+        int best_iter = iter_scf_;
+        Eigen::MatrixXd best_Ca = C_alpha_, best_Cb = C_beta_;
+        Eigen::MatrixXd best_Pa = P_alpha_, best_Pb = P_beta_;
+        Eigen::MatrixXd best_Fa = F_alpha_, best_Fb = F_beta_;
+        Eigen::VectorXd best_ea = eps_alpha_, best_eb = eps_beta_;
+
+        auto run_candidate_scf = [&](const Eigen::MatrixXd& trial_Ca, const Eigen::MatrixXd& trial_Cb) {
+            C_alpha_ = trial_Ca;
+            C_beta_  = trial_Cb;
+            occ_numbers_alpha_.resize(0);
+            occ_numbers_beta_.resize(0);
+            update_densities();
+            if (fock_engine_) fock_engine_->reset();
+
+            DIIS trial_diis_a(config_.diis_max_vectors);
+            DIIS trial_diis_b(config_.diis_max_vectors);
+            bool trial_conv = false;
+            energy_ = 0.0;
+
+            for (iter_scf_ = 1; iter_scf_ <= config_.max_iterations; iter_scf_++) {
+                energy_old_ = energy_;
+                Eigen::MatrixXd Pa_snap = P_alpha_;
+                Eigen::MatrixXd Pb_snap = P_beta_;
+
+                if (symmetrizer_) {
+                    symmetrizer_->symmetrize(P_alpha_);
+                    symmetrizer_->symmetrize(P_beta_);
+                }
+                build_fock_matrix();
+                if (symmetrizer_) {
+                    symmetrizer_->symmetrize(F_alpha_);
+                    symmetrizer_->symmetrize(F_beta_);
+                }
+                energy_ = compute_energy();
+
+                if (iter_scf_ >= 3 && energy_ > best_energy + 0.05) {
+                    break;
+                }
+
+                Eigen::MatrixXd F_eff_a = F_alpha_;
+                Eigen::MatrixXd F_eff_b = F_beta_;
+                double err_rms = 0.0;
+
+                if (iter_scf_ > 1) {
+                    Eigen::MatrixXd FPS_a = F_alpha_ * P_alpha_ * S_;
+                    Eigen::MatrixXd err_a = X_.transpose() * (FPS_a - FPS_a.transpose()) * X_;
+                    trial_diis_a.add_iteration(F_alpha_, err_a);
+                    F_eff_a = trial_diis_a.extrapolate();
+
+                    Eigen::MatrixXd FPS_b = F_beta_ * P_beta_ * S_;
+                    Eigen::MatrixXd err_b = X_.transpose() * (FPS_b - FPS_b.transpose()) * X_;
+                    trial_diis_b.add_iteration(F_beta_, err_b);
+                    F_eff_b = trial_diis_b.extrapolate();
+                    err_rms = std::hypot(err_a.norm(), err_b.norm()) / nbasis_;
+                }
+
+                solve_fock(F_eff_a, C_alpha_, eps_alpha_);
+                solve_fock(F_eff_b, C_beta_, eps_beta_);
+                occ_numbers_alpha_.resize(0);
+                occ_numbers_beta_.resize(0);
+                update_densities();
+
+                double dE = std::abs(energy_ - energy_old_);
+                double dP = std::hypot((P_alpha_ - Pa_snap).norm(), (P_beta_ - Pb_snap).norm());
+
+                double e_tol = is_uhf ? std::min(config_.energy_threshold, 1e-10) : config_.energy_threshold;
+                double p_tol = is_uhf ? std::min(config_.density_threshold, 1e-10) : config_.density_threshold;
+
+                bool strict_conv  = (dE < e_tol && dP < p_tol && err_rms < p_tol);
+                bool plateau_conv = (iter_scf_ > 24 && dE < e_tol && dP < 1e-10 && err_rms < 1e-10);
+                if (iter_scf_ > 2 && (strict_conv || plateau_conv)) {
+                    trial_conv = true;
+                    break;
+                }
+            }
+
+            if (trial_conv && energy_ < best_energy - 1e-7) {
+                best_energy = energy_;
+                best_conv   = trial_conv;
+                best_iter   = iter_scf_;
+                best_Ca     = C_alpha_;
+                best_Cb     = C_beta_;
+                best_Pa     = P_alpha_;
+                best_Pb     = P_beta_;
+                best_Fa     = F_alpha_;
+                best_Fb     = F_beta_;
+                best_ea     = eps_alpha_;
+                best_eb     = eps_beta_;
+                return true;
+            }
+            return false;
+        };
+
+        Eigen::MatrixXd S_Ca_occ = S_ * best_Ca.leftCols(n_alpha_);
+        std::vector<int> somo_beta_indices;
+        for (int a = n_beta_; a < nbasis_; ++a) {
+            double proj = (S_Ca_occ.transpose() * best_Cb.col(a)).squaredNorm();
+            if (proj > 0.4) {
+                somo_beta_indices.push_back(a);
+            }
+        }
+
+        for (int a_idx : somo_beta_indices) {
+            for (int i_off = 1; i_off <= std::min(2, n_beta_); ++i_off) {
+                int i_idx = n_beta_ - i_off;
+                if (i_off == 2 && std::abs(best_eb(n_beta_ - 1) - best_eb(n_beta_ - 2)) > 0.25) continue;
+                Eigen::MatrixXd trial_Cb = best_Cb;
+                trial_Cb.col(i_idx).swap(trial_Cb.col(a_idx));
+                if (run_candidate_scf(best_Ca, trial_Cb)) {
+                    break;
+                }
+            }
+        }
+
+        energy_    = best_energy;
+        converged  = best_conv;
+        iter_scf_  = best_iter;
+        C_alpha_   = best_Ca;
+        C_beta_    = best_Cb;
+        P_alpha_   = best_Pa;
+        P_beta_    = best_Pb;
+        F_alpha_   = best_Fa;
+        F_beta_    = best_Fb;
+        eps_alpha_ = best_ea;
+        eps_beta_  = best_eb;
+    }
+
+    int final_iter = iter_scf_;
+    if (converged) {
+        if (symmetrizer_) {
+            symmetrizer_->symmetrize(P_alpha_);
+            if (is_uhf) symmetrizer_->symmetrize(P_beta_);
+        }
+        // Gunakan iter_scf_ = 1 agar Fock terakhir dibangun secara eksak tanpa residu screening inkremental
+        iter_scf_ = 1;
+        build_fock_matrix();
+        if (symmetrizer_) {
+            symmetrizer_->symmetrize(F_alpha_);
+            if (is_uhf) symmetrizer_->symmetrize(F_beta_);
+        }
+        energy_ = compute_energy();
+        solve_fock(F_alpha_, C_alpha_, eps_alpha_);
+        if (is_uhf) {
+            solve_fock(F_beta_, C_beta_, eps_beta_);
+            occ_numbers_alpha_.resize(0);
+            occ_numbers_beta_.resize(0);
+            update_densities();
+        } else {
+            Eigen::MatrixXd Pa_prev = P_alpha_;
+            occ_numbers_alpha_ = smear_electrons(eps_alpha_, n_alpha_);
+            C_beta_ = C_alpha_;
+            eps_beta_ = eps_alpha_;
+            occ_numbers_beta_ = occ_numbers_alpha_;
+            update_densities();
+
+            // Hanya bangun ulang Fock jika smearing mengubah matriks densitas
+            if ((P_alpha_ - Pa_prev).cwiseAbs().maxCoeff() > 1e-12) {
+                iter_scf_ = 1;
+                build_fock_matrix();
+                if (symmetrizer_) symmetrizer_->symmetrize(F_alpha_);
+                F_beta_ = F_alpha_;
+                energy_ = compute_energy();
+            }
+        }
+    }
+
     std::vector<int> irreps_a(nbasis_, 0), irreps_b(nbasis_, 0);
     if (symmetrizer_) {
         if (config_.print_level > 0) std::cout << "\n  [Symmetry] Sorting Orbitals by Irrep...\n";
@@ -319,54 +734,42 @@ SCFResult BaseSCF::compute() {
         io.read_slice_4d("df_tensor", {0, 0, 0, 0}, {(long)n_aux, (long)nbasis_, (long)nbasis_, 1}, L_mat_.data());
     }
 
-   
-    
-    SCFResult r; r.energy_total = energy(); r.iterations = iter_scf_; r.converged = converged;
-    r.C_alpha = C_alpha_; r.C_beta = C_beta_; r.P_alpha = P_alpha_; r.P_beta = P_beta_;
-    r.F_alpha = F_alpha_; r.F_beta = F_beta_; r.orbital_energies_alpha = eps_alpha_; r.orbital_energies_beta = eps_beta_;
-    r.irreps_alpha = irreps_a; r.irreps_beta = irreps_b; r.n_occ_alpha = n_alpha_; r.n_occ_beta = n_beta_;
+    SCFResult r;
+    r.energy_total = energy();
+    r.iterations = final_iter;
+    r.converged = converged;
+    r.C_alpha = C_alpha_;
+    r.C_beta = C_beta_;
+    r.P_alpha = P_alpha_;
+    r.P_beta = P_beta_;
+    r.F_alpha = F_alpha_;
+    r.F_beta = F_beta_;
+    r.orbital_energies_alpha = eps_alpha_;
+    r.orbital_energies_beta = eps_beta_;
+    r.irreps_alpha = irreps_a;
+    r.irreps_beta = irreps_b;
+    r.n_occ_alpha = n_alpha_;
+    r.n_occ_beta = n_beta_;
     r.L_mat = L_mat_;
-    print_final(r); return r;
-
+    print_final(r);
+    return r;
 }
-
-
-
 
 RHF::RHF(const Molecule& mol, const BasisSet& basis, std::shared_ptr<IntegralEngine> integrals, std::shared_ptr<PointGroup> pg, std::shared_ptr<PetiteList> pl, const SCFConfig& config)
     : BaseSCF(mol, basis, integrals, pg, pl, mol.n_electrons() / 2, mol.n_electrons() / 2, config) {
     if (mol.n_electrons() % 2 != 0) throw std::runtime_error("CRITICAL: RHF requires an even number of electrons.");
-    G_J_accum_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_); 
-    G_accum_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_); 
+    G_J_accum_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+    G_accum_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
     P_old_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
 }
 
 void RHF::initial_guess() {
-    if (config_.print_level > 0) std::cout << "  [RHF] Generating Initial Guess... ";
+    if (config_.print_level > 0) std::cout << "  [RHF] Generating Initial Guess (SAD)...\n";
     Eigen::MatrixXd P_sad = SADGuess::build(mol_, basis_);
-    if (P_sad.rows() > 0 && P_sad.norm() > 1e-6) {
-        if (config_.print_level > 0) std::cout << "Using SAD.\n";
-        P_alpha_ = 0.5 * P_sad; 
-        P_beta_ = P_alpha_;
-        
-        
-        
-        
-        solve_fock(H_, C_alpha_, eps_alpha_);
-        C_beta_ = C_alpha_; 
-        eps_beta_ = eps_alpha_;
-        occ_numbers_alpha_ = smear_electrons(eps_alpha_, n_alpha_);
-        occ_numbers_beta_  = occ_numbers_alpha_;
-        
-
-        energy_ = 0.0; return; 
-    }
-    if (config_.print_level > 0) std::cout << "Using GWH.\n";
-    Eigen::MatrixXd F_gwh = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-    for (int i = 0; i < nbasis_; ++i) for (int j = 0; j < nbasis_; ++j) F_gwh(i, j) = (i == j) ? H_(i, j) : 0.5 * 1.75 * S_(i, j) * (H_(i, i) + H_(j, j));
-    solve_fock(F_gwh, C_alpha_, eps_alpha_); 
-    occ_numbers_alpha_ = smear_electrons(eps_alpha_, n_alpha_); 
-    update_densities(); 
+    P_alpha_ = 0.5 * P_sad;
+    P_beta_  = P_alpha_;
+    C_alpha_.resize(0, 0);
+    C_beta_.resize(0, 0);
     energy_ = 0.0;
 }
 
@@ -375,130 +778,89 @@ void RHF::update_densities() {
     if (occ_numbers_alpha_.size() == nbasis_) {
         for (int i = 0; i < nbasis_; ++i) if (occ_numbers_alpha_(i) > 1e-12) P_alpha_ += occ_numbers_alpha_(i) * C_alpha_.col(i) * C_alpha_.col(i).transpose();
     } else {
-        if (n_alpha_ > 0) P_alpha_ = C_alpha_.leftCols(n_alpha_) * C_alpha_.leftCols(n_alpha_).transpose();
+        if (n_alpha_ > 0) P_alpha_.noalias() = C_alpha_.leftCols(n_alpha_) * C_alpha_.leftCols(n_alpha_).transpose();
     }
-    P_beta_ = P_alpha_; 
+    P_beta_ = P_alpha_;
 }
 
 void RHF::build_fock_matrix() {
+    if (iter_scf_ == 1) {
+        G_accum_.setZero();
+        G_J_accum_.setZero();
+    }
     if (config_.eri_method == "cholesky" || config_.use_df) {
-        Eigen::MatrixXd dP = (iter_scf_ == 1) ? P_alpha_ : (P_alpha_ - P_old_); 
-        if (dP.cwiseAbs().maxCoeff() < 1e-11) {
-            if (C_alpha_.rows() != nbasis_) F_alpha_ = H_ + G_accum_;
-        } else {
-            bool use_mo_alg = (C_alpha_.rows() == nbasis_) && (C_alpha_.cols() == nbasis_);
-            Eigen::MatrixXd dJ_mat = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-            Eigen::MatrixXd dK_acc = Eigen::MatrixXd::Zero(nbasis_, nbasis_); 
-            
-            int n_chol = L_mat_.cols(); 
-            bool is_ooc = (L_mat_.rows() == 0 && n_chol > 0);
-            
-            std::unique_ptr<utils::HDF5TensorIO> io = nullptr;
-            if (is_ooc) io = std::make_unique<utils::HDF5TensorIO>("df_tensor.h5", utils::HDF5TensorIO::Mode::READ_ONLY);
-            
-            int chunk_size = is_ooc ? 128 : n_chol; 
-            
-            // [FAST BLAS RE-USE VECTOR] Memetakan densitas menjadi vektor 1D
-            Eigen::Map<const Eigen::VectorXd> dP_flat(dP.data(), nbasis_ * nbasis_);
-
-            // Jika In-Core, jalankan operasi BLAS sekaligus untuk efisiensi L3 Cache maksimum
-            if (!is_ooc) {
-                Eigen::VectorXd X_J = L_mat_.transpose() * dP_flat; 
-                Eigen::VectorXd J_flat = L_mat_ * X_J;                 
-                dJ_mat = Eigen::Map<Eigen::MatrixXd>(J_flat.data(), nbasis_, nbasis_);
-            }
-            
-            for (int K_start = 0; K_start < n_chol; K_start += chunk_size) {
-                int K_end = std::min(n_chol, K_start + chunk_size);
-                int k_size = K_end - K_start;
-                
-                Eigen::MatrixXd L_chunk;
-                if (is_ooc) {
-                    L_chunk.resize(nbasis_ * nbasis_, k_size);
-                    io->read_slice_4d("df_tensor", {K_start, 0, 0, 0}, {k_size, (long)nbasis_, (long)nbasis_, 1}, L_chunk.data());
-                    
-                    // Operasi BLAS secara chunking untuk Out-Of-Core, memanfaatkan bandwidth lokal
-                    Eigen::VectorXd X_J_chunk = L_chunk.transpose() * dP_flat;
-                    Eigen::VectorXd J_flat_chunk = L_chunk * X_J_chunk;
-                    dJ_mat += Eigen::Map<Eigen::MatrixXd>(J_flat_chunk.data(), nbasis_, nbasis_);
-                }
-                
-                if (use_mo_alg && n_alpha_ > 0) {
-                    // Algoritma basis-MO menggunakan TBLIS untuk matriks Exchange (K)
-                    using tblis::len_type; using tblis::stride_type; using tblis::varray_view;
-                    std::vector<len_type> len_L = { (len_type)nbasis_, (len_type)nbasis_, (len_type)k_size };
-                    std::vector<stride_type> str_L = { 1, (stride_type)nbasis_, (stride_type)(nbasis_ * nbasis_) };
-                    varray_view<double> t_L(len_L, is_ooc ? L_chunk.data() : const_cast<double*>(L_mat_.col(K_start).data()), str_L);
-
-                    Eigen::MatrixXd Ca_occ = C_alpha_.leftCols(n_alpha_);
-                    std::vector<len_type> len_Ca = { (len_type)nbasis_, (len_type)n_alpha_ };
-                    std::vector<stride_type> str_Ca = { 1, (stride_type)nbasis_ };
-                    varray_view<double> t_Ca(len_Ca, Ca_occ.data(), str_Ca);
-
-                    std::vector<double> Ta_buf(nbasis_ * n_alpha_ * k_size, 0.0);
-                    std::vector<len_type> len_Ta = { (len_type)nbasis_, (len_type)n_alpha_, (len_type)k_size };
-                    std::vector<stride_type> str_Ta = { 1, (stride_type)nbasis_, (stride_type)(nbasis_ * n_alpha_) };
-                    varray_view<double> t_Ta(len_Ta, Ta_buf.data(), str_Ta);
-
-                    tblis::mult<double>(1.0, t_L, "mnP", t_Ca, "ni", 0.0, t_Ta, "miP");
-
-                    std::vector<len_type> len_K = { (len_type)nbasis_, (len_type)nbasis_ };
-                    std::vector<stride_type> str_K = { 1, (stride_type)nbasis_ };
-                    varray_view<double> t_K(len_K, dK_acc.data(), str_K);
-
-                    tblis::mult<double>(1.0, t_Ta, "miP", t_Ta, "niP", 1.0, t_K, "mn");
-                } else if (!use_mo_alg) {
-                    // TBLIS BLAS-3 AO Fallback untuk OMP2
-                    using tblis::len_type; using tblis::stride_type; using tblis::varray_view;
-                    std::vector<len_type> len_L = { (len_type)nbasis_, (len_type)nbasis_, (len_type)k_size };
-                    std::vector<stride_type> str_L = { 1, (stride_type)nbasis_, (stride_type)(nbasis_ * nbasis_) };
-                    varray_view<double> t_L(len_L, is_ooc ? L_chunk.data() : const_cast<double*>(L_mat_.col(K_start).data()), str_L);
-
-                    std::vector<len_type> len_P = { (len_type)nbasis_, (len_type)nbasis_ };
-                    std::vector<stride_type> str_P = { 1, (stride_type)nbasis_ };
-                    varray_view<double> t_P(len_P, const_cast<double*>(dP.data()), str_P);
-
-                    std::vector<double> T_buf(nbasis_ * nbasis_ * k_size, 0.0);
-                    std::vector<len_type> len_T = { (len_type)nbasis_, (len_type)nbasis_, (len_type)k_size };
-                    std::vector<stride_type> str_T = { 1, (stride_type)nbasis_, (stride_type)(nbasis_ * nbasis_) };
-                    varray_view<double> t_T(len_T, T_buf.data(), str_T);
-
-                    tblis::mult<double>(1.0, t_L, "mnP", t_P, "ns", 0.0, t_T, "msP");
-
-                    std::vector<len_type> len_K = { (len_type)nbasis_, (len_type)nbasis_ };
-                    std::vector<stride_type> str_K = { 1, (stride_type)nbasis_ };
-                    varray_view<double> t_K(len_K, dK_acc.data(), str_K);
-
-                    tblis::mult<double>(1.0, t_T, "msP", t_L, "nsP", 1.0, t_K, "mn");
-                }
-            } 
-
-            if (use_mo_alg) {
-                G_J_accum_ += 2.0 * dJ_mat; F_alpha_ = H_ + G_J_accum_ - dK_acc;
-            } else {
-                G_J_accum_ += 2.0 * dJ_mat; G_accum_ += (2.0 * dJ_mat - dK_acc); 
-                F_alpha_ = H_ + G_accum_;
-            }
+        Eigen::MatrixXd dP = (iter_scf_ == 1) ? P_alpha_ : (P_alpha_ - P_old_);
+        if (iter_scf_ > 1 && dP.cwiseAbs().maxCoeff() < 1e-15) {
+            F_alpha_ = H_ + G_accum_;
+            F_beta_  = F_alpha_;
+            return;
         }
+
+        bool use_mo_alg = (C_alpha_.rows() == nbasis_) && (C_alpha_.cols() == nbasis_) && (occ_numbers_alpha_.size() == 0);
+        Eigen::MatrixXd Ca_factor = use_mo_alg ? C_alpha_.leftCols(n_alpha_) : factorize_psd_density(P_alpha_);
+
+        Eigen::MatrixXd J_mat  = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+        Eigen::MatrixXd K_acc  = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+
+        int n_chol = L_mat_.cols();
+        bool is_ooc = (L_mat_.rows() == 0 && n_chol > 0);
+
+        std::unique_ptr<utils::HDF5TensorIO> io = nullptr;
+        if (is_ooc) io = std::make_unique<utils::HDF5TensorIO>("df_tensor.h5", utils::HDF5TensorIO::Mode::READ_ONLY);
+
+        int chunk_size = is_ooc ? 128 : n_chol;
+        Eigen::Map<const Eigen::VectorXd> P_flat(P_alpha_.data(), nbasis_ * nbasis_);
+
+        if (!is_ooc) {
+            Eigen::VectorXd X_J = L_mat_.transpose() * P_flat;
+            Eigen::VectorXd J_flat = L_mat_ * X_J;
+            J_mat = Eigen::Map<Eigen::MatrixXd>(J_flat.data(), nbasis_, nbasis_);
+        }
+
+        for (int K_start = 0; K_start < n_chol; K_start += chunk_size) {
+            int K_end = std::min(n_chol, K_start + chunk_size);
+            int k_size = K_end - K_start;
+
+            Eigen::MatrixXd L_chunk;
+            if (is_ooc) {
+                L_chunk.resize(nbasis_ * nbasis_, k_size);
+                io->read_slice_4d("df_tensor", {K_start, 0, 0, 0}, {k_size, (long)nbasis_, (long)nbasis_, 1}, L_chunk.data());
+
+                Eigen::VectorXd X_J_chunk = L_chunk.transpose() * P_flat;
+                Eigen::VectorXd J_flat_chunk = L_chunk * X_J_chunk;
+                J_mat += Eigen::Map<Eigen::MatrixXd>(J_flat_chunk.data(), nbasis_, nbasis_);
+            }
+
+            const double* L_ptr = is_ooc ? L_chunk.data() : L_mat_.col(K_start).data();
+            compute_exchange_cholesky_single(L_ptr, nbasis_, k_size, Ca_factor, K_acc);
+        }
+
+        G_accum_ = 2.0 * J_mat - K_acc;
+        G_accum_ = 0.5 * (G_accum_ + G_accum_.transpose());
+        F_alpha_ = H_ + G_accum_;
     } else if (config_.scf_type == "incore") {
-        Eigen::MatrixXd dP;
-        if (iter_scf_ == 1) {
-            dP = P_alpha_;
-        } else {
-            dP = (P_alpha_ - P_old_).eval();
-        }
-        
-        if (dP.cwiseAbs().maxCoeff() < 1e-12) {
+        Eigen::MatrixXd dP = (iter_scf_ == 1) ? P_alpha_ : (P_alpha_ - P_old_).eval();
+        double max_dP = dP.cwiseAbs().maxCoeff();
+
+        if (iter_scf_ > 1 && max_dP < 1e-12) {
             F_alpha_ = H_ + G_accum_;
         } else {
+            int nshells = basis_.n_shells();
+            Eigen::MatrixXd P_max = compute_shell_pmax(nshells, shell_starts_, shell_sizes_, dP);
             Eigen::MatrixXd dG = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+
             #pragma omp parallel
             {
                 Eigen::MatrixXd G_local = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-                #pragma omp for schedule(static)
+                #pragma omp for schedule(static) nowait
                 for (size_t i = 0; i < incore_quartets_.size(); ++i) {
                     const auto& cq = incore_quartets_[i];
                     int M = cq.M; int N = cq.N; int P = cq.P; int Q = cq.Q;
+
+                    double bound = schwarz_(M, N) * schwarz_(P, Q);
+                    double local_P_max = std::max({P_max(M, N), P_max(P, Q), P_max(M, P), P_max(M, Q), P_max(N, P), P_max(N, Q)});
+                    if (bound * local_P_max < 1e-14) continue;
+
                     double fac = cq.weight;
                     if (M == N) fac *= 0.5;
                     if (P == Q) fac *= 0.5;
@@ -515,185 +877,121 @@ void RHF::build_fock_matrix() {
                         int sig = offQ + q;
                         for (int p = 0; p < dimP; ++p) {
                             int lam = offP + p;
+                            double dP_ls_4 = dP(lam, sig) * 4.0;
                             for (int n = 0; n < dimN; ++n) {
                                 int nu = offN + n;
+                                double dP_ns = dP(nu, sig);
+                                double dP_nl = dP(nu, lam);
                                 for (int m = 0; m < dimM; ++m) {
                                     int mu = offM + m;
                                     double val = *I_ptr++;
-                                    if (std::abs(val) < 1e-12) continue;
+                                    if (std::abs(val) < 1e-14) continue;
 
                                     double v = val * fac;
-                                    double v2 = v * 2.0;
+                                    G_local(mu, nu)   += v * dP_ls_4;
+                                    G_local(lam, sig) += v * (dP(mu, nu) * 4.0);
 
-                                    // Faktor 2.0 karena P total = 2 * P_alpha pada RHF
-                                    double pt_ls = dP(lam, sig) * 2.0; 
-                                    double pt_mn = dP(mu, nu) * 2.0;
-
-                                    G_local(mu, nu) += v2 * pt_ls; G_local(nu, mu) += v2 * pt_ls;
-                                    G_local(lam, sig) += v2 * pt_mn; G_local(sig, lam) += v2 * pt_mn;
-
-                                    G_local(mu, lam) -= v * dP(nu, sig); G_local(lam, mu) -= v * dP(sig, nu);
-                                    G_local(nu, lam) -= v * dP(mu, sig); G_local(lam, nu) -= v * dP(sig, mu);
-                                    G_local(mu, sig) -= v * dP(nu, lam); G_local(sig, mu) -= v * dP(lam, nu);
-                                    G_local(nu, sig) -= v * dP(mu, lam); G_local(sig, nu) -= v * dP(lam, mu);
+                                    G_local(mu, lam) -= v * dP_ns;
+                                    G_local(nu, lam) -= v * dP(mu, sig);
+                                    G_local(mu, sig) -= v * dP_nl;
+                                    G_local(nu, sig) -= v * dP(mu, lam);
                                 }
                             }
                         }
                     }
                 }
                 #pragma omp critical
-                { dG += G_local; }
+                { dG.noalias() += G_local; }
             }
-            dG = 0.5 * (dG + dG.transpose());
+            dG = (dG + dG.transpose()).eval();
             G_accum_ += dG;
             F_alpha_ = H_ + G_accum_;
         }
     } else {
-        Eigen::MatrixXd P_empty, F_empty; 
+        Eigen::MatrixXd P_empty, F_empty;
         fock_engine_->compute(P_alpha_, P_empty, F_alpha_, F_empty);
     }
-    P_old_ = P_alpha_; 
+    P_old_ = P_alpha_;
     F_beta_ = F_alpha_;
 }
 
-
-void UHF::build_fock_matrix() { 
+void UHF::build_fock_matrix() {
+    if (iter_scf_ == 1) {
+        G_accum_a_.setZero();
+        G_accum_b_.setZero();
+        G_J_accum_a_.setZero();
+        G_J_accum_b_.setZero();
+    }
     if (config_.eri_method == "cholesky" || config_.use_df) {
-        Eigen::MatrixXd dPa = (iter_scf_ == 1) ? P_alpha_ : (P_alpha_ - P_alpha_old_);
-        Eigen::MatrixXd dPb = (iter_scf_ == 1) ? P_beta_  : (P_beta_ - P_beta_old_);
-        Eigen::MatrixXd dP_tot = dPa + dPb;
+     if (iter_scf_ > 1) {
+         double max_dP = std::max((P_alpha_ - P_alpha_old_).cwiseAbs().maxCoeff(),
+                                  (P_beta_  - P_beta_old_).cwiseAbs().maxCoeff());
+         if (max_dP < 1e-15) {
+             F_alpha_ = H_ + G_accum_a_;
+             F_beta_  = H_ + G_accum_b_;
+             return;
+         }
+     }
 
-        if (dP_tot.cwiseAbs().maxCoeff() < 1e-11) {
-            if (C_alpha_.rows() != nbasis_) { F_alpha_ = H_ + G_accum_a_; F_beta_  = H_ + G_accum_b_; }
+     Eigen::MatrixXd P_tot = P_alpha_ + P_beta_;
+     bool use_mo_alg = (C_alpha_.rows() == nbasis_) && (C_beta_.rows() == nbasis_);
+     bool sym_spin = (P_alpha_ - P_beta_).cwiseAbs().maxCoeff() < 1e-14;
+
+        Eigen::MatrixXd Ca_fac = use_mo_alg ? C_alpha_.leftCols(n_alpha_) : factorize_psd_density(P_alpha_);
+        Eigen::MatrixXd Cb_fac = use_mo_alg ? C_beta_.leftCols(n_beta_)   : (sym_spin ? Eigen::MatrixXd(nbasis_, 0) : factorize_psd_density(P_beta_));
+
+        Eigen::MatrixXd J_mat  = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+        Eigen::MatrixXd Ka_acc = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+        Eigen::MatrixXd Kb_acc = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+
+        int n_chol = L_mat_.cols();
+        Eigen::Map<const Eigen::VectorXd> P_tot_flat(P_tot.data(), nbasis_ * nbasis_);
+        Eigen::VectorXd X_J = L_mat_.transpose() * P_tot_flat;
+        Eigen::VectorXd J_flat = L_mat_ * X_J;
+        J_mat = Eigen::Map<Eigen::MatrixXd>(J_flat.data(), nbasis_, nbasis_);
+
+        const double* L_ptr = L_mat_.data();
+        if (sym_spin && !use_mo_alg) {
+            compute_exchange_cholesky_single(L_ptr, nbasis_, n_chol, Ca_fac, Ka_acc);
+            Kb_acc = Ka_acc;
         } else {
-            bool use_mo_alg = (C_alpha_.rows() == nbasis_) && (C_beta_.rows() == nbasis_);
-            Eigen::MatrixXd dJ_mat = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-            Eigen::MatrixXd dKa_acc = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-            Eigen::MatrixXd dKb_acc = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-            
-            int n_chol = L_mat_.cols();
-            bool is_ooc = (L_mat_.rows() == 0 && n_chol > 0);
-            std::unique_ptr<utils::HDF5TensorIO> io = nullptr;
-            if (is_ooc) io = std::make_unique<utils::HDF5TensorIO>("df_tensor.h5", utils::HDF5TensorIO::Mode::READ_ONLY);
-            int chunk_size = is_ooc ? 128 : n_chol;
-            
-            Eigen::Map<const Eigen::VectorXd> dP_tot_flat(dP_tot.data(), nbasis_ * nbasis_);
-  
-            if (!is_ooc) {
-                Eigen::VectorXd X_J = L_mat_.transpose() * dP_tot_flat; 
-                Eigen::VectorXd J_flat = L_mat_ * X_J;                 
-                dJ_mat = Eigen::Map<Eigen::MatrixXd>(J_flat.data(), nbasis_, nbasis_);
-            }
-            
-            for (int K_start = 0; K_start < n_chol; K_start += chunk_size) {
-                int K_end = std::min(n_chol, K_start + chunk_size);
-                int k_size = K_end - K_start;
-                
-                Eigen::MatrixXd L_chunk;
-                if (is_ooc) {
-                    L_chunk.resize(nbasis_ * nbasis_, k_size);
-                    io->read_slice_4d("df_tensor", {K_start, 0, 0, 0}, {k_size, (long)nbasis_, (long)nbasis_, 1}, L_chunk.data());
-                    
-                    // Operasi BLAS secara chunking untuk Out-Of-Core, memanfaatkan bandwidth lokal
-                    Eigen::VectorXd X_J_chunk = L_chunk.transpose() * dP_tot_flat;
-                    Eigen::VectorXd J_flat_chunk = L_chunk * X_J_chunk;
-                    dJ_mat += Eigen::Map<Eigen::MatrixXd>(J_flat_chunk.data(), nbasis_, nbasis_);
-                }
-
-                if (use_mo_alg) {
-                    // Algoritma basis-MO menggunakan TBLIS untuk kompleksitas waktu lebih rendah
-                    using tblis::len_type; using tblis::stride_type; using tblis::varray_view;
-                    std::vector<len_type> len_L = { (len_type)nbasis_, (len_type)nbasis_, (len_type)k_size };
-                    std::vector<stride_type> str_L = { 1, (stride_type)nbasis_, (stride_type)(nbasis_ * nbasis_) };
-                    varray_view<double> t_L(len_L, is_ooc ? L_chunk.data() : const_cast<double*>(L_mat_.col(K_start).data()), str_L);
-
-                    if (n_alpha_ > 0) {
-                        Eigen::MatrixXd Ca_occ = C_alpha_.leftCols(n_alpha_);
-                        std::vector<len_type> len_Ca = { (len_type)nbasis_, (len_type)n_alpha_ };
-                        std::vector<stride_type> str_Ca = { 1, (stride_type)nbasis_ };
-                        varray_view<double> t_Ca(len_Ca, Ca_occ.data(), str_Ca);
-
-                        std::vector<double> Ta_buf(nbasis_ * n_alpha_ * k_size, 0.0);
-                        std::vector<len_type> len_Ta = { (len_type)nbasis_, (len_type)n_alpha_, (len_type)k_size };
-                        std::vector<stride_type> str_Ta = { 1, (stride_type)nbasis_, (stride_type)(nbasis_ * n_alpha_) };
-                        varray_view<double> t_Ta(len_Ta, Ta_buf.data(), str_Ta);
-
-                        tblis::mult<double>(1.0, t_L, "mnP", t_Ca, "ni", 0.0, t_Ta, "miP");
-                        
-                        std::vector<len_type> len_Ka = { (len_type)nbasis_, (len_type)nbasis_ };
-                        std::vector<stride_type> str_Ka = { 1, (stride_type)nbasis_ };
-                        varray_view<double> t_Ka(len_Ka, dKa_acc.data(), str_Ka);
-                        tblis::mult<double>(1.0, t_Ta, "miP", t_Ta, "niP", 1.0, t_Ka, "mn");
-                    }
-
-                    if (n_beta_ > 0) {
-                        Eigen::MatrixXd Cb_occ = C_beta_.leftCols(n_beta_);
-                        std::vector<len_type> len_Cb = { (len_type)nbasis_, (len_type)n_beta_ };
-                        std::vector<stride_type> str_Cb = { 1, (stride_type)nbasis_ };
-                        varray_view<double> t_Cb(len_Cb, Cb_occ.data(), str_Cb);
-
-                        std::vector<double> Tb_buf(nbasis_ * n_beta_ * k_size, 0.0);
-                        std::vector<len_type> len_Tb = { (len_type)nbasis_, (len_type)n_beta_, (len_type)k_size };
-                        std::vector<stride_type> str_Tb = { 1, (stride_type)nbasis_, (stride_type)(nbasis_ * n_beta_) };
-                        varray_view<double> t_Tb(len_Tb, Tb_buf.data(), str_Tb);
-
-                        tblis::mult<double>(1.0, t_L, "mnP", t_Cb, "ni", 0.0, t_Tb, "miP");
-                        
-                        std::vector<len_type> len_Kb = { (len_type)nbasis_, (len_type)nbasis_ };
-                        std::vector<stride_type> str_Kb = { 1, (stride_type)nbasis_ };
-                        varray_view<double> t_Kb(len_Kb, dKb_acc.data(), str_Kb);
-                        tblis::mult<double>(1.0, t_Tb, "miP", t_Tb, "niP", 1.0, t_Kb, "mn");
-                    }
-                } else {
-                    // TBLIS BLAS-3 AO Fallback untuk OMP2 (Alpha & Beta)
-                    using tblis::len_type; using tblis::stride_type; using tblis::varray_view;
-                    std::vector<len_type> len_L = { (len_type)nbasis_, (len_type)nbasis_, (len_type)k_size };
-                    std::vector<stride_type> str_L = { 1, (stride_type)nbasis_, (stride_type)(nbasis_ * nbasis_) };
-                    varray_view<double> t_L(len_L, is_ooc ? L_chunk.data() : const_cast<double*>(L_mat_.col(K_start).data()), str_L);
-
-                    varray_view<double> t_Pa({(len_type)nbasis_, (len_type)nbasis_}, const_cast<double*>(dPa.data()), {1, (stride_type)nbasis_});
-                    varray_view<double> t_Pb({(len_type)nbasis_, (len_type)nbasis_}, const_cast<double*>(dPb.data()), {1, (stride_type)nbasis_});
-
-                    std::vector<double> Ta_buf(nbasis_ * nbasis_ * k_size, 0.0);
-                    std::vector<double> Tb_buf(nbasis_ * nbasis_ * k_size, 0.0);
-                    varray_view<double> t_Ta({(len_type)nbasis_, (len_type)nbasis_, (len_type)k_size}, Ta_buf.data(), {1, (stride_type)nbasis_, (stride_type)(nbasis_ * nbasis_)});
-                    varray_view<double> t_Tb({(len_type)nbasis_, (len_type)nbasis_, (len_type)k_size}, Tb_buf.data(), {1, (stride_type)nbasis_, (stride_type)(nbasis_ * nbasis_)});
-
-                    tblis::mult<double>(1.0, t_L, "mnP", t_Pa, "ns", 0.0, t_Ta, "msP");
-                    tblis::mult<double>(1.0, t_L, "mnP", t_Pb, "ns", 0.0, t_Tb, "msP");
-
-                    varray_view<double> t_Ka({(len_type)nbasis_, (len_type)nbasis_}, dKa_acc.data(), {1, (stride_type)nbasis_});
-                    varray_view<double> t_Kb({(len_type)nbasis_, (len_type)nbasis_}, dKb_acc.data(), {1, (stride_type)nbasis_});
-
-                    tblis::mult<double>(1.0, t_Ta, "msP", t_L, "nsP", 1.0, t_Ka, "mn");
-                    tblis::mult<double>(1.0, t_Tb, "msP", t_L, "nsP", 1.0, t_Kb, "mn");
-                }
-            } 
-            
-            if (use_mo_alg) {
-                G_J_accum_a_ += dJ_mat; G_J_accum_b_ += dJ_mat;
-                F_alpha_ = H_ + G_J_accum_a_ - dKa_acc; F_beta_  = H_ + G_J_accum_b_ - dKb_acc;
-            } else {
-                G_J_accum_a_ += dJ_mat; G_J_accum_b_ += dJ_mat; 
-                G_accum_a_ += (dJ_mat - dKa_acc); G_accum_b_ += (dJ_mat - dKb_acc);
-                F_alpha_ = H_ + G_accum_a_; F_beta_  = H_ + G_accum_b_;
-            }
+            compute_exchange_cholesky_dual(L_ptr, nbasis_, n_chol, Ca_fac, Cb_fac, Ka_acc, Kb_acc);
         }
+
+        G_accum_a_ = 0.5 * ((J_mat - Ka_acc) + (J_mat - Ka_acc).transpose());
+        G_accum_b_ = 0.5 * ((J_mat - Kb_acc) + (J_mat - Kb_acc).transpose());
+        F_alpha_ = H_ + G_accum_a_;
+        F_beta_  = H_ + G_accum_b_;
+        P_alpha_old_ = P_alpha_;
+        P_beta_old_  = P_beta_;
     } else if (config_.scf_type == "incore") {
-        Eigen::MatrixXd dPa, dPb;
-        if (iter_scf_ == 1) {
-            dPa = P_alpha_;
-            dPb = P_beta_;
-        } else {
-            dPa = (P_alpha_ - P_alpha_old_).eval();
-            dPb = (P_beta_ - P_beta_old_).eval();
-        }
-        double max_dP = std::max(dPa.cwiseAbs().maxCoeff(), dPb.cwiseAbs().maxCoeff()); 
+        Eigen::MatrixXd P_tot = P_alpha_ + P_beta_;
+        Eigen::MatrixXd Pa_k = (iter_scf_ == 1 && C_alpha_.rows() == nbasis_ && n_alpha_ > 0)
+            ? (C_alpha_.leftCols(n_alpha_) * C_alpha_.leftCols(n_alpha_).transpose()).eval()
+            : P_alpha_;
+        Eigen::MatrixXd Pb_k = (iter_scf_ == 1 && C_beta_.rows() == nbasis_ && n_beta_ > 0)
+            ? (C_beta_.leftCols(n_beta_) * C_beta_.leftCols(n_beta_).transpose()).eval()
+            : P_beta_;
 
-        if (max_dP < 1e-12) {
+        Eigen::MatrixXd dP_tot, dPa, dPb;
+        if (iter_scf_ == 1) {
+            dP_tot = P_tot;
+            dPa    = Pa_k;
+            dPb    = Pb_k;
+        } else {
+            dP_tot = (P_tot - G_J_accum_a_).eval();
+            dPa    = (Pa_k - P_alpha_old_).eval();
+            dPb    = (Pb_k - P_beta_old_).eval();
+        }
+        double max_dP = std::max({dP_tot.cwiseAbs().maxCoeff(), dPa.cwiseAbs().maxCoeff(), dPb.cwiseAbs().maxCoeff()});
+
+        if (iter_scf_ > 1 && max_dP < 1e-12) {
             F_alpha_ = H_ + G_accum_a_;
             F_beta_  = H_ + G_accum_b_;
         } else {
+            int nshells = basis_.n_shells();
+            Eigen::MatrixXd P_max = compute_shell_pmax(nshells, shell_starts_, shell_sizes_, dPa, &dPb);
+
             Eigen::MatrixXd dGa = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
             Eigen::MatrixXd dGb = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
 
@@ -701,11 +999,16 @@ void UHF::build_fock_matrix() {
             {
                 Eigen::MatrixXd Ga_local = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
                 Eigen::MatrixXd Gb_local = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-                
-                #pragma omp for schedule(static)
+
+                #pragma omp for schedule(dynamic, 32) nowait
                 for (size_t i = 0; i < incore_quartets_.size(); ++i) {
                     const auto& cq = incore_quartets_[i];
                     int M = cq.M; int N = cq.N; int P = cq.P; int Q = cq.Q;
+
+                    double bound = schwarz_(M, N) * schwarz_(P, Q);
+                    double local_P_max = std::max({P_max(M, N), P_max(P, Q), P_max(M, P), P_max(M, Q), P_max(N, P), P_max(N, Q)});
+                    if (bound * local_P_max < 1e-14) continue;
+
                     double fac = cq.weight;
                     if (M == N) fac *= 0.5;
                     if (P == Q) fac *= 0.5;
@@ -720,110 +1023,121 @@ void UHF::build_fock_matrix() {
 
                     for (int q = 0; q < dimQ; ++q) {
                         int sig = offQ + q;
+                        const double* dPa_sig = dPa.col(sig).data();
+                        const double* dPb_sig = dPb.col(sig).data();
+
                         for (int p = 0; p < dimP; ++p) {
                             int lam = offP + p;
+                            const double* dPa_lam = dPa.col(lam).data();
+                            const double* dPb_lam = dPb.col(lam).data();
+                            double pt_ls_2 = dP_tot(lam, sig) * 2.0;
+                            double j_ls_accum = 0.0;
+
                             for (int n = 0; n < dimN; ++n) {
                                 int nu = offN + n;
+                                const double* dP_tot_nu = dP_tot.col(nu).data();
+                                double dPa_ns = dPa_sig[nu];
+                                double dPa_nl = dPa_lam[nu];
+                                double dPb_ns = dPb_sig[nu];
+                                double dPb_nl = dPb_lam[nu];
+
+                                double ka_nl_acc = 0.0, ka_ns_acc = 0.0;
+                                double kb_nl_acc = 0.0, kb_ns_acc = 0.0;
+
                                 for (int m = 0; m < dimM; ++m) {
                                     int mu = offM + m;
                                     double val = *I_ptr++;
-                                    if (std::abs(val) < 1e-12) continue;
+                                    if (std::abs(val) < 1e-14) continue;
 
                                     double v = val * fac;
-                                    double pt_ls = dPa(lam, sig) + dPb(lam, sig);
-                                    double pt_mn = dPa(mu, nu) + dPb(mu, nu);
-                                    double v2 = v * 2.0;
+                                    double j_val = v * pt_ls_2;
+                                    j_ls_accum += v * dP_tot_nu[mu];
 
-                                    Ga_local(mu, nu) += v2 * pt_ls; Gb_local(mu, nu) += v2 * pt_ls;
-                                    Ga_local(nu, mu) += v2 * pt_ls; Gb_local(nu, mu) += v2 * pt_ls;
-                                    Ga_local(lam, sig) += v2 * pt_mn; Gb_local(lam, sig) += v2 * pt_mn;
-                                    Ga_local(sig, lam) += v2 * pt_mn; Gb_local(sig, lam) += v2 * pt_mn;
+                                    Ga_local(mu, nu)  += j_val;
+                                    Gb_local(mu, nu)  += j_val;
+                                    Ga_local(mu, lam) -= v * dPa_ns;
+                                    Ga_local(mu, sig) -= v * dPa_nl;
+                                    Gb_local(mu, lam) -= v * dPb_ns;
+                                    Gb_local(mu, sig) -= v * dPb_nl;
 
-                                    Ga_local(mu, lam) -= v * dPa(nu, sig); Ga_local(lam, mu) -= v * dPa(sig, nu);
-                                    Ga_local(nu, lam) -= v * dPa(mu, sig); Ga_local(lam, nu) -= v * dPa(sig, mu);
-                                    Ga_local(mu, sig) -= v * dPa(nu, lam); Ga_local(sig, mu) -= v * dPa(lam, nu);
-                                    Ga_local(nu, sig) -= v * dPa(mu, lam); Ga_local(sig, nu) -= v * dPa(lam, mu);
-
-                                    Gb_local(mu, lam) -= v * dPb(nu, sig); Gb_local(lam, mu) -= v * dPb(sig, nu);
-                                    Gb_local(nu, lam) -= v * dPb(mu, sig); Gb_local(lam, nu) -= v * dPb(sig, mu);
-                                    Gb_local(mu, sig) -= v * dPb(nu, lam); Gb_local(sig, mu) -= v * dPb(lam, nu);
-                                    Gb_local(nu, sig) -= v * dPb(mu, lam); Gb_local(sig, nu) -= v * dPb(lam, mu);
+                                    ka_nl_acc += v * dPa_sig[mu];
+                                    ka_ns_acc += v * dPa_lam[mu];
+                                    kb_nl_acc += v * dPb_sig[mu];
+                                    kb_ns_acc += v * dPb_lam[mu];
                                 }
+
+                                Ga_local(nu, lam) -= ka_nl_acc;
+                                Ga_local(nu, sig) -= ka_ns_acc;
+                                Gb_local(nu, lam) -= kb_nl_acc;
+                                Gb_local(nu, sig) -= kb_ns_acc;
                             }
+                            Ga_local(lam, sig) += 2.0 * j_ls_accum;
+                            Gb_local(lam, sig) += 2.0 * j_ls_accum;
                         }
                     }
                 }
                 #pragma omp critical
-                { dGa += Ga_local; dGb += Gb_local; }
+                {
+                    dGa.noalias() += Ga_local;
+                    dGb.noalias() += Gb_local;
+                }
             }
-            
-            dGa = 0.5 * (dGa + dGa.transpose());
-            dGb = 0.5 * (dGb + dGb.transpose());
-            
+
+            dGa = (dGa + dGa.transpose()).eval();
+            dGb = (dGb + dGb.transpose()).eval();
+
             G_accum_a_ += dGa;
             G_accum_b_ += dGb;
-            F_alpha_ = H_ + G_accum_a_; 
+            F_alpha_ = H_ + G_accum_a_;
             F_beta_  = H_ + G_accum_b_;
+            G_J_accum_a_ = P_tot;
+            P_alpha_old_ = Pa_k;
+            P_beta_old_  = Pb_k;
         }
     } else {
-        fock_engine_->compute(P_alpha_, P_beta_, F_alpha_, F_beta_); 
+        fock_engine_->compute(P_alpha_, P_beta_, F_alpha_, F_beta_);
+        P_alpha_old_ = P_alpha_;
+        P_beta_old_  = P_beta_;
     }
-    P_alpha_old_ = P_alpha_; P_beta_old_  = P_beta_; 
 }
 
 double RHF::compute_energy() { return P_alpha_.cwiseProduct(H_ + F_alpha_).sum(); }
 
-
-
-
 UHF::UHF(const Molecule& mol, const BasisSet& basis, std::shared_ptr<IntegralEngine> integrals, std::shared_ptr<PointGroup> pg, std::shared_ptr<PetiteList> pl, int n_alpha, int n_beta, const SCFConfig& config)
     : BaseSCF(mol, basis, integrals, pg, pl, n_alpha, n_beta, config) {
     if (n_alpha < n_beta) throw std::runtime_error("UHF Error: High spin assumption violated.");
-    
-    G_accum_a_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_); 
+
+    G_accum_a_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
     G_accum_b_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-    
-    
     G_J_accum_a_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
     G_J_accum_b_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-    
-    
-    P_alpha_old_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_); 
+    P_alpha_old_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
     P_beta_old_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
 }
 
 void UHF::initial_guess() {
-    if (config_.print_level > 0) std::cout << "  [UHF] Generating Initial Guess... ";
+    if (config_.print_level > 0) std::cout << "  [UHF] Generating Initial Guess (SAD)...\n";
     Eigen::MatrixXd P_sad = SADGuess::build(mol_, basis_);
-    if (P_sad.rows() > 0 && P_sad.norm() > 1e-6) {
-        P_alpha_ = 0.5 * P_sad; 
-        P_beta_  = 0.5 * P_sad; 
-        if (n_alpha_ != n_beta_) {
-            for (int i=0; i<nbasis_; ++i) if (i % 2 == 0) P_alpha_(i,i) *= 1.1; 
-        }
-        
-        
+    P_alpha_ = 0.5 * P_sad;
+    P_beta_  = 0.5 * P_sad;
+
+    if (mol_.n_atoms() == 1) {
         solve_fock(H_, C_alpha_, eps_alpha_);
-        solve_fock(H_, C_beta_, eps_beta_); 
+        solve_fock(H_, C_beta_, eps_beta_);
         occ_numbers_alpha_ = smear_electrons(eps_alpha_, n_alpha_);
         occ_numbers_beta_  = smear_electrons(eps_beta_, n_beta_);
-        
-        energy_ = 0.0; return; 
+    } else {
+        C_alpha_.resize(0, 0);
+        C_beta_.resize(0, 0);
     }
-    if (config_.print_level > 0) std::cout << "Using GWH.\n";
-    Eigen::MatrixXd F_gwh = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-    for (int i = 0; i < nbasis_; ++i) for (int j = 0; j < nbasis_; ++j) F_gwh(i, j) = (i == j) ? H_(i, j) : 0.5 * 1.75 * S_(i, j) * (H_(i, i) + H_(j, j));
-    solve_fock(F_gwh, C_alpha_, eps_alpha_); C_beta_ = C_alpha_; eps_beta_ = eps_alpha_;
-    occ_numbers_alpha_ = smear_electrons(eps_alpha_, n_alpha_); occ_numbers_beta_  = smear_electrons(eps_beta_, n_beta_); update_densities(); energy_ = 0.0;
+
+    energy_ = 0.0;
 }
 
 void UHF::update_densities() {
-    
-    
-    P_alpha_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_); 
+    P_alpha_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
     P_beta_  = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
 
-    
     if (n_alpha_ > 0) {
         P_alpha_.noalias() = C_alpha_.leftCols(n_alpha_) * C_alpha_.leftCols(n_alpha_).transpose();
     }
@@ -832,203 +1146,128 @@ void UHF::update_densities() {
     }
 }
 
-
 double UHF::compute_energy() { return 0.5 * (P_alpha_.cwiseProduct(H_ + F_alpha_).sum() + P_beta_.cwiseProduct(H_ + F_beta_).sum()); }
 
 double UHF::compute_s2(const Eigen::MatrixXd& Ca, const Eigen::MatrixXd& Cb, const Eigen::MatrixXd& S) {
     double sz = 0.5 * (n_alpha_ - n_beta_);
-    if(n_alpha_ == 0 || n_beta_ == 0) return sz * (sz + 1.0);
+    if (n_alpha_ == 0 || n_beta_ == 0) return sz * (sz + 1.0);
     return sz * (sz + 1.0) + n_beta_ - (Ca.leftCols(n_alpha_).transpose() * S * Cb.leftCols(n_beta_)).array().square().sum();
 }
-
-
-
 
 ROHF::ROHF(const Molecule& mol, const BasisSet& basis, std::shared_ptr<IntegralEngine> integrals, std::shared_ptr<PointGroup> pg, std::shared_ptr<PetiteList> pl, int n_alpha, int n_beta, const SCFConfig& config)
     : BaseSCF(mol, basis, integrals, pg, pl, n_alpha, n_beta, config) {
     if (n_alpha < n_beta) throw std::runtime_error("ROHF Error: Alpha must be >= Beta.");
-    G_accum_a_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_); 
-    G_accum_b_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_); 
-    P_alpha_old_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_); 
+    G_accum_a_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+    G_accum_b_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+    P_alpha_old_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
     P_beta_old_  = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
     G_J_accum_a_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
     G_J_accum_b_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
 }
 
 void ROHF::initial_guess() {
-    if (config_.print_level > 0) std::cout << "  [ROHF] Generating Initial Guess... ";
+    if (config_.print_level > 0) std::cout << "  [ROHF] Generating Initial Guess (SAD)...\n";
     Eigen::MatrixXd P_sad = SADGuess::build(mol_, basis_);
-    if (P_sad.rows() > 0 && P_sad.norm() > 1e-6) {
-        if (config_.print_level > 0) std::cout << "Using SAD.\n";
-        P_alpha_ = 0.5 * P_sad; 
-        P_beta_  = 0.5 * P_sad; 
-        
-        solve_fock(H_, C_alpha_, eps_alpha_);
-        C_beta_ = C_alpha_; 
-        eps_beta_ = eps_alpha_;
-        occ_numbers_alpha_ = smear_electrons(eps_alpha_, n_alpha_); 
-        occ_numbers_beta_  = smear_electrons(eps_beta_, n_beta_);
-        energy_ = 0.0; return; 
-    }
-    Eigen::MatrixXd F_gwh = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-    for (int i = 0; i < nbasis_; ++i) for (int j = 0; j < nbasis_; ++j) F_gwh(i, j) = (i == j) ? H_(i, j) : 0.5 * 1.75 * S_(i, j) * (H_(i, i) + H_(j, j));
-    solve_fock(F_gwh, C_alpha_, eps_alpha_); C_beta_ = C_alpha_; eps_beta_ = eps_alpha_;
-    occ_numbers_alpha_ = smear_electrons(eps_alpha_, n_alpha_); occ_numbers_beta_  = smear_electrons(eps_beta_, n_beta_); update_densities(); energy_ = 0.0;
+    double n_tot = static_cast<double>(n_alpha_ + n_beta_);
+    double frac_a = (n_tot > 0.0) ? (static_cast<double>(n_alpha_) / n_tot) : 0.5;
+    double frac_b = (n_tot > 0.0) ? (static_cast<double>(n_beta_)  / n_tot) : 0.5;
+    P_alpha_ = frac_a * P_sad;
+    P_beta_  = frac_b * P_sad;
+    C_alpha_.resize(0, 0);
+    C_beta_.resize(0, 0);
+    energy_ = 0.0;
 }
 
 void ROHF::update_densities() {
-    P_alpha_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_); P_beta_  = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+    P_alpha_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+    P_beta_  = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
     if (occ_numbers_alpha_.size() == nbasis_) {
         for (int i = 0; i < nbasis_; ++i) {
             if (occ_numbers_alpha_(i) > 1e-12) P_alpha_ += occ_numbers_alpha_(i) * C_alpha_.col(i) * C_alpha_.col(i).transpose();
             if (occ_numbers_beta_(i) > 1e-12)  P_beta_  += occ_numbers_beta_(i) * C_alpha_.col(i) * C_alpha_.col(i).transpose();
         }
     } else {
-        if (n_alpha_ > 0) P_alpha_ = C_alpha_.leftCols(n_alpha_) * C_alpha_.leftCols(n_alpha_).transpose();
-        if (n_beta_ > 0)  P_beta_  = C_alpha_.leftCols(n_beta_) * C_alpha_.leftCols(n_beta_).transpose();
+        if (n_alpha_ > 0) P_alpha_.noalias() = C_alpha_.leftCols(n_alpha_) * C_alpha_.leftCols(n_alpha_).transpose();
+        if (n_beta_ > 0)  P_beta_.noalias()  = C_alpha_.leftCols(n_beta_) * C_alpha_.leftCols(n_beta_).transpose();
     }
 }
 
-
-
-void ROHF::build_fock_matrix() { 
+void ROHF::build_fock_matrix() {
+    if (iter_scf_ == 1) {
+        G_accum_a_.setZero();
+        G_accum_b_.setZero();
+        G_J_accum_a_.setZero();
+        G_J_accum_b_.setZero();
+    }
     if (config_.eri_method == "cholesky" || config_.use_df) {
         Eigen::MatrixXd dPa = (iter_scf_ == 1) ? P_alpha_ : (P_alpha_ - P_alpha_old_);
         Eigen::MatrixXd dPb = (iter_scf_ == 1) ? P_beta_  : (P_beta_ - P_beta_old_);
         Eigen::MatrixXd dP_tot = dPa + dPb;
 
-        if (dP_tot.cwiseAbs().maxCoeff() < 1e-11) {
-            if (C_alpha_.rows() != nbasis_) { F_alpha_ = H_ + G_accum_a_; F_beta_  = H_ + G_accum_b_; }
-        } else {
-            bool use_mo_alg = (C_alpha_.rows() == nbasis_);
-            Eigen::MatrixXd dJ_mat = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-            Eigen::MatrixXd dKa_acc = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-            Eigen::MatrixXd dKb_acc = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-            
-            int n_chol = L_mat_.cols();
-            bool is_ooc = (L_mat_.rows() == 0 && n_chol > 0);
-            std::unique_ptr<utils::HDF5TensorIO> io = nullptr;
-            if (is_ooc) io = std::make_unique<utils::HDF5TensorIO>("df_tensor.h5", utils::HDF5TensorIO::Mode::READ_ONLY);
-            int chunk_size = is_ooc ? 128 : n_chol;
-            
-            // [FAST BLAS RE-USE VECTOR] Memetakan densitas menjadi vektor 1D
-            Eigen::Map<const Eigen::VectorXd> dP_tot_flat(dP_tot.data(), nbasis_ * nbasis_);
-
-            // Jika In-Core, jalankan operasi BLAS sekaligus untuk efisiensi L3 Cache maksimum
-            if (!is_ooc) {
-                Eigen::VectorXd X_J = L_mat_.transpose() * dP_tot_flat; 
-                Eigen::VectorXd J_flat = L_mat_ * X_J;                 
-                dJ_mat = Eigen::Map<Eigen::MatrixXd>(J_flat.data(), nbasis_, nbasis_);
-            }
-            
-            for (int K_start = 0; K_start < n_chol; K_start += chunk_size) {
-                int K_end = std::min(n_chol, K_start + chunk_size);
-                int k_size = K_end - K_start;
-                
-                Eigen::MatrixXd L_chunk;
-                if (is_ooc) {
-                    L_chunk.resize(nbasis_ * nbasis_, k_size);
-                    io->read_slice_4d("df_tensor", {K_start, 0, 0, 0}, {k_size, (long)nbasis_, (long)nbasis_, 1}, L_chunk.data());
-                    
-                    // Operasi BLAS secara chunking untuk Out-Of-Core, memanfaatkan bandwidth lokal
-                    Eigen::VectorXd X_J_chunk = L_chunk.transpose() * dP_tot_flat;
-                    Eigen::VectorXd J_flat_chunk = L_chunk * X_J_chunk;
-                    dJ_mat += Eigen::Map<Eigen::MatrixXd>(J_flat_chunk.data(), nbasis_, nbasis_);
-                }
-
-                if (use_mo_alg) {
-                    using tblis::len_type; using tblis::stride_type; using tblis::varray_view;
-                    std::vector<len_type> len_L = { (len_type)nbasis_, (len_type)nbasis_, (len_type)k_size };
-                    std::vector<stride_type> str_L = { 1, (stride_type)nbasis_, (stride_type)(nbasis_ * nbasis_) };
-                    varray_view<double> t_L(len_L, is_ooc ? L_chunk.data() : const_cast<double*>(L_mat_.col(K_start).data()), str_L);
-
-                    if (n_alpha_ > 0) {
-                        Eigen::MatrixXd Ca_occ = C_alpha_.leftCols(n_alpha_);
-                        std::vector<len_type> len_Ca = { (len_type)nbasis_, (len_type)n_alpha_ };
-                        std::vector<stride_type> str_Ca = { 1, (stride_type)nbasis_ };
-                        varray_view<double> t_Ca(len_Ca, Ca_occ.data(), str_Ca);
-
-                        std::vector<double> Ta_buf(nbasis_ * n_alpha_ * k_size, 0.0);
-                        std::vector<len_type> len_Ta = { (len_type)nbasis_, (len_type)n_alpha_, (len_type)k_size };
-                        std::vector<stride_type> str_Ta = { 1, (stride_type)nbasis_, (stride_type)(nbasis_ * n_alpha_) };
-                        varray_view<double> t_Ta(len_Ta, Ta_buf.data(), str_Ta);
-
-                        tblis::mult<double>(1.0, t_L, "mnP", t_Ca, "ni", 0.0, t_Ta, "miP");
-                        
-                        std::vector<len_type> len_Ka = { (len_type)nbasis_, (len_type)nbasis_ };
-                        std::vector<stride_type> str_Ka = { 1, (stride_type)nbasis_ };
-                        varray_view<double> t_Ka(len_Ka, dKa_acc.data(), str_Ka);
-                        tblis::mult<double>(1.0, t_Ta, "miP", t_Ta, "niP", 1.0, t_Ka, "mn");
-                    }
-
-                    if (n_beta_ > 0) {
-                        Eigen::MatrixXd Cb_occ = C_alpha_.leftCols(n_beta_); 
-                        std::vector<len_type> len_Cb = { (len_type)nbasis_, (len_type)n_beta_ };
-                        std::vector<stride_type> str_Cb = { 1, (stride_type)nbasis_ };
-                        varray_view<double> t_Cb(len_Cb, Cb_occ.data(), str_Cb);
-
-                        std::vector<double> Tb_buf(nbasis_ * n_beta_ * k_size, 0.0);
-                        std::vector<len_type> len_Tb = { (len_type)nbasis_, (len_type)n_beta_, (len_type)k_size };
-                        std::vector<stride_type> str_Tb = { 1, (stride_type)nbasis_, (stride_type)(nbasis_ * n_beta_) };
-                        varray_view<double> t_Tb(len_Tb, Tb_buf.data(), str_Tb);
-
-                        tblis::mult<double>(1.0, t_L, "mnP", t_Cb, "ni", 0.0, t_Tb, "miP");
-                        
-                        std::vector<len_type> len_Kb = { (len_type)nbasis_, (len_type)nbasis_ };
-                        std::vector<stride_type> str_Kb = { 1, (stride_type)nbasis_ };
-                        varray_view<double> t_Kb(len_Kb, dKb_acc.data(), str_Kb);
-                        tblis::mult<double>(1.0, t_Tb, "miP", t_Tb, "niP", 1.0, t_Kb, "mn");
-                    }
-                } else {
-                    // TBLIS BLAS-3 AO Fallback untuk OMP2 (Alpha & Beta)
-                    using tblis::len_type; using tblis::stride_type; using tblis::varray_view;
-                    std::vector<len_type> len_L = { (len_type)nbasis_, (len_type)nbasis_, (len_type)k_size };
-                    std::vector<stride_type> str_L = { 1, (stride_type)nbasis_, (stride_type)(nbasis_ * nbasis_) };
-                    varray_view<double> t_L(len_L, is_ooc ? L_chunk.data() : const_cast<double*>(L_mat_.col(K_start).data()), str_L);
-
-                    varray_view<double> t_Pa({(len_type)nbasis_, (len_type)nbasis_}, const_cast<double*>(dPa.data()), {1, (stride_type)nbasis_});
-                    varray_view<double> t_Pb({(len_type)nbasis_, (len_type)nbasis_}, const_cast<double*>(dPb.data()), {1, (stride_type)nbasis_});
-
-                    std::vector<double> Ta_buf(nbasis_ * nbasis_ * k_size, 0.0);
-                    std::vector<double> Tb_buf(nbasis_ * nbasis_ * k_size, 0.0);
-                    varray_view<double> t_Ta({(len_type)nbasis_, (len_type)nbasis_, (len_type)k_size}, Ta_buf.data(), {1, (stride_type)nbasis_, (stride_type)(nbasis_ * nbasis_)});
-                    varray_view<double> t_Tb({(len_type)nbasis_, (len_type)nbasis_, (len_type)k_size}, Tb_buf.data(), {1, (stride_type)nbasis_, (stride_type)(nbasis_ * nbasis_)});
-
-                    tblis::mult<double>(1.0, t_L, "mnP", t_Pa, "ns", 0.0, t_Ta, "msP");
-                    tblis::mult<double>(1.0, t_L, "mnP", t_Pb, "ns", 0.0, t_Tb, "msP");
-
-                    varray_view<double> t_Ka({(len_type)nbasis_, (len_type)nbasis_}, dKa_acc.data(), {1, (stride_type)nbasis_});
-                    varray_view<double> t_Kb({(len_type)nbasis_, (len_type)nbasis_}, dKb_acc.data(), {1, (stride_type)nbasis_});
-
-                    tblis::mult<double>(1.0, t_Ta, "msP", t_L, "nsP", 1.0, t_Ka, "mn");
-                    tblis::mult<double>(1.0, t_Tb, "msP", t_L, "nsP", 1.0, t_Kb, "mn");
-                }
-            } 
-            
-            if (use_mo_alg) {
-                G_J_accum_a_ += dJ_mat; G_J_accum_b_ += dJ_mat;
-                F_alpha_ = H_ + G_J_accum_a_ - dKa_acc; F_beta_  = H_ + G_J_accum_b_ - dKb_acc;
-            } else {
-                G_J_accum_a_ += dJ_mat; G_J_accum_b_ += dJ_mat; 
-                G_accum_a_ += (dJ_mat - dKa_acc); G_accum_b_ += (dJ_mat - dKb_acc);
-                F_alpha_ = H_ + G_accum_a_; F_beta_  = H_ + G_accum_b_;
-            }
+        if (iter_scf_ > 1 && dP_tot.cwiseAbs().maxCoeff() < 1e-12) {
+            F_alpha_ = H_ + G_accum_a_;
+            F_beta_  = H_ + G_accum_b_;
+            return;
         }
+
+        Eigen::MatrixXd P_tot = P_alpha_ + P_beta_;
+        bool use_mo_alg = (C_alpha_.rows() == nbasis_) && (occ_numbers_alpha_.size() == 0);
+        Eigen::MatrixXd Ca_factor = use_mo_alg ? C_alpha_.leftCols(n_alpha_) : factorize_psd_density(P_alpha_);
+        Eigen::MatrixXd Cb_factor = use_mo_alg ? C_alpha_.leftCols(n_beta_)  : factorize_psd_density(P_beta_);
+
+        Eigen::MatrixXd J_mat  = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+        Eigen::MatrixXd Ka_acc = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+        Eigen::MatrixXd Kb_acc = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
+
+        int n_chol = L_mat_.cols();
+        bool is_ooc = (L_mat_.rows() == 0 && n_chol > 0);
+        std::unique_ptr<utils::HDF5TensorIO> io = nullptr;
+        if (is_ooc) io = std::make_unique<utils::HDF5TensorIO>("df_tensor.h5", utils::HDF5TensorIO::Mode::READ_ONLY);
+        int chunk_size = is_ooc ? 128 : n_chol;
+
+        Eigen::Map<const Eigen::VectorXd> P_tot_flat(P_tot.data(), nbasis_ * nbasis_);
+
+        if (!is_ooc) {
+            Eigen::VectorXd X_J = L_mat_.transpose() * P_tot_flat;
+            Eigen::VectorXd J_flat = L_mat_ * X_J;
+            J_mat = Eigen::Map<Eigen::MatrixXd>(J_flat.data(), nbasis_, nbasis_);
+        }
+
+        for (int K_start = 0; K_start < n_chol; K_start += chunk_size) {
+            int K_end = std::min(n_chol, K_start + chunk_size);
+            int k_size = K_end - K_start;
+
+            Eigen::MatrixXd L_chunk;
+            if (is_ooc) {
+                L_chunk.resize(nbasis_ * nbasis_, k_size);
+                io->read_slice_4d("df_tensor", {K_start, 0, 0, 0}, {k_size, (long)nbasis_, (long)nbasis_, 1}, L_chunk.data());
+
+                Eigen::VectorXd X_J_chunk = L_chunk.transpose() * P_tot_flat;
+                Eigen::VectorXd J_flat_chunk = L_chunk * X_J_chunk;
+                J_mat += Eigen::Map<Eigen::MatrixXd>(J_flat_chunk.data(), nbasis_, nbasis_);
+            }
+
+            const double* L_ptr = is_ooc ? L_chunk.data() : L_mat_.col(K_start).data();
+            compute_exchange_cholesky_dual(L_ptr, nbasis_, k_size, Ca_factor, Cb_factor, Ka_acc, Kb_acc);
+        }
+
+        G_accum_a_ = 0.5 * ((J_mat - Ka_acc) + (J_mat - Ka_acc).transpose());
+        G_accum_b_ = 0.5 * ((J_mat - Kb_acc) + (J_mat - Kb_acc).transpose());
+        F_alpha_ = H_ + G_accum_a_;
+        F_beta_  = H_ + G_accum_b_;
     } else if (config_.scf_type == "incore") {
-        Eigen::MatrixXd dPa, dPb;
-        if (iter_scf_ == 1) {
-            dPa = P_alpha_;
-            dPb = P_beta_;
-        } else {
-            dPa = (P_alpha_ - P_alpha_old_).eval();
-            dPb = (P_beta_ - P_beta_old_).eval();
-        }
-        double max_dP = std::max(dPa.cwiseAbs().maxCoeff(), dPb.cwiseAbs().maxCoeff()); 
+        Eigen::MatrixXd dPa = (iter_scf_ == 1) ? P_alpha_ : (P_alpha_ - P_alpha_old_).eval();
+        Eigen::MatrixXd dPb = (iter_scf_ == 1) ? P_beta_  : (P_beta_  - P_beta_old_).eval();
+        Eigen::MatrixXd dP_tot = dPa + dPb;
+        double max_dP = std::max(dPa.cwiseAbs().maxCoeff(), dPb.cwiseAbs().maxCoeff());
 
-        if (max_dP < 1e-12) {
+        if (iter_scf_ > 1 && max_dP < 1e-12) {
             F_alpha_ = H_ + G_accum_a_;
             F_beta_  = H_ + G_accum_b_;
         } else {
+            int nshells = basis_.n_shells();
+            Eigen::MatrixXd P_max = compute_shell_pmax(nshells, shell_starts_, shell_sizes_, dPa, &dPb);
+
             Eigen::MatrixXd dGa = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
             Eigen::MatrixXd dGb = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
 
@@ -1036,11 +1275,16 @@ void ROHF::build_fock_matrix() {
             {
                 Eigen::MatrixXd Ga_local = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
                 Eigen::MatrixXd Gb_local = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-                
-                #pragma omp for schedule(static)
+
+                #pragma omp for schedule(static) nowait
                 for (size_t i = 0; i < incore_quartets_.size(); ++i) {
                     const auto& cq = incore_quartets_[i];
                     int M = cq.M; int N = cq.N; int P = cq.P; int Q = cq.Q;
+
+                    double bound = schwarz_(M, N) * schwarz_(P, Q);
+                    double local_P_max = std::max({P_max(M, N), P_max(P, Q), P_max(M, P), P_max(M, Q), P_max(N, P), P_max(N, Q)});
+                    if (bound * local_P_max < 1e-14) continue;
+
                     double fac = cq.weight;
                     if (M == N) fac *= 0.5;
                     if (P == Q) fac *= 0.5;
@@ -1057,95 +1301,145 @@ void ROHF::build_fock_matrix() {
                         int sig = offQ + q;
                         for (int p = 0; p < dimP; ++p) {
                             int lam = offP + p;
+                            double pt_ls_2 = dP_tot(lam, sig) * 2.0;
+                            double j_ls_accum = 0.0;
+
                             for (int n = 0; n < dimN; ++n) {
                                 int nu = offN + n;
+                                double dPa_ns = dPa(nu, sig);
+                                double dPa_nl = dPa(nu, lam);
+                                double dPb_ns = dPb(nu, sig);
+                                double dPb_nl = dPb(nu, lam);
+
                                 for (int m = 0; m < dimM; ++m) {
                                     int mu = offM + m;
                                     double val = *I_ptr++;
-                                    if (std::abs(val) < 1e-12) continue;
+                                    if (std::abs(val) < 1e-14) continue;
 
                                     double v = val * fac;
-                                    double pt_ls = dPa(lam, sig) + dPb(lam, sig);
-                                    double pt_mn = dPa(mu, nu) + dPb(mu, nu);
-                                    double v2 = v * 2.0;
+                                    double j_val = v * pt_ls_2;
+                                    Ga_local(mu, nu) += j_val;
+                                    Gb_local(mu, nu) += j_val;
+                                    j_ls_accum += v * (dP_tot(mu, nu) * 2.0);
 
-                                    Ga_local(mu, nu) += v2 * pt_ls; Gb_local(mu, nu) += v2 * pt_ls;
-                                    Ga_local(nu, mu) += v2 * pt_ls; Gb_local(nu, mu) += v2 * pt_ls;
-                                    Ga_local(lam, sig) += v2 * pt_mn; Gb_local(lam, sig) += v2 * pt_mn;
-                                    Ga_local(sig, lam) += v2 * pt_mn; Gb_local(sig, lam) += v2 * pt_mn;
+                                    Ga_local(mu, lam) -= v * dPa_ns;
+                                    Ga_local(nu, lam) -= v * dPa(mu, sig);
+                                    Ga_local(mu, sig) -= v * dPa_nl;
+                                    Ga_local(nu, sig) -= v * dPa(mu, lam);
 
-                                    Ga_local(mu, lam) -= v * dPa(nu, sig); Ga_local(lam, mu) -= v * dPa(sig, nu);
-                                    Ga_local(nu, lam) -= v * dPa(mu, sig); Ga_local(lam, nu) -= v * dPa(sig, mu);
-                                    Ga_local(mu, sig) -= v * dPa(nu, lam); Ga_local(sig, mu) -= v * dPa(lam, nu);
-                                    Ga_local(nu, sig) -= v * dPa(mu, lam); Ga_local(sig, nu) -= v * dPa(lam, mu);
-
-                                    Gb_local(mu, lam) -= v * dPb(nu, sig); Gb_local(lam, mu) -= v * dPb(sig, nu);
-                                    Gb_local(nu, lam) -= v * dPb(mu, sig); Gb_local(lam, nu) -= v * dPb(sig, mu);
-                                    Gb_local(mu, sig) -= v * dPb(nu, lam); Gb_local(sig, mu) -= v * dPb(lam, nu);
-                                    Gb_local(nu, sig) -= v * dPb(mu, lam); Gb_local(sig, nu) -= v * dPb(lam, mu);
+                                    Gb_local(mu, lam) -= v * dPb_ns;
+                                    Gb_local(nu, lam) -= v * dPb(mu, sig);
+                                    Gb_local(mu, sig) -= v * dPb_nl;
+                                    Gb_local(nu, sig) -= v * dPb(mu, lam);
                                 }
                             }
+                            Ga_local(lam, sig) += j_ls_accum;
+                            Gb_local(lam, sig) += j_ls_accum;
                         }
                     }
                 }
                 #pragma omp critical
-                { dGa += Ga_local; dGb += Gb_local; }
+                {
+                    dGa.noalias() += Ga_local;
+                    dGb.noalias() += Gb_local;
+                }
             }
-            
-            dGa = 0.5 * (dGa + dGa.transpose());
-            dGb = 0.5 * (dGb + dGb.transpose());
-            
+
+            dGa = (dGa + dGa.transpose()).eval();
+            dGb = (dGb + dGb.transpose()).eval();
+
             G_accum_a_ += dGa;
             G_accum_b_ += dGb;
-            F_alpha_ = H_ + G_accum_a_; 
+            F_alpha_ = H_ + G_accum_a_;
             F_beta_  = H_ + G_accum_b_;
         }
-    }else {
-        fock_engine_->compute(P_alpha_, P_beta_, F_alpha_, F_beta_); 
+    } else {
+        fock_engine_->compute(P_alpha_, P_beta_, F_alpha_, F_beta_);
     }
-    P_alpha_old_ = P_alpha_; P_beta_old_  = P_beta_; 
+    P_alpha_old_ = P_alpha_;
+    P_beta_old_  = P_beta_;
 }
+
 double ROHF::compute_energy() { return 0.5 * (P_alpha_.cwiseProduct(H_ + F_alpha_).sum() + P_beta_.cwiseProduct(H_ + F_beta_).sum()); }
 
 SCFResult ROHF::compute() {
     if (n_alpha_ == n_beta_) { RHF rhf_engine(mol_, basis_, integrals_, pg_, pl_, config_); return rhf_engine.compute(); }
-    init_integrals(); initial_guess(); 
-    if (config_.scf_type == "direct") { fock_engine_ = std::make_unique<FockBuilder>(integrals_, basis_, H_, schwarz_); if (pl_) fock_engine_->set_petite_list(pl_.get()); }
+    init_integrals();
+    initial_guess();
+    if (config_.scf_type == "direct") {
+        fock_engine_ = std::make_unique<FockBuilder>(integrals_, basis_, H_, schwarz_);
+        if (pl_) fock_engine_->set_petite_list(pl_.get());
+    }
 
-    DIIS diis(config_.diis_max_vectors); bool converged = false; double thresh = 1e-6;
+    DIIS diis(config_.diis_max_vectors);
+    bool converged = false;
     if (config_.print_level > 0) printf("\n Iter        Energy (Ha)        Delta E    Delta P\n");
 
     for (iter_scf_ = 1; iter_scf_ <= config_.max_iterations; iter_scf_++) {
-        energy_old_ = energy_; Eigen::MatrixXd P_tot_old = P_alpha_ + P_beta_;
-        if (iter_scf_ > 2) { double de = std::abs(energy_ - energy_old_); if (de < 1e-3) thresh = 1e-9; if (de < 1e-6) thresh = 1e-12; }
+        energy_old_ = energy_;
+        Eigen::MatrixXd P_tot_old = P_alpha_ + P_beta_;
         if (symmetrizer_) { symmetrizer_->symmetrize(P_alpha_); symmetrizer_->symmetrize(P_beta_); }
 
         build_fock_matrix();
         if (symmetrizer_) { symmetrizer_->symmetrize(F_alpha_); symmetrizer_->symmetrize(F_beta_); }
         energy_ = compute_energy();
-        
-        Eigen::MatrixXd Fa_mo = C_alpha_.transpose() * F_alpha_ * C_alpha_; Eigen::MatrixXd Fb_mo = C_alpha_.transpose() * F_beta_  * C_alpha_;
+
+        if (C_alpha_.rows() != nbasis_) {
+            solve_fock(0.5 * (F_alpha_ + F_beta_), C_alpha_, eps_alpha_);
+            C_beta_ = C_alpha_;
+            eps_beta_ = eps_alpha_;
+        }
+        Eigen::MatrixXd Fa_mo = C_alpha_.transpose() * F_alpha_ * C_alpha_;
+        Eigen::MatrixXd Fb_mo = C_alpha_.transpose() * F_beta_  * C_alpha_;
         Eigen::MatrixXd F_uni = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-        int n_c = n_beta_; int n_o = n_alpha_ - n_beta_; int n_v = nbasis_ - n_alpha_; double shift_o = 0.5; double shift_v = 1.0; 
+        int n_c = n_beta_;
+        int n_o = n_alpha_ - n_beta_;
+        int n_v = nbasis_ - n_alpha_;
+        double shift_o = 0.5;
+        double shift_v = 1.0;
 
         if (n_c > 0) F_uni.topLeftCorner(n_c, n_c) = 0.5 * (Fa_mo.topLeftCorner(n_c, n_c) + Fb_mo.topLeftCorner(n_c, n_c));
-        if (n_o > 0) { F_uni.block(n_c, n_c, n_o, n_o) = Fa_mo.block(n_c, n_c, n_o, n_o); for(int i=0; i<n_o; ++i) F_uni(n_c+i, n_c+i) += shift_o; }
-        if (n_v > 0) { F_uni.bottomRightCorner(n_v, n_v) = 0.5 * (Fa_mo.bottomRightCorner(n_v, n_v) + Fb_mo.bottomRightCorner(n_v, n_v)); for(int i=0; i<n_v; ++i) F_uni(n_alpha_+i, n_alpha_+i) += shift_v; }
-        if (n_c > 0 && n_o > 0) { Eigen::MatrixXd blk = Fb_mo.block(0, n_c, n_c, n_o); F_uni.block(0, n_c, n_c, n_o) = blk; F_uni.block(n_c, 0, n_o, n_c) = blk.transpose(); }
-        if (n_c > 0 && n_v > 0) { Eigen::MatrixXd blk = 0.5 * (Fa_mo.block(0, n_alpha_, n_c, n_v) + Fb_mo.block(0, n_alpha_, n_c, n_v)); F_uni.block(0, n_alpha_, n_c, n_v) = blk; F_uni.block(n_alpha_, 0, n_v, n_c) = blk.transpose(); }
-        if (n_o > 0 && n_v > 0) { Eigen::MatrixXd blk = Fa_mo.block(n_c, n_alpha_, n_o, n_v); F_uni.block(n_c, n_alpha_, n_o, n_v) = blk; F_uni.block(n_alpha_, n_c, n_v, n_o) = blk.transpose(); }
+        if (n_o > 0) {
+            F_uni.block(n_c, n_c, n_o, n_o) = Fa_mo.block(n_c, n_c, n_o, n_o);
+            for (int i = 0; i < n_o; ++i) F_uni(n_c + i, n_c + i) += shift_o;
+        }
+        if (n_v > 0) {
+            F_uni.bottomRightCorner(n_v, n_v) = 0.5 * (Fa_mo.bottomRightCorner(n_v, n_v) + Fb_mo.bottomRightCorner(n_v, n_v));
+            for (int i = 0; i < n_v; ++i) F_uni(n_alpha_ + i, n_alpha_ + i) += shift_v;
+        }
+        if (n_c > 0 && n_o > 0) {
+            Eigen::MatrixXd blk = Fb_mo.block(0, n_c, n_c, n_o);
+            F_uni.block(0, n_c, n_c, n_o) = blk;
+            F_uni.block(n_c, 0, n_o, n_c) = blk.transpose();
+        }
+        if (n_c > 0 && n_v > 0) {
+            Eigen::MatrixXd blk = 0.5 * (Fa_mo.block(0, n_alpha_, n_c, n_v) + Fb_mo.block(0, n_alpha_, n_c, n_v));
+            F_uni.block(0, n_alpha_, n_c, n_v) = blk;
+            F_uni.block(n_alpha_, 0, n_v, n_c) = blk.transpose();
+        }
+        if (n_o > 0 && n_v > 0) {
+            Eigen::MatrixXd blk = Fa_mo.block(n_c, n_alpha_, n_o, n_v);
+            F_uni.block(n_c, n_alpha_, n_o, n_v) = blk;
+            F_uni.block(n_alpha_, n_c, n_v, n_o) = blk.transpose();
+        }
 
-        Eigen::MatrixXd SC = S_ * C_alpha_; Eigen::MatrixXd F_eff_ao = SC * F_uni * SC.transpose(); Eigen::MatrixXd FPS = F_eff_ao * P_alpha_ * S_; 
-        diis.add_iteration(F_eff_ao, FPS - FPS.transpose(), P_alpha_);
-        solve_fock((iter_scf_ <= 1) ? 0.7 * F_eff_ao + 0.3 * H_ : diis.extrapolate(), C_alpha_, eps_alpha_); C_beta_ = C_alpha_; eps_beta_ = eps_alpha_;
-        occ_numbers_alpha_ = smear_electrons(eps_alpha_, n_alpha_); occ_numbers_beta_  = smear_electrons(eps_beta_, n_beta_); update_densities();
-        
-        double dE = std::abs(energy_ - energy_old_); double dP = ((P_alpha_ + P_beta_) - P_tot_old).norm() / nbasis_;
+        Eigen::MatrixXd SC = S_ * C_alpha_;
+        Eigen::MatrixXd F_eff_ao = SC * F_uni * SC.transpose();
+        Eigen::MatrixXd FPS = F_eff_ao * P_alpha_ * S_;
+        diis.add_iteration(F_eff_ao, FPS - FPS.transpose());
+        solve_fock((iter_scf_ <= 1) ? 0.7 * F_eff_ao + 0.3 * H_ : diis.extrapolate(), C_alpha_, eps_alpha_);
+        C_beta_ = C_alpha_;
+        eps_beta_ = eps_alpha_;
+        occ_numbers_alpha_ = smear_electrons(eps_alpha_, n_alpha_);
+        occ_numbers_beta_  = smear_electrons(eps_beta_, n_beta_);
+        update_densities();
+
+        double dE = std::abs(energy_ - energy_old_);
+        double dP = ((P_alpha_ + P_beta_) - P_tot_old).norm() / nbasis_;
         if (config_.print_level > 0) printf(" %4d %18.10f %10.2e %10.2e\n", iter_scf_, energy(), dE, dP);
         if (dE < config_.energy_threshold && dP < config_.density_threshold) { converged = true; break; }
     }
-    
-    
+
     if (config_.use_df && L_mat_.rows() == 0) {
         if (config_.print_level > 0) std::cout << "\n  [SCF] Reloading df_tensor.h5 to RAM for MP2 compatibility...\n";
         int n_aux = L_mat_.cols();
@@ -1153,13 +1447,25 @@ SCFResult ROHF::compute() {
         utils::HDF5TensorIO io("df_tensor.h5", utils::HDF5TensorIO::Mode::READ_ONLY);
         io.read_slice_4d("df_tensor", {0, 0, 0, 0}, {(long)n_aux, (long)nbasis_, (long)nbasis_, 1}, L_mat_.data());
     }
-    
-    SCFResult r; r.energy_total = energy(); r.iterations = iter_scf_; r.converged = converged;
-    r.C_alpha = C_alpha_; r.C_beta = C_beta_; r.P_alpha = P_alpha_; r.P_beta = P_beta_; r.F_alpha = F_alpha_; r.F_beta = F_beta_;
-    r.orbital_energies_alpha = eps_alpha_; r.orbital_energies_beta = eps_beta_; r.n_occ_alpha = n_alpha_; r.n_occ_beta = n_beta_; 
-    r.L_mat = L_mat_; 
-    
-    print_final(r); return r;
+
+    SCFResult r;
+    r.energy_total = energy();
+    r.iterations = iter_scf_;
+    r.converged = converged;
+    r.C_alpha = C_alpha_;
+    r.C_beta = C_beta_;
+    r.P_alpha = P_alpha_;
+    r.P_beta = P_beta_;
+    r.F_alpha = F_alpha_;
+    r.F_beta = F_beta_;
+    r.orbital_energies_alpha = eps_alpha_;
+    r.orbital_energies_beta = eps_beta_;
+    r.n_occ_alpha = n_alpha_;
+    r.n_occ_beta = n_beta_;
+    r.L_mat = L_mat_;
+
+    print_final(r);
+    return r;
 }
 
-} 
+} // namespace mshqc

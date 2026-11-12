@@ -36,6 +36,10 @@ struct MP3Result {
     double e_total = 0.0;
     bool converged = true;
     int iterations = 1;
+    Eigen::MatrixXd C_alpha;
+    Eigen::MatrixXd C_beta;
+    int n_occ_alpha = 0;
+    int n_occ_beta = 0;
 };
 
 class BaseMP3 {
@@ -72,6 +76,15 @@ public:
 class UMP3 : public BaseMP3 {
 public:
     using BaseMP3::BaseMP3;
+    MP3Result compute() override;
+};
+// Deklarasi kelas ROMP3 (setelah deklarasi kelas UMP3):
+class ROMP3 : public UMP3 {
+public:
+    ROMP3(const SCFResult& scf, const MP2Result& mp2,
+          const MP2Config& config, std::shared_ptr<IntegralEngine> ints);
+    ~ROMP3() override = default;
+
     MP3Result compute() override;
 };
 } 

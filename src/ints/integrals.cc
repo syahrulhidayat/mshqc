@@ -235,7 +235,7 @@ const Eigen::Tensor<double, 4>& IntegralEngine::compute_eri() {
         for (int s1 = 0; s1 < nbas; ++s1) {
             for (int s2 = 0; s2 <= s1; ++s2) {
                 int shls[4] = {s1, s2, s1, s2};
-                int has_val = cint2e_sph(buf.data(), shls, atm_.data(), mol_.n_atoms(), bas_.data(), nbas, env_.data(), nullptr);
+                int has_val = cint2e_sph(buf.data(), shls, atm_.data(), mol_.n_atoms(), bas_.data(), nbas, env_.data(), static_cast<CINTOpt*>(opt_));
                 if (has_val) {
                     int dim1 = CINTcgto_spheric(s1, bas_.data());
                     int dim2 = CINTcgto_spheric(s2, bas_.data());
@@ -265,7 +265,7 @@ const Eigen::Tensor<double, 4>& IntegralEngine::compute_eri() {
                         if (bound1 * schwarz_max[s3 * nbas + s4] < screen_thresh) continue;
 
                         int shls[4] = {s1, s2, s3, s4};
-                        if (!cint2e_sph(buf.data(), shls, atm_.data(), mol_.n_atoms(), bas_.data(), nbas, env_.data(), nullptr)) continue;
+                        if (!cint2e_sph(buf.data(), shls, atm_.data(), mol_.n_atoms(), bas_.data(), nbas, env_.data(), static_cast<CINTOpt*>(opt_))) continue;
 
                         int dim1 = CINTcgto_spheric(s1, bas_.data());
                         int dim2 = CINTcgto_spheric(s2, bas_.data());

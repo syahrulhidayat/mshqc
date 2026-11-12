@@ -76,15 +76,18 @@ void FockBuilder::compute(const Eigen::MatrixXd& P_alpha,
     double dP_max = dP_a.cwiseAbs().maxCoeff();
     if (!is_rhf) dP_max = std::max(dP_max, dP_b.cwiseAbs().maxCoeff());
 
-    if (dP_max < 1e-12) {
+    if (dP_max < 1e-15) {
         F_alpha = H_core_ + G_alpha_accum_;
         if (!is_rhf) F_beta  = H_core_ + G_beta_accum_;
         return;
     }
 
+    P_alpha_old_ = P_alpha; 
+    if (!is_rhf) P_beta_old_ = P_beta;
+
     int nshells = basis_.n_shells();
     double schwarz_max = schwarz_.maxCoeff();
-    double threshold = 1e-11; 
+    double threshold = 1e-13;
 
     std::vector<int> shell_offsets(nshells);
     std::vector<int> shell_sizes(nshells);
@@ -145,7 +148,7 @@ void FockBuilder::compute(const Eigen::MatrixXd& P_alpha,
                     for (int m = 0; m < dM; ++m) {
                         int mu = offM + m;
                         double val = *I_ptr++; 
-                        if (std::abs(val) < 1e-12) continue;
+                        if (std::abs(val) < 1e-14) continue;
 
                         double v = val * fac;
                         double pt_ls = dP_a(lam, sig) + dP_b(lam, sig);
@@ -199,7 +202,7 @@ void FockBuilder::compute(const Eigen::MatrixXd& P_alpha,
                     for (int m = 0; m < dM; ++m) {
                         int mu = offM + m;
                         double val = *I_ptr++; 
-                        if (std::abs(val) < 1e-12) continue;
+                        if (std::abs(val) < 1e-14) continue;
 
                         double v = val * fac;
                         double v2 = v * 2.0;

@@ -314,7 +314,7 @@ void OMP2::compute_t2_and_energy_cholesky() {
         const double* eps_b = scf_.orbital_energies_beta.data();
 
         if (t_bb_blk) {
-            Eigen::MatrixXd G_bb = B_ia_P_beta_ * B_ia_P_beta_.transpose();
+            Eigen::MatrixXd G_bb = parallel_gemm_abt(B_ia_P_beta_, B_ia_P_beta_);
             
             #pragma omp parallel for reduction(+:E_ss_bb) schedule(static)
             for (int i = nf; i < nb_; ++i) {
@@ -345,7 +345,7 @@ void OMP2::compute_t2_and_energy_cholesky() {
         }
 
         if (t_ab_blk) {
-            Eigen::MatrixXd G_ab = B_ia_P_alpha_ * B_ia_P_beta_.transpose();
+            Eigen::MatrixXd G_ab = parallel_gemm_abt(B_ia_P_alpha_, B_ia_P_beta_);
             const double* eps_a = scf_.orbital_energies_alpha.data();
             
             #pragma omp parallel for reduction(+:E_os) schedule(static)

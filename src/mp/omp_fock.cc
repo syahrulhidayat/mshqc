@@ -18,9 +18,74 @@
 #include <tblis/tblis.h>
 #include <iostream> 
 
+namespace tblis {
+
+inline size_t view_num_elements(const varray_view<double>& v) {
+    const auto& len = v.lengths();
+    if (len.empty()) return 0;
+    size_t prod = 1;
+    for (auto d : len) {
+        if (d <= 0) return 0;
+        prod *= static_cast<size_t>(d);
+    }
+    return prod;
+}
+
+template <typename T = double>
+inline void safe_tblis_mult(
+    T alpha,
+    const varray_view<double>& A, const char* idxA,
+    const varray_view<double>& B, const char* idxB,
+    T beta,
+    varray_view<double>& C, const char* idxC)
+{
+    const size_t szA = view_num_elements(A);
+    const size_t szB = view_num_elements(B);
+    const size_t szC = view_num_elements(C);
+
+    if (szC == 0) return;
+    if (szA == 0 || szB == 0) {
+        Eigen::Map<Eigen::VectorXd> vecC(C.data(), static_cast<Eigen::Index>(szC));
+        if (beta == T(0)) vecC.setZero();
+        else vecC *= static_cast<double>(beta);
+        return;
+    }
+
+    if (szC == 1 && szA == szB) {
+        Eigen::Map<const Eigen::VectorXd> vecA(A.data(), static_cast<Eigen::Index>(szA));
+        Eigen::Map<const Eigen::VectorXd> vecB(B.data(), static_cast<Eigen::Index>(szB));
+        const double dot = vecA.dot(vecB);
+        C.data()[0] = (beta == T(0)) ? (alpha * dot) : (beta * C.data()[0] + alpha * dot);
+        return;
+    }
+    if (szA == 1 && szB == szC) {
+        Eigen::Map<const Eigen::VectorXd> vecB(B.data(), static_cast<Eigen::Index>(szB));
+        Eigen::Map<Eigen::VectorXd> vecC(C.data(), static_cast<Eigen::Index>(szC));
+        const double scale = alpha * A.data()[0];
+        if (beta == T(0)) vecC.noalias() = scale * vecB;
+        else vecC.noalias() = beta * vecC + scale * vecB;
+        return;
+    }
+    if (szB == 1 && szA == szC) {
+        Eigen::Map<const Eigen::VectorXd> vecA(A.data(), static_cast<Eigen::Index>(szA));
+        Eigen::Map<Eigen::VectorXd> vecC(C.data(), static_cast<Eigen::Index>(szC));
+        const double scale = alpha * B.data()[0];
+        if (beta == T(0)) vecC.noalias() = scale * vecA;
+        else vecC.noalias() = beta * vecC + scale * vecA;
+        return;
+    }
+
+    ::tblis::mult<double>(alpha, A, idxA, B, idxB, beta, C, idxC);
+}
+
+} // namespace tblis
+
+#define mult safe_tblis_mult
+
 namespace mshqc {
 
 using integrals::ERITransformer;
+using tblis::safe_tblis_mult;
 
 #define TBLIS_VIEW_4D(name, t, d1, d2, d3, d4) \
     tblis::varray_view<double> name({(tblis::len_type)d1, (tblis::len_type)d2, (tblis::len_type)d3, (tblis::len_type)d4}, t.data(), \
@@ -49,42 +114,53 @@ void OMP2::build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_
 
         bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
         bool is_idempotent_pa = (&P_a == &scf_.P_alpha);
+        bool has_beta_unres = (!is_restricted && nb_ > 0);
 
         int max_threads = omp_get_max_threads();
         std::vector<Eigen::MatrixXd> Ka_tls(max_threads, Eigen::MatrixXd::Zero(nbf_, nbf_));
         std::vector<Eigen::MatrixXd> Kb_tls(is_restricted ? 0 : max_threads, Eigen::MatrixXd::Zero(nbf_, nbf_));
 
-        const Eigen::MatrixXd& Ca_o = scf_.C_alpha.leftCols(na_);
-        const Eigen::MatrixXd& Cb_o = scf_.C_beta.leftCols(nb_);
+        // Gabungkan Ca_o dan Cb_o atau P_a dan P_b agar matriks L_K cukup dibaca 1x dari cache per iterasi K
+        Eigen::MatrixXd Cab_o;
+        Eigen::MatrixXd Pab_full;
+        if (is_idempotent_pa) {
+            int n_tot_o = na_ + (has_beta_unres ? nb_ : 0);
+            Cab_o.resize(nbf_, n_tot_o);
+            if (na_ > 0) Cab_o.leftCols(na_) = scf_.C_alpha.leftCols(na_);
+            if (has_beta_unres) Cab_o.rightCols(nb_) = scf_.C_beta.leftCols(nb_);
+        } else if (has_beta_unres) {
+            Pab_full.resize(nbf_, 2 * nbf_);
+            Pab_full.leftCols(nbf_)  = P_a;
+            Pab_full.rightCols(nbf_) = P_b;
+        }
 
         #pragma omp parallel
         {
             int tid = omp_get_thread_num();
             Eigen::MatrixXd& Ka_priv = Ka_tls[tid];
-            Eigen::MatrixXd Ta_buf(nbf_, is_idempotent_pa ? na_ : nbf_);
-            Eigen::MatrixXd Tb_buf(nbf_, is_idempotent_pa ? nb_ : nbf_);
+            Eigen::MatrixXd Tab_buf(nbf_, is_idempotent_pa ? Cab_o.cols() : (has_beta_unres ? 2 * nbf_ : nbf_));
 
             #pragma omp for schedule(static) nowait
             for (int K = 0; K < n_chol; ++K) {
                 Eigen::Map<const Eigen::MatrixXd> L_K(scf_.L_mat.col(K).data(), nbf_, nbf_);
 
                 if (is_idempotent_pa) {
-                    // Low-rank O(O * Nbf^2) saat dipanggil dari pseudocanonicalize()
-                    Ta_buf.noalias() = L_K * Ca_o;
-                    Ka_priv.noalias() += Ta_buf * Ta_buf.transpose();
-
-                    if (!is_restricted && nb_ > 0) {
-                        Tb_buf.noalias() = L_K * Cb_o;
-                        Kb_tls[tid].noalias() += Tb_buf * Tb_buf.transpose();
+                    Tab_buf.noalias() = L_K * Cab_o;
+                    if (na_ > 0) {
+                        auto Ta = Tab_buf.leftCols(na_);
+                        Ka_priv.noalias() += Ta * Ta.transpose();
                     }
+                    if (has_beta_unres) {
+                        auto Tb = Tab_buf.rightCols(nb_);
+                        Kb_tls[tid].noalias() += Tb * Tb.transpose();
+                    }
+                } else if (has_beta_unres) {
+                    Tab_buf.noalias() = L_K * Pab_full;
+                    Ka_priv.noalias() += Tab_buf.leftCols(nbf_) * L_K;
+                    Kb_tls[tid].noalias() += Tab_buf.rightCols(nbf_) * L_K;
                 } else {
-                    Ta_buf.noalias() = L_K * P_a;
-                    Ka_priv.noalias() += Ta_buf * L_K;
-
-                    if (!is_restricted && nb_ > 0) {
-                        Tb_buf.noalias() = L_K * P_b;
-                        Kb_tls[tid].noalias() += Tb_buf * L_K;
-                    }
+                    Tab_buf.noalias() = L_K * P_a;
+                    Ka_priv.noalias() += Tab_buf * L_K;
                 }
             }
         }
@@ -106,77 +182,49 @@ void OMP2::build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_
 
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     Eigen::MatrixXd P_tot = P_a + P_b;
-    double max_P = P_tot.cwiseAbs().maxCoeff(); 
-    double threshold = 1e-9;
-    const double* __restrict__ p_dtot = P_tot.data();
-    const double* __restrict__ p_da   = P_a.data();
-    const double* __restrict__ p_db   = P_b.data();
+    const auto& ERI = integrals_->compute_eri();
+    const double* __restrict__ eri_ptr = ERI.data();
 
-    const double* __restrict__ Jv = J_val_.data(); 
-    const int* __restrict__ Ji = J_ind_.data(); 
-    const size_t* __restrict__ Jp = J_ptr_.data();
-    const double* __restrict__ Kv = K_val_.data(); 
-    const int* __restrict__ Ki = K_ind_.data(); 
-    const size_t* __restrict__ Kp = K_ptr_.data();
+    Eigen::Map<const Eigen::MatrixXd> ERI_mat(eri_ptr, static_cast<Eigen::Index>(nbf_) * nbf_, static_cast<Eigen::Index>(nbf_) * nbf_);
+    Eigen::Map<const Eigen::VectorXd> P_tot_flat(P_tot.data(), static_cast<Eigen::Index>(nbf_) * nbf_);
+    Eigen::VectorXd J_flat = ERI_mat * P_tot_flat;
+    Eigen::Map<const Eigen::MatrixXd> J_mat(J_flat.data(), nbf_, nbf_);
 
-    Eigen::MatrixXd G_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
-    Eigen::MatrixXd G_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
-    size_t n_rows = row_map_.size();
+    Eigen::MatrixXd K_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
+    Eigen::MatrixXd K_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
 
-    #pragma omp parallel
-    {
-        Eigen::MatrixXd Ga_local = Eigen::MatrixXd::Zero(nbf_, nbf_);
-        Eigen::MatrixXd Gb_local;
-        if (!is_restricted) Gb_local = Eigen::MatrixXd::Zero(nbf_, nbf_);
-
-        #pragma omp for schedule(static) nowait
-        for (size_t r = 0; r < n_rows; ++r) {
-            int mu = row_map_[r].first;
-            int nu = row_map_[r].second;
-
-            if (schwarz_(mu, nu) * max_P < threshold) continue;
-
-            size_t js = Jp[r]; size_t je = Jp[r+1];
-            size_t ks = Kp[r]; size_t ke = Kp[r+1];
-
-            double vj = 0.0;
-            #pragma omp simd reduction(+:vj)
-            for (size_t k = js; k < je; ++k) vj += Jv[k] * p_dtot[Ji[k]];
-
-            if (is_restricted) {
-                double ka = 0.0;
-                #pragma omp simd reduction(+:ka)
-                for (size_t k = ks; k < ke; ++k) ka += Kv[k] * p_da[Ki[k]];
-                Ga_local(mu, nu) += vj - ka;
-            } else {
-                double ka = 0.0, kb = 0.0;
-                #pragma omp simd reduction(+:ka, kb)
-                for (size_t k = ks; k < ke; ++k) {
-                    double v = Kv[k]; int idx = Ki[k];
-                    ka += v * p_da[idx];
-                    kb += v * p_db[idx];
+    #pragma omp parallel for schedule(dynamic, 4)
+    for (int mu = 0; mu < nbf_; ++mu) {
+        for (int nu = 0; nu <= mu; ++nu) {
+            double ka = 0.0, kb = 0.0;
+            for (int sig = 0; sig < nbf_; ++sig) {
+                const double* __restrict__ e_col = eri_ptr + static_cast<size_t>(nbf_) * (mu + static_cast<size_t>(nbf_) * (nu + static_cast<size_t>(nbf_) * sig));
+                const double* __restrict__ pa_col = P_a.data() + static_cast<size_t>(sig) * nbf_;
+                if (is_restricted) {
+                    #pragma omp simd reduction(+:ka)
+                    for (int lam = 0; lam < nbf_; ++lam) {
+                        ka += e_col[lam] * pa_col[lam];
+                    }
+                } else {
+                    const double* __restrict__ pb_col = P_b.data() + static_cast<size_t>(sig) * nbf_;
+                    #pragma omp simd reduction(+:ka, kb)
+                    for (int lam = 0; lam < nbf_; ++lam) {
+                        ka += e_col[lam] * pa_col[lam];
+                        kb += e_col[lam] * pb_col[lam];
+                    }
                 }
-                Ga_local(mu, nu) += vj - ka;
-                Gb_local(mu, nu) += vj - kb;
+            }
+            K_a(mu, nu) = ka;
+            K_a(nu, mu) = ka;
+            if (!is_restricted) {
+                K_b(mu, nu) = kb;
+                K_b(nu, mu) = kb;
             }
         }
-
-        #pragma omp critical
-        {
-            G_a += Ga_local;
-            if (!is_restricted) G_b += Gb_local;
-        }
     }
 
-    for (int i = 0; i < nbf_; ++i) {
-        for (int j = 0; j < i; ++j) {
-            G_a(j, i) = G_a(i, j); 
-            if (!is_restricted) G_b(j, i) = G_b(i, j);
-        }
-    }
-
-    F_a = H_core_ + G_a;
-    F_b = is_restricted ? F_a : (H_core_ + G_b);
+    F_a = H_core_ + J_mat - K_a;
+    F_b = is_restricted ? F_a : (H_core_ + J_mat - K_b);
 }
 
 void OMP2::build_opdm_alpha() {
@@ -274,14 +322,13 @@ void OMP2::build_generalized_fock() {
         Z_mat_a.setZero();
         Z_mat_b.setZero();
 
-        if (eri_ao_cached_.size() == 0) {
-            eri_ao_cached_ = integrals_->compute_eri();
-        }
-        const auto& eri_ao = eri_ao_cached_;
+        const auto& eri_ao = integrals_->compute_eri();
 
         const Eigen::MatrixXd& Ca_o = scf_.C_alpha.leftCols(na_);
         const Eigen::MatrixXd& Ca_v = scf_.C_alpha.rightCols(va_);
         auto* t_aa_blk = t2_aa_.get_block(0, 0, 0, 0);
+
+        Eigen::Tensor<double, 4> half_ov_a, half_oo_a;
 
         if (t_aa_blk && na_ > 0 && va_ > 0) {
             Eigen::Tensor<double, 4> T2_eff_aa(na_, na_, va_, va_);
@@ -300,15 +347,16 @@ void OMP2::build_generalized_fock() {
                 }
             }
 
-            auto V_ovvv_aa = integrals::ERITransformer::transform_custom(eri_ao, Ca_o, Ca_v, Ca_v, Ca_v, nbf_, na_, va_, va_, va_);
-            auto V_ooov_aa = integrals::ERITransformer::transform_custom(eri_ao, Ca_o, Ca_o, Ca_o, Ca_v, nbf_, na_, na_, na_, va_);
+            half_ov_a = integrals::ERITransformer::transform_half_bra(eri_ao, Ca_o, Ca_v, nbf_, na_, va_);
+            half_oo_a = integrals::ERITransformer::transform_half_bra(eri_ao, Ca_o, Ca_o, nbf_, na_, na_);
+            auto V_ovvv_aa = integrals::ERITransformer::transform_finish_ket(half_ov_a, Ca_v, Ca_v, nbf_, na_, va_, va_, va_);
+            auto V_ooov_aa = integrals::ERITransformer::transform_finish_ket(half_oo_a, Ca_o, Ca_v, nbf_, na_, na_, na_, va_);
 
             TBLIS_VIEW_4D(t_Teff_aa, T2_eff_aa, na_, na_, va_, va_);
             TBLIS_VIEW_4D(t_Vovvv_aa, V_ovvv_aa, na_, va_, va_, va_);
             TBLIS_VIEW_4D(t_Vooov_aa, V_ooov_aa, na_, na_, na_, va_);
             TBLIS_VIEW_2D(t_Zmat_a, Z_mat_a.data(), va_, na_);
 
-            // Dipanggil di luar #pragma omp parallel agar TBLIS bebas memakai seluruh core CPU
             tblis::mult<double>(1.0,  t_Vovvv_aa, "kcab", t_Teff_aa, "ikbc", 0.0, t_Zmat_a, "ai");
             tblis::mult<double>(-1.0, t_Vooov_aa, "jikc", t_Teff_aa, "jkac", 1.0, t_Zmat_a, "ai");
         }
@@ -323,12 +371,22 @@ void OMP2::build_generalized_fock() {
             auto* t_ab_dense = t2_ab_.get_block(0, 0, 0, 0);
 
             if (t_bb_dense && t_ab_dense) {
-                auto V_ovvv_bb    = integrals::ERITransformer::transform_custom(eri_ao, Cb_o, Cb_v, Cb_v, Cb_v, nbf_, nb_, vb_, vb_, vb_);
-                auto V_ooov_bb    = integrals::ERITransformer::transform_custom(eri_ao, Cb_o, Cb_o, Cb_o, Cb_v, nbf_, nb_, nb_, nb_, vb_);
-                auto V_ovvv_ba_aa = integrals::ERITransformer::transform_custom(eri_ao, Cb_o, Cb_v, Ca_v, Ca_v, nbf_, nb_, vb_, va_, va_);
-                auto V_ooov_aa_bb = integrals::ERITransformer::transform_custom(eri_ao, Ca_o, Ca_o, Cb_o, Cb_v, nbf_, na_, na_, nb_, vb_);
-                auto V_ovvv_ab_bb = integrals::ERITransformer::transform_custom(eri_ao, Ca_o, Ca_v, Cb_v, Cb_v, nbf_, na_, va_, vb_, vb_);
-                auto V_ooov_bb_aa = integrals::ERITransformer::transform_custom(eri_ao, Cb_o, Cb_o, Ca_o, Ca_v, nbf_, nb_, nb_, na_, va_);
+                if (half_ov_a.size() == 0) half_ov_a = integrals::ERITransformer::transform_half_bra(eri_ao, Ca_o, Ca_v, nbf_, na_, va_);
+                if (half_oo_a.size() == 0) half_oo_a = integrals::ERITransformer::transform_half_bra(eri_ao, Ca_o, Ca_o, nbf_, na_, na_);
+                auto V_ooov_aa_bb = integrals::ERITransformer::transform_finish_ket(half_oo_a, Cb_o, Cb_v, nbf_, na_, na_, nb_, vb_);
+                auto V_ovvv_ab_bb = integrals::ERITransformer::transform_finish_ket(half_ov_a, Cb_v, Cb_v, nbf_, na_, va_, vb_, vb_);
+                half_ov_a.resize(0, 0, 0, 0);
+                half_oo_a.resize(0, 0, 0, 0);
+
+                auto half_ov_b = integrals::ERITransformer::transform_half_bra(eri_ao, Cb_o, Cb_v, nbf_, nb_, vb_);
+                auto V_ovvv_bb    = integrals::ERITransformer::transform_finish_ket(half_ov_b, Cb_v, Cb_v, nbf_, nb_, vb_, vb_, vb_);
+                auto V_ovvv_ba_aa = integrals::ERITransformer::transform_finish_ket(half_ov_b, Ca_v, Ca_v, nbf_, nb_, vb_, va_, va_);
+                half_ov_b.resize(0, 0, 0, 0);
+
+                auto half_oo_b = integrals::ERITransformer::transform_half_bra(eri_ao, Cb_o, Cb_o, nbf_, nb_, nb_);
+                auto V_ooov_bb    = integrals::ERITransformer::transform_finish_ket(half_oo_b, Cb_o, Cb_v, nbf_, nb_, nb_, nb_, vb_);
+                auto V_ooov_bb_aa = integrals::ERITransformer::transform_finish_ket(half_oo_b, Ca_o, Ca_v, nbf_, nb_, nb_, na_, va_);
+                half_oo_b.resize(0, 0, 0, 0);
 
                 TBLIS_VIEW_4D(t_Tbb, (*t_bb_dense), nb_, nb_, vb_, vb_);
                 TBLIS_VIEW_4D(t_Tab, (*t_ab_dense), na_, nb_, va_, vb_);

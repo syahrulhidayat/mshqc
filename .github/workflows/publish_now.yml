@@ -1,0 +1,122 @@
+name: Instant Publish Artifacts to PyPI and GitHub Release
+
+on:
+  push:
+    branches: ["build-pypi"]
+    tags: ["*"]
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "GitHub Actions Run ID yang memiliki artifact wheel"
+        required: false
+        default: "43200032324"
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  publish_existing_wheels:
+    name: Grab Artifacts, Inject README & Publish to PyPI
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository (ambil README.md & pyproject.toml terbaru)
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Extract Version from pyproject.toml (Tanpa awalan v)
+        id: meta
+        run: |
+          VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Target Release Version: $VERSION"
+
+      - name: Download Compiled Wheels & sdist from Run 43200032324
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.run_id || '43200032324' }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pattern: cibw-*
+          path: dist
+          merge-multiple: true
+
+      - name: Inject GitHub README.md into All Wheels & Rebuild sdist
+        run: |
+          python3 - << 'EOF'
+          import base64, glob, hashlib, re, zipfile
+          from pathlib import Path
+
+          readme_text = Path("README.md").read_text(encoding="utf-8").strip()
+
+          def b64_nopad(digest: bytes) -> str:
+              return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
+
+          for whl_str in sorted(glob.glob("dist/*.whl")):
+              whl_path = Path(whl_str)
+              tmp_whl = whl_path.with_suffix(".whl.tmp")
+              with zipfile.ZipFile(whl_path, "r") as zin:
+                  meta_name = next((n for n in zin.namelist() if n.endswith(".dist-info/METADATA")), None)
+                  rec_name = next((n for n in zin.namelist() if n.endswith(".dist-info/RECORD")), None)
+                  if not meta_name or not rec_name:
+                      continue
+
+                  raw_meta = zin.read(meta_name).decode("utf-8", errors="replace")
+                  headers = raw_meta.split("\n\n", 1)[0].strip()
+
+                  if "Description-Content-Type:" not in headers:
+                      headers += "\nDescription-Content-Type: text/markdown"
+                  else:
+                      headers = re.sub(r"Description-Content-Type:.*", "Description-Content-Type: text/markdown", headers)
+
+                  if "github.com/syahrulhidayat/mshqc" not in headers:
+                      headers += "\nProject-URL: Homepage, https://github.com/syahrulhidayat/mshqc"
+                      headers += "\nProject-URL: Repository, https://github.com/syahrulhidayat/mshqc"
+
+                  new_meta = (headers + "\n\n" + readme_text + "\n").encode("utf-8")
+                  sha = b64_nopad(hashlib.sha256(new_meta).digest())
+                  size = str(len(new_meta))
+
+                  rec_lines = []
+                  for line in zin.read(rec_name).decode("utf-8", errors="replace").splitlines():
+                      if line.startswith(meta_name + ","):
+                          rec_lines.append(f"{meta_name},sha256={sha},{size}")
+                      else:
+                          rec_lines.append(line)
+                  new_rec = ("\n".join(rec_lines) + "\n").encode("utf-8")
+
+                  with zipfile.ZipFile(tmp_whl, "w", compression=zipfile.ZIP_DEFLATED) as zout:
+                      for item in zin.infolist():
+                          if item.filename == meta_name:
+                              zout.writestr(item, new_meta)
+                          elif item.filename == rec_name:
+                              zout.writestr(item, new_rec)
+                          else:
+                              zout.writestr(item, zin.read(item.filename))
+              tmp_whl.replace(whl_path)
+              print(f"[OK] README.md synced into: {whl_path.name}")
+          EOF
+          ls -lh dist/
+
+      - name: Publish Wheels & sdist to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          skip-existing: true
+
+      - name: Create GitHub Release (Tanpa awalan v)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.version }}
+          name: "mshqc ${{ steps.meta.outputs.version }}"
+          body_path: README.md
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
