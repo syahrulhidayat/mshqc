@@ -56,6 +56,9 @@
 
 #include "mshqc/integrals/cholesky_eri.h"
 #include "mshqc/integrals/eri_transformer.h"
+#include "mshqc/gradient/hpc_geom_opt.h"
+#include <nanobind/stl/map.h>
+#include <nanobind/stl/pair.h>
 
 namespace nb = nanobind;
 using namespace mshqc;
@@ -272,7 +275,101 @@ NB_MODULE(_mshqc, m) {
         .def("set_charge", &Molecule::set_charge, nb::arg("q"))
         .def("multiplicity", &Molecule::multiplicity)
         .def("set_multiplicity", &Molecule::set_multiplicity, nb::arg("m"))
-        .def("nuclear_repulsion_energy", &Molecule::nuclear_repulsion_energy);
+        .def("nuclear_repulsion_energy", &Molecule::nuclear_repulsion_energy)
+        .def("set_atom_position", &Molecule::set_atom_position, nb::arg("i"), nb::arg("x"), nb::arg("y"), nb::arg("z"))
+        .def("optimize_geometry", [](Molecule& mol,
+                                     const std::string& method,
+                                     const std::string& eri_mode,
+                                     const std::string& eri_method,
+                                     const std::string& basis,
+                                     const std::string& reference,
+                                     int max_iter,
+                                     double g_rms_tol,
+                                     double fd_step_bohr,
+                                     bool verbose) {
+            mshqc::gradient::GeomOptConfig cfg;
+            cfg.method = method;
+            cfg.eri_method = !eri_method.empty() ? eri_method : eri_mode;
+            cfg.basis_name = basis;
+            cfg.reference = reference;
+            cfg.max_iter = max_iter;
+            cfg.g_rms_tol = g_rms_tol;
+            cfg.fd_step_bohr = fd_step_bohr;
+            cfg.verbose = verbose;
+            nb::gil_scoped_release release;
+            return mshqc::gradient::HPCGeometryOptimizer::optimize_molecule(mol, cfg);
+        }, nb::arg("method") = "omp2",
+           nb::arg("eri_mode") = "df",
+           nb::arg("eri_method") = "",
+           nb::arg("basis") = "cc-pVDZ",
+           nb::arg("reference") = "auto",
+           nb::arg("max_iter") = 40,
+           nb::arg("g_rms_tol") = 1.0e-5,
+           nb::arg("fd_step_bohr") = 1.0e-3,
+           nb::arg("verbose") = true,
+           "Optimize molecular geometry in C++20 and update coordinates in-place")
+        .def("frequencies", [](const Molecule& mol,
+                               const std::string& method,
+                               const std::string& eri_mode,
+                               const std::string& eri_method,
+                               const std::string& basis,
+                               const std::string& reference,
+                               double temperature_k,
+                               bool verbose) {
+            mshqc::gradient::GeomOptConfig cfg;
+            cfg.method = method;
+            cfg.eri_method = !eri_method.empty() ? eri_method : eri_mode;
+            cfg.basis_name = basis;
+            cfg.reference = reference;
+            cfg.verbose = verbose;
+            nb::gil_scoped_release release;
+            return mshqc::gradient::HPCGeometryOptimizer::compute_frequencies(mol, cfg, temperature_k, 1.0);
+        }, nb::arg("method") = "omp2",
+           nb::arg("eri_mode") = "df",
+           nb::arg("eri_method") = "",
+           nb::arg("basis") = "cc-pVDZ",
+           nb::arg("reference") = "auto",
+           nb::arg("temperature_k") = 298.15,
+           nb::arg("verbose") = true,
+           "Compute harmonic vibrational frequencies (cm^-1), ZPE, Enthalpy H, and Gibbs G")
+        .def("gradient", [](const Molecule& mol,
+                            const std::string& method,
+                            const std::string& eri_mode,
+                            const std::string& basis,
+                            const std::string& reference,
+                            double fd_step_bohr) {
+            mshqc::gradient::GeomOptConfig cfg;
+            cfg.method = method;
+            cfg.eri_method = eri_mode;
+            cfg.basis_name = basis;
+            cfg.reference = reference;
+            cfg.fd_step_bohr = fd_step_bohr;
+            cfg.verbose = false;
+            nb::gil_scoped_release release;
+            return mshqc::gradient::HPCGeometryOptimizer::compute_nuclear_gradient_cpp(mol, cfg);
+        }, nb::arg("method") = "omp2",
+           nb::arg("eri_mode") = "df",
+           nb::arg("basis") = "cc-pVDZ",
+           nb::arg("reference") = "auto",
+           nb::arg("fd_step_bohr") = 1.0e-3,
+           "Compute nuclear gradient vector dE/dR (Ha/Bohr)")
+        .def("scan_pes", [](const Molecule& mol,
+                            int atom_i,
+                            int atom_j,
+                            const std::vector<double>& distances_angstrom,
+                            const std::string& method,
+                            const std::string& eri_mode,
+                            const std::string& basis) {
+            mshqc::gradient::GeomOptConfig cfg;
+            cfg.method = method;
+            cfg.eri_method = eri_mode;
+            cfg.basis_name = basis;
+            cfg.verbose = false;
+            nb::gil_scoped_release release;
+            return mshqc::gradient::HPCGeometryOptimizer::scan_bond_pes(mol, atom_i, atom_j, distances_angstrom, cfg);
+        }, nb::arg("atom_i"), nb::arg("atom_j"), nb::arg("distances_angstrom"),
+           nb::arg("method") = "omp2", nb::arg("eri_mode") = "df", nb::arg("basis") = "cc-pVDZ",
+           "Scan bond dissociation Potential Energy Surface");
 
     nb::enum_<AngularMomentum>(m, "AngularMomentum")
         .value("S", AngularMomentum::S)
@@ -732,4 +829,63 @@ NB_MODULE(_mshqc, m) {
     m.def("angstrom_to_bohr", [](double angstrom) { return angstrom / 0.529177210903; }, "Convert Angstrom to Bohr");
     m.def("hartree_to_ev", [](double hartree) { return hartree * 27.211386245988; }, "Convert Hartree to eV");
     m.def("hartree_to_kcal", [](double hartree) { return hartree * 627.5094740631; }, "Convert Hartree to kcal/mol");
+    
+    nb::class_<mshqc::gradient::GeomOptConfig>(m, "GeomOptConfig")
+        .def(nb::init<>())
+        .def_rw("method", &mshqc::gradient::GeomOptConfig::method)
+        .def_rw("eri_method", &mshqc::gradient::GeomOptConfig::eri_method)
+        .def_rw("basis_name", &mshqc::gradient::GeomOptConfig::basis_name)
+        .def_rw("aux_basis_name", &mshqc::gradient::GeomOptConfig::aux_basis_name)
+        .def_rw("reference", &mshqc::gradient::GeomOptConfig::reference)
+        .def_rw("opt_method", &mshqc::gradient::GeomOptConfig::opt_method)
+        .def_rw("max_iter", &mshqc::gradient::GeomOptConfig::max_iter)
+        .def_rw("energy_thresh", &mshqc::gradient::GeomOptConfig::energy_thresh)
+        .def_rw("orb_grad_thresh", &mshqc::gradient::GeomOptConfig::orb_grad_thresh)
+        .def_rw("g_rms_tol", &mshqc::gradient::GeomOptConfig::g_rms_tol)
+        .def_rw("g_max_tol", &mshqc::gradient::GeomOptConfig::g_max_tol)
+        .def_rw("dx_rms_tol", &mshqc::gradient::GeomOptConfig::dx_rms_tol)
+        .def_rw("dx_max_tol", &mshqc::gradient::GeomOptConfig::dx_max_tol)
+        .def_rw("trust_radius_init", &mshqc::gradient::GeomOptConfig::trust_radius_init)
+        .def_rw("trust_radius_max", &mshqc::gradient::GeomOptConfig::trust_radius_max)
+        .def_rw("trust_radius_min", &mshqc::gradient::GeomOptConfig::trust_radius_min)
+        .def_rw("fd_step_bohr", &mshqc::gradient::GeomOptConfig::fd_step_bohr)
+        .def_rw("project_trans_rot", &mshqc::gradient::GeomOptConfig::project_trans_rot)
+        .def_rw("verbose", &mshqc::gradient::GeomOptConfig::verbose)
+        .def_rw("xyz_traj_file", &mshqc::gradient::GeomOptConfig::xyz_traj_file);
+
+    nb::class_<mshqc::gradient::GeomOptResult>(m, "GeomOptResult")
+        .def_ro("converged", &mshqc::gradient::GeomOptResult::converged)
+        .def_ro("iterations", &mshqc::gradient::GeomOptResult::iterations)
+        .def_ro("method", &mshqc::gradient::GeomOptResult::method)
+        .def_ro("eri_method", &mshqc::gradient::GeomOptResult::eri_method)
+        .def_ro("basis_name", &mshqc::gradient::GeomOptResult::basis_name)
+        .def_ro("initial_energy", &mshqc::gradient::GeomOptResult::initial_energy)
+        .def_ro("final_energy", &mshqc::gradient::GeomOptResult::final_energy)
+        .def_ro("final_g_rms", &mshqc::gradient::GeomOptResult::final_g_rms)
+        .def_ro("final_g_max", &mshqc::gradient::GeomOptResult::final_g_max)
+        .def_ro("wall_time_sec", &mshqc::gradient::GeomOptResult::wall_time_sec)
+        .def_ro("coordinates_bohr", &mshqc::gradient::GeomOptResult::coordinates_bohr)
+        .def_ro("coordinates_angstrom", &mshqc::gradient::GeomOptResult::coordinates_angstrom)
+        .def_ro("gradient_ha_bohr", &mshqc::gradient::GeomOptResult::gradient_ha_bohr)
+        .def_ro("energy_history", &mshqc::gradient::GeomOptResult::energy_history)
+        .def_ro("g_rms_history", &mshqc::gradient::GeomOptResult::g_rms_history)
+        .def_ro("bond_lengths_angstrom", &mshqc::gradient::GeomOptResult::bond_lengths_angstrom);
+
+    nb::class_<mshqc::gradient::VibThermoResult>(m, "VibThermoResult")
+        .def_ro("frequencies_cm1", &mshqc::gradient::VibThermoResult::frequencies_cm1)
+        .def_ro("normal_modes", &mshqc::gradient::VibThermoResult::normal_modes)
+        .def_ro("hessian_ha_bohr2", &mshqc::gradient::VibThermoResult::hessian_ha_bohr2)
+        .def_ro("electronic_energy_ha", &mshqc::gradient::VibThermoResult::electronic_energy_ha)
+        .def_ro("zpe_hartree", &mshqc::gradient::VibThermoResult::zpe_hartree)
+        .def_ro("zpe_kcal_mol", &mshqc::gradient::VibThermoResult::zpe_kcal_mol)
+        .def_ro("thermal_energy_ha", &mshqc::gradient::VibThermoResult::thermal_energy_ha)
+        .def_ro("enthalpy_ha", &mshqc::gradient::VibThermoResult::enthalpy_ha)
+        .def_ro("gibbs_free_energy_ha", &mshqc::gradient::VibThermoResult::gibbs_free_energy_ha)
+        .def_ro("temperature_k", &mshqc::gradient::VibThermoResult::temperature_k)
+        .def_ro("n_imaginary", &mshqc::gradient::VibThermoResult::n_imaginary);
+
+    nb::class_<mshqc::gradient::PESScanPoint>(m, "PESScanPoint")
+        .def_ro("r_angstrom", &mshqc::gradient::PESScanPoint::r_angstrom)
+        .def_ro("r_bohr", &mshqc::gradient::PESScanPoint::r_bohr)
+        .def_ro("energy_ha", &mshqc::gradient::PESScanPoint::energy_ha);
 }
