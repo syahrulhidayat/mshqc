@@ -112,7 +112,7 @@ jobs:
             cp 03_psi4_out.txt psi4_out.txt
           fi
 
-      # --- 5. BANDINGKAN HASIL (TEST_MSHQC2 vs BENC.PY) ---
+      # --- 5. BANDINGKAN HASIL (TEST_MSHQC2 vs BENC.PY) --
       - name: Compare Head-to-Head mshqc vs Psi4
         shell: bash {0}
         run: |
