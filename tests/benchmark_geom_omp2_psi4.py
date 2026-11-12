@@ -18,6 +18,8 @@ def main():
 
         try:
             import psi4
+            psi4.core.clean()
+            psi4.core.clean_options()
             psi4.core.be_quiet()
             p4_mol = psi4.geometry('''
             0 2
@@ -25,6 +27,9 @@ def main():
             H 0.0 0.0 1.03
             symmetry c1
             ''')
+            
+            # Modul OCC analitik Psi4 untuk OMP3 mewajibkan referensi SCF konvensional (pk),
+            # sedangkan DFOCC untuk DF-OMP3 hanya mendukung optimisasi via finite-difference (dertype='energy').
             psi4.set_options({
                 "basis": "cc-pVDZ",
                 "reference": "uhf",
@@ -35,7 +40,11 @@ def main():
                 "g_convergence": "gau_verytight",
             })
             t0 = time.perf_counter()
-            e_p4 = psi4.optimize(method, molecule=p4_mol)
+            if method == "omp3":
+                # Gunakan dertype="energy" agar Psi4 tetap mengevaluasi di atas potensial DF-OMP3 (modul DFOCC)
+                e_p4 = psi4.optimize(method, molecule=p4_mol, dertype="energy")
+            else:
+                e_p4 = psi4.optimize(method, molecule=p4_mol)
             t_p4 = time.perf_counter() - t0
             c_p4 = np.asarray(p4_mol.geometry()) * 0.529177210903
             r_p4 = float(np.linalg.norm(c_p4[1] - c_p4[0]))
