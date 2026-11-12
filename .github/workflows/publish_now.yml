@@ -1,19 +1,15 @@
-
 name: Instant Publish Artifacts to PyPI and GitHub Release
 
 on:
   push:
-    branches: ["build-pypi"]
+    branches: ["*"]
+    tags: ["*"]
   workflow_dispatch:
     inputs:
       run_id:
-        description: "Run ID sumber artifact wheel"
+        description: "GitHub Actions Run ID yang memiliki artifact wheel"
         required: false
         default: "43217985325"
-      target_version:
-        description: "Versi rilis PyPI baru (kosongkan untuk otomatis 1.0.4.post17)"
-        required: false
-        default: "1.0.4.post17"
 
 permissions:
   contents: write
@@ -21,85 +17,59 @@ permissions:
 
 jobs:
   publish_existing_wheels:
-    name: Repack Artifacts (Fix macOS MKL + README) & Upload to PyPI
+    name: Grab Artifacts, Inject README & Publish to PyPI
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout Repository (ambil README.md & pyproject.toml terbaru)
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.12
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Download Wheels from Run 43217985325
+      - name: Extract Version from pyproject.toml (Tanpa awalan v)
+        id: meta
+        run: |
+          VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Target Release Version: $VERSION"
+
+      - name: Download Compiled Wheels & sdist from Run
         uses: actions/download-artifact@v4
         with:
           run-id: ${{ inputs.run_id || '43217985325' }}
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          pattern: cibw-wheels-*
-          path: raw_wheels
+          pattern: cibw-*
+          path: dist
           merge-multiple: true
 
-      - name: Patch Metadata (Fix macOS MKL, Inject README.md, Bump Version) & Build sdist
-        id: prep
+      - name: Inject GitHub README.md into All Wheels (Fix Windows CRLF & macOS MKL)
         env:
-          TARGET_VER: ${{ inputs.target_version || '1.0.4.post17' }}
+          TARGET_VER: ${{ steps.meta.outputs.version }}
         run: |
-          python3 -m pip install --upgrade pip build twine packaging
-
-          python3 - << 'PYEOF'
-          import base64
-          import glob
-          import hashlib
-          import os
-          import re
-          import shutil
-          import subprocess
-          import sys
-          import zipfile
+          python3 -m pip install --upgrade pip build twine
+          python3 - << 'EOF'
+          import base64, glob, hashlib, os, re, shutil, subprocess, sys, zipfile
           from pathlib import Path
 
-          target_ver = os.environ.get("TARGET_VER", "1.0.4.post17").strip()
-          readme_text = Path("README.md").read_text(encoding="utf-8").strip()
+          target_ver = os.environ["TARGET_VER"].strip()
+          readme_text = Path("README.md").read_text(encoding="utf-8").replace("\r\n", "\n").strip()
 
-          # 1. Perbarui pyproject.toml & __init__.py agar sdist sinkron dan bebas bug MKL di macOS
-          pyproj_path = Path("pyproject.toml")
-          pyproj_txt = pyproj_path.read_text(encoding="utf-8")
-          pyproj_txt = re.sub(r'version\s*=\s*"[^"]+"', f'version = "{target_ver}"', pyproj_txt, count=1)
-          pyproj_txt = re.sub(r'"mkl(?:\s*;[^"]*)?"', '"mkl; sys_platform != \'darwin\'"', pyproj_txt)
-          pyproj_path.write_text(pyproj_txt, encoding="utf-8")
+          def b64_nopad(digest: bytes) -> str:
+              return base64.urlsafe_b64encode(digest).decode("ascii").rstrip("=")
 
-          init_path = Path("python/mshqc/__init__.py")
-          if init_path.exists():
-              init_txt = init_path.read_text(encoding="utf-8")
-              init_txt = re.sub(r'__version__\s*=\s*"[^"]+"', f'__version__ = "{target_ver}"', init_txt)
-              init_path.write_text(init_txt, encoding="utf-8")
-
-          out_dir = Path("dist")
-          out_dir.mkdir(parents=True, exist_ok=True)
-
-          def b64_nopad(data: bytes) -> str:
-              return base64.urlsafe_b64encode(data).decode("ascii").rstrip("=")
-
-          # 2. Proses setiap file .whl dari Run 43217985325
-          whl_files = sorted(glob.glob("raw_wheels/*.whl"))
-          if not whl_files:
-              raise RuntimeError("Tidak ada file .whl ditemukan di raw_wheels/!")
-
-          for whl_str in whl_files:
+          for whl_str in sorted(glob.glob("dist/*.whl")):
               whl_path = Path(whl_str)
-              # Ubah nama file wheel ke target_ver: mshqc-<ver>-cp3XX-...
               new_whl_name = re.sub(r"^mshqc-[^-]+-", f"mshqc-{target_ver}-", whl_path.name)
-              # Pada macOS, jika tag memakai macosx_26_0_arm64, tambahkan juga kompatibilitas macosx_14_0_arm64
-              new_whl_path = out_dir / new_whl_name
-
+              new_whl_path = whl_path.parent / new_whl_name
+              tmp_whl = whl_path.with_suffix(".whl.tmp")
               new_dist_info = f"mshqc-{target_ver}.dist-info"
               records = []
 
               with zipfile.ZipFile(whl_path, "r") as zin, \
-                   zipfile.ZipFile(new_whl_path, "w", compression=zipfile.ZIP_DEFLATED) as zout:
+                   zipfile.ZipFile(tmp_whl, "w", compression=zipfile.ZIP_DEFLATED) as zout:
 
                   for item in zin.infolist():
                       fname = item.filename
@@ -107,36 +77,35 @@ jobs:
                           continue
 
                       data = zin.read(fname)
-
-                      # Ganti nama folder .dist-info lama ke versi baru
                       if ".dist-info/" in fname:
                           suffix = fname.split(".dist-info/", 1)[1]
                           fname = f"{new_dist_info}/{suffix}"
 
-                      # Update __version__ di dalam mshqc/__init__.py pada wheel
                       if fname == "mshqc/__init__.py":
-                          txt = data.decode("utf-8", errors="replace")
+                          txt = data.decode("utf-8", errors="replace").replace("\r\n", "\n")
                           txt = re.sub(r'__version__\s*=\s*"[^"]+"', f'__version__ = "{target_ver}"', txt)
                           data = txt.encode("utf-8")
 
-                      # Update METADATA: Version, Requires-Dist mkl (non-darwin), dan README.md
                       if fname.endswith(".dist-info/METADATA"):
-                          raw_meta = data.decode("utf-8", errors="replace")
-                          headers = raw_meta.split("\n\n", 1)[0].splitlines()
+                          # Normalisasi CRLF (\r\n) dari Windows ke LF (\n) sebelum split!
+                          raw_meta = data.decode("utf-8", errors="replace").replace("\r\n", "\n").replace("\r", "\n")
+                          headers_block = raw_meta.split("\n\n", 1)[0].strip()
+
                           clean_headers = []
-                          for h in headers:
-                              if h.startswith("Version:"):
+                          for line in headers_block.splitlines():
+                              if line.startswith("Version:"):
                                   clean_headers.append(f"Version: {target_ver}")
-                              elif h.startswith("Requires-Dist:") and "mkl" in h:
+                              elif line.startswith("Requires-Dist:") and "mkl" in line:
                                   clean_headers.append('Requires-Dist: mkl ; sys_platform != "darwin"')
-                              elif h.startswith("Description-Content-Type:"):
+                              elif line.startswith("Description-Content-Type:"):
                                   continue
                               else:
-                                  clean_headers.append(h)
+                                  clean_headers.append(line)
 
                           clean_headers.append("Description-Content-Type: text/markdown")
                           if not any("github.com/syahrulhidayat/mshqc" in h for h in clean_headers):
                               clean_headers.append("Project-URL: Homepage, https://github.com/syahrulhidayat/mshqc")
+                              clean_headers.append("Project-URL: Repository, https://github.com/syahrulhidayat/mshqc")
 
                           data = ("\n".join(clean_headers) + "\n\n" + readme_text + "\n").encode("utf-8")
 
@@ -150,37 +119,36 @@ jobs:
 
                   rec_fname = f"{new_dist_info}/RECORD"
                   records.append(f"{rec_fname},,")
-                  rec_bytes = ("\n".join(records) + "\n").encode("utf-8")
-                  zout.writestr(rec_fname, rec_bytes)
+                  zout.writestr(rec_fname, ("\n".join(records) + "\n").encode("utf-8"))
 
-              print(f"[OK] Repacked & Fixed Wheel: {new_whl_path.name}")
+              whl_path.unlink()
+              tmp_whl.replace(new_whl_path)
+              print(f"[OK] Synced & Repacked: {new_whl_path.name}")
 
-          # 3. Bangun sdist (.tar.gz) dengan basis sets dan README.md
+          # Bangun ulang sdist (.tar.gz) agar versinya persis sama dengan pyproject.toml
+          for old_tar in glob.glob("dist/*.tar.gz"):
+              os.remove(old_tar)
           subprocess.run(["git", "clone", "--depth", "1", "https://github.com/syahrulhidayat/mshqc-basis.git", "/tmp/mshqc-basis"], check=True)
           Path("data/basis").mkdir(parents=True, exist_ok=True)
           for gbs in Path("/tmp/mshqc-basis/data/basis").glob("*.gbs"):
               shutil.copy2(gbs, Path("data/basis") / gbs.name)
           shutil.rmtree("/tmp/mshqc-basis", ignore_errors=True)
-
           subprocess.run([sys.executable, "-m", "build", "--sdist", "--outdir", "dist"], check=True)
-          PYEOF
-
-          echo "version=$TARGET_VER" >> "$GITHUB_OUTPUT"
+          EOF
+          python3 -m twine check dist/*
           ls -lh dist/
 
-      - name: Upload to PyPI via Twine
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-        run: |
-          python3 -m twine check dist/*
-          python3 -m twine upload --skip-existing dist/*
+      - name: Publish Wheels & sdist to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}
+          skip-existing: true
 
-      - name: Create GitHub Release
+      - name: Create GitHub Release (Tanpa awalan v)
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ steps.prep.outputs.version }}
-          name: "mshqc ${{ steps.prep.outputs.version }}"
+          tag_name: ${{ steps.meta.outputs.version }}
+          name: "mshqc ${{ steps.meta.outputs.version }}"
           body_path: README.md
           files: |
             dist/*.whl
