@@ -3,7 +3,7 @@ name: Compile and Release Wheel to Public Repo
 on:
   push:
     branches: ["master"]
-    tags: [ "v*" ]
+    tags: ["*"]
   workflow_dispatch:
 
 permissions:
@@ -503,12 +503,22 @@ jobs:
           path: dist/*.tar.gz
 
   upload_pypi:
-    name: Upload to PyPI
+    name: Upload to PyPI & GitHub Release
     needs: [build_wheels, build_sdist]
     runs-on: ubuntu-latest
-    if: (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) || github.event_name == 'workflow_dispatch'
+    if: github.ref == 'refs/heads/master' || startsWith(github.ref, 'refs/tags/') || github.event_name == 'workflow_dispatch'
 
     steps:
+      - name: Checkout Source Code (for version detection)
+        uses: actions/checkout@v4
+
+      - name: Extract Version from pyproject.toml
+        id: get_version
+        run: |
+          VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Detected version: $VERSION"
+
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
@@ -520,3 +530,16 @@ jobs:
         uses: pypa/gh-action-pypi-publish@release/v1
         with:
           password: ${{ secrets.PYPI_API_TOKEN }}
+          skip-existing: true
+
+      - name: Create GitHub Release & Upload Wheels
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.get_version.outputs.version }}
+          name: "mshqc ${{ steps.get_version.outputs.version }}"
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
