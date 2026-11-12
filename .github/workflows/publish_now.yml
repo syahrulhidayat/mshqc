@@ -2,8 +2,8 @@ name: Instant Publish Artifacts to PyPI and GitHub Release
 
 on:
   push:
-    branches: ["*"]
-    tags: ["*"]
+    branches: [""]
+    tags: [""]
   workflow_dispatch:
     inputs:
       run_id:
