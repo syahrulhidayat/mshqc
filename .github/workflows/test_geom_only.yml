@@ -2,7 +2,10 @@ name: Compile Locally and Run Geometry Benchmark Suite Only
 
 on:
   push:
-    branches: ["build-pypi"]
+    branches:
+      - build-pypi
+      - test-geom
+      - test
   workflow_dispatch:
 
 jobs:
@@ -82,7 +85,11 @@ jobs:
             fi
           else
             git clone --depth 1 -b v6.1.2 https://github.com/sunqm/libcint.git /tmp/libcint
-            cmake -S /tmp/libcint -B /tmp/libcint/build -GNinja               -DCMAKE_INSTALL_PREFIX="$CONDA_PREFIX"               -DCMAKE_POSITION_INDEPENDENT_CODE=ON               -DCMAKE_C_FLAGS="-O3 -fPIC -Wno-incompatible-pointer-types -Wno-implicit-function-declaration"               -DENABLE_EXAMPLE=0 -DENABLE_TEST=0 -DBUILD_SHARED_LIBS=OFF
+            cmake -S /tmp/libcint -B /tmp/libcint/build -GNinja \
+              -DCMAKE_INSTALL_PREFIX="$CONDA_PREFIX" \
+              -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
+              -DCMAKE_C_FLAGS="-O3 -fPIC -Wno-incompatible-pointer-types -Wno-implicit-function-declaration" \
+              -DENABLE_EXAMPLE=0 -DENABLE_TEST=0 -DBUILD_SHARED_LIBS=OFF
             cmake --build /tmp/libcint/build -j4
             cmake --install /tmp/libcint/build
             if [ -f "$CONDA_PREFIX/lib64/libcint.a" ] && [ ! -f "$CONDA_PREFIX/lib/libcint.a" ]; then
@@ -92,31 +99,40 @@ jobs:
             git clone --depth 1 -b v1.2.0 https://github.com/devinamatthews/tblis.git /tmp/tblis
             cd /tmp/tblis
             git submodule update --init --recursive
-            perl -pi -e 's/SIGSTKSZ/8192/g' src/external/catch/catch.hpp
-            perl -pi -e 'print "#include <limits>
-" if $. == 1' src/external/marray/include/short_vector.hpp
-            perl -pi -e 'print "#include <limits>
-" if $. == 1' src/external/marray/include/range.hpp
-            perl -pi -e 'print "#include <limits>
-" if $. == 1' src/util/thread.h
-            perl -pi -e 'print "#include <stdlib.h>
-" if $. == 1' src/external/tci/tci/task_set.c
-            perl -pi -e 's|#include <x86intrin.h>|#if defined(__GNUC__) && (defined(__x86_64__) \|\| defined(__i386__))
-#include <x86intrin.h>
-#else
-#undef __AVX512F__
-#undef __AVX__
-#undef __SSE2__
-#endif|g' src/external/marray/include/expression.hpp
-            perl -pi -e 's/enum \{VENDOR_ARM, VENDOR_UNKNOWN\}/enum {VENDOR_ARM, VENDOR_UNKNOWN};/g' src/util/cpuid.hpp
-            perl -pi -e 's/enum \{MODEL_ARMV7, MODEL_ARMV8, MODEL_UNKNOWN\}/enum {MODEL_ARMV7, MODEL_ARMV8, MODEL_UNKNOWN};/g' src/util/cpuid.hpp
-            perl -pi -e 's/strtoi\(ptno, pos, 16\)/((void)pos, (int)strtol(ptno.c_str(), NULL, 16))/g' src/util/cpuid.cxx
+
+            python -c "
+          import pathlib
+          p = pathlib.Path('src/external/catch/catch.hpp')
+          p.write_text(p.read_text().replace('SIGSTKSZ', '8192'))
+          for f in ('src/external/marray/include/short_vector.hpp', 'src/external/marray/include/range.hpp', 'src/util/thread.h'):
+              fp = pathlib.Path(f)
+              fp.write_text('#include <limits>\n' + fp.read_text())
+          tp = pathlib.Path('src/external/tci/tci/task_set.c')
+          tp.write_text('#include <stdlib.h>\n' + tp.read_text())
+          ep = pathlib.Path('src/external/marray/include/expression.hpp')
+          ep.write_text(ep.read_text().replace(
+              '#include <x86intrin.h>',
+              '#if defined(__GNUC__) && (defined(__x86_64__) || defined(__i386__))\n#include <x86intrin.h>\n#else\n#undef __AVX512F__\n#undef __AVX__\n#undef __SSE2__\n#endif'
+          ))
+          cp = pathlib.Path('src/util/cpuid.hpp')
+          if cp.exists():
+              txt = cp.read_text()
+              txt = txt.replace('enum {VENDOR_ARM, VENDOR_UNKNOWN}', 'enum {VENDOR_ARM, VENDOR_UNKNOWN};')
+              txt = txt.replace('enum {MODEL_ARMV7, MODEL_ARMV8, MODEL_UNKNOWN}', 'enum {MODEL_ARMV7, MODEL_ARMV8, MODEL_UNKNOWN};')
+              cp.write_text(txt)
+          cx = pathlib.Path('src/util/cpuid.cxx')
+          if cx.exists():
+              cx.write_text(cx.read_text().replace('strtoi(ptno, pos, 16)', '((void)pos, (int)strtol(ptno.c_str(), NULL, 16))'))
+          "
 
             CFG_ARCH="reference"
             if [ "$(uname -m)" = "x86_64" ]; then
               CFG_ARCH="haswell,zen,core2,reference"
             fi
-            ./configure --prefix="$CONDA_PREFIX" --enable-static --disable-shared --with-pic --without-hwloc               --enable-config="$CFG_ARCH"               CFLAGS="-O3 -fPIC -Wno-implicit-function-declaration -Wno-incompatible-function-pointer-types"               CXXFLAGS="-O3 -fPIC -std=c++17 -D_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION -D_LIBCPP_ENABLE_CXX17_REMOVED_RANDOM_SHUFFLE"
+            ./configure --prefix="$CONDA_PREFIX" --enable-static --disable-shared --with-pic --without-hwloc \
+              --enable-config="$CFG_ARCH" \
+              CFLAGS="-O3 -fPIC -Wno-implicit-function-declaration -Wno-incompatible-function-pointer-types" \
+              CXXFLAGS="-O3 -fPIC -std=c++17 -D_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION -D_LIBCPP_ENABLE_CXX17_REMOVED_RANDOM_SHUFFLE"
             make -j4 bin_PROGRAMS= noinst_PROGRAMS= check_PROGRAMS=
             make install bin_PROGRAMS= noinst_PROGRAMS= check_PROGRAMS=
 
