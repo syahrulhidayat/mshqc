@@ -1,8 +1,8 @@
-name: Validation & Universal Benchmark Suite (mshqc vs Psi4) test
+name: Validation & Universal Benchmark Suite (mshqc vs Psi4) 
 
 on:
   push:
-    branches: [""]
+    branches: ["build-pypi"]
   workflow_dispatch:
 
 jobs:
@@ -16,7 +16,7 @@ jobs:
 
     env:
       OMP_NUM_THREADS: "4"
-      TBLIS_NUM_THREADS: "1"
+      TBLIS_NUM_THREADS: "4"
       MKL_NUM_THREADS: "1"
       OPENBLAS_NUM_THREADS: "1"
       HDF5_USE_FILE_LOCKING: "FALSE"
