@@ -2,7 +2,7 @@ name: Compile and Release Wheel to Public Repo
 
 on:
   push:
-    branches: ["build-pypi"]
+    branches: [""]
     tags: ["*"]
   workflow_dispatch:
 
