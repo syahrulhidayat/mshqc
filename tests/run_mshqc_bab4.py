@@ -137,15 +137,79 @@ def capture_c_stdout():
         buf.append("".join(chunks))
 
 
-def get_rss_and_hwm_mb():
-    rss, hwm = 0.0, 0.0
-    with open("/proc/self/status", encoding="utf-8") as f:
-        for line in f:
-            if line.startswith("VmRSS:"):
-                rss = int(line.split()[1]) / 1024.0
-            elif line.startswith("VmHWM:"):
-                hwm = int(line.split()[1]) / 1024.0
-    return rss, hwm
+def get_rss_and_hwm_mb() -> tuple[float, float]:
+    """Mengukur (Current RSS MB, Peak HWM MB) di Linux, macOS, dan Windows."""
+    import sys
+    import ctypes
+
+    if sys.platform.startswith("linux"):
+        rss_kb, hwm_kb = 0.0, 0.0
+        try:
+            with open("/proc/self/status", encoding="utf-8") as f:
+                for line in f:
+                    if line.startswith("VmRSS:"):
+                        rss_kb = float(line.split()[1])
+                    elif line.startswith("VmHWM:"):
+                        hwm_kb = float(line.split()[1])
+            return rss_kb / 1024.0, hwm_kb / 1024.0
+        except OSError:
+            return 0.0, 0.0
+
+    elif sys.platform == "darwin":
+        class MachTaskBasicInfo(ctypes.Structure):
+            _fields_ = [
+                ("virtual_size", ctypes.c_uint64),
+                ("resident_size", ctypes.c_uint64),
+                ("resident_size_max", ctypes.c_uint64),
+                ("user_time_sec", ctypes.c_int32),
+                ("user_time_usec", ctypes.c_int32),
+                ("system_time_sec", ctypes.c_int32),
+                ("system_time_usec", ctypes.c_int32),
+                ("policy", ctypes.c_int32),
+                ("suspend_count", ctypes.c_int32),
+            ]
+        try:
+            libc = ctypes.CDLL("/usr/lib/libSystem.B.dylib")
+            info = MachTaskBasicInfo()
+            count = ctypes.c_uint32(12)
+            kr = libc.task_info(
+                libc.mach_task_self(), 20, ctypes.byref(info), ctypes.byref(count)
+            )
+            if kr == 0:
+                rss_mb = info.resident_size / (1024.0 * 1024.0)
+                hwm_mb = info.resident_size_max / (1024.0 * 1024.0)
+                return rss_mb, max(hwm_mb, rss_mb)
+        except Exception:
+            import resource
+            hwm_mb = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / (1024.0 * 1024.0)
+            return hwm_mb, hwm_mb
+
+    elif sys.platform == "win32":
+        class PROCESS_MEMORY_COUNTERS(ctypes.Structure):
+            _fields_ = [
+                ("cb", ctypes.c_ulong),
+                ("PageFaultCount", ctypes.c_ulong),
+                ("PeakWorkingSetSize", ctypes.c_size_t),
+                ("WorkingSetSize", ctypes.c_size_t),
+                ("QuotaPeakPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                ("PagefileUsage", ctypes.c_size_t),
+                ("PeakPagefileUsage", ctypes.c_size_t),
+            ]
+        try:
+            pmc = PROCESS_MEMORY_COUNTERS()
+            pmc.cb = ctypes.sizeof(PROCESS_MEMORY_COUNTERS)
+            handle = ctypes.windll.kernel32.GetCurrentProcess()
+            if ctypes.windll.psapi.GetProcessMemoryInfo(handle, ctypes.byref(pmc), pmc.cb):
+                rss_mb = pmc.WorkingSetSize / (1024.0 * 1024.0)
+                hwm_mb = pmc.PeakWorkingSetSize / (1024.0 * 1024.0)
+                return rss_mb, max(hwm_mb, rss_mb)
+        except Exception:
+            pass
+
+    return 0.0, 0.0
 
 
 def build_mol(sys_name: str) -> mshqc.Molecule:

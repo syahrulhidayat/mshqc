@@ -54,6 +54,7 @@ IntegralEngine::~IntegralEngine() {
     if (opt_ != nullptr) {
         CINTOpt* tmp_opt = static_cast<CINTOpt*>(opt_);
         CINTdel_optimizer(&tmp_opt);
+        opt_ = nullptr;
     }
 }
 
@@ -230,17 +231,20 @@ const Eigen::Tensor<double, 4>& IntegralEngine::compute_eri() {
     std::vector<double> schwarz_max(nbas * nbas, 0.0);
     #pragma omp parallel
     {
-        std::vector<double> buf(10000);
+        std::vector<double> buf(65536, 0.0);
         #pragma omp for schedule(dynamic)
         for (int s1 = 0; s1 < nbas; ++s1) {
             for (int s2 = 0; s2 <= s1; ++s2) {
+                int dim1 = CINTcgto_spheric(s1, bas_.data());
+                int dim2 = CINTcgto_spheric(s2, bas_.data());
+                size_t req_sz = static_cast<size_t>(dim1) * dim2 * dim1 * dim2;
+                if (buf.size() < req_sz) buf.resize(req_sz);
+
                 int shls[4] = {s1, s2, s1, s2};
                 int has_val = cint2e_sph(buf.data(), shls, atm_.data(), mol_.n_atoms(), bas_.data(), nbas, env_.data(), static_cast<CINTOpt*>(opt_));
                 if (has_val) {
-                    int dim1 = CINTcgto_spheric(s1, bas_.data());
-                    int dim2 = CINTcgto_spheric(s2, bas_.data());
                     double max_v = 0.0;
-                    for (int x = 0; x < dim1*dim2*dim1*dim2; ++x) max_v = std::max(max_v, std::abs(buf[x]));
+                    for (size_t x = 0; x < req_sz; ++x) max_v = std::max(max_v, std::abs(buf[x]));
                     schwarz_max[s1 * nbas + s2] = std::sqrt(max_v);
                     schwarz_max[s2 * nbas + s1] = std::sqrt(max_v);
                 }
@@ -252,7 +256,7 @@ const Eigen::Tensor<double, 4>& IntegralEngine::compute_eri() {
     const double screen_thresh = 1e-12;
     #pragma omp parallel
     {
-        std::vector<double> buf(10000);
+        std::vector<double> buf(65536, 0.0);
         #pragma omp for schedule(dynamic, 1)
         for (int s1 = 0; s1 < nbas; ++s1) {
             for (int s2 = 0; s2 <= s1; ++s2) {
@@ -264,14 +268,16 @@ const Eigen::Tensor<double, 4>& IntegralEngine::compute_eri() {
                     for (int s4 = 0; s4 <= s4_max; ++s4) {
                         if (bound1 * schwarz_max[s3 * nbas + s4] < screen_thresh) continue;
 
-                        int shls[4] = {s1, s2, s3, s4};
-                        if (!cint2e_sph(buf.data(), shls, atm_.data(), mol_.n_atoms(), bas_.data(), nbas, env_.data(), static_cast<CINTOpt*>(opt_))) continue;
-
                         int dim1 = CINTcgto_spheric(s1, bas_.data());
                         int dim2 = CINTcgto_spheric(s2, bas_.data());
                         int dim3 = CINTcgto_spheric(s3, bas_.data());
                         int dim4 = CINTcgto_spheric(s4, bas_.data());
-                        
+                        size_t req_sz = static_cast<size_t>(dim1) * dim2 * dim3 * dim4;
+                        if (buf.size() < req_sz) buf.resize(req_sz);
+
+                        int shls[4] = {s1, s2, s3, s4};
+                        if (!cint2e_sph(buf.data(), shls, atm_.data(), mol_.n_atoms(), bas_.data(), nbas, env_.data(), static_cast<CINTOpt*>(opt_))) continue;
+
                         int bf1 = shell2bf[s1]; int bf2 = shell2bf[s2];
                         int bf3 = shell2bf[s3]; int bf4 = shell2bf[s4];
 
@@ -281,8 +287,8 @@ const Eigen::Tensor<double, 4>& IntegralEngine::compute_eri() {
                                 for (int k = 0; k < dim3; ++k) {
                                     for (int l = 0; l < dim4; ++l) {
                                         double val = buf[i + dim1*(j + dim2*(k + dim3*l))];
-                                        
-                                        long i1 = bf1 + i, i2 = bf2 + j, i3 = bf3 + k, i4 = bf4 + l;
+
+                                        Eigen::Index i1 = bf1 + i, i2 = bf2 + j, i3 = bf3 + k, i4 = bf4 + l;
                                         cached_eri(i1, i2, i3, i4) = val;
                                         cached_eri(i2, i1, i3, i4) = val;
                                         cached_eri(i1, i2, i4, i3) = val;
@@ -343,9 +349,10 @@ int IntegralEngine::compute_shell_block_raw(int sh_a, int sh_b, int sh_c, int sh
 }
 
 const double* IntegralEngine::compute_shell_block_ptr(int sh_a, int sh_b, int sh_c, int sh_d, size_t& size_out) {
-    const auto& buf = compute_shell_block(sh_a, sh_b, sh_c, sh_d);
-    size_out = buf.size();
-    return buf.data();
+    static thread_local std::vector<double> tl_buf;
+    tl_buf = compute_shell_block(sh_a, sh_b, sh_c, sh_d);
+    size_out = tl_buf.size();
+    return tl_buf.data();
 }
 // ============================================================================
 // DENSITY FITTING INTEGRALS (2-Center & 3-Center)

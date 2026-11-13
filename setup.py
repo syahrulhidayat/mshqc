@@ -120,7 +120,11 @@ class CMakeBuild(build_ext):
         os.makedirs(self.build_temp, exist_ok=True)
 
         env = os.environ.copy()
-        if sys.platform != "win32":
+        if sys.platform == "win32":
+            win_flags = "/DEIGEN_MAX_ALIGN_BYTES=0 /DEIGEN_DONT_ALIGN_STATICALLY /D_CRT_SECURE_NO_WARNINGS /DNOMINMAX"
+            env["CXXFLAGS"] = f'{env.get("CXXFLAGS", "")} {win_flags}'.strip()
+            cmake_args.append(f"-DCMAKE_CXX_FLAGS={env['CXXFLAGS']}")
+        else:
             env["CXXFLAGS"] = f'{env.get("CXXFLAGS", "")} -DVERSION_INFO=\\"{self.distribution.get_version()}\\"'
 
         subprocess.check_call(["cmake", ext.sourcedir] + cmake_args, cwd=self.build_temp, env=env)
