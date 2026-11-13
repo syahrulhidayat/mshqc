@@ -31,11 +31,51 @@
 #include <Eigen/Core>
 #include <tblis/tblis.h>
 
+namespace tblis {
+
+inline size_t view_num_elements(const varray_view<double>& v) {
+    const auto& len = v.lengths();
+    if (len.empty()) return 0;
+    size_t prod = 1;
+    for (auto d : len) {
+        if (d <= 0) return 0;
+        prod *= static_cast<size_t>(d);
+    }
+    return prod;
+}
+
+template <typename T = double>
+inline void c_tblis_mult(
+    T alpha,
+    const varray_view<double>& A, const char* idxA,
+    const varray_view<double>& B, const char* idxB,
+    T beta,
+    varray_view<double>& C, const char* idxC)
+{
+    const size_t szA = view_num_elements(A);
+    const size_t szB = view_num_elements(B);
+    const size_t szC = view_num_elements(C);
+
+    if (szC == 0) return;
+    if (szA == 0 || szB == 0) {
+        Eigen::Map<Eigen::VectorXd> vecC(C.data(), static_cast<Eigen::Index>(szC));
+        if (beta == T(0)) vecC.setZero();
+        else vecC *= static_cast<double>(beta);
+        return;
+    }
+
+    tblis_tensor A_s(static_cast<double>(alpha), const_cast<double*>(A.data()), A.dimension(), A.lengths().data(), A.strides().data());
+    tblis_tensor B_s(const_cast<double*>(B.data()), B.dimension(), B.lengths().data(), B.strides().data());
+    tblis_tensor C_s(static_cast<double>(beta), C.data(), C.dimension(), C.lengths().data(), C.strides().data());
+    tblis_tensor_mult(nullptr, nullptr, &A_s, idxA, &B_s, idxB, &C_s, idxC);
+}
+
+} // namespace tblis
+
+#define mult c_tblis_mult
+
 namespace mshqc {
 namespace integrals {
-
-
-
 
 static Eigen::Tensor<double, 4> smart_transform_kernel(
     const Eigen::Tensor<double, 4>& eri_ao,

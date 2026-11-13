@@ -127,7 +127,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: .cache_deps_windows
-          key: windows-amd64-deps-v6.1.2-tblis-v1.2.0-v1
+          key: windows-amd64-deps-v6.1.2-tblis-v1.2.0-v2
 
       - name: Build libcint & TBLIS via MSYS2 MinGW64 (Windows)
         if: runner.os == 'Windows'
@@ -296,7 +296,7 @@ jobs:
             sed -i 's/extern const communicator single;/#ifdef _MSC_VER\nstatic const communicator single;\n#else\nextern const communicator single;\n#endif/g' src/util/thread.h
             sed -i 's|#include <x86intrin.h>|#if defined(__GNUC__) \&\& (defined(__x86_64__) \|\| defined(__i386__))\n#include <x86intrin.h>\n#else\n#undef __AVX512F__\n#undef __AVX__\n#undef __SSE2__\n#endif|g' src/external/marray/include/expression.hpp
             sed -i '/#include <cstdlib>/a #include <malloc.h>\nstatic inline int posix_memalign(void** p, size_t a, size_t s) { *p = _aligned_malloc(s, a); return *p ? 0 : 12; }' src/memory/aligned_allocator.hpp
-            sed -i 's/free(ptr);/_aligned_free(ptr);/g' src/memory/aligned_allocator.hpp
+            sed -i -E 's/\b(std::)?free\s*\(([^)]+)\);/_aligned_free((void*)(\2));/g' src/memory/aligned_allocator.hpp
 
             export CC=/mingw64/bin/gcc.exe
             export CXX=/mingw64/bin/g++.exe
@@ -359,7 +359,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: .cache_deps_windows
-          key: windows-amd64-deps-v6.1.2-tblis-v1.2.0-v1
+          key: windows-amd64-deps-v6.1.2-tblis-v1.2.0-v2
 
       - name: Patch Headers & OpenMP Pragmas for MSVC (Windows)
         if: runner.os == 'Windows'

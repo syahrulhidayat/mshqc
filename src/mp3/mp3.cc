@@ -93,7 +93,10 @@ inline void safe_tblis_mult(
         return;
     }
 
-    ::tblis::mult<double>(alpha, A, idxA, B, idxB, beta, C, idxC);
+    tblis_tensor A_s(alpha, A);
+    tblis_tensor B_s(B);
+    tblis_tensor C_s(beta, C);
+    tblis_tensor_mult(nullptr, nullptr, &A_s, idxA, &B_s, idxB, &C_s, idxC);
 }
 
 } // namespace tblis

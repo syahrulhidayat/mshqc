@@ -136,29 +136,52 @@ namespace mshqc_auto_tune {
         }
 
         std::string threads_str = std::to_string(num_threads);
-        set_env_if_empty("OMP_NUM_THREADS", threads_str.c_str());
+    set_env_if_empty("OMP_NUM_THREADS", threads_str.c_str());
     #if defined(__APPLE__) || defined(_WIN32)
+      #if defined(_WIN32)
+        _putenv_s("TBLIS_NUM_THREADS", "1");
+        _putenv_s("MKL_NUM_THREADS", "1");
+        _putenv_s("OPENBLAS_NUM_THREADS", "1");
+      #else
         set_env_if_empty("TBLIS_NUM_THREADS", "1");
-        set_env_if_empty("OMP_WAIT_POLICY", "PASSIVE");
-        set_env_if_empty("KMP_BLOCKTIME", "0");
+      #endif
+      set_env_if_empty("OMP_WAIT_POLICY", "PASSIVE");
+      set_env_if_empty("KMP_BLOCKTIME", "0");
     #else
-        set_env_if_empty("TBLIS_NUM_THREADS", threads_str.c_str());
+      set_env_if_empty("TBLIS_NUM_THREADS", threads_str.c_str());
     #endif
-        set_env_if_empty("OPENBLAS_NUM_THREADS", "1");
-        set_env_if_empty("MKL_NUM_THREADS", "1");
-        set_env_if_empty("VECLIB_MAXIMUM_THREADS", "1");
-        set_env_if_empty("NUMEXPR_NUM_THREADS", "1");
-        set_env_if_empty("OMP_MAX_ACTIVE_LEVELS", "1");
-        set_env_if_empty("HDF5_USE_FILE_LOCKING", "FALSE");
+    set_env_if_empty("OPENBLAS_NUM_THREADS", "1");
+    set_env_if_empty("MKL_NUM_THREADS", "1");
+    set_env_if_empty("VECLIB_MAXIMUM_THREADS", "1");
+    set_env_if_empty("NUMEXPR_NUM_THREADS", "1");
+    set_env_if_empty("OMP_MAX_ACTIVE_LEVELS", "1");
+    set_env_if_empty("HDF5_USE_FILE_LOCKING", "FALSE");
 
-        // Matikan multithreading internal Eigen agar tidak bertabrakan dengan OpenMP/TBLIS
-        Eigen::setNbThreads(1);
+    Eigen::setNbThreads(1);
 
-        omp_set_dynamic(0);
-        omp_set_num_threads(num_threads);
-        omp_set_max_active_levels(1);
+    omp_set_dynamic(0);
+    omp_set_num_threads(num_threads);
+    omp_set_max_active_levels(1);
 
-    #if defined(__linux__) || defined(__APPLE__)
+    #if defined(_WIN32)
+    using set_threads_fn = void (*)(int);
+    const char* tblis_dlls[] = {"libtblis.dll", "tblis.dll"};
+    for (const char* dll : tblis_dlls) {
+      if (HMODULE h = GetModuleHandleA(dll)) {
+        if (auto fn = reinterpret_cast<set_threads_fn>(GetProcAddress(h, "tblis_set_num_threads"))) {
+          fn(1);
+        }
+      }
+    }
+    const char* mkl_dlls[] = {"mkl_rt.2.dll", "mkl_rt.3.dll", "mkl_rt.dll"};
+    for (const char* dll : mkl_dlls) {
+      if (HMODULE h = GetModuleHandleA(dll)) {
+        if (auto fn = reinterpret_cast<set_threads_fn>(GetProcAddress(h, "MKL_Set_Num_Threads"))) {
+          fn(1);
+        }
+      }
+    }
+    #elif defined(__linux__) || defined(__APPLE__)
         using set_threads_fn = void (*)(int);
         if (auto fn = reinterpret_cast<set_threads_fn>(dlsym(RTLD_DEFAULT, "openblas_set_num_threads"))) {
             fn(1);
