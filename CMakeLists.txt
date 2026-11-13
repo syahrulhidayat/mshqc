@@ -20,17 +20,23 @@ endif()
 # 0. OS & COMPILER SPECIFIC FLAGS
 # ==============================================================================
 if(MSVC)
-    # Konfigurasi Windows (MSVC)
-    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /O2 /Ob2 /Oi /Ot /arch:AVX2 /fp:fast /openmp:llvm /Zc:__cplusplus /permissive- /DNDEBUG /EHsc /bigobj")
-    add_compile_options(/arch:AVX2 /openmp:llvm /EHsc /bigobj)
-    add_compile_definitions(
-        _USE_MATH_DEFINES
-        _CRT_SECURE_NO_WARNINGS
-        NOMINMAX
-        __restrict__=__restrict
-        H5_BUILT_AS_DYNAMIC_LIB
-        EIGEN_MAX_ALIGN_BYTES=32
-    )
+
+  set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /O2 /Ob2 /Oi /Ot /arch:AVX2 /fp:fast /openmp:llvm /Zc:__cplusplus /permissive- /DNDEBUG /EHsc /bigobj")
+  add_compile_options(
+    /arch:AVX2
+    /openmp:llvm
+    /EHsc
+    /bigobj
+    "/FI${CMAKE_SOURCE_DIR}/include/mshqc/msvc_compat.h"
+  )
+  add_compile_definitions(
+    _USE_MATH_DEFINES
+    _CRT_SECURE_NO_WARNINGS
+    NOMINMAX
+    __restrict__=__restrict
+    H5_BUILT_AS_DYNAMIC_LIB
+    EIGEN_MAX_ALIGN_BYTES=32
+  )
 elseif(APPLE)
     # Konfigurasi macOS (Apple Silicon ARM64 & Intel x86_64)
     add_compile_definitions(_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION _LIBCPP_ENABLE_CXX17_REMOVED_RANDOM_SHUFFLE)
