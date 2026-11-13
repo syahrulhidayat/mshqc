@@ -29,6 +29,7 @@ jobs:
           out_dir.mkdir(exist_ok=True)
 
           skip_dirs = {".git", "_gdrive_out", "build", "dist", "__pycache__", ".pytest_cache", ".vscode", ".idea"}
+          skip_files = {"sisa_mshqc.txt"}
           skip_exts = {
               ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg",
               ".so", ".pyd", ".dll", ".dylib", ".a", ".lib", ".o", ".obj",
@@ -39,7 +40,9 @@ jobs:
           for root, dirs, files in os.walk("."):
               dirs[:] = sorted([d for d in dirs if d not in skip_dirs])
               for fname in sorted(files):
-                  rel = pathlib.Path(root, fname).as_posix().lstrip("./")
+                  if fname in skip_files:
+                      continue
+                  rel = pathlib.Path(root, fname).as_posix().removeprefix("./")
                   if any(rel.endswith(ext) for ext in skip_exts):
                       continue
                   all_files.append(rel)
@@ -69,7 +72,6 @@ jobs:
               elif f.startswith(("include/mshqc/mp2/", "include/mshqc/mp3/", "src/mp/", "src/mp2/", "src/mp3/")):
                   buckets["03_mp_omp_solvers.txt"].append(f)
               else:
-                  # Menangkap symmetry, gradient, utils, python, tests, maupun folder baru apa pun
                   buckets["04_sym_grad_py_tests_rest.txt"].append(f)
 
           manifest_lines = [header, f"Total files bundled: {len(all_files)}\n\n"]
@@ -97,7 +99,9 @@ jobs:
           GDRIVE_REFRESH_TOKEN: ${{ secrets.GDRIVE_REFRESH_TOKEN }}
           BRANCH: ${{ github.ref_name }}
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq rclone
+          if ! command -v rclone >/dev/null 2>&1; then
+            sudo apt-get update -qq && sudo apt-get install -y -qq rclone
+          fi
           mkdir -p ~/.config/rclone
           python3 - << 'EOF'
           import json, os, pathlib
