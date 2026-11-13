@@ -39,6 +39,8 @@ def main():
     except ImportError:
         has_psi4 = False
 
+    basis_name = "cc-pVDZ"
+    aux_basis = "cc-pVDZ-RI"
     rows = []
 
     for method in ("omp2", "omp3"):
@@ -47,14 +49,19 @@ def main():
         mol.add_atom("H", 0.0, 0.0, 1.03, units="angstrom")
 
         opt_res = mol.optimize_geometry(
-            method=method, eri_mode="df", basis="cc-pVDZ", verbose=False
+            method=method,
+            eri_mode="df",
+            basis=basis_name,
+            g_rms_tol=1.0e-6,
+            fd_step_bohr=5.0e-4,
+            verbose=False,
         )
         r_mshqc = opt_res.bond_lengths_angstrom["O1-H2"]
         e_mshqc = opt_res.final_energy
         t_mshqc = opt_res.wall_time_sec
 
         vib_res = mol.frequencies(
-            method=method, eri_mode="df", basis="cc-pVDZ", verbose=False
+            method=method, eri_mode="df", basis=basis_name, verbose=False
         )
         freq_mshqc = float(vib_res.frequencies_cm1[0])
 
@@ -66,23 +73,34 @@ def main():
             with suppress_all_output():
                 psi4.core.clean()
                 psi4.core.clean_options()
-                psi4.core.set_output_file(os.devnull, False)
-                psi4.core.be_quiet()
+                psi4.core.set_output_file("NUL" if os.name == "nt" else "/dev/null", False)
 
                 p4_mol = psi4.geometry("""
                 0 2
                 O 0.0 0.0 0.0
                 H 0.0 0.0 1.03
+                units angstrom
                 symmetry c1
                 """)
 
                 psi4.set_options({
-                    "basis": "cc-pVDZ",
+                    "basis": basis_name,
+                    "df_basis_scf": aux_basis,
+                    "df_basis_mp2": aux_basis,
+                    "df_basis_cc": aux_basis,
                     "reference": "uhf",
                     "scf_type": "df",
+                    "mp2_type": "df",
+                    "mp_type": "df",
+                    "cc_type": "df",
+                    "freeze_core": "false",
                     "orb_opt": "true",
+                    "hess_type": "approx_diag",
                     "e_convergence": 1e-10,
-                    "d_convergence": 1e-9,
+                    "d_convergence": 1e-10,
+                    "r_convergence": 1e-9,
+                    "rms_mograd_convergence": 1e-8,
+                    "max_mograd_convergence": 1e-7,
                     "g_convergence": "gau_verytight",
                 })
 
@@ -111,7 +129,7 @@ def main():
         })
 
     print("\n" + "=" * 126)
-    print(" BENCHMARK OPTIMISASI GEOMETRI & FREKUENSI VIBRASI RADIKAL HIDROKSIL (.OH, 2Pi | cc-pVDZ / DF)")
+    print(" BENCHMARK OPTIMISASI GEOMETRI & FREKUENSI VIBRASI RADIKAL HIDROKSIL (.OH, 2Pi | cc-pVDZ / cc-pVDZ-RI)")
     print("=" * 126)
     hdr = (
         f"| {'Method':<8} | {'R_eq mshqc (A)':<14} | {'R_eq Psi4 (A)':<13} | {'|dR| (mA)':<9} | "

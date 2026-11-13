@@ -340,8 +340,8 @@ NB_MODULE(_mshqc, m) {
            nb::arg("basis") = "cc-pVDZ",
            nb::arg("reference") = "auto",
            nb::arg("max_iter") = 40,
-           nb::arg("g_rms_tol") = 1.0e-5,
-           nb::arg("fd_step_bohr") = 1.0e-3,
+           nb::arg("g_rms_tol") = 1.0e-6,
+           nb::arg("fd_step_bohr") = 5.0e-4,
            nb::arg("verbose") = true,
            "Optimize molecular geometry in C++20 and update coordinates in-place")
         .def("frequencies", [](const Molecule& mol,
@@ -387,7 +387,7 @@ NB_MODULE(_mshqc, m) {
            nb::arg("eri_mode") = "df",
            nb::arg("basis") = "cc-pVDZ",
            nb::arg("reference") = "auto",
-           nb::arg("fd_step_bohr") = 1.0e-3,
+           nb::arg("fd_step_bohr") = 5.0e-4,
            "Compute nuclear gradient vector dE/dR (Ha/Bohr)")
         .def("scan_pes", [](const Molecule& mol,
                             int atom_i,

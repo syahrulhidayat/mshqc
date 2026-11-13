@@ -27,7 +27,7 @@ N_THREADS = int(os.environ.get("OMP_NUM_THREADS", str(min(6, CPU_AVAIL))))
 os.environ.update({
     "OMP_NUM_THREADS": str(N_THREADS),
     "OPENBLAS_NUM_THREADS": "1",
-    "MKL_NUM_THREADS": str(N_THREADS),
+    "MKL_NUM_THREADS": "1",
     "OMP_MAX_ACTIVE_LEVELS": "1",
     "HDF5_USE_FILE_LOCKING": "FALSE",
 })
@@ -41,7 +41,7 @@ import psi4
 
 psi4.set_num_threads(N_THREADS)
 psi4.set_memory("8 GB")
-psi4.core.be_quiet()
+psi4.core.set_output_file("NUL" if os.name == "nt" else "/dev/null", False)
 
 ANG_TO_BOHR = 1.8897261246257702
 
@@ -232,6 +232,7 @@ def configure_psi4(mode_lower: str, is_uhf: bool, basis: str = "cc-pVTZ", aux: s
         "mp_type": corr_t,
         "cc_type": corr_t,
         "freeze_core": "false",
+        "hess_type": "approx_diag",
         "r_convergence": 1e-6,
         "rms_mograd_convergence": 1e-5,
         "max_mograd_convergence": 1e-4,
@@ -370,7 +371,7 @@ def run_ram_worker(payload_str: str):
         if mode_lower in ("cholesky", "df"):
             psi4.set_options({"scf_type": "pk", "read_scf_3index": False})
 
-        set_blas_threads(N_THREADS)
+        set_blas_threads(1)
         psi4.energy(p["method"].lower(), ref_wfn=scf_wfn, molecule=mol)
         set_blas_threads(1)
 
@@ -404,7 +405,7 @@ def compute_psi4_suite():
             mode_lower = mode_upper.lower()
             psi4.core.clean()
             psi4.core.clean_options()
-            psi4.core.be_quiet()
+            psi4.core.set_output_file("NUL" if os.name == "nt" else "/dev/null", False)
 
             mol = build_psi4_mol(sys_name, mode_lower)
             configure_psi4(mode_lower, is_uhf)
@@ -444,7 +445,7 @@ def compute_psi4_suite():
                     if mode_lower in ("cholesky", "df"):
                         psi4.set_options({"scf_type": "pk", "read_scf_3index": False})
 
-                    set_blas_threads(N_THREADS)
+                    set_blas_threads(1)
                     for ro_key, ro_call in (("ROMP2", "mp2"), ("ROMP3", "mp3")):
                         try:
                             t0 = time.perf_counter()
@@ -475,7 +476,7 @@ def compute_psi4_suite():
             if mode_lower in ("cholesky", "df"):
                 psi4.set_options({"scf_type": "pk", "read_scf_3index": False})
 
-            set_blas_threads(N_THREADS)
+            set_blas_threads(1)
             try:
                 for m_key, m_call, m_lbl in (("MP2", "mp2", f"{ref_lbl}MP2"), ("MP3", "mp3", f"{ref_lbl}MP3")):
                     try:
@@ -498,7 +499,7 @@ def compute_psi4_suite():
                         t_val = time.perf_counter() - t0
 
                         psi4.core.flush_outfile()
-                        psi4.core.be_quiet()
+                        psi4.core.set_output_file("NUL" if os.name == "nt" else "/dev/null", False)
                         log_txt = Path(tmp_log).read_text(errors="replace") if os.path.exists(tmp_log) else ""
                         it_cnt = parse_occ_iterations(log_txt)
 
@@ -508,7 +509,7 @@ def compute_psi4_suite():
                         it_disp = str(it_cnt) if it_cnt > 0 else "-"
                         print(f"| {sys_name:<8} | {mode_upper:<9} | {m_key:<6} | {float(e_val):<16.8f} | {t_val:<9.3f} | {s2_val:<10.6f} | {s_ideal:<6.2f} | {it_disp:<6} | {'OK':<6} |", flush=True)
                     except Exception:
-                        psi4.core.be_quiet()
+                        psi4.core.set_output_file("NUL" if os.name == "nt" else "/dev/null", False)
                     psi4.core.clean()
                     if m_key == "OMP2":
                         restore_wfn(scf_wfn, hf_snap)

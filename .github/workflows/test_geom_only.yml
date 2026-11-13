@@ -1,0 +1,180 @@
+name: Compile Locally and Run Geometry Benchmark Suite Only
+
+on:
+  push:
+    branches: ["build-pypi"]
+  workflow_dispatch:
+
+jobs:
+  geom_benchmark:
+    name: Local Build & Geometry Suite (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    env:
+      OMP_NUM_THREADS: "4"
+      TBLIS_NUM_THREADS: "4"
+      MKL_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      HDF5_USE_FILE_LOCKING: "FALSE"
+      PYTHONUNBUFFERED: "1"
+      PYTHONIOENCODING: "utf-8"
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Fetch Basis Sets from mshqc-basis
+        shell: bash
+        run: |
+          git clone --depth 1 https://github.com/syahrulhidayat/mshqc-basis.git /tmp/mshqc-basis
+          mkdir -p data/basis python/mshqc/basis
+          cp -rf /tmp/mshqc-basis/data/basis/* data/basis/
+          cp -rf /tmp/mshqc-basis/data/basis/* python/mshqc/basis/
+          rm -rf /tmp/mshqc-basis
+
+      - name: Set up Micromamba Environment (Compilers + C++ Deps + Psi4)
+        uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: geom_env
+          create-args: >-
+            -c conda-forge
+            python=3.11
+            cmake
+            ninja
+            pkg-config
+            cxx-compiler
+            c-compiler
+            llvm-openmp
+            eigen
+            hdf5=1.14.3
+            openblas
+            liblapacke
+            nanobind
+            setuptools
+            wheel
+            pip
+            numpy
+            scipy
+            pytest
+            psi4
+
+      - name: Restore Cached libcint & TBLIS (${{ runner.os }})
+        id: cache-deps
+        uses: actions/cache@v4
+        with:
+          path: .cache_local_deps
+          key: local-geom-deps-${{ runner.os }}-v1
+
+      - name: Build libcint & TBLIS if Not Cached
+        shell: bash -el {0}
+        run: |
+          micromamba activate geom_env
+          mkdir -p .cache_local_deps/include .cache_local_deps/lib
+          if [ -f ".cache_local_deps/lib/libtblis.a" ] && ( [ -f ".cache_local_deps/lib/libcint.a" ] || [ -f ".cache_local_deps/lib64/libcint.a" ] ); then
+            cp -rf .cache_local_deps/include/* "$CONDA_PREFIX/include/"
+            cp -rf .cache_local_deps/lib/* "$CONDA_PREFIX/lib/" 2>/dev/null || true
+            if [ -d ".cache_local_deps/lib64" ]; then
+              cp -rf .cache_local_deps/lib64/* "$CONDA_PREFIX/lib/" 2>/dev/null || true
+            fi
+          else
+            git clone --depth 1 -b v6.1.2 https://github.com/sunqm/libcint.git /tmp/libcint
+            cmake -S /tmp/libcint -B /tmp/libcint/build -GNinja               -DCMAKE_INSTALL_PREFIX="$CONDA_PREFIX"               -DCMAKE_POSITION_INDEPENDENT_CODE=ON               -DCMAKE_C_FLAGS="-O3 -fPIC -Wno-incompatible-pointer-types -Wno-implicit-function-declaration"               -DENABLE_EXAMPLE=0 -DENABLE_TEST=0 -DBUILD_SHARED_LIBS=OFF
+            cmake --build /tmp/libcint/build -j4
+            cmake --install /tmp/libcint/build
+            if [ -f "$CONDA_PREFIX/lib64/libcint.a" ] && [ ! -f "$CONDA_PREFIX/lib/libcint.a" ]; then
+              cp -f "$CONDA_PREFIX/lib64/libcint.a" "$CONDA_PREFIX/lib/libcint.a"
+            fi
+
+            git clone --depth 1 -b v1.2.0 https://github.com/devinamatthews/tblis.git /tmp/tblis
+            cd /tmp/tblis
+            git submodule update --init --recursive
+            perl -pi -e 's/SIGSTKSZ/8192/g' src/external/catch/catch.hpp
+            perl -pi -e 'print "#include <limits>
+" if $. == 1' src/external/marray/include/short_vector.hpp
+            perl -pi -e 'print "#include <limits>
+" if $. == 1' src/external/marray/include/range.hpp
+            perl -pi -e 'print "#include <limits>
+" if $. == 1' src/util/thread.h
+            perl -pi -e 'print "#include <stdlib.h>
+" if $. == 1' src/external/tci/tci/task_set.c
+            perl -pi -e 's|#include <x86intrin.h>|#if defined(__GNUC__) && (defined(__x86_64__) \|\| defined(__i386__))
+#include <x86intrin.h>
+#else
+#undef __AVX512F__
+#undef __AVX__
+#undef __SSE2__
+#endif|g' src/external/marray/include/expression.hpp
+            perl -pi -e 's/enum \{VENDOR_ARM, VENDOR_UNKNOWN\}/enum {VENDOR_ARM, VENDOR_UNKNOWN};/g' src/util/cpuid.hpp
+            perl -pi -e 's/enum \{MODEL_ARMV7, MODEL_ARMV8, MODEL_UNKNOWN\}/enum {MODEL_ARMV7, MODEL_ARMV8, MODEL_UNKNOWN};/g' src/util/cpuid.hpp
+            perl -pi -e 's/strtoi\(ptno, pos, 16\)/((void)pos, (int)strtol(ptno.c_str(), NULL, 16))/g' src/util/cpuid.cxx
+
+            CFG_ARCH="reference"
+            if [ "$(uname -m)" = "x86_64" ]; then
+              CFG_ARCH="haswell,zen,core2,reference"
+            fi
+            ./configure --prefix="$CONDA_PREFIX" --enable-static --disable-shared --with-pic --without-hwloc               --enable-config="$CFG_ARCH"               CFLAGS="-O3 -fPIC -Wno-implicit-function-declaration -Wno-incompatible-function-pointer-types"               CXXFLAGS="-O3 -fPIC -std=c++17 -D_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION -D_LIBCPP_ENABLE_CXX17_REMOVED_RANDOM_SHUFFLE"
+            make -j4 bin_PROGRAMS= noinst_PROGRAMS= check_PROGRAMS=
+            make install bin_PROGRAMS= noinst_PROGRAMS= check_PROGRAMS=
+
+            cd "$GITHUB_WORKSPACE"
+            cp -rf "$CONDA_PREFIX/include/cint"*.h "$CONDA_PREFIX/include/tci"* "$CONDA_PREFIX/include/tblis" .cache_local_deps/include/
+            cp -rf "$CONDA_PREFIX/lib/libcint.a" "$CONDA_PREFIX/lib/libtblis.a" "$CONDA_PREFIX/lib/libtci.a" .cache_local_deps/lib/
+          fi
+
+      - name: Compile mshqc In-Place (No Wheel Release)
+        shell: bash -el {0}
+        run: |
+          micromamba activate geom_env
+          export TBLIS_DIR="$CONDA_PREFIX"
+          export CMAKE_PREFIX_PATH="$CONDA_PREFIX"
+          export CMAKE_BUILD_PARALLEL_LEVEL=4
+          python -m pip install --no-build-isolation --no-deps -e . -v
+
+      - name: Run Unit Test Universal Geometry Optimizer (test_universal_geom_opt.py)
+        shell: bash -el {0}
+        run: |
+          micromamba activate geom_env
+          python -u tests/test_universal_geom_opt.py 2>&1 | tee 01_test_universal_geom_opt_log.txt
+
+      - name: Run .OH Radical Geometry & Frequency Benchmark (benchmark_geom_omp2_psi4.py)
+        shell: bash -el {0}
+        run: |
+          micromamba activate geom_env
+          python -u tests/benchmark_geom_omp2_psi4.py 2>&1 | tee 02_benchmark_geom_oh_psi4_log.txt
+
+      - name: Run mshqc Multi-System Geometry Suite (run_mshqc_geom.py)
+        shell: bash -el {0}
+        run: |
+          micromamba activate geom_env
+          python -u tests/run_mshqc_geom.py 2>&1 | tee 03_mshqc_geom_running_log.txt
+
+      - name: Run Psi4 Multi-System Geometry Reference Suite (run_psi4_geom.py)
+        shell: bash -el {0}
+        run: |
+          micromamba activate geom_env
+          python -u tests/run_psi4_geom.py 2>&1 | tee 04_psi4_geom_running_log.txt
+
+      - name: Compare Head-to-Head Geometry & Vibrational Tables (compare_geom.py)
+        shell: bash -el {0}
+        run: |
+          micromamba activate geom_env
+          python -u tests/compare_geom.py mshqc_geom_raw.json psi4_geom_raw.json 2>&1 | tee 05_compare_geom_log.txt
+
+      - name: Upload Geometry Benchmark Logs (.txt & .json)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mshqc-vs-psi4-geom-logs-${{ matrix.os }}
+          path: |
+            01_test_universal_geom_opt_log.txt
+            02_benchmark_geom_oh_psi4_log.txt
+            03_mshqc_geom_running_log.txt
+            04_psi4_geom_running_log.txt
+            05_compare_geom_log.txt
+            test_geom_validation.txt
+            mshqc_geom_raw.json
+            psi4_geom_raw.json

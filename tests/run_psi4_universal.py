@@ -294,7 +294,7 @@ def run_psi4_system(spec, actual_basis: str, eri_mode: str) -> dict:
 
     scratch_dir = tempfile.mkdtemp(prefix="psi4_scr_", dir=SHM_DIR)
     try:
-        psi4.core.be_quiet()
+        psi4.core.set_output_file("NUL" if os.name == "nt" else "/dev/null", False)
         psi4.set_num_threads(N_THREADS)
         psi4.set_memory("4 GB")
         psi4.core.IOManager.shared_object().set_default_path(scratch_dir)

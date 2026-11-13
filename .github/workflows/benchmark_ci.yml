@@ -151,7 +151,7 @@ jobs:
       - name: Run mshqc Universal Benchmark
         shell: bash -eo pipefail {0}
         run: |
-          "$VENV_PY" -u tests/run_mshqc_universal.py 2>&1 | tee 08_mshqc_universal_running_log.txt
+          "$VENV_PY" -u tests/run_mshqc_geom.py 2>&1 | tee 08_mshqc_universal_running_log.txt
 
       - name: Run Psi4 Universal Reference Benchmark
         shell: bash -el {0}
@@ -160,7 +160,7 @@ jobs:
           if micromamba env list | grep -q "psi4_env"; then
             micromamba activate psi4_env
             if python -c "import psi4" >/dev/null 2>&1; then
-              python -u tests/run_psi4_universal.py 2>&1 | tee 09_psi4_universal_running_log.txt
+              python -u tests/run_psi4_geom.py 2>&1 | tee 09_psi4_universal_running_log.txt
             else
               echo "Psi4 Universal dilewati pada OS $RUNNER_OS." | tee 09_psi4_universal_running_log.txt
             fi
@@ -171,9 +171,9 @@ jobs:
       - name: Generate Universal Comparison Table
         shell: bash {0}
         run: |
-          "$VENV_PY" -u tests/compare_universal.py 2>&1 | tee compare_univ_stdout.txt || true
-          if [ -f test_universal_validation.txt ]; then
-            cp test_universal_validation.txt 10_compare_universal_log.txt
+          "$VENV_PY" -u tests/compare_geom.py 2>&1 | tee compare_univ_stdout.txt || true
+          if [ -f test_geom_validation.txt ]; then
+            cp test_geom_validation.txt 10_compare_universal_log.txt
           else
             cp compare_univ_stdout.txt 10_compare_universal_log.txt
           fi

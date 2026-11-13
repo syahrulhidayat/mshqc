@@ -16,7 +16,7 @@ cpu_avail = os.cpu_count() or 4
 n_threads = int(os.environ.get("OMP_NUM_THREADS", str(min(6, cpu_avail))))
 os.environ["OMP_NUM_THREADS"] = str(n_threads)
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = str(n_threads)
+os.environ["MKL_NUM_THREADS"] = "1"
 os.environ["OMP_MAX_ACTIVE_LEVELS"] = "1"
 os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
@@ -27,7 +27,7 @@ import psi4
 
 psi4.set_num_threads(n_threads)
 psi4.set_memory("8 GB")
-psi4.core.be_quiet()
+psi4.core.set_output_file("NUL" if os.name == "nt" else "/dev/null", False)
 
 
 def _load_blas_setters():
@@ -153,6 +153,7 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
         "mp_type": corr_type,
         "cc_type": corr_type,
         "freeze_core": "false",
+        "hess_type": "approx_diag",
         "r_convergence": 1e-6,
         "rms_mograd_convergence": 1e-5,
         "max_mograd_convergence": 1e-4,
@@ -187,7 +188,7 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
         psi4.set_options({"scf_type": "pk", "read_scf_3index": False})
 
     # Aktifkan multi-thread BLAS untuk seluruh modul pasca-HF (occ maupun dfocc)
-    set_blas_threads(n_threads)
+    set_blas_threads(1)
 
     try:
         # --- 2. MP2 ---
