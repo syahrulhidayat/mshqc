@@ -127,7 +127,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: .cache_deps_windows
-          key: windows-amd64-deps-v6.1.2-tblis-v1.2.0-v2
+          key: windows-amd64-deps-v6.1.2-tblis-v1.2.0-v3
 
       - name: Build libcint & TBLIS via MSYS2 MinGW64 (Windows)
         if: runner.os == 'Windows'
@@ -359,7 +359,7 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: .cache_deps_windows
-          key: windows-amd64-deps-v6.1.2-tblis-v1.2.0-v2
+          key: windows-amd64-deps-v6.1.2-tblis-v1.2.0-v3
 
       - name: Patch Headers & OpenMP Pragmas for MSVC (Windows)
         if: runner.os == 'Windows'
@@ -442,7 +442,7 @@ jobs:
           CIBW_ENVIRONMENT_LINUX: >
             GITHUB_ACTIONS=true
             CIBUILDWHEEL=1
-            CXXFLAGS="-std=c++20 -fopenmp -O3 -DNDEBUG -mavx2 -mfma -mno-avx512f -funroll-loops -ftree-vectorize -mtune=generic -fno-math-errno -DEIGEN_USE_MKL_ALL -I/usr/local/include -I/usr/include/eigen3"
+            CXXFLAGS="-std=c++20 -fopenmp -O3 -DNDEBUG -mavx2 -mfma -mno-avx512f -funroll-loops -ftree-vectorize -mtune=generic -fno-math-errno -Wno-deprecated-enum-enum-conversion -Wno-deprecated-declarations -DEIGEN_USE_MKL_ALL -isystem /usr/local/include -isystem /usr/include/eigen3"
             CFLAGS="-O3 -fPIC -DNDEBUG"
             CMAKE_BUILD_TYPE=Release
             LDFLAGS="-L/usr/local/lib -L/usr/local/lib64 -lquadmath -latomic"

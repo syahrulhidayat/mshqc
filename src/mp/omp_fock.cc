@@ -16,7 +16,7 @@
 #include "mshqc/integrals/eri_transformer.h" 
 #include <omp.h>
 #include <tblis/tblis.h>
-#include <iostream> 
+#include <iostream>
 
 namespace tblis {
 
@@ -75,8 +75,8 @@ inline void safe_tblis_mult(
         return;
     }
 
-    tblis_tensor A_s(alpha, A);
-    tblis_tensor B_s(B);
+    tblis_tensor A_s(alpha, const_cast<varray_view<double>&>(A));
+    tblis_tensor B_s(const_cast<varray_view<double>&>(B));
     tblis_tensor C_s(beta, C);
     tblis_tensor_mult(nullptr, nullptr, &A_s, idxA, &B_s, idxB, &C_s, idxC);
 }

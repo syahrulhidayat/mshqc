@@ -44,8 +44,6 @@ inline size_t view_num_elements(const varray_view<double>& v) {
     return prod;
 }
 
-// Pengganti aman untuk tblis::mult<double> yang mencegah SIGSEGV pada TBLIS v1.2.0
-// saat seluruh dimensi dari salah satu tensor bernilai 1 (misal O = 1 pada He, H2, Li-beta)
 template <typename T = double>
 inline void safe_tblis_mult(
     T alpha,
@@ -66,7 +64,6 @@ inline void safe_tblis_mult(
         return;
     }
 
-    // Kasus 1: Tensor output C berukuran 1 elemen (misal G_oo (1,1) atau G_oooo (1,1,1,1))
     if (szC == 1 && szA == szB) {
         Eigen::Map<const Eigen::VectorXd> vecA(A.data(), static_cast<Eigen::Index>(szA));
         Eigen::Map<const Eigen::VectorXd> vecB(B.data(), static_cast<Eigen::Index>(szB));
@@ -74,7 +71,6 @@ inline void safe_tblis_mult(
         C.data()[0] = (beta == T(0)) ? (alpha * dot) : (beta * C.data()[0] + alpha * dot);
         return;
     }
-    // Kasus 2: Tensor input A berukuran 1 elemen (misal G_oooo (1,1,1,1) * V_ooov (1,1,1,V) -> Z (V,1))
     if (szA == 1 && szB == szC) {
         Eigen::Map<const Eigen::VectorXd> vecB(B.data(), static_cast<Eigen::Index>(szB));
         Eigen::Map<Eigen::VectorXd> vecC(C.data(), static_cast<Eigen::Index>(szC));
@@ -83,7 +79,6 @@ inline void safe_tblis_mult(
         else vecC.noalias() = beta * vecC + scale * vecB;
         return;
     }
-    // Kasus 3: Tensor input B berukuran 1 elemen (misal T2 (1,1,V,V) * V_oooo (1,1,1,1) -> W (1,1,V,V))
     if (szB == 1 && szA == szC) {
         Eigen::Map<const Eigen::VectorXd> vecA(A.data(), static_cast<Eigen::Index>(szA));
         Eigen::Map<Eigen::VectorXd> vecC(C.data(), static_cast<Eigen::Index>(szC));
@@ -93,8 +88,8 @@ inline void safe_tblis_mult(
         return;
     }
 
-    tblis_tensor A_s(alpha, A);
-    tblis_tensor B_s(B);
+    tblis_tensor A_s(alpha, const_cast<varray_view<double>&>(A));
+    tblis_tensor B_s(const_cast<varray_view<double>&>(B));
     tblis_tensor C_s(beta, C);
     tblis_tensor_mult(nullptr, nullptr, &A_s, idxA, &B_s, idxB, &C_s, idxC);
 }

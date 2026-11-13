@@ -45,7 +45,7 @@ inline size_t view_num_elements(const varray_view<double>& v) {
 }
 
 template <typename T = double>
-inline void c_tblis_mult(
+inline void safe_tblis_mult(
     T alpha,
     const varray_view<double>& A, const char* idxA,
     const varray_view<double>& B, const char* idxB,
@@ -64,18 +64,44 @@ inline void c_tblis_mult(
         return;
     }
 
-    tblis_tensor A_s(static_cast<double>(alpha), const_cast<double*>(A.data()), A.dimension(), A.lengths().data(), A.strides().data());
-    tblis_tensor B_s(const_cast<double*>(B.data()), B.dimension(), B.lengths().data(), B.strides().data());
-    tblis_tensor C_s(static_cast<double>(beta), C.data(), C.dimension(), C.lengths().data(), C.strides().data());
+    if (szC == 1 && szA == szB) {
+        Eigen::Map<const Eigen::VectorXd> vecA(A.data(), static_cast<Eigen::Index>(szA));
+        Eigen::Map<const Eigen::VectorXd> vecB(B.data(), static_cast<Eigen::Index>(szB));
+        const double dot = vecA.dot(vecB);
+        C.data()[0] = (beta == T(0)) ? (alpha * dot) : (beta * C.data()[0] + alpha * dot);
+        return;
+    }
+    if (szA == 1 && szB == szC) {
+        Eigen::Map<const Eigen::VectorXd> vecB(B.data(), static_cast<Eigen::Index>(szB));
+        Eigen::Map<Eigen::VectorXd> vecC(C.data(), static_cast<Eigen::Index>(szC));
+        const double scale = alpha * A.data()[0];
+        if (beta == T(0)) vecC.noalias() = scale * vecB;
+        else vecC.noalias() = beta * vecC + scale * vecB;
+        return;
+    }
+    if (szB == 1 && szA == szC) {
+        Eigen::Map<const Eigen::VectorXd> vecA(A.data(), static_cast<Eigen::Index>(szA));
+        Eigen::Map<Eigen::VectorXd> vecC(C.data(), static_cast<Eigen::Index>(szC));
+        const double scale = alpha * B.data()[0];
+        if (beta == T(0)) vecC.noalias() = scale * vecA;
+        else vecC.noalias() = beta * vecC + scale * vecA;
+        return;
+    }
+
+    tblis_tensor A_s(alpha, const_cast<varray_view<double>&>(A));
+    tblis_tensor B_s(const_cast<varray_view<double>&>(B));
+    tblis_tensor C_s(beta, C);
     tblis_tensor_mult(nullptr, nullptr, &A_s, idxA, &B_s, idxB, &C_s, idxC);
 }
 
 } // namespace tblis
 
-#define mult c_tblis_mult
+#define mult safe_tblis_mult
 
 namespace mshqc {
 namespace integrals {
+
+using tblis::safe_tblis_mult;
 
 static Eigen::Tensor<double, 4> smart_transform_kernel(
     const Eigen::Tensor<double, 4>& eri_ao,

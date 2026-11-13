@@ -7,6 +7,7 @@ RHF-OMP2, UHF-OMP2, RHF-OMP3, UHF-OMP3, dan MP3@OMP2).
 
 import numpy as np
 from mshqc.calculators import UniversalGeomOptimizer
+from mshqc.geom_opt import project_translation_rotation
 
 
 def test_tr_projection_invariance():
@@ -17,28 +18,25 @@ def test_tr_projection_invariance():
         [0.0, -1.430900, -0.886800],
     ], dtype=np.float64)
 
-    # Gradien translasi murni + rotasi murni
     trans_grad = np.tile([0.15, -0.22, 0.08], 3)
     omega = np.array([0.05, -0.03, 0.11])
     com = np.mean(coords, axis=0)
     rot_grad = np.cross(coords - com, omega).reshape(-1)
 
-    opt = UniversalGeomOptimizer(
-        energy_only_dispatch=lambda c: 0.0,
+    _ = UniversalGeomOptimizer(
+        energy_fn=lambda c: 0.0,
         method="omp3",
     )
-    from mshqc.calculators import _project_out_translation_rotation
-    projected = _project_out_translation_rotation(coords, trans_grad + rot_grad)
+    projected = project_translation_rotation(coords, trans_grad + rot_grad)
     assert np.linalg.norm(projected) < 1e-12, f"Galat proyeksi TR: {np.linalg.norm(projected)}"
     print("[PASS] Invariansi Translasi-Rotasi (Eckart Projection) terverifikasi.")
 
 
 def test_supported_methods_convergence_on_model_pes():
     """
-    Menguji konvergensi UniversalGeomOptimizer untuk seluruh 13 metode yang didukung
+    Menguji konvergensi UniversalGeomOptimizer untuk seluruh 14 metode yang didukung
     (dan memastikan ROHF-OMP2 / ROHF-OMP3 ditolak secara eksplisit sesuai desain).
     """
-    # Geometri ekuilibrium H2O (Bohr)
     r_eq = 1.8088
     theta_eq = np.deg2rad(104.52)
 
@@ -51,7 +49,6 @@ def test_supported_methods_convergence_on_model_pes():
         theta = np.arccos(cos_theta)
         return float(e_min + 0.45 * ((r1 - r_eq) ** 2 + (r2 - r_eq) ** 2) + 0.18 * ((theta - theta_eq) ** 2))
 
-    # Koordinat awal terdistorsi
     init_coords = np.array([
         [0.0,  0.0000,  0.0000],
         [0.0,  1.5200,  1.1500],
@@ -69,7 +66,7 @@ def test_supported_methods_convergence_on_model_pes():
 
     for m in all_methods:
         opt = UniversalGeomOptimizer(
-            energy_only_dispatch=pes_h2o,
+            energy_fn=pes_h2o,
             method=m,
             max_iter=40,
             grad_rms_tol=1e-6,
@@ -83,13 +80,12 @@ def test_supported_methods_convergence_on_model_pes():
         print(
             f"[PASS] {res.method:<10} (Ref: {res.reference:<4}) | "
             f"Iter: {res.iterations:2d} | E_final: {res.final_energy:.8f} Ha | "
-            f"Grad RMS: {res.final_gradient_norm_rms:.2e}"
+            f"Grad RMS: {res.grad_rms:.2e}"
         )
 
-    # Pastikan ROHF-OMP2 dan ROHF-OMP3 mengeluarkan NotImplementedError yang informatif
     for unsupported in ("rohf-omp2", "rohf-omp3"):
         try:
-            UniversalGeomOptimizer(energy_only_dispatch=pes_h2o, method=unsupported)
+            UniversalGeomOptimizer(energy_fn=pes_h2o, method=unsupported)
             raise AssertionError(f"{unsupported} seharusnya melempar NotImplementedError")
         except NotImplementedError as err:
             print(f"[PASS] Penolakan eksplisit {unsupported.upper()}: {err}")
