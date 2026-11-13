@@ -1,4 +1,4 @@
-name: Sync Total Source Code to Google Drive
+name: Sync Exact GitHub Structure to Google Drive
 
 on:
   push:
@@ -9,95 +9,19 @@ on:
   workflow_dispatch:
 
 jobs:
-  sync_total_code:
-    name: Bundle 100% Code & Sync (${{ github.ref_name }})
+  sync_gdrive:
+    name: Mirror Repo (${{ github.ref_name }}) to Google Drive
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Bundle 100% Text & Source Files
-        env:
-          BRANCH: ${{ github.ref_name }}
-          SHORT_SHA: ${{ github.sha }}
-        run: |
-          python3 - << 'EOF'
-          import os, pathlib, datetime
-
-          out_dir = pathlib.Path("_gdrive_out")
-          out_dir.mkdir(exist_ok=True)
-
-          skip_dirs = {".git", "_gdrive_out", "build", "dist", "__pycache__", ".pytest_cache", ".vscode", ".idea"}
-          skip_files = {"sisa_mshqc.txt"}
-          skip_exts = {
-              ".pdf", ".png", ".jpg", ".jpeg", ".gif", ".ico", ".svg",
-              ".so", ".pyd", ".dll", ".dylib", ".a", ".lib", ".o", ".obj",
-              ".whl", ".tar.gz", ".zip", ".h5", ".gbs", ".pyc", ".exe"
-          }
-
-          all_files = []
-          for root, dirs, files in os.walk("."):
-              dirs[:] = sorted([d for d in dirs if d not in skip_dirs])
-              for fname in sorted(files):
-                  if fname in skip_files:
-                      continue
-                  rel = pathlib.Path(root, fname).as_posix().removeprefix("./")
-                  if any(rel.endswith(ext) for ext in skip_exts):
-                      continue
-                  all_files.append(rel)
-
-          header = (
-              f"# Repo: syahrulhidayat/mshqc | Branch: {os.environ['BRANCH']} "
-              f"| Commit: {os.environ['SHORT_SHA'][:7]} "
-              f"| UTC: {datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%d %H:%M')}\n"
-          )
-
-          buckets = {
-              "01_build_ci_docs_root.txt": [],
-              "02_core_integrals_scf.txt": [],
-              "03_mp_omp_solvers.txt": [],
-              "04_sym_grad_py_tests_rest.txt": [],
-          }
-
-          for f in all_files:
-              if "/" not in f or f.startswith(("cmake/", ".github/", "docs/")):
-                  buckets["01_build_ci_docs_root.txt"].append(f)
-              elif f.startswith((
-                  "include/mshqc/basis.h", "include/mshqc/core/", "include/mshqc/integrals/",
-                  "include/mshqc/ints/", "include/mshqc/scf/",
-                  "src/core/", "src/integrals/", "src/ints/", "src/scf/"
-              )):
-                  buckets["02_core_integrals_scf.txt"].append(f)
-              elif f.startswith(("include/mshqc/mp2/", "include/mshqc/mp3/", "src/mp/", "src/mp2/", "src/mp3/")):
-                  buckets["03_mp_omp_solvers.txt"].append(f)
-              else:
-                  buckets["04_sym_grad_py_tests_rest.txt"].append(f)
-
-          manifest_lines = [header, f"Total files bundled: {len(all_files)}\n\n"]
-          for bname, flist in buckets.items():
-              manifest_lines.append(f"=== {bname} ({len(flist)} files) ===\n")
-              with open(out_dir / bname, "w", encoding="utf-8") as fout:
-                  fout.write(header)
-                  for fpath in flist:
-                      content = pathlib.Path(fpath).read_text(encoding="utf-8", errors="replace")
-                      line_cnt = content.count("\n") + 1
-                      manifest_lines.append(f"  - {fpath} ({line_cnt} lines)\n")
-                      fout.write(f"\n\n==================== FILE: {fpath} ====================\n")
-                      fout.write(content)
-              manifest_lines.append("\n")
-
-          (out_dir / "00_MANIFEST_ALL_FILES.txt").write_text("".join(manifest_lines), encoding="utf-8")
-          print(f"Successfully bundled {len(all_files)} files into {len(buckets)} files.")
-          EOF
-          ls -lh _gdrive_out/
-
-      - name: Configure rclone & Sync to Google Drive
+      - name: Configure rclone
         env:
           GDRIVE_CLIENT_ID: ${{ secrets.GDRIVE_CLIENT_ID }}
           GDRIVE_CLIENT_SECRET: ${{ secrets.GDRIVE_CLIENT_SECRET }}
           GDRIVE_REFRESH_TOKEN: ${{ secrets.GDRIVE_REFRESH_TOKEN }}
-          BRANCH: ${{ github.ref_name }}
         run: |
           if ! command -v rclone >/dev/null 2>&1; then
             sudo apt-get update -qq && sudo apt-get install -y -qq rclone
@@ -121,4 +45,21 @@ jobs:
           )
           pathlib.Path.home().joinpath(".config/rclone/rclone.conf").write_text(conf)
           EOF
-          rclone sync _gdrive_out/ "gdrive:mshqc_sync/${BRANCH}/" --verbose
+
+      - name: Mirror Exact GitHub Tree to Google Drive
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          rclone sync ./ "gdrive:mshqc_sync/${BRANCH}/" \
+            --exclude ".git/**" \
+            --exclude "__pycache__/**" \
+            --exclude "*.pyc" \
+            --exclude "build/**" \
+            --exclude "dist/**" \
+            --exclude "*.so" \
+            --exclude "*.pyd" \
+            --exclude "*.dll" \
+            --exclude "*.dylib" \
+            --exclude "*.h5" \
+            --exclude "sisa_mshqc.txt" \
+            --verbose
