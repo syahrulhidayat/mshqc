@@ -1,10 +1,19 @@
-cmake_minimum_required(VERSION 3.14)
-
+cmake_minimum_required(VERSION 3.18)
 project(mshqc VERSION 1.0.4 LANGUAGES CXX C)
-set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
+endif()
+
+# Kompatibilitas lintas versi macOS (macOS 11.0+ ke atas)
+if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS deployment version")
+endif()
+
+# Seragamkan Dynamic CRT (/MD) di Windows agar tidak terjadi Cross-CRT Heap Corruption (0xc0000374)
+if(MSVC)
+    set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 endif()
 
 # ==============================================================================
@@ -12,16 +21,22 @@ endif()
 # ==============================================================================
 if(MSVC)
     # Konfigurasi Windows (MSVC)
-    set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
-    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /O2 /Ob2 /Oi /Ot /arch:AVX2 /fp:fast /openmp:llvm /Zc:__cplusplus /permissive /DNDEBUG /EHsc /bigobj")
-    add_compile_options(/openmp:llvm /permissive /EHsc /bigobj)
-    add_compile_definitions(_USE_MATH_DEFINES NOMINMAX __restrict__=__restrict H5_BUILT_AS_DYNAMIC_LIB)
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /O2 /Ob2 /Oi /Ot /arch:AVX2 /fp:fast /openmp:llvm /Zc:__cplusplus /permissive- /DNDEBUG /EHsc /bigobj")
+    add_compile_options(/arch:AVX2 /openmp:llvm /EHsc /bigobj)
+    add_compile_definitions(
+        _USE_MATH_DEFINES
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+        __restrict__=__restrict
+        H5_BUILT_AS_DYNAMIC_LIB
+        EIGEN_MAX_ALIGN_BYTES=32
+    )
 elseif(APPLE)
     # Konfigurasi macOS (Apple Silicon ARM64 & Intel x86_64)
     add_compile_definitions(_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION _LIBCPP_ENABLE_CXX17_REMOVED_RANDOM_SHUFFLE)
     if(DEFINED ENV{GITHUB_ACTIONS} OR DEFINED ENV{CIBUILDWHEEL})
         if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
-            set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -g -fno-omit-frame-pointer -funroll-loops -ftree-vectorize -DNDEBUG -fno-math-errno")
+            set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -g -fno-omit-frame-pointer -mcpu=apple-m1 -funroll-loops -ftree-vectorize -DNDEBUG -fno-math-errno")
         else()
             set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -g -fno-omit-frame-pointer -mavx2 -mfma -funroll-loops -ftree-vectorize -mtune=generic -DNDEBUG -fno-math-errno")
         endif()
@@ -39,17 +54,7 @@ endif()
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-
-if(WIN32 OR MSVC)
-    add_compile_definitions(
-        EIGEN_MAX_ALIGN_BYTES=0
-        EIGEN_DONT_ALIGN_STATICALLY
-        _CRT_SECURE_NO_WARNINGS
-        NOMINMAX
-    )
-endif()
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
-
 set(CMAKE_CXX_VISIBILITY_PRESET default)
 set(CMAKE_VISIBILITY_INLINES_HIDDEN 0)
 
@@ -87,7 +92,6 @@ if(NOT nanobind_DIR)
         OUTPUT_STRIP_TRAILING_WHITESPACE
     )
 endif()
-
 find_package(nanobind CONFIG REQUIRED HINTS "${nanobind_DIR}" "$ENV{CONDA_PREFIX}/lib/python3.14/site-packages/nanobind/cmake")
 
 if(APPLE)
@@ -109,7 +113,6 @@ if(MSVC)
 endif()
 
 find_package(OpenMP REQUIRED)
-
 if(MSVC AND TARGET OpenMP::OpenMP_CXX)
     set_target_properties(OpenMP::OpenMP_CXX PROPERTIES INTERFACE_COMPILE_OPTIONS "/openmp:llvm")
 endif()
@@ -170,13 +173,11 @@ if(MKL_LIBRARY AND MKL_INCLUDE_DIR)
 else()
     find_library(BLIS_LIBRARY NAMES blis-mt blis HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/homebrew/lib" "/opt/homebrew/opt/openblas/lib" "/usr/local/lib" "/usr/local/lib64" "/usr/lib64" "/usr/lib/x86_64-linux-gnu" "/usr/lib")
     find_library(FLAME_LIBRARY NAMES flame HINTS "$ENV{CONDA_PREFIX}/lib" "/opt/homebrew/lib" "/usr/local/lib" "/usr/local/lib64" "/usr/lib64" "/usr/lib/x86_64-linux-gnu" "/usr/lib")
-
     if(BLIS_LIBRARY)
         set(BLAS_LIBRARIES ${BLIS_LIBRARY})
     else()
         find_package(BLAS REQUIRED)
     endif()
-
     if(FLAME_LIBRARY)
         set(LAPACK_LIBRARIES ${FLAME_LIBRARY})
     else()
@@ -229,7 +230,6 @@ find_path(CINT_INCLUDE_DIR
     NAMES cint.h
     HINTS "$ENV{CONDA_PREFIX}/include" "$ENV{CONDA_PREFIX}/Library/include" "C:/deps/Library/include" "$ENV{HOME}/libcint_install/include" "/opt/homebrew/include" "/usr/local/include" "/usr/include"
 )
-
 if(NOT CINT_LIBRARY OR NOT CINT_INCLUDE_DIR)
     message(FATAL_ERROR "CRITICAL: libcint library atau cint.h header tidak ditemukan!")
 endif()
@@ -246,7 +246,6 @@ find_path(TBLIS_INCLUDE_DIR
     NAMES tblis/tblis.h
     HINTS "$ENV{TBLIS_DIR}/include" "$ENV{CONDA_PREFIX}/include" "$ENV{CONDA_PREFIX}/Library/include" "C:/deps/Library/include" "$ENV{HOME}/tblis_install/include" "/opt/homebrew/include" "/usr/local/include" "/usr/include"
 )
-
 if(NOT TBLIS_LIBRARY OR NOT TBLIS_INCLUDE_DIR)
     message(FATAL_ERROR "CRITICAL: TBLIS library atau header tidak ditemukan!")
 endif()
@@ -266,7 +265,6 @@ find_path(HDF5_INCLUDE_DIR
     NAMES H5Cpp.h
     HINTS "$ENV{CONDA_PREFIX}/include" "$ENV{CONDA_PREFIX}/Library/include" "C:/deps/Library/include" "/opt/homebrew/opt/hdf5/include" "/opt/homebrew/include" "/usr/local/include" "/usr/include" "/usr/include/hdf5/serial"
 )
-
 if(HDF5_C_LIB AND HDF5_CXX_LIB)
     set(HDF5_LIBRARIES ${HDF5_CXX_LIB} ${HDF5_C_LIB})
 else()
@@ -303,30 +301,28 @@ else()
     set(MSHQC_RPATH "$ORIGIN:$ORIGIN/../../..")
 endif()
 
-set_target_properties(mshqc PROPERTIES 
+set_target_properties(mshqc PROPERTIES
     INSTALL_RPATH "${MSHQC_RPATH}"
     BUILD_WITH_INSTALL_RPATH TRUE
 )
 
-if(MKL_LIBRARY AND MKL_INCLUDE_DIR)
+if(MKL_LIBRARY AND MKL_INCLUDE_DIR AND NOT MSVC)
     target_compile_definitions(mshqc PUBLIC EIGEN_USE_MKL_ALL)
 endif()
 target_compile_definitions(mshqc PUBLIC EIGEN_NO_DEBUG EIGEN_MPL2_ONLY)
 
-set(MSHQC_LINK_LIBS 
+set(MSHQC_LINK_LIBS
     Eigen3::Eigen
     ${CINT_LIBRARY}
     ${TBLIS_LIBRARY}
-    ${HDF5_LIBRARIES} 
+    ${HDF5_LIBRARIES}
     ${BLAS_LIBRARIES}
     ${LAPACK_LIBRARIES}
     OpenMP::OpenMP_CXX
 )
-
 if(UNIX AND NOT APPLE)
     list(APPEND MSHQC_LINK_LIBS quadmath atomic)
 endif()
-
 if(TCI_LIBRARY)
     list(APPEND MSHQC_LINK_LIBS ${TCI_LIBRARY})
 endif()
@@ -342,18 +338,15 @@ set(MSHQC_BUILD_INCLUDES
     "${HDF5_INCLUDE_DIR}"
     "${Python_ROOT_DIR}/include"
 )
-
 if(MKL_INCLUDE_DIR AND EXISTS "${MKL_INCLUDE_DIR}")
     list(APPEND MSHQC_BUILD_INCLUDES "${MKL_INCLUDE_DIR}")
 endif()
-
 if(DEFINED ENV{CONDA_PREFIX} AND NOT "$ENV{CONDA_PREFIX}" STREQUAL "")
     list(APPEND MSHQC_BUILD_INCLUDES
         "$ENV{CONDA_PREFIX}/include"
         "$ENV{CONDA_PREFIX}/Library/include"
     )
 endif()
-
 if(WIN32)
     list(APPEND MSHQC_BUILD_INCLUDES "C:/deps/Library/include")
 endif()
@@ -365,7 +358,7 @@ foreach(_inc IN LISTS MSHQC_BUILD_INCLUDES)
     endif()
 endforeach()
 
-nanobind_add_module(_mshqc "python/bindings.cc")
+nanobind_add_module(_mshqc NOMINSIZE "python/bindings.cc")
 
 foreach(_inc IN LISTS MSHQC_BUILD_INCLUDES)
     if(_inc AND IS_ABSOLUTE "${_inc}" AND EXISTS "${_inc}")
@@ -379,12 +372,12 @@ if(UNIX AND NOT APPLE)
 endif()
 target_link_libraries(_mshqc PRIVATE ${MSHQC_MODULE_LIBS})
 
-set_target_properties(_mshqc PROPERTIES 
+set_target_properties(_mshqc PROPERTIES
     LIBRARY_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/python/mshqc"
     LIBRARY_OUTPUT_DIRECTORY_RELEASE "${CMAKE_SOURCE_DIR}/python/mshqc"
     RUNTIME_OUTPUT_DIRECTORY "${CMAKE_SOURCE_DIR}/python/mshqc"
     RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_SOURCE_DIR}/python/mshqc"
-    PREFIX "" 
+    PREFIX ""
     INSTALL_RPATH "${MSHQC_RPATH}"
     BUILD_WITH_INSTALL_RPATH TRUE
 )
@@ -399,7 +392,6 @@ install(TARGETS mshqc _mshqc
     ARCHIVE DESTINATION lib
     RUNTIME DESTINATION bin
 )
-
 if(EXISTS "${CMAKE_SOURCE_DIR}/include/mshqc")
     install(DIRECTORY include/mshqc DESTINATION include)
 endif()

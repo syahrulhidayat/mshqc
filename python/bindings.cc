@@ -242,7 +242,7 @@ NB_MODULE(_mshqc, m) {
 
     m.doc() = "MSHQC: Modern C++20 Quantum Chemistry Library";
 
-    using ERITensor = Eigen::Tensor<double, 4, 0, long>;
+
 
     nb::class_<ERITensor>(m, "ERITensor")
         .def("size", &ERITensor::size)

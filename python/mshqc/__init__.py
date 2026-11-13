@@ -112,10 +112,8 @@ def _preload_mkl():
             os.environ["PATH"] = os.pathsep.join(_valid_dirs) + os.pathsep + os.environ.get("PATH", "")
 
         _win_dlls = [
-            "libiomp5md.dll",
             "mkl_core.3.dll", "mkl_core.2.dll", "mkl_core.dll",
             "mkl_sequential.3.dll", "mkl_sequential.2.dll", "mkl_sequential.dll",
-            "mkl_intel_thread.3.dll", "mkl_intel_thread.2.dll", "mkl_intel_thread.dll",
             "mkl_rt.3.dll", "mkl_rt.2.dll", "mkl_rt.dll",
         ]
         for _d_str in _valid_dirs:
