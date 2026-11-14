@@ -143,8 +143,8 @@ double HPCGeometryOptimizer::evaluate_single_point_cpp(
     scf_conf.aux_basis_name = cfg.aux_basis_name.empty()
         ? (basis_name + "-RI")
         : cfg.aux_basis_name;
-    scf_conf.energy_threshold = std::min(1.0e-12, cfg.energy_thresh);
-    scf_conf.density_threshold = std::min(1.0e-11, cfg.energy_thresh);
+    scf_conf.energy_threshold = std::min(1.0e-13, cfg.energy_thresh);
+    scf_conf.density_threshold = std::min(1.0e-12, cfg.energy_thresh);
     scf_conf.cholesky_threshold = cfg.energy_thresh;
     scf_conf.df_threshold = cfg.energy_thresh;
     scf_conf.print_level = 0;
@@ -294,10 +294,7 @@ std::pair<double, Eigen::VectorXd> HPCGeometryOptimizer::compute_nuclear_gradien
         return {e0, grad};
     }
 
-    const std::string m_low = to_lower_copy(cfg.method);
-    const double h = ((m_low == "ump2" || m_low == "ump3") && cfg.fd_step_bohr < 1.5e-3)
-        ? 1.5e-3
-        : cfg.fd_step_bohr;
+    const double h = cfg.fd_step_bohr;
 
     // Eksploitasi Invarian Translasi (Hukum III Newton):
     // Evaluasi hanya (N - 1) atom pertama, lalu F_last = -sum_{a=0}^{N-2} F_a.

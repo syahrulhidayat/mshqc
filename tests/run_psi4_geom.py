@@ -171,6 +171,7 @@ def main():
                     "rms_mograd_convergence": 1e-8,
                     "max_mograd_convergence": 1e-7,
                     "g_convergence": "gau_verytight",
+                    "disp_size": 5.0e-4,
                 }
                 psi4.set_options(opts)
 

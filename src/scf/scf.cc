@@ -542,7 +542,7 @@ SCFResult BaseSCF::compute() {
         double p_tol = is_uhf ? std::min(config_.density_threshold, 1e-10) : config_.density_threshold;
 
         bool strict_conv  = (dE < e_tol && dP < p_tol && err_rms < p_tol);
-        bool plateau_conv = (iter_scf_ > 24 && dE < e_tol && dP < 1e-10 && err_rms < 1e-10);
+        bool plateau_conv = (iter_scf_ > 24 && dE < e_tol && dP < std::min(1e-10, p_tol * 5.0) && err_rms < std::min(1e-10, p_tol * 5.0));
         if (iter_scf_ > 2 && (strict_conv || plateau_conv)) {
             converged = true;
             break;
@@ -622,7 +622,7 @@ SCFResult BaseSCF::compute() {
                 double p_tol = is_uhf ? std::min(config_.density_threshold, 1e-10) : config_.density_threshold;
 
                 bool strict_conv  = (dE < e_tol && dP < p_tol && err_rms < p_tol);
-                bool plateau_conv = (iter_scf_ > 24 && dE < e_tol && dP < 1e-10 && err_rms < 1e-10);
+                bool plateau_conv = (iter_scf_ > 24 && dE < e_tol && dP < std::min(1e-10, p_tol * 5.0) && err_rms < std::min(1e-10, p_tol * 5.0));
                 if (iter_scf_ > 2 && (strict_conv || plateau_conv)) {
                     trial_conv = true;
                     break;
