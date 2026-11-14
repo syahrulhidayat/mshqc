@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-Unit Test Standar JOSS: Verifikasi UniversalGeomOptimizer untuk
-seluruh keluarga metode (RHF, UHF, ROHF, RMP2, UMP2, ROMP2, RMP3, UMP3, ROMP3,
-RHF-OMP2, UHF-OMP2, RHF-OMP3, UHF-OMP3, dan MP3@OMP2).
+Unit Test Standar JOSS: Verifikasi UniversalGeomOptimizer & HPCGeometryOptimizer (Trust-Region SOSCF)
+untuk seluruh keluarga metode (RHF, UHF, ROHF, RMP2, UMP2, ROMP2, RMP3, UMP3, ROMP3,
+RHF-OMP2, UHF-OMP2, RHF-OMP3, UHF-OMP3, dan MP3@OMP2) serta integrasi C++ mshqc.
 """
 
 import numpy as np
+import mshqc
 from mshqc.calculators import UniversalGeomOptimizer
 from mshqc.geom_opt import project_translation_rotation
 
@@ -34,8 +35,8 @@ def test_tr_projection_invariance():
 
 def test_supported_methods_convergence_on_model_pes():
     """
-    Menguji konvergensi UniversalGeomOptimizer untuk seluruh 14 metode yang didukung
-    (dan memastikan ROHF-OMP2 / ROHF-OMP3 ditolak secara eksplisit sesuai desain).
+    Menguji konvergensi UniversalGeomOptimizer berbasis Trust-Region SOSCF untuk seluruh 14 metode
+    yang didukung (dan memastikan ROHF-OMP2 / ROHF-OMP3 ditolak secara eksplisit sesuai desain).
     """
     r_eq = 1.8088
     theta_eq = np.deg2rad(104.52)
@@ -50,9 +51,9 @@ def test_supported_methods_convergence_on_model_pes():
         return float(e_min + 0.45 * ((r1 - r_eq) ** 2 + (r2 - r_eq) ** 2) + 0.18 * ((theta - theta_eq) ** 2))
 
     init_coords = np.array([
-        [0.0,  0.0000,  0.0000],
-        [0.0,  1.5200,  1.1500],
-        [0.0, -1.5200,  1.1500],
+        [0.0,  0.0000, 0.0000],
+        [0.0,  1.5200, 1.1500],
+        [0.0, -1.5200, 1.1500],
     ], dtype=np.float64)
 
     all_methods = [
@@ -91,6 +92,33 @@ def test_supported_methods_convergence_on_model_pes():
             print(f"[PASS] Penolakan eksplisit {unsupported.upper()}: {err}")
 
 
+def test_real_quantum_soscf_geom_opt():
+    """Verifikasi integrasi nyata C++ HPCGeometryOptimizer (Trust-Region SOSCF) pada molekul H2."""
+    mol = mshqc.Molecule(charge=0, multiplicity=1)
+    mol.add_atom("H", 0.0, 0.0, 0.0, units="angstrom")
+    mol.add_atom("H", 0.0, 0.0, 0.80, units="angstrom")
+
+    res = mol.optimize_geometry(
+        method="omp2",
+        eri_mode="df",
+        basis="cc-pVTZ",
+        reference="rhf",
+        max_iter=20,
+        g_rms_tol=1.0e-6,
+        fd_step_bohr=5.0e-4,
+        verbose=False,
+    )
+    coords_ang = np.asarray(res.coordinates_angstrom)
+    r_eq = float(np.linalg.norm(coords_ang[1] - coords_ang[0]))
+    assert res.converged, "Optimasi geometri kuantum nyata H2 (DF-OMP2) gagal konvergen!"
+    assert abs(r_eq - 0.737278) < 5.0e-5, f"R_eq H2 DF-OMP2 menyimpang: {r_eq:.6f} A"
+    print(
+        f"[PASS] Real C++20 Quantum Trust-Region SOSCF (H2 | cc-pVTZ | DF-OMP2) | "
+        f"Iter: {res.iterations:2d} | R_eq: {r_eq:.6f} A | E_opt: {res.final_energy:.10f} Ha"
+    )
+
+
 if __name__ == "__main__":
     test_tr_projection_invariance()
     test_supported_methods_convergence_on_model_pes()
+    test_real_quantum_soscf_geom_opt()
