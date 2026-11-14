@@ -48,6 +48,7 @@ jobs:
             python=3.11
             cmake
             ninja
+            make
             pkg-config
             cxx-compiler
             c-compiler
@@ -70,7 +71,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: .cache_local_deps
-          key: local-geom-deps-${{ runner.os }}-v1
+          key: local-geom-deps-${{ runner.os }}-v2
 
       - name: Build libcint & TBLIS if Not Cached
         shell: bash -el {0}
@@ -88,7 +89,7 @@ jobs:
             cmake -S /tmp/libcint -B /tmp/libcint/build -GNinja \
               -DCMAKE_INSTALL_PREFIX="$CONDA_PREFIX" \
               -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
-              -DCMAKE_C_FLAGS="-O3 -fPIC -Wno-incompatible-pointer-types -Wno-implicit-function-declaration" \
+              -DCMAKE_C_FLAGS="-O3 -fPIC -std=gnu17 -Wno-incompatible-pointer-types -Wno-implicit-function-declaration" \
               -DENABLE_EXAMPLE=0 -DENABLE_TEST=0 -DBUILD_SHARED_LIBS=OFF
             cmake --build /tmp/libcint/build -j4
             cmake --install /tmp/libcint/build
@@ -131,7 +132,7 @@ jobs:
             fi
             ./configure --prefix="$CONDA_PREFIX" --enable-static --disable-shared --with-pic --without-hwloc \
               --enable-config="$CFG_ARCH" \
-              CFLAGS="-O3 -fPIC -Wno-implicit-function-declaration -Wno-incompatible-function-pointer-types" \
+              CFLAGS="-O3 -fPIC -std=gnu17 -Wno-implicit-function-declaration -Wno-incompatible-function-pointer-types" \
               CXXFLAGS="-O3 -fPIC -std=c++17 -D_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION -D_LIBCPP_ENABLE_CXX17_REMOVED_RANDOM_SHUFFLE"
             make -j4 bin_PROGRAMS= noinst_PROGRAMS= check_PROGRAMS=
             make install bin_PROGRAMS= noinst_PROGRAMS= check_PROGRAMS=
@@ -146,7 +147,9 @@ jobs:
         run: |
           micromamba activate geom_env
           export TBLIS_DIR="$CONDA_PREFIX"
+          export OpenMP_ROOT="$CONDA_PREFIX"
           export CMAKE_PREFIX_PATH="$CONDA_PREFIX"
+          export CMAKE_ARGS="-DOpenMP_ROOT=$CONDA_PREFIX"
           export CMAKE_BUILD_PARALLEL_LEVEL=4
           python -m pip install --no-build-isolation --no-deps -e . -v
 

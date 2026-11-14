@@ -28,7 +28,7 @@ os.environ["PSI_SCRATCH"] = SHM_DIR
 import psi4
 
 psi4.set_num_threads(N_THREADS)
-psi4.set_memory("4 GB")
+psi4.set_memory("1800 MB" if os.name == "nt" else "4 GB")
 psi4.core.set_output_file("NUL" if os.name == "nt" else "/dev/null", False)
 
 BOHR_TO_ANG = 0.529177210903
@@ -178,7 +178,11 @@ def main():
                 if dertype is not None:
                     e_opt = float(psi4.optimize(p4_name, molecule=p4_mol, dertype=dertype))
                 else:
-                    e_opt = float(psi4.optimize(p4_name, molecule=p4_mol))
+                    try:
+                        e_opt = float(psi4.optimize(p4_name, molecule=p4_mol))
+                    except Exception:
+                        psi4.core.clean()
+                        e_opt = float(psi4.optimize(p4_name, molecule=p4_mol, dertype="energy"))
                 t_opt = time.perf_counter() - t0
 
                 coords_ang = np.asarray(p4_mol.geometry()) * BOHR_TO_ANG

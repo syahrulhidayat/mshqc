@@ -26,7 +26,7 @@ os.environ["PSI_SCRATCH"] = shm_dir
 import psi4
 
 psi4.set_num_threads(n_threads)
-psi4.set_memory("8 GB")
+psi4.set_memory("1800 MB" if os.name == "nt" else "4 GB")
 psi4.core.set_output_file("NUL" if os.name == "nt" else "/dev/null", False)
 
 

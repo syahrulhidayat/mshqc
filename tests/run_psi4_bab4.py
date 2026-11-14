@@ -40,7 +40,7 @@ import numpy as np
 import psi4
 
 psi4.set_num_threads(N_THREADS)
-psi4.set_memory("8 GB")
+psi4.set_memory("1800 MB" if os.name == "nt" else "4 GB")
 psi4.core.set_output_file("NUL" if os.name == "nt" else "/dev/null", False)
 
 ANG_TO_BOHR = 1.8897261246257702
