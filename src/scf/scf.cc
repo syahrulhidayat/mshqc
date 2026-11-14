@@ -542,7 +542,7 @@ SCFResult BaseSCF::compute() {
         double p_tol = is_uhf ? std::min(config_.density_threshold, 1e-10) : config_.density_threshold;
 
         bool strict_conv  = (dE < e_tol && dP < p_tol && err_rms < p_tol);
-        bool plateau_conv = (iter_scf_ > 24 && dE < e_tol && dP < std::min(1e-10, p_tol * 5.0) && err_rms < std::min(1e-10, p_tol * 5.0));
+        bool plateau_conv = (iter_scf_ > 24 && dE < e_tol && dP < 1e-10 && err_rms < 1e-10);
         if (iter_scf_ > 2 && (strict_conv || plateau_conv)) {
             converged = true;
             break;
@@ -622,7 +622,7 @@ SCFResult BaseSCF::compute() {
                 double p_tol = is_uhf ? std::min(config_.density_threshold, 1e-10) : config_.density_threshold;
 
                 bool strict_conv  = (dE < e_tol && dP < p_tol && err_rms < p_tol);
-                bool plateau_conv = (iter_scf_ > 24 && dE < e_tol && dP < std::min(1e-10, p_tol * 5.0) && err_rms < std::min(1e-10, p_tol * 5.0));
+                bool plateau_conv = (iter_scf_ > 24 && dE < e_tol && dP < 1e-10 && err_rms < 1e-10);
                 if (iter_scf_ > 2 && (strict_conv || plateau_conv)) {
                     trial_conv = true;
                     break;
@@ -694,13 +694,41 @@ SCFResult BaseSCF::compute() {
             if (is_uhf) symmetrizer_->symmetrize(F_beta_);
         }
         energy_ = compute_energy();
-        solve_fock(F_alpha_, C_alpha_, eps_alpha_);
-        if (is_uhf) {
-            solve_fock(F_beta_, C_beta_, eps_beta_);
-            occ_numbers_alpha_.resize(0);
-            occ_numbers_beta_.resize(0);
-            update_densities();
+        if (is_uhf && C_alpha_.rows() == nbasis_ && C_beta_.rows() == nbasis_) {
+          auto canonicalize_uhf_subspace = [&](const Eigen::MatrixXd& F_ao, Eigen::MatrixXd& C,
+                                               Eigen::VectorXd& eps, int nocc) {
+            const int nvir = nbasis_ - nocc;
+            eps.resize(nbasis_);
+            if (nocc > 0) {
+              Eigen::MatrixXd Co = C.leftCols(nocc);
+              Eigen::MatrixXd Foo = Co.transpose() * F_ao * Co;
+              Foo = 0.5 * (Foo + Foo.transpose()).eval();
+              Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_o(Foo);
+              C.leftCols(nocc).noalias() = Co * es_o.eigenvectors();
+              eps.head(nocc) = es_o.eigenvalues();
+            }
+            if (nvir > 0) {
+              Eigen::MatrixXd Cv = C.rightCols(nvir);
+              Eigen::MatrixXd Fvv = Cv.transpose() * F_ao * Cv;
+              Fvv = 0.5 * (Fvv + Fvv.transpose()).eval();
+              Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_v(Fvv);
+              C.rightCols(nvir).noalias() = Cv * es_v.eigenvectors();
+              eps.tail(nvir) = es_v.eigenvalues();
+            }
+          };
+          canonicalize_uhf_subspace(F_alpha_, C_alpha_, eps_alpha_, n_alpha_);
+          canonicalize_uhf_subspace(F_beta_, C_beta_, eps_beta_, n_beta_);
+          occ_numbers_alpha_.resize(0);
+          occ_numbers_beta_.resize(0);
+          update_densities();
+        } else if (is_uhf) {
+          solve_fock(F_alpha_, C_alpha_, eps_alpha_);
+          solve_fock(F_beta_, C_beta_, eps_beta_);
+          occ_numbers_alpha_.resize(0);
+          occ_numbers_beta_.resize(0);
+          update_densities();
         } else {
+          solve_fock(F_alpha_, C_alpha_, eps_alpha_);
             Eigen::MatrixXd Pa_prev = P_alpha_;
             occ_numbers_alpha_ = smear_electrons(eps_alpha_, n_alpha_);
             C_beta_ = C_alpha_;

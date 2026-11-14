@@ -143,8 +143,8 @@ double HPCGeometryOptimizer::evaluate_single_point_cpp(
     scf_conf.aux_basis_name = cfg.aux_basis_name.empty()
         ? (basis_name + "-RI")
         : cfg.aux_basis_name;
-    scf_conf.energy_threshold = std::min(1.0e-13, cfg.energy_thresh);
-    scf_conf.density_threshold = std::min(1.0e-12, cfg.energy_thresh);
+    scf_conf.energy_threshold = std::min(1.0e-12, cfg.energy_thresh);
+    scf_conf.density_threshold = std::min(1.0e-10, cfg.energy_thresh);
     scf_conf.cholesky_threshold = cfg.energy_thresh;
     scf_conf.df_threshold = cfg.energy_thresh;
     scf_conf.print_level = 0;
@@ -315,14 +315,28 @@ std::pair<double, Eigen::VectorXd> HPCGeometryOptimizer::compute_nuclear_gradien
                 continue;
             }
 
-            Eigen::VectorXd xp = x0;
-            Eigen::VectorXd xm = x0;
-            xp(3 * a + xyz) += h;
-            xm(3 * a + xyz) -= h;
-
-            double ep = evaluate_single_point_cpp(make_displaced_molecule(mol, xp), cfg);
-            double em = evaluate_single_point_cpp(make_displaced_molecule(mol, xm), cfg);
-            grad(3 * a + xyz) = (ep - em) / (2.0 * h);
+            const std::string m_fd = to_lower_copy(cfg.method);
+            if (m_fd == "ump2" || m_fd == "ump3") {
+                const double h_u = 2.0e-3;
+                Eigen::VectorXd xp1 = x0, xm1 = x0, xp2 = x0, xm2 = x0;
+                xp1(3 * a + xyz) += h_u;
+                xm1(3 * a + xyz) -= h_u;
+                xp2(3 * a + xyz) += 2.0 * h_u;
+                xm2(3 * a + xyz) -= 2.0 * h_u;
+                const double ep1 = evaluate_single_point_cpp(make_displaced_molecule(mol, xp1), cfg);
+                const double em1 = evaluate_single_point_cpp(make_displaced_molecule(mol, xm1), cfg);
+                const double ep2 = evaluate_single_point_cpp(make_displaced_molecule(mol, xp2), cfg);
+                const double em2 = evaluate_single_point_cpp(make_displaced_molecule(mol, xm2), cfg);
+                grad(3 * a + xyz) = (8.0 * (ep1 - em1) - (ep2 - em2)) / (12.0 * h_u);
+            } else {
+                Eigen::VectorXd xp = x0;
+                Eigen::VectorXd xm = x0;
+                xp(3 * a + xyz) += h;
+                xm(3 * a + xyz) -= h;
+                double ep = evaluate_single_point_cpp(make_displaced_molecule(mol, xp), cfg);
+                double em = evaluate_single_point_cpp(make_displaced_molecule(mol, xm), cfg);
+                grad(3 * a + xyz) = (ep - em) / (2.0 * h);
+            }
         }
     }
 
@@ -505,7 +519,7 @@ GeomOptResult HPCGeometryOptimizer::optimize_molecule(
         bool grad_ok = (g_rms < cfg.g_rms_tol) && (g_max < cfg.g_max_tol);
         bool step_ok = (dx_rms < cfg.dx_rms_tol) && (dx_max < cfg.dx_max_tol);
         bool tight_grad = (g_rms < 0.25 * cfg.g_rms_tol) && (g_max < 0.25 * cfg.g_max_tol);
-        bool stationary_ok = (iter >= 4) && (std::abs(de) < 1.0e-8) && (dx_rms < 0.1 * cfg.dx_rms_tol) && (g_rms < 2.5e-4);
+        bool stationary_ok = (iter >= 4) && (std::abs(de) < 1.0e-8) && (dx_rms < 0.1 * cfg.dx_rms_tol) && (g_rms < 5.0e-6);
 
         if ((grad_ok && step_ok) || tight_grad || stationary_ok || natoms <= 1) {
             res.converged = true;
