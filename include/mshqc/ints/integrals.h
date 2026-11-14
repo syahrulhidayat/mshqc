@@ -34,7 +34,7 @@ public:
     IntegralEngine(const IntegralEngine&) = delete;
     IntegralEngine& operator=(const IntegralEngine&) = delete;
     IntegralEngine(IntegralEngine&&) = default;
-    IntegralEngine& operator=(IntegralEngine&&) = default;
+    IntegralEngine& operator=(IntegralEngine&&) = delete;
     
     Eigen::MatrixXd compute_overlap();
     Eigen::MatrixXd compute_kinetic();

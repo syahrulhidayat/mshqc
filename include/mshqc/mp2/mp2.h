@@ -285,8 +285,8 @@ protected:
     Eigen::VectorXd hessian_diag_;
 
    
-    virtual double execute_micro_iterations();
-    virtual void build_generalized_fock();
+    double execute_micro_iterations() override;
+    void build_generalized_fock() override;
     virtual void build_opdm_alpha();
     virtual void build_opdm_beta();
 

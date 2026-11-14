@@ -122,11 +122,15 @@ class CMakeBuild(build_ext):
         for ext_pat in ("**/*.so", "**/*.pyd", "**/*.dylib"):
             for filepath in glob.glob(os.path.join(self.build_temp, ext_pat), recursive=True):
                 if "_mshqc" in os.path.basename(filepath):
-                    shutil.copy2(filepath, extdir)
+                    dst_file = os.path.join(extdir, os.path.basename(filepath))
+                    if os.path.abspath(filepath) != os.path.abspath(dst_file):
+                        shutil.copy2(filepath, dst_file)
         for ext_pat in ("*.so", "*.pyd", "*.dylib"):
             for filepath in glob.glob(os.path.join(ext.sourcedir, "python", "mshqc", ext_pat)):
                 if "_mshqc" in os.path.basename(filepath):
-                    shutil.copy2(filepath, extdir)
+                    dst_file = os.path.join(extdir, os.path.basename(filepath))
+                    if os.path.abspath(filepath) != os.path.abspath(dst_file):
+                        shutil.copy2(filepath, dst_file)
 
         basis_candidates = [
             os.path.join(ext.sourcedir, "data", "basis"),
