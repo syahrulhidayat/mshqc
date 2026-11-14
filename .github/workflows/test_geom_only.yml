@@ -54,7 +54,7 @@ jobs:
             c-compiler
             llvm-openmp
             eigen
-            hdf5
+            hdf5=1.14.3
             openblas
             liblapacke
             nanobind
@@ -71,9 +71,8 @@ jobs:
         run: |
           set -o pipefail
           micromamba activate geom_env
-          if ! python -c "import psi4" >/dev/null 2>&1; then
-            echo "Mendeteksi ketidakcocokan fungsional LibXC pada Psi4, menerapkan patch proc_table.py..."
-            python - << 'EOF'
+
+          python - << 'EOF'
           import pathlib, re, sys
           for p in pathlib.Path(sys.prefix).rglob("psi4/driver/procrouting/proc_table.py"):
               txt = p.read_text(encoding="utf-8")
@@ -89,9 +88,9 @@ jobs:
               new_txt, count = re.subn(pattern, replacement, txt)
               if count > 0:
                   p.write_text(new_txt, encoding="utf-8")
-                  print(f"Berhasil melakukan patch pada: {p}")
+                  print(f"Berhasil melakukan patch proc_table.py pada: {p}")
           EOF
-          fi
+
           python -c "import psi4; print('Psi4 berhasil dimuat, versi:', psi4.__version__)"
 
       - name: Restore Cached libcint & TBLIS (${{ runner.os }})
