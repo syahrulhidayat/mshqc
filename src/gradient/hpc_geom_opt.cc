@@ -143,8 +143,8 @@ double HPCGeometryOptimizer::evaluate_single_point_cpp(
     scf_conf.aux_basis_name = cfg.aux_basis_name.empty()
         ? (basis_name + "-RI")
         : cfg.aux_basis_name;
-    scf_conf.energy_threshold = cfg.energy_thresh;
-    scf_conf.density_threshold = std::min(1.0e-9, cfg.energy_thresh * 10.0);
+    scf_conf.energy_threshold = std::min(1.0e-12, cfg.energy_thresh);
+    scf_conf.density_threshold = std::min(1.0e-11, cfg.energy_thresh);
     scf_conf.cholesky_threshold = cfg.energy_thresh;
     scf_conf.df_threshold = cfg.energy_thresh;
     scf_conf.print_level = 0;
@@ -294,7 +294,10 @@ std::pair<double, Eigen::VectorXd> HPCGeometryOptimizer::compute_nuclear_gradien
         return {e0, grad};
     }
 
-    const double h = cfg.fd_step_bohr;
+    const std::string m_low = to_lower_copy(cfg.method);
+    const double h = ((m_low == "ump2" || m_low == "ump3") && cfg.fd_step_bohr < 1.5e-3)
+        ? 1.5e-3
+        : cfg.fd_step_bohr;
 
     // Eksploitasi Invarian Translasi (Hukum III Newton):
     // Evaluasi hanya (N - 1) atom pertama, lalu F_last = -sum_{a=0}^{N-2} F_a.
@@ -453,7 +456,7 @@ GeomOptResult HPCGeometryOptimizer::optimize_molecule(
             Eigen::VectorXd r_vec = theta * y + (1.0 - theta) * Hs;
             double sr = s.dot(r_vec);
 
-            if (sr > 1.0e-12 && sHs > 1.0e-12) {
+            if (s.norm() > 1.0e-5 && sr > 1.0e-12 && sHs > 1.0e-12) {
                 H += (r_vec * r_vec.transpose()) / sr - (Hs * Hs.transpose()) / sHs;
             }
 
@@ -505,8 +508,9 @@ GeomOptResult HPCGeometryOptimizer::optimize_molecule(
         bool grad_ok = (g_rms < cfg.g_rms_tol) && (g_max < cfg.g_max_tol);
         bool step_ok = (dx_rms < cfg.dx_rms_tol) && (dx_max < cfg.dx_max_tol);
         bool tight_grad = (g_rms < 0.25 * cfg.g_rms_tol) && (g_max < 0.25 * cfg.g_max_tol);
+        bool stationary_ok = (iter >= 4) && (std::abs(de) < 1.0e-8) && (dx_rms < 0.1 * cfg.dx_rms_tol) && (g_rms < 2.5e-4);
 
-        if ((grad_ok && step_ok) || tight_grad || natoms <= 1) {
+        if ((grad_ok && step_ok) || tight_grad || stationary_ok || natoms <= 1) {
             res.converged = true;
             break;
         }
