@@ -1,4 +1,4 @@
-name: Validation & Universal Benchmark Suite (mshqc vs Psi4) 
+name: Validation & Universal Benchmark Suite (mshqc vs Psi4)
 
 on:
   push:
@@ -78,8 +78,8 @@ jobs:
           cp 02_mshqc_out.txt mshqc_out.txt
 
       - name: Set up Micromamba & Install Psi4 (conda-forge)
+        if: runner.os != 'Windows'
         uses: mamba-org/setup-micromamba@v2
-        continue-on-error: true
         with:
           environment-name: psi4_env
           create-args: >-
@@ -88,29 +88,54 @@ jobs:
             psi4
             numpy
             scipy
+            pip
+
+      - name: Verify & Patch Psi4 LibXC Compatibility (Linux & macOS)
+        if: runner.os != 'Windows'
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate psi4_env
+          if ! python -c "import psi4" >/dev/null 2>&1; then
+            echo "Mendeteksi ketidakcocokan fungsional LibXC pada Psi4, menerapkan patch proc_table.py..."
+            python - << 'EOF'
+          import pathlib, re, sys
+          for p in pathlib.Path(sys.prefix).rglob("psi4/driver/procrouting/proc_table.py"):
+              txt = p.read_text(encoding="utf-8")
+              pattern = r"for key in functionals:\s+ssuper = build_superfunctional_from_dictionary\(functionals\[key\], 1, 1, True\)\[0\]"
+              replacement = (
+                  "for key in list(functionals.keys()):\n"
+                  "    try:\n"
+                  "        ssuper = build_superfunctional_from_dictionary(functionals[key], 1, 1, True)[0]\n"
+                  "    except Exception:\n"
+                  "        functionals.pop(key, None)\n"
+                  "        continue"
+              )
+              new_txt, count = re.subn(pattern, replacement, txt)
+              if count > 0:
+                  p.write_text(new_txt, encoding="utf-8")
+                  print(f"Berhasil melakukan patch pada: {p}")
+          EOF
+          fi
+          python -c "import psi4; print('Psi4 berhasil dimuat, versi:', psi4.__version__)"
 
       - name: Run Psi4 Benchmark (benc.py)
         shell: bash -el {0}
         run: |
           set -o pipefail
-          if micromamba env list | grep -q "psi4_env"; then
-            micromamba activate psi4_env
-            if python -c "import psi4" >/dev/null 2>&1; then
-              python -u tests/benc.py 2>&1 | tee 03_psi4_out.txt
-              cp 03_psi4_out.txt psi4_out.txt
-            else
-              echo "Psi4 binary tidak tersedia untuk OS $RUNNER_OS di conda-forge." | tee 03_psi4_out.txt
-              cp 03_psi4_out.txt psi4_out.txt
-            fi
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            echo "Psi4 dilewati pada OS Windows." | tee 03_psi4_out.txt
+            cp 03_psi4_out.txt psi4_out.txt
           else
-            echo "Environment psi4_env dilewati pada OS $RUNNER_OS." | tee 03_psi4_out.txt
+            micromamba activate psi4_env
+            python -u tests/benc.py 2>&1 | tee 03_psi4_out.txt
             cp 03_psi4_out.txt psi4_out.txt
           fi
 
       - name: Compare Head-to-Head mshqc vs Psi4
-        shell: bash {0}
+        shell: bash -eo pipefail {0}
         run: |
-          "$VENV_PY" -u tests/compare_mshqc_psi4.py mshqc_out.txt psi4_out.txt 2>&1 | tee 04_compare_mshqc_psi4_log.txt || true
+          "$VENV_PY" -u tests/compare_mshqc_psi4.py mshqc_out.txt psi4_out.txt 2>&1 | tee 04_compare_mshqc_psi4_log.txt
 
       - name: Run mshqc Bab 4 Benchmark
         shell: bash -eo pipefail {0}
@@ -126,22 +151,18 @@ jobs:
         shell: bash -el {0}
         run: |
           set -o pipefail
-          if micromamba env list | grep -q "psi4_env"; then
-            micromamba activate psi4_env
-            if python -c "import psi4" >/dev/null 2>&1; then
-              python -u tests/run_psi4_bab4.py
-              cp psi4_bab4_test.txt 06_psi4_bab4_running_log.txt
-            else
-              echo "Psi4 Bab 4 dilewati pada OS $RUNNER_OS." > 06_psi4_bab4_running_log.txt
-            fi
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            echo "Psi4 Bab 4 dilewati pada OS Windows." | tee 06_psi4_bab4_running_log.txt
           else
-            echo "Psi4 Bab 4 dilewati pada OS $RUNNER_OS." > 06_psi4_bab4_running_log.txt
+            micromamba activate psi4_env
+            python -u tests/run_psi4_bab4.py
+            cp psi4_bab4_test.txt 06_psi4_bab4_running_log.txt
           fi
 
       - name: Compare Bab 4 Results
-        shell: bash {0}
+        shell: bash -eo pipefail {0}
         run: |
-          "$VENV_PY" -u tests/compare_bab4.py 2>&1 | tee compare_bab4_stdout.txt || true
+          "$VENV_PY" -u tests/compare_bab4.py 2>&1 | tee compare_bab4_stdout.txt
           if [ -f test_bab4_benchmark.txt ]; then
             cp test_bab4_benchmark.txt 07_compare_bab4_log.txt
           else
@@ -157,21 +178,17 @@ jobs:
         shell: bash -el {0}
         run: |
           set -o pipefail
-          if micromamba env list | grep -q "psi4_env"; then
-            micromamba activate psi4_env
-            if python -c "import psi4" >/dev/null 2>&1; then
-              python -u tests/run_psi4_geom.py 2>&1 | tee 09_psi4_universal_running_log.txt
-            else
-              echo "Psi4 Universal dilewati pada OS $RUNNER_OS." | tee 09_psi4_universal_running_log.txt
-            fi
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            echo "Psi4 Universal dilewati pada OS Windows." | tee 09_psi4_universal_running_log.txt
           else
-            echo "Psi4 Universal dilewati pada OS $RUNNER_OS." | tee 09_psi4_universal_running_log.txt
+            micromamba activate psi4_env
+            python -u tests/run_psi4_geom.py 2>&1 | tee 09_psi4_universal_running_log.txt
           fi
 
       - name: Generate Universal Comparison Table
-        shell: bash {0}
+        shell: bash -eo pipefail {0}
         run: |
-          "$VENV_PY" -u tests/compare_geom.py 2>&1 | tee compare_univ_stdout.txt || true
+          "$VENV_PY" -u tests/compare_geom.py mshqc_geom_raw.json psi4_geom_raw.json 2>&1 | tee compare_univ_stdout.txt
           if [ -f test_geom_validation.txt ]; then
             cp test_geom_validation.txt 10_compare_universal_log.txt
           else
@@ -182,16 +199,14 @@ jobs:
         shell: bash -el {0}
         run: |
           set -o pipefail
-          if micromamba env list | grep -q "psi4_env"; then
-            micromamba activate psi4_env
-            if python -c "import psi4" >/dev/null 2>&1; then
-              python -m pip install mshqc --no-cache-dir >/dev/null 2>&1 || true
-            fi
-          fi
-          if python -c "import mshqc, psi4" >/dev/null 2>&1; then
-            python -u tests/benchmark_geom_omp2_psi4.py 2>&1 | tee 11_benchmark_geom_omp2_psi4_log.txt
-          else
+          if [ "$RUNNER_OS" = "Windows" ]; then
             "$VENV_PY" -u tests/benchmark_geom_omp2_psi4.py 2>&1 | tee 11_benchmark_geom_omp2_psi4_log.txt
+          else
+            micromamba activate psi4_env
+            python -m pip install --upgrade pip
+            python -m pip install mshqc --no-cache-dir
+            python -c "import mshqc, psi4"
+            python -u tests/benchmark_geom_omp2_psi4.py 2>&1 | tee 11_benchmark_geom_omp2_psi4_log.txt
           fi
 
       - name: Run Universal Geometry Optimization Suite (test_universal_geom_opt.py)

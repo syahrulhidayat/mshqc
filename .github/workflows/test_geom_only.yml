@@ -31,7 +31,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Fetch Basis Sets from mshqc-basis
-        shell: bash
+        shell: bash -eo pipefail {0}
         run: |
           git clone --depth 1 https://github.com/syahrulhidayat/mshqc-basis.git /tmp/mshqc-basis
           mkdir -p data/basis python/mshqc/basis
@@ -54,7 +54,7 @@ jobs:
             c-compiler
             llvm-openmp
             eigen
-            hdf5=1.14.3
+            hdf5
             openblas
             liblapacke
             nanobind
@@ -66,6 +66,34 @@ jobs:
             pytest
             psi4
 
+      - name: Verify & Patch Psi4 LibXC Functional Table Compatibility
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate geom_env
+          if ! python -c "import psi4" >/dev/null 2>&1; then
+            echo "Mendeteksi ketidakcocokan fungsional LibXC pada Psi4, menerapkan patch proc_table.py..."
+            python - << 'EOF'
+          import pathlib, re, sys
+          for p in pathlib.Path(sys.prefix).rglob("psi4/driver/procrouting/proc_table.py"):
+              txt = p.read_text(encoding="utf-8")
+              pattern = r"for key in functionals:\s+ssuper = build_superfunctional_from_dictionary\(functionals\[key\], 1, 1, True\)\[0\]"
+              replacement = (
+                  "for key in list(functionals.keys()):\n"
+                  "    try:\n"
+                  "        ssuper = build_superfunctional_from_dictionary(functionals[key], 1, 1, True)[0]\n"
+                  "    except Exception:\n"
+                  "        functionals.pop(key, None)\n"
+                  "        continue"
+              )
+              new_txt, count = re.subn(pattern, replacement, txt)
+              if count > 0:
+                  p.write_text(new_txt, encoding="utf-8")
+                  print(f"Berhasil melakukan patch pada: {p}")
+          EOF
+          fi
+          python -c "import psi4; print('Psi4 berhasil dimuat, versi:', psi4.__version__)"
+
       - name: Restore Cached libcint & TBLIS (${{ runner.os }})
         id: cache-deps
         uses: actions/cache@v4
@@ -76,6 +104,7 @@ jobs:
       - name: Build libcint & TBLIS if Not Cached
         shell: bash -el {0}
         run: |
+          set -o pipefail
           micromamba activate geom_env
           mkdir -p .cache_local_deps/include .cache_local_deps/lib
           if [ -f ".cache_local_deps/lib/libtblis.a" ] && ( [ -f ".cache_local_deps/lib/libcint.a" ] || [ -f ".cache_local_deps/lib64/libcint.a" ] ); then
@@ -101,7 +130,7 @@ jobs:
             cd /tmp/tblis
             git submodule update --init --recursive
 
-            python -c "
+            python - << 'EOF'
           import pathlib
           p = pathlib.Path('src/external/catch/catch.hpp')
           p.write_text(p.read_text().replace('SIGSTKSZ', '8192'))
@@ -124,7 +153,7 @@ jobs:
           cx = pathlib.Path('src/util/cpuid.cxx')
           if cx.exists():
               cx.write_text(cx.read_text().replace('strtoi(ptno, pos, 16)', '((void)pos, (int)strtol(ptno.c_str(), NULL, 16))'))
-          "
+          EOF
 
             CFG_ARCH="reference"
             if [ "$(uname -m)" = "x86_64" ]; then
@@ -145,6 +174,7 @@ jobs:
       - name: Compile mshqc In-Place (No Wheel Release)
         shell: bash -el {0}
         run: |
+          set -o pipefail
           micromamba activate geom_env
           export TBLIS_DIR="$CONDA_PREFIX"
           export OpenMP_ROOT="$CONDA_PREFIX"
@@ -156,30 +186,35 @@ jobs:
       - name: Run Unit Test Universal Geometry Optimizer (test_universal_geom_opt.py)
         shell: bash -el {0}
         run: |
+          set -o pipefail
           micromamba activate geom_env
           python -u tests/test_universal_geom_opt.py 2>&1 | tee 01_test_universal_geom_opt_log.txt
 
       - name: Run .OH Radical Geometry & Frequency Benchmark (benchmark_geom_omp2_psi4.py)
         shell: bash -el {0}
         run: |
+          set -o pipefail
           micromamba activate geom_env
           python -u tests/benchmark_geom_omp2_psi4.py 2>&1 | tee 02_benchmark_geom_oh_psi4_log.txt
 
       - name: Run mshqc Multi-System Geometry Suite (run_mshqc_geom.py)
         shell: bash -el {0}
         run: |
+          set -o pipefail
           micromamba activate geom_env
           python -u tests/run_mshqc_geom.py 2>&1 | tee 03_mshqc_geom_running_log.txt
 
       - name: Run Psi4 Multi-System Geometry Reference Suite (run_psi4_geom.py)
         shell: bash -el {0}
         run: |
+          set -o pipefail
           micromamba activate geom_env
           python -u tests/run_psi4_geom.py 2>&1 | tee 04_psi4_geom_running_log.txt
 
       - name: Compare Head-to-Head Geometry & Vibrational Tables (compare_geom.py)
         shell: bash -el {0}
         run: |
+          set -o pipefail
           micromamba activate geom_env
           python -u tests/compare_geom.py mshqc_geom_raw.json psi4_geom_raw.json 2>&1 | tee 05_compare_geom_log.txt
 
