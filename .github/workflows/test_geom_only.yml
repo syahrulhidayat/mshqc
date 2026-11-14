@@ -39,7 +39,7 @@ jobs:
           cp -rf /tmp/mshqc-basis/data/basis/* python/mshqc/basis/
           rm -rf /tmp/mshqc-basis
 
-      - name: Set up Micromamba Environment (Compilers + C++ Deps + Psi4)
+      - name: Set up Micromamba Build Environment for mshqc (geom_env)
         uses: mamba-org/setup-micromamba@v2
         with:
           environment-name: geom_env
@@ -64,21 +64,21 @@ jobs:
             numpy
             scipy
             pytest
-            psi4
 
-      - name: Verify & Patch Psi4 LibXC Functional Table Compatibility
+      - name: Create Clean Psi4 Environment (psi4_env) & Patch LibXC Table
         shell: bash -el {0}
         run: |
           set -o pipefail
-          micromamba activate geom_env
+          micromamba create -y -n psi4_env -c conda-forge python=3.11 psi4 numpy scipy
 
+          micromamba activate psi4_env
           python - << 'EOF'
           import pathlib, re, sys
           for p in pathlib.Path(sys.prefix).rglob("psi4/driver/procrouting/proc_table.py"):
               txt = p.read_text(encoding="utf-8")
               pattern = r"for key in functionals:\s+ssuper = build_superfunctional_from_dictionary\(functionals\[key\], 1, 1, True\)\[0\]"
               replacement = (
-                  "for key in list(functionals.keys()):\n"
+                  "for key in [k for k in list(functionals.keys()) if not k.lower().startswith('th-')]:\n"
                   "    try:\n"
                   "        ssuper = build_superfunctional_from_dictionary(functionals[key], 1, 1, True)[0]\n"
                   "    except Exception:\n"
@@ -91,7 +91,7 @@ jobs:
                   print(f"Berhasil melakukan patch proc_table.py pada: {p}")
           EOF
 
-          python -c "import psi4; print('Psi4 berhasil dimuat, versi:', psi4.__version__)"
+          python -c "import psi4; print('Psi4 berhasil dimuat di psi4_env, versi:', psi4.__version__)"
 
       - name: Restore Cached libcint & TBLIS (${{ runner.os }})
         id: cache-deps
@@ -170,7 +170,7 @@ jobs:
             cp -rf "$CONDA_PREFIX/lib/libcint.a" "$CONDA_PREFIX/lib/libtblis.a" "$CONDA_PREFIX/lib/libtci.a" .cache_local_deps/lib/
           fi
 
-      - name: Compile mshqc In-Place (No Wheel Release)
+      - name: Compile mshqc In-Place & Set up Subprocess Bridge to psi4_env
         shell: bash -el {0}
         run: |
           set -o pipefail
@@ -181,6 +181,77 @@ jobs:
           export CMAKE_ARGS="-DOpenMP_ROOT=$CONDA_PREFIX"
           export CMAKE_BUILD_PARALLEL_LEVEL=4
           python -m pip install --no-build-isolation --no-deps -e . -v
+
+          PSI4_PY="$MAMBA_ROOT_PREFIX/envs/psi4_env/bin/python"
+          export PSI4_PY
+          python - << 'EOF'
+          import os, pathlib, sysconfig
+          purelib = pathlib.Path(sysconfig.get_paths()["purelib"])
+          psi4_py = os.environ["PSI4_PY"]
+          bridge_code = f'''import json, subprocess, numpy as np
+
+          PSI4_BIN = {psi4_py!r}
+          _OPTS = {{}}
+
+          class _Core:
+              @staticmethod
+              def clean(): pass
+              @staticmethod
+              def clean_options(): _OPTS.clear()
+              @staticmethod
+              def set_output_file(path, append=False): pass
+
+          core = _Core()
+
+          class _Mol:
+              def __init__(self, geom_str):
+                  self.geom_str = geom_str
+                  self._coords = None
+              def geometry(self):
+                  return self._coords
+
+          def geometry(geom_str):
+              return _Mol(geom_str)
+
+          def set_options(opts):
+              _OPTS.update(opts)
+
+          def optimize(method, molecule=None, dertype=None):
+              payload = json.dumps({{
+                  "method": method,
+                  "geom": molecule.geom_str,
+                  "opts": _OPTS,
+                  "dertype": dertype,
+              }})
+              runner = """import os, sys, json, tempfile, numpy as np
+          os.environ["PSI_SCRATCH"] = "/dev/shm" if os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK) else tempfile.gettempdir()
+          import psi4
+          psi4.set_num_threads(int(os.environ.get("OMP_NUM_THREADS", "4")))
+          psi4.set_memory("4 GB")
+          psi4.core.set_output_file("/dev/null", False)
+          data = json.loads(sys.argv[1])
+          psi4.core.clean()
+          psi4.core.clean_options()
+          mol = psi4.geometry(data["geom"])
+          psi4.set_options(data["opts"])
+          if data["dertype"] is not None:
+              e = float(psi4.optimize(data["method"], molecule=mol, dertype=data["dertype"]))
+          else:
+              e = float(psi4.optimize(data["method"], molecule=mol))
+          coords = np.asarray(mol.geometry()).tolist()
+          print("PSI4_JSON_RESULT:" + json.dumps({{"e": e, "coords": coords}}))
+          """
+              proc = subprocess.run([PSI4_BIN, "-c", runner, payload], capture_output=True, text=True, check=True)
+              for line in reversed(proc.stdout.splitlines()):
+                  if line.startswith("PSI4_JSON_RESULT:"):
+                      res = json.loads(line.split("PSI4_JSON_RESULT:", 1)[1])
+                      molecule._coords = np.asarray(res["coords"], dtype=np.float64)
+                      return float(res["e"])
+              raise RuntimeError(f"Psi4 subprocess gagal:\\n{{proc.stdout}}\\n{{proc.stderr}}")
+          '''
+          (purelib / "psi4.py").write_text(bridge_code, encoding="utf-8")
+          print("Subprocess bridge psi4.py berhasil dipasang di:", purelib / "psi4.py")
+          EOF
 
       - name: Run Unit Test Universal Geometry Optimizer (test_universal_geom_opt.py)
         shell: bash -el {0}
@@ -195,6 +266,10 @@ jobs:
           set -o pipefail
           micromamba activate geom_env
           python -u tests/benchmark_geom_omp2_psi4.py 2>&1 | tee 02_benchmark_geom_oh_psi4_log.txt
+          if grep -q "N/A" 02_benchmark_geom_oh_psi4_log.txt; then
+            echo "ERROR: Ditemukan nilai N/A pada hasil Psi4 di 02_benchmark_geom_oh_psi4_log.txt!"
+            exit 1
+          fi
 
       - name: Run mshqc Multi-System Geometry Suite (run_mshqc_geom.py)
         shell: bash -el {0}
@@ -207,8 +282,9 @@ jobs:
         shell: bash -el {0}
         run: |
           set -o pipefail
-          micromamba activate geom_env
+          micromamba activate psi4_env
           python -u tests/run_psi4_geom.py 2>&1 | tee 04_psi4_geom_running_log.txt
+          test -s psi4_geom_raw.json
 
       - name: Compare Head-to-Head Geometry & Vibrational Tables (compare_geom.py)
         shell: bash -el {0}
@@ -216,6 +292,7 @@ jobs:
           set -o pipefail
           micromamba activate geom_env
           python -u tests/compare_geom.py mshqc_geom_raw.json psi4_geom_raw.json 2>&1 | tee 05_compare_geom_log.txt
+          grep -q "Total Matched Geometry Runs: 24" 05_compare_geom_log.txt
 
       - name: Upload Geometry Benchmark Logs (.txt & .json)
         if: always()
