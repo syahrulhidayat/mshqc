@@ -99,7 +99,7 @@ def main():
                 basis=basis,
                 reference=spec["ref"],
                 max_iter=40,
-                g_rms_tol=1.0e-6,
+                g_rms_tol=2.0e-8,
                 fd_step_bohr=5.0e-4,
                 verbose=False,
             )

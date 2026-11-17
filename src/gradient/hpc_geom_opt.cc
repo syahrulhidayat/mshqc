@@ -95,6 +95,46 @@ Molecule make_displaced_molecule(const Molecule& base_mol, const Eigen::VectorXd
 
 // Membangun basis ortonormal subruang vibrasi internal V_int (3N x N_vib)
 // yang bebas dari 5 atau 6 mode translasi dan rotasi kaku (Proyeksi Eckart).
+
+// [MSHQC-SYNC INJECT] Deterministic Cartesian reflection symmetrization across OpenMP/SIMD threads
+inline void symmetrize_cartesian_vector_sync(
+    const Eigen::VectorXd& coords,
+    Eigen::VectorXd& vec,
+    double tol = 1.0e-4)
+{
+    const int natoms = static_cast<int>(coords.size()) / 3;
+    if (natoms < 2 || vec.size() != coords.size()) return;
+    Eigen::VectorXd v_orig = vec;
+    for (int axis = 0; axis < 3; ++axis) {
+        std::vector<int> mirror_map(natoms, -1);
+        bool is_sym = true;
+        for (int i = 0; i < natoms; ++i) {
+            Eigen::Vector3d ri = coords.segment<3>(3 * i);
+            ri(axis) = -ri(axis);
+            for (int j = 0; j < natoms; ++j) {
+                if ((ri - coords.segment<3>(3 * j)).norm() < tol) {
+                    mirror_map[i] = j;
+                    break;
+                }
+            }
+            if (mirror_map[i] == -1) {
+                is_sym = false;
+                break;
+            }
+        }
+        if (is_sym) {
+            for (int i = 0; i < natoms; ++i) {
+                const int j = mirror_map[i];
+                for (int d = 0; d < 3; ++d) {
+                    const double s = (d == axis) ? -1.0 : 1.0;
+                    vec(3 * i + d) = 0.5 * (v_orig(3 * i + d) + s * v_orig(3 * j + d));
+                }
+            }
+            v_orig = vec;
+        }
+    }
+}
+
 Eigen::MatrixXd build_internal_vibrational_subspace(
     const Eigen::VectorXd& coords_bohr,
     const std::vector<double>& masses_amu,
@@ -341,8 +381,10 @@ double HPCGeometryOptimizer::evaluate_single_point_cpp(
   scf_conf.aux_basis_name = cfg.aux_basis_name.empty()
       ? (basis_name + "-RI")
       : cfg.aux_basis_name;
-  scf_conf.energy_threshold = std::min(1.0e-13, 0.001 * cfg.energy_thresh);
-  scf_conf.density_threshold = std::min(1.0e-11, 0.01 * cfg.energy_thresh);
+  // [MSHQC-SYNC INJECT] Prevent DIIS B_ij ~ 1e-20 singularity on open-shell UMP2/UMP3 radicals
+    const bool is_canonical_ump = (m_upper == "UMP2" || m_upper == "UMP3" || m_upper == "DF-UMP2" || m_upper == "DF-UMP3");
+    scf_conf.energy_threshold = is_canonical_ump ? 1.0e-11 : std::min(1.0e-12, 0.001 * cfg.energy_thresh);
+    scf_conf.density_threshold = is_canonical_ump ? 1.0e-9 : std::min(1.0e-10, 0.01 * cfg.energy_thresh);
   scf_conf.cholesky_threshold = std::min(1.0e-11, cfg.energy_thresh);
   scf_conf.df_threshold = std::min(1.0e-12, cfg.energy_thresh);
   scf_conf.print_level = 0;
