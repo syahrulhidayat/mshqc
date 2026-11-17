@@ -180,7 +180,15 @@ Eigen::MatrixXd build_internal_vibrational_subspace(
     if (s(k) > 1.0e-6) ++n_tr;
   }
   const int n_vib = std::max(0, ndof - n_tr);
-  return U.rightCols(n_vib);
+  Eigen::MatrixXd V_int = U.rightCols(n_vib);
+  for (int c = 0; c < V_int.cols(); ++c) {
+    int max_idx = 0;
+    V_int.col(c).cwiseAbs().maxCoeff(&max_idx);
+    if (V_int(max_idx, c) < 0.0) {
+      V_int.col(c) = -V_int.col(c);
+    }
+  }
+  return V_int;
 }
 
 // Membangun matriks Hessian awal model Lindh-Schlegel (ikatan + sudut valensi)
@@ -385,9 +393,7 @@ double HPCGeometryOptimizer::evaluate_single_point_cpp(
       ? (basis_name + "-RI")
       : cfg.aux_basis_name;
   // [MSHQC-SYNC INJECT] Prevent DIIS B_ij ~ 1e-20 singularity on open-shell UMP2/UMP3 radicals
-  const bool is_canonical_ump =
-      (method == "ump2" || method == "ump3" ||
-       ((method == "mp2" || method == "mp3") && ref == "uhf"));
+  const bool is_canonical_ump = (method == "ump2" || method == "ump3");
   scf_conf.energy_threshold = is_canonical_ump ? 1.0e-11 : std::min(1.0e-12, 0.001 * cfg.energy_thresh);
   scf_conf.density_threshold = is_canonical_ump ? 1.0e-9 : std::min(1.0e-10, 0.01 * cfg.energy_thresh);
   scf_conf.cholesky_threshold = std::min(1.0e-11, cfg.energy_thresh);
@@ -484,7 +490,9 @@ Eigen::VectorXd HPCGeometryOptimizer::project_out_trans_rot(
   if (V_int.cols() == 0) {
     return Eigen::VectorXd::Zero(ndof);
   }
-  return V_int * (V_int.transpose() * grad);
+  Eigen::VectorXd projected = V_int * (V_int.transpose() * grad);
+  symmetrize_cartesian_vector_sync(coords_bohr, projected);
+  return projected;
 }
 
 std::pair<double, Eigen::VectorXd> HPCGeometryOptimizer::compute_nuclear_gradient_cpp(
@@ -568,13 +576,27 @@ GeomOptResult HPCGeometryOptimizer::optimize_molecule(
     // Injeksi kurvatur lokal eksak dari stensil Central Finite-Difference:
     // Untuk molekul diatomik (N=2), H_{00} = H_{11} = -H_{01} = d^2E/dz_0^2 adalah eksak!
     if (natoms == 2) {
+      const std::string m_opt = to_lower_copy(cfg.method);
+      const bool is_ump = (m_opt == "ump2" || m_opt == "ump3");
       for (int xyz = 0; xyz < 3; ++xyz) {
-        if (gc.has_curv(xyz)) {
+        if (gc.has_curv(xyz) && (!is_ump || iter <= 1)) {
           const double k_exact = gc.diag_curv(xyz);
           H(xyz, xyz) = k_exact;
           H(3 + xyz, 3 + xyz) = k_exact;
           H(xyz, 3 + xyz) = -k_exact;
           H(3 + xyz, xyz) = -k_exact;
+        } else if (is_ump && iter > 1) {
+          const double ds = x(xyz) - x_prev(xyz);
+          const double dg = g(xyz) - g_prev(xyz);
+          if (std::abs(ds) > 5.0e-4) {
+            const double k_sec = dg / ds;
+            if (std::isfinite(k_sec) && k_sec > 0.05 && k_sec < 10.0) {
+              H(xyz, xyz) = k_sec;
+              H(3 + xyz, 3 + xyz) = k_sec;
+              H(xyz, 3 + xyz) = -k_sec;
+              H(3 + xyz, xyz) = -k_sec;
+            }
+          }
         }
       }
     } else if (iter == 0) {
@@ -706,6 +728,17 @@ GeomOptResult HPCGeometryOptimizer::optimize_molecule(
                          (dx_rms < 0.5 * cfg.dx_rms_tol) && (g_rms < 1.5 * cfg.g_rms_tol);
 
     if ((grad_ok && step_ok) || tight_grad || stationary_ok || natoms <= 1) {
+      if (natoms > 1 && g_rms > 1.0e-9 && dx_rms > 0.0 && dx_rms < 1.0e-3) {
+        x += dx;
+        Molecule final_mol = make_displaced_molecule(mol, x);
+        const double e_final = evaluate_single_point_cpp(final_mol, cfg);
+        if (std::isfinite(e_final) && e_final <= energy + 1.0e-10) {
+          energy = e_final;
+          res.energy_history.back() = energy;
+        } else {
+          x -= dx;
+        }
+      }
       res.converged = true;
       break;
     }
@@ -796,7 +829,8 @@ VibThermoResult HPCGeometryOptimizer::compute_frequencies(
 
   double e0 = evaluate_single_point_cpp(mol, cfg);
   Eigen::MatrixXd hess = Eigen::MatrixXd::Zero(ndof, ndof);
-  const double h = 2.0e-3;
+  const std::string m_freq = to_lower_copy(cfg.method);
+  const double h = (m_freq == "ump2" || m_freq == "ump3") ? 5.0e-3 : 2.0e-3;
 
   GeomOptConfig grad_cfg = cfg;
   grad_cfg.project_trans_rot = false;

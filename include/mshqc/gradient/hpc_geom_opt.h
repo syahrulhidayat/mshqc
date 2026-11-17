@@ -28,7 +28,7 @@ struct GeomOptConfig {
   int max_iter = 40;
   double energy_thresh = 1.0e-10;
   double orb_grad_thresh = 1.0e-8;
-  double g_rms_tol = 2.0e-8;         // Ha / Bohr
+  double g_rms_tol = 1.0e-6;         // Ha / Bohr
   double g_max_tol = 3.0e-6;         // Ha / Bohr
   double dx_rms_tol = 1.0e-5;        // Bohr
   double dx_max_tol = 3.0e-5;        // Bohr

@@ -107,9 +107,11 @@ def map_psi4_call(m: str):
     m_low = m.lower()
     if m_low in ("rhf", "uhf"):
         return "scf", False, None
-    if m_low in ("rmp2", "ump2"):
+    if m_low == "rmp2":
         return "mp2", False, None
-    if m_low in ("rmp3", "ump3", "ump2"):
+    if m_low == "ump2":
+        return "mp2", False, "energy"
+    if m_low in ("rmp3", "ump3"):
         return "mp3", False, "energy"
     if m_low == "omp2":
         return "omp2", True, None
@@ -171,7 +173,7 @@ def main():
                     "rms_mograd_convergence": 1e-8,
                     "max_mograd_convergence": 1e-7,
                     "g_convergence": "gau_verytight",
-                    "disp_size": 5.0e-4,
+                    "disp_size": 5.0e-3 if m.lower() in ("ump2", "ump3") else 5.0e-4,
                 }
                 psi4.set_options(opts)
 
