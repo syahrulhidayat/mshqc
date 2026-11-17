@@ -33,53 +33,35 @@ namespace mshqc {
 DIIS::DIIS(int max_vectors) : max_vectors_(max_vectors) {
     // Resize B_matrix agar pas untuk (max + 1)
     B_matrix_ = Eigen::MatrixXd::Zero(max_vectors + 1, max_vectors + 1);
-    
-    // [FIX] std::deque tidak memiliki .reserve(). Baris tersebut dihapus.
-    // Deque mengelola memori secara otomatis dan efisien.
+
 }
 
 void DIIS::clear() {
     fock_history_.clear();
     error_history_.clear();
-    // density_history_ dihapus untuk efisiensi RAM & CPU
     B_matrix_.setZero();
 }
 
 void DIIS::add_iteration(const Eigen::MatrixXd& F, const Eigen::MatrixXd& err)
 {
-    // 1. Jika buffer penuh, buang elemen terlama (index 0)
+
     if (fock_history_.size() >= max_vectors_) {
-        fock_history_.pop_front();  // [FIX] Gunakan pop_front() untuk std::deque
+        fock_history_.pop_front();
         error_history_.pop_front();
-        
-        // Geser B Matrix (Penting: Geser blok kiri-atas ke pojok)
         int n = max_vectors_; 
-        // Logika: data index 1..n digeser ke 0..n-1
-        // B_matrix ukuran (n+1)x(n+1), kita geser subblok n x n (sebelum push baru)
-        // Sebenarnya kita menggeser (n-1)x(n-1) elemen yang tersisa.
-        // Blok mulai dari (1,1) sebesar (n-1)x(n-1) digeser ke (0,0)
         Eigen::MatrixXd temp = B_matrix_.block(1, 1, n-1, n-1);
         B_matrix_.topLeftCorner(n-1, n-1) = temp;
     }
 
     fock_history_.push_back(F);
     error_history_.push_back(err);
-
-    // 2. Update B Matrix (Hanya baris/kolom terakhir yang aktif)
     int n = fock_history_.size(); 
-    int new_idx = n - 1; // Index vektor baru (0-based)
-    
-    // Flatten error vector baru untuk dot product cepat
-    // Eigen::Map memungkinkan kita melihat Matrix sebagai Vector tanpa copy (Zero-Copy)
+    int new_idx = n - 1;
     Eigen::Map<const Eigen::VectorXd> vec_new(err.data(), err.size());
 
     for (int i = 0; i < n; ++i) {
-        // Map error lama sebagai vector
         Eigen::Map<const Eigen::VectorXd> vec_old(error_history_[i].data(), error_history_[i].size());
-        
-        // Dot product: <e_i | e_new>
-        double val = vec_old.dot(vec_new);
-        
+        double val = vec_old.dot(vec_new); 
         B_matrix_(i, new_idx) = val;
         B_matrix_(new_idx, i) = val; 
     }
@@ -94,7 +76,7 @@ Eigen::VectorXd DIIS::solve_svd(const Eigen::MatrixXd& A) {
     int n = A.rows();
     Eigen::VectorXd singular_values = svd.singularValues();
     double max_sv = (singular_values.size() > 0) ? singular_values(0) : 1.0;
-    double threshold = 1e-14 * max_sv;
+    double threshold = 1.0e-12 * std::max(1.0, max_sv);
 
     Eigen::MatrixXd S_inv = Eigen::MatrixXd::Zero(n, n);
     for (int i = 0; i < n; ++i) {
@@ -116,46 +98,22 @@ Eigen::MatrixXd DIIS::extrapolate() {
     if (n < 2) return fock_history_.back();
 
     Eigen::MatrixXd B_sub = B_matrix_.topLeftCorner(n, n);
-    Eigen::VectorXd diag = B_sub.diagonal();
-
-    // Jika error terakhir sudah mencapai nol mesin, langsung gunakan Fock terakhir
-    if (diag(n - 1) <= 1e-30) {
-        return fock_history_.back();
-    }
-
-    // Penyeimbangan diagonal (Diagonal Equilibration) setara Psi4 DIISManager:
-    // d_i = sqrt(B_ii) = ||e_i||, sehingga matriks korelasi C_ij = B_ij / (d_i * d_j)
-    // selalu memiliki diagonal 1.0 dan bebas dari pemotongan SVD saat ||e_i|| < 1e-6.
-    Eigen::VectorXd d = diag.cwiseMax(1e-30).cwiseSqrt();
-    double d_min = d.minCoeff();
-    Eigen::VectorXd w = d_min * d.cwiseInverse();
+    double b_scale = B_sub.cwiseAbs().maxCoeff();
+    if (b_scale <= 0.0) return fock_history_.back();
 
     Eigen::MatrixXd A = Eigen::MatrixXd::Zero(n + 1, n + 1);
-    for (int i = 0; i < n; ++i) {
-        for (int j = 0; j < n; ++j) {
-            A(i, j) = B_sub(i, j) / (d(i) * d(j));
-        }
-        A(i, n) = -w(i);
-        A(n, i) = -w(i);
-    }
+    A.topLeftCorner(n, n) = B_sub / b_scale;
+    A.col(n).head(n).setConstant(-1.0);
+    A.row(n).head(n).setConstant(-1.0);
     A(n, n) = 0.0;
 
-    Eigen::VectorXd coeffs_tilde = solve_svd(A).head(n);
-    Eigen::VectorXd coeffs = coeffs_tilde.cwiseProduct(w);
-    double sum_c = coeffs.sum();
-    if (std::abs(sum_c) > 1e-15) {
-        coeffs /= sum_c;
-    } else {
-        coeffs.setZero();
-        coeffs(n - 1) = 1.0;
-    }
+    Eigen::VectorXd coeffs = solve_svd(A);
 
-    Eigen::MatrixXd F_ext = Eigen::MatrixXd::Zero(fock_history_[0].rows(), fock_history_[0].cols());
-    for (int i = 0; i < n; i++) {
-        F_ext.noalias() += coeffs(i) * fock_history_[i];
+    Eigen::MatrixXd F_new = Eigen::MatrixXd::Zero(fock_history_[0].rows(), fock_history_[0].cols());
+    for (int i = 0; i < n; ++i) {
+        F_new.noalias() += coeffs(i) * fock_history_[i];
     }
-
-    return F_ext;
+    return F_new;
 }
 
 

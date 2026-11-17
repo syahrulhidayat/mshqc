@@ -538,11 +538,11 @@ SCFResult BaseSCF::compute() {
             printf(" %4d %18.10f %10.2e %10.2e\n", iter_scf_, energy(), dE, dP);
         }
 
-        double e_tol = is_uhf ? std::min(config_.energy_threshold, 1e-10) : config_.energy_threshold;
-        double p_tol = is_uhf ? std::min(config_.density_threshold, 1e-10) : config_.density_threshold;
+        double e_tol = is_uhf ? std::min(config_.energy_threshold, 1e-12) : config_.energy_threshold;
+        double p_tol = is_uhf ? std::min(config_.density_threshold, 1e-11) : config_.density_threshold;
 
-        bool strict_conv  = (dE < e_tol && dP < p_tol && err_rms < p_tol);
-        bool plateau_conv = (iter_scf_ > 24 && dE < e_tol && dP < 1e-10 && err_rms < 1e-10);
+        bool strict_conv = (dE < e_tol && dP < p_tol && err_rms < p_tol);
+        bool plateau_conv = (iter_scf_ > 45 && dE < e_tol && dP < 1e-11 && err_rms < 1e-11);
         if (iter_scf_ > 2 && (strict_conv || plateau_conv)) {
             converged = true;
             break;
@@ -618,11 +618,11 @@ SCFResult BaseSCF::compute() {
                 double dE = std::abs(energy_ - energy_old_);
                 double dP = std::hypot((P_alpha_ - Pa_snap).norm(), (P_beta_ - Pb_snap).norm());
 
-                double e_tol = is_uhf ? std::min(config_.energy_threshold, 1e-10) : config_.energy_threshold;
-                double p_tol = is_uhf ? std::min(config_.density_threshold, 1e-10) : config_.density_threshold;
+                double e_tol = is_uhf ? std::min(config_.energy_threshold, 1e-12) : config_.energy_threshold;
+                double p_tol = is_uhf ? std::min(config_.density_threshold, 1e-11) : config_.density_threshold;
 
-                bool strict_conv  = (dE < e_tol && dP < p_tol && err_rms < p_tol);
-                bool plateau_conv = (iter_scf_ > 24 && dE < e_tol && dP < 1e-10 && err_rms < 1e-10);
+                bool strict_conv = (dE < e_tol && dP < p_tol && err_rms < p_tol);
+                bool plateau_conv = (iter_scf_ > 45 && dE < e_tol && dP < 1e-11 && err_rms < 1e-11);
                 if (iter_scf_ > 2 && (strict_conv || plateau_conv)) {
                     trial_conv = true;
                     break;
@@ -695,6 +695,23 @@ SCFResult BaseSCF::compute() {
         }
         energy_ = compute_energy();
         if (is_uhf && C_alpha_.rows() == nbasis_ && C_beta_.rows() == nbasis_) {
+          solve_fock(F_alpha_, C_alpha_, eps_alpha_);
+          solve_fock(F_beta_, C_beta_, eps_beta_);
+          occ_numbers_alpha_.resize(0);
+          occ_numbers_beta_.resize(0);
+          update_densities();
+          if (symmetrizer_) {
+            symmetrizer_->symmetrize(P_alpha_);
+            symmetrizer_->symmetrize(P_beta_);
+          }
+          iter_scf_ = 1;
+          build_fock_matrix();
+          if (symmetrizer_) {
+            symmetrizer_->symmetrize(F_alpha_);
+            symmetrizer_->symmetrize(F_beta_);
+          }
+          energy_ = compute_energy();
+
           auto canonicalize_uhf_subspace = [&](const Eigen::MatrixXd& F_ao, Eigen::MatrixXd& C,
                                                Eigen::VectorXd& eps, int nocc) {
             const int nvir = nbasis_ - nocc;

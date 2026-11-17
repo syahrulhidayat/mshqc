@@ -286,13 +286,7 @@ GradCurvatureResult compute_gradient_and_curvature_internal(
     return out;
   }
 
-  const std::string m_fd = to_lower_copy(cfg.method);
-  const bool is_ump_fd = (m_fd == "ump2" || m_fd == "ump3" ||
-                          m_fd == "df-ump2" || m_fd == "df-ump3" ||
-                          m_fd == "cholesky-ump2" || m_fd == "cholesky-ump3");
-  const double h = is_ump_fd
-                       ? std::max(cfg.fd_step_bohr, 1.0e-3)
-                       : cfg.fd_step_bohr;
+  const double h = cfg.fd_step_bohr;
 
   for (int a = 0; a < natoms - 1; ++a) {
     for (int xyz = 0; xyz < 3; ++xyz) {
@@ -392,14 +386,12 @@ double HPCGeometryOptimizer::evaluate_single_point_cpp(
   scf_conf.aux_basis_name = cfg.aux_basis_name.empty()
       ? (basis_name + "-RI")
       : cfg.aux_basis_name;
-  // [MSHQC-SYNC INJECT] Prevent DIIS B_ij ~ 1e-20 singularity on open-shell UMP2/UMP3 radicals
-  const bool is_canonical_ump = (method == "ump2" || method == "ump3");
-  scf_conf.energy_threshold = is_canonical_ump ? 1.0e-11 : std::min(1.0e-12, 0.001 * cfg.energy_thresh);
-  scf_conf.density_threshold = is_canonical_ump ? 1.0e-9 : std::min(1.0e-10, 0.01 * cfg.energy_thresh);
+  scf_conf.energy_threshold = std::min(1.0e-13, 0.001 * cfg.energy_thresh);
+  scf_conf.density_threshold = std::min(1.0e-11, 0.01 * cfg.energy_thresh);
   scf_conf.cholesky_threshold = std::min(1.0e-11, cfg.energy_thresh);
   scf_conf.df_threshold = std::min(1.0e-12, cfg.energy_thresh);
   scf_conf.print_level = 0;
-  scf_conf.max_iterations = 150;
+  scf_conf.max_iterations = 200;
 
   SCFResult scf_res;
   if (ref == "rhf") {
@@ -422,13 +414,13 @@ double HPCGeometryOptimizer::evaluate_single_point_cpp(
   mp2_conf.eri_method = eri_mode;
   mp2_conf.use_df = (eri_mode == "df");
   mp2_conf.aux_basis_name = scf_conf.aux_basis_name;
-  mp2_conf.energy_threshold = cfg.energy_thresh;
+  mp2_conf.energy_threshold = std::min(1.0e-12, cfg.energy_thresh);
   mp2_conf.df_threshold = std::min(1.0e-12, cfg.energy_thresh);
   mp2_conf.cholesky_threshold = std::min(1.0e-11, cfg.energy_thresh);
-  mp2_conf.gradient_threshold = cfg.orb_grad_thresh;
+  mp2_conf.gradient_threshold = std::min(1.0e-10, cfg.orb_grad_thresh);
   mp2_conf.opt_method = cfg.opt_method;
   mp2_conf.print_level = 0;
-  mp2_conf.max_iterations = 80;
+  mp2_conf.max_iterations = 100;
 
   if (method == "mp2" || method == "rmp2" || method == "ump2" || method == "romp2") {
     if (method == "rmp2" || (method == "mp2" && ref == "rhf")) {
@@ -576,27 +568,13 @@ GeomOptResult HPCGeometryOptimizer::optimize_molecule(
     // Injeksi kurvatur lokal eksak dari stensil Central Finite-Difference:
     // Untuk molekul diatomik (N=2), H_{00} = H_{11} = -H_{01} = d^2E/dz_0^2 adalah eksak!
     if (natoms == 2) {
-      const std::string m_opt = to_lower_copy(cfg.method);
-      const bool is_ump = (m_opt == "ump2" || m_opt == "ump3");
       for (int xyz = 0; xyz < 3; ++xyz) {
-        if (gc.has_curv(xyz) && (!is_ump || iter <= 1)) {
+        if (gc.has_curv(xyz)) {
           const double k_exact = gc.diag_curv(xyz);
           H(xyz, xyz) = k_exact;
           H(3 + xyz, 3 + xyz) = k_exact;
           H(xyz, 3 + xyz) = -k_exact;
           H(3 + xyz, xyz) = -k_exact;
-        } else if (is_ump && iter > 1) {
-          const double ds = x(xyz) - x_prev(xyz);
-          const double dg = g(xyz) - g_prev(xyz);
-          if (std::abs(ds) > 5.0e-4) {
-            const double k_sec = dg / ds;
-            if (std::isfinite(k_sec) && k_sec > 0.05 && k_sec < 10.0) {
-              H(xyz, xyz) = k_sec;
-              H(3 + xyz, 3 + xyz) = k_sec;
-              H(xyz, 3 + xyz) = -k_sec;
-              H(3 + xyz, xyz) = -k_sec;
-            }
-          }
         }
       }
     } else if (iter == 0) {
@@ -721,22 +699,18 @@ GeomOptResult HPCGeometryOptimizer::optimize_molecule(
                 << " | " << std::setw(10) << dx_rms << std::fixed << "\n";
     }
 
-    bool grad_ok = (g_rms < cfg.g_rms_tol) && (g_max < cfg.g_max_tol);
+    const double eff_g_rms_tol = std::min(cfg.g_rms_tol, 1.0e-7);
+    bool grad_ok = (g_rms < eff_g_rms_tol) && (g_max < cfg.g_max_tol);
     bool step_ok = (dx_rms < cfg.dx_rms_tol) && (dx_max < cfg.dx_max_tol);
-    bool tight_grad = (g_rms < 0.25 * cfg.g_rms_tol) && (g_max < 0.25 * cfg.g_max_tol);
+    bool tight_grad = (g_rms < 1.0e-8) && (g_max < 3.0e-8);
     bool stationary_ok = (iter >= 4) && (std::abs(de) < 1.0e-9) &&
-                         (dx_rms < 0.5 * cfg.dx_rms_tol) && (g_rms < 1.5 * cfg.g_rms_tol);
+                         (dx_rms < 0.5 * cfg.dx_rms_tol) && (g_rms < 1.5e-6);
 
     if ((grad_ok && step_ok) || tight_grad || stationary_ok || natoms <= 1) {
-      if (natoms > 1 && g_rms > 1.0e-9 && dx_rms > 0.0 && dx_rms < 1.0e-3) {
+      if (natoms > 1 && pred_de_last <= 0.0 && dx_rms < cfg.dx_rms_tol) {
         x += dx;
-        Molecule final_mol = make_displaced_molecule(mol, x);
-        const double e_final = evaluate_single_point_cpp(final_mol, cfg);
-        if (std::isfinite(e_final) && e_final <= energy + 1.0e-10) {
-          energy = e_final;
-          res.energy_history.back() = energy;
-        } else {
-          x -= dx;
+        if (!res.energy_history.empty()) {
+          res.energy_history.back() += pred_de_last;
         }
       }
       res.converged = true;
