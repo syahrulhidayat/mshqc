@@ -286,7 +286,13 @@ GradCurvatureResult compute_gradient_and_curvature_internal(
     return out;
   }
 
-  const double h = cfg.fd_step_bohr;
+  const std::string m_fd = to_lower_copy(cfg.method);
+  const bool is_ump_fd = (m_fd == "ump2" || m_fd == "ump3" ||
+                          m_fd == "df-ump2" || m_fd == "df-ump3" ||
+                          m_fd == "cholesky-ump2" || m_fd == "cholesky-ump3");
+  const double h = is_ump_fd
+                       ? std::max(cfg.fd_step_bohr, 1.0e-3)
+                       : cfg.fd_step_bohr;
 
   for (int a = 0; a < natoms - 1; ++a) {
     for (int xyz = 0; xyz < 3; ++xyz) {
