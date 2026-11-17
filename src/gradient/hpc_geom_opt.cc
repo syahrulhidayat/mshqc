@@ -279,7 +279,10 @@ GradCurvatureResult compute_gradient_and_curvature_internal(
   }
 
   const std::string m_fd = to_lower_copy(cfg.method);
-  const double h = (m_fd == "ump2" || m_fd == "ump3")
+  const bool is_ump_fd = (m_fd == "ump2" || m_fd == "ump3" ||
+                          m_fd == "df-ump2" || m_fd == "df-ump3" ||
+                          m_fd == "cholesky-ump2" || m_fd == "cholesky-ump3");
+  const double h = is_ump_fd
                        ? std::max(cfg.fd_step_bohr, 1.0e-3)
                        : cfg.fd_step_bohr;
 
@@ -382,9 +385,11 @@ double HPCGeometryOptimizer::evaluate_single_point_cpp(
       ? (basis_name + "-RI")
       : cfg.aux_basis_name;
   // [MSHQC-SYNC INJECT] Prevent DIIS B_ij ~ 1e-20 singularity on open-shell UMP2/UMP3 radicals
-    const bool is_canonical_ump = (m_upper == "UMP2" || m_upper == "UMP3" || m_upper == "DF-UMP2" || m_upper == "DF-UMP3");
-    scf_conf.energy_threshold = is_canonical_ump ? 1.0e-11 : std::min(1.0e-12, 0.001 * cfg.energy_thresh);
-    scf_conf.density_threshold = is_canonical_ump ? 1.0e-9 : std::min(1.0e-10, 0.01 * cfg.energy_thresh);
+  const bool is_canonical_ump =
+      (method == "ump2" || method == "ump3" ||
+       ((method == "mp2" || method == "mp3") && ref == "uhf"));
+  scf_conf.energy_threshold = is_canonical_ump ? 1.0e-11 : std::min(1.0e-12, 0.001 * cfg.energy_thresh);
+  scf_conf.density_threshold = is_canonical_ump ? 1.0e-9 : std::min(1.0e-10, 0.01 * cfg.energy_thresh);
   scf_conf.cholesky_threshold = std::min(1.0e-11, cfg.energy_thresh);
   scf_conf.df_threshold = std::min(1.0e-12, cfg.energy_thresh);
   scf_conf.print_level = 0;
