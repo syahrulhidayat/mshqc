@@ -406,20 +406,25 @@ MP2Result UMP2::compute() {
 
         auto build_uhf_df_fock = [&](const Eigen::MatrixXd& Ca, const Eigen::MatrixXd& Cb,
                                      Eigen::MatrixXd& Fa, Eigen::MatrixXd& Fb) {
-            Eigen::MatrixXd Pa = Ca.leftCols(nocc_a_) * Ca.leftCols(nocc_a_).transpose();
-            Eigen::MatrixXd Pb = (nocc_b_ > 0)
-                ? (Cb.leftCols(nocc_b_) * Cb.leftCols(nocc_b_).transpose())
-                : Eigen::MatrixXd::Zero(nbf_, nbf_);
+            Eigen::MatrixXd Pa(nbf_, nbf_);
+            Pa.noalias() = Ca.leftCols(nocc_a_) * Ca.leftCols(nocc_a_).transpose();
+            Eigen::MatrixXd Pb = Eigen::MatrixXd::Zero(nbf_, nbf_);
+            if (nocc_b_ > 0) {
+                Pb.noalias() = Cb.leftCols(nocc_b_) * Cb.leftCols(nocc_b_).transpose();
+            }
             Eigen::MatrixXd P_tot = Pa + Pb;
             Eigen::Map<const Eigen::VectorXd> P_flat(P_tot.data(), nbf_ * nbf_);
             Eigen::VectorXd X_J = L_flat_J.transpose() * P_flat;
             Eigen::VectorXd J_flat = L_flat_J * X_J;
-            Eigen::Map<const Eigen::MatrixXd> J_mat(J_flat.data(), nbf_, nbf_);
+            Eigen::Map<Eigen::MatrixXd> J_mat(J_flat.data(), nbf_, nbf_);
 
             Eigen::MatrixXd Ka = Eigen::MatrixXd::Zero(nbf_, nbf_);
             Eigen::MatrixXd Kb = Eigen::MatrixXd::Zero(nbf_, nbf_);
             const Eigen::MatrixXd Ca_o = Ca.leftCols(nocc_a_);
-            const Eigen::MatrixXd Cb_o = (nocc_b_ > 0) ? Cb.leftCols(nocc_b_) : Eigen::MatrixXd();
+            Eigen::MatrixXd Cb_o;
+            if (nocc_b_ > 0) {
+                Cb_o = Cb.leftCols(nocc_b_);
+            }
 
             for (int P = 0; P < n_aux; ++P) {
                 Eigen::Map<const Eigen::MatrixXd> L_P(scf_.L_mat.col(P).data(), nbf_, nbf_);
