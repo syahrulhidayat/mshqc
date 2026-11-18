@@ -168,10 +168,10 @@ def main():
                     "orb_opt": "true" if is_oo else "false",
                     "hess_type": "approx_diag",
                     "e_convergence": 1e-12,
-                    "d_convergence": 1e-11,
+                    "d_convergence": 1e-12,
                     "r_convergence": 1e-10,
-                    "rms_mograd_convergence": 1e-9,
-                    "max_mograd_convergence": 1e-8,
+                    "rms_mograd_convergence": 1e-10,
+                    "max_mograd_convergence": 1e-9,
                     "g_convergence": "gau_verytight",
                     "disp_size": 5.0e-3 if m.lower() in ("ump2", "ump3") else 5.0e-4,
                 }

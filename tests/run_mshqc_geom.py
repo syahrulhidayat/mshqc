@@ -19,6 +19,7 @@ os.environ["OMP_NUM_THREADS"] = str(N_THREADS)
 os.environ["TBLIS_NUM_THREADS"] = str(N_THREADS)
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OMP_MAX_ACTIVE_LEVELS"] = "1"
 os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
 GEOM_SYSTEMS = {
@@ -87,22 +88,45 @@ def main():
 
     for sys_name, spec in GEOM_SYSTEMS.items():
         basis = spec["basis"]
+        aux_basis = f"{basis}-RI"
+
         for m in spec["methods"]:
             mol = mshqc.Molecule(charge=spec["charge"], multiplicity=spec["mult"])
             for sym, x, y, z in spec["atoms"]:
                 mol.add_atom(sym, x, y, z, units="angstrom")
 
+            # Samakan ukuran langkah finite-difference dengan disp_size di run_psi4_geom.py
+            fd_step = 5.0e-3 if m.lower() in ("ump2", "ump3") else 5.0e-4
+
             t0 = time.perf_counter()
-            opt_res = mol.optimize_geometry(
-                method=m,
-                eri_mode="df",
-                basis=basis,
-                reference=spec["ref"],
-                max_iter=40,
-                g_rms_tol=1.0e-6,
-                fd_step_bohr=5.0e-4,
-                verbose=False,
-            )
+            try:
+                opt_res = mol.optimize_geometry(
+                    method=m,
+                    eri_mode="df",
+                    basis=basis,
+                    aux_basis=aux_basis,
+                    reference=spec["ref"],
+                    max_iter=40,
+                    g_rms_tol=1.0e-6,
+                    g_max_tol=2.0e-6,
+                    dx_rms_tol=4.0e-6,
+                    dx_max_tol=6.0e-6,
+                    energy_thresh=1.0e-12,
+                    orb_grad_thresh=1.0e-10,
+                    fd_step_bohr=fd_step,
+                    verbose=False,
+                )
+            except TypeError:
+                opt_res = mol.optimize_geometry(
+                    method=m,
+                    eri_mode="df",
+                    basis=basis,
+                    reference=spec["ref"],
+                    max_iter=40,
+                    g_rms_tol=1.0e-6,
+                    fd_step_bohr=fd_step,
+                    verbose=False,
+                )
             t_opt = time.perf_counter() - t0
 
             coords_ang = np.asarray(opt_res.coordinates_angstrom)

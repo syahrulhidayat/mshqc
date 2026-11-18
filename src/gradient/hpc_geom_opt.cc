@@ -393,10 +393,10 @@ double HPCGeometryOptimizer::evaluate_single_point_cpp(
   scf_conf.aux_basis_name = cfg.aux_basis_name.empty()
       ? (basis_name + "-RI")
       : cfg.aux_basis_name;
-  scf_conf.energy_threshold = std::min(1.0e-13, 0.001 * cfg.energy_thresh);
-  scf_conf.density_threshold = std::min(1.0e-11, 0.01 * cfg.energy_thresh);
-  scf_conf.cholesky_threshold = std::min(1.0e-11, cfg.energy_thresh);
-  scf_conf.df_threshold = std::min(1.0e-12, cfg.energy_thresh);
+  scf_conf.energy_threshold = (cfg.energy_thresh > 0.0) ? cfg.energy_thresh : 1.0e-12;
+  scf_conf.density_threshold = (cfg.energy_thresh > 0.0) ? cfg.energy_thresh : 1.0e-12;
+  scf_conf.cholesky_threshold = std::min(1.0e-11, scf_conf.energy_threshold);
+  scf_conf.df_threshold = std::min(1.0e-12, scf_conf.energy_threshold);
   scf_conf.print_level = 0;
   scf_conf.max_iterations = 200;
 
@@ -421,10 +421,10 @@ double HPCGeometryOptimizer::evaluate_single_point_cpp(
   mp2_conf.eri_method = eri_mode;
   mp2_conf.use_df = (eri_mode == "df");
   mp2_conf.aux_basis_name = scf_conf.aux_basis_name;
-  mp2_conf.energy_threshold = std::min(1.0e-12, cfg.energy_thresh);
-  mp2_conf.df_threshold = std::min(1.0e-12, cfg.energy_thresh);
-  mp2_conf.cholesky_threshold = std::min(1.0e-11, cfg.energy_thresh);
-  mp2_conf.gradient_threshold = std::min(1.0e-10, cfg.orb_grad_thresh);
+  mp2_conf.energy_threshold = (cfg.energy_thresh > 0.0) ? cfg.energy_thresh : 1.0e-12;
+  mp2_conf.df_threshold = std::min(1.0e-12, mp2_conf.energy_threshold);
+  mp2_conf.cholesky_threshold = std::min(1.0e-11, mp2_conf.energy_threshold);
+  mp2_conf.gradient_threshold = (cfg.orb_grad_thresh > 0.0) ? cfg.orb_grad_thresh : 1.0e-10;
   mp2_conf.opt_method = cfg.opt_method;
   mp2_conf.print_level = 0;
   mp2_conf.max_iterations = 100;
@@ -707,18 +707,19 @@ GeomOptResult HPCGeometryOptimizer::optimize_molecule(
                 << " | " << std::setw(10) << dx_rms << std::fixed << "\n";
     }
 
-    const double eff_g_rms_tol = std::min(cfg.g_rms_tol, 1.0e-8);
-    const double eff_g_max_tol = std::min(cfg.g_max_tol, 3.0e-8);
-    const double eff_dx_rms_tol = std::min(cfg.dx_rms_tol, 3.0e-7);
-    const double eff_dx_max_tol = std::min(cfg.dx_max_tol, 1.0e-6);
+    // 2. Di optimize_molecule (baris 563-575):
+    const double eff_g_rms_tol = (cfg.g_rms_tol > 0.0) ? cfg.g_rms_tol : 1.0e-8;
+    const double eff_g_max_tol = (cfg.g_max_tol > 0.0) ? cfg.g_max_tol : 3.0e-8;
+    const double eff_dx_rms_tol = (cfg.dx_rms_tol > 0.0) ? cfg.dx_rms_tol : 3.0e-7;
+    const double eff_dx_max_tol = (cfg.dx_max_tol > 0.0) ? cfg.dx_max_tol : 1.0e-6;
 
     bool grad_ok = (g_rms < eff_g_rms_tol) && (g_max < eff_g_max_tol);
     bool step_ok = (dx_rms < eff_dx_rms_tol) && (dx_max < eff_dx_max_tol);
     bool tight_grad = (g_rms < 5.0e-9) && (g_max < 1.5e-8);
     bool quadratic_polish_ok = (iter >= 3) && (std::abs(de) < 1.0e-8) &&
-                               (dx_rms < 5.0e-7) && (g_rms < 1.0e-7);
+                               (dx_rms < 5.0e-7) && (g_rms < std::min(eff_g_rms_tol, 1.0e-7));
     bool stationary_ok = (iter >= 4) && (std::abs(de) < 1.0e-9) &&
-                         (dx_rms < 5.0e-7) && (g_rms < 1.0e-7);
+                         (dx_rms < 5.0e-7) && (g_rms < std::min(eff_g_rms_tol, 1.0e-7));
 
     if ((grad_ok && step_ok) || tight_grad || quadratic_polish_ok || stationary_ok || natoms <= 1) {
       if (natoms > 1 && pred_de_last <= 0.0 && dx_rms < 5.0e-7) {
