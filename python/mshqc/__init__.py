@@ -216,12 +216,12 @@ _G_CONV_PRESETS = {
 }
 
 _orig_mol_opt_geom = getattr(Molecule, "optimize_geometry", None)
-_orig_mol_freqs = getattr(Molecule, "frequencies", None)
 
 def _psi4_compatible_optimize_geometry(
     self,
     method: str = "omp2",
     eri_mode: str = "df",
+    eri_method: str = "",
     basis: str = "cc-pVDZ",
     aux_basis: str = "",
     reference: str = "auto",
@@ -245,6 +245,7 @@ def _psi4_compatible_optimize_geometry(
     verbose: bool = False,
     xyz_traj_file: str = "",
 ):
+    del opt_method, max_mograd_convergence, project_trans_rot, xyz_traj_file
     if g_convergence:
         key = g_convergence.strip().lower()
         if key in _G_CONV_PRESETS:
@@ -260,39 +261,27 @@ def _psi4_compatible_optimize_geometry(
     if disp_size > 0.0:
         fd_step_bohr = disp_size
 
-    if hasattr(_mshqc, "GeomOptConfig") and hasattr(_mshqc, "HPCGeometryOptimizer"):
-        cfg = _mshqc.GeomOptConfig()
-        cfg.method = method
-        cfg.eri_method = eri_mode
-        cfg.basis_name = basis
-        cfg.aux_basis_name = aux_basis or f"{basis}-RI"
-        cfg.reference = reference
-        cfg.opt_method = opt_method
-        cfg.max_iter = max_iter
-        cfg.g_rms_tol = g_rms_tol
-        cfg.g_max_tol = g_max_tol
-        cfg.dx_rms_tol = dx_rms_tol
-        cfg.dx_max_tol = dx_max_tol
-        cfg.energy_thresh = energy_thresh
-        cfg.orb_grad_thresh = orb_grad_thresh
-        cfg.fd_step_bohr = fd_step_bohr
-        cfg.project_trans_rot = project_trans_rot
-        cfg.verbose = verbose
-        cfg.xyz_traj_file = xyz_traj_file
-        return _mshqc.HPCGeometryOptimizer.optimize_molecule(self, cfg)
+    resolved_eri = eri_method if eri_method else eri_mode
+    resolved_aux = aux_basis if aux_basis else (f"{basis}-RI" if resolved_eri.lower() == "df" else "")
 
     return _orig_mol_opt_geom(
         self,
         method=method,
-        eri_mode=eri_mode,
+        eri_mode=resolved_eri,
+        eri_method=resolved_eri,
         basis=basis,
+        aux_basis=resolved_aux,
         reference=reference,
         max_iter=max_iter,
         g_rms_tol=g_rms_tol,
+        g_max_tol=g_max_tol,
+        dx_rms_tol=dx_rms_tol,
+        dx_max_tol=dx_max_tol,
+        energy_thresh=energy_thresh,
+        orb_grad_thresh=orb_grad_thresh,
         fd_step_bohr=fd_step_bohr,
         verbose=verbose,
     )
 
-if _orig_mol_opt_geom is not None and "_psi4_compatible_optimize_geometry" not in txt:
+if _orig_mol_opt_geom is not None:
     Molecule.optimize_geometry = _psi4_compatible_optimize_geometry
-
