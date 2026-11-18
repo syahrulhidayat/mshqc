@@ -1,4 +1,4 @@
-name: Compile Locally and Run Geometry Benchmark Suite Only
+name: Compile Locally and Run Full Test & Benchmark Suite
 
 on:
   push:
@@ -6,12 +6,14 @@ on:
       - build-pypi
       - test-geom
       - test
+      - main
   workflow_dispatch:
 
 jobs:
-  geom_benchmark:
-    name: Local Build & Geometry Suite (${{ matrix.os }})
+  full_test_suite:
+    name: Local Build & Full Suite (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 360
     strategy:
       fail-fast: false
       matrix:
@@ -19,6 +21,7 @@ jobs:
 
     env:
       OMP_NUM_THREADS: "4"
+      OMP_WAIT_POLICY: "PASSIVE"
       TBLIS_NUM_THREADS: "4"
       MKL_NUM_THREADS: "1"
       OPENBLAS_NUM_THREADS: "1"
@@ -170,7 +173,7 @@ jobs:
             cp -rf "$CONDA_PREFIX/lib/libcint.a" "$CONDA_PREFIX/lib/libtblis.a" "$CONDA_PREFIX/lib/libtci.a" .cache_local_deps/lib/
           fi
 
-      - name: Compile mshqc In-Place & Set up Subprocess Bridge to psi4_env
+      - name: Compile mshqc In-Place & Set up Full Subprocess Bridge to psi4_env
         shell: bash -el {0}
         run: |
           set -o pipefail
@@ -192,6 +195,36 @@ jobs:
 
           PSI4_BIN = {psi4_py!r}
           _OPTS = {{}}
+          _MEM = "4 GB"
+          _THREADS = int(__import__("os").environ.get("OMP_NUM_THREADS", "4"))
+          _LAST_MOL = None
+          _VARS = {{}}
+
+          class _MatrixStub:
+              def __init__(self, arr):
+                  self._arr = np.asarray(arr, dtype=np.float64)
+              def to_array(self, dense=True):
+                  return self._arr
+              def np(self):
+                  return self._arr
+
+          class _WfnStub:
+              def __init__(self, e, freqs=None, hess=None, grad=None, vars_dict=None):
+                  self._e = float(e)
+                  self._freqs = _MatrixStub(freqs) if freqs is not None else None
+                  self._hess = _MatrixStub(hess) if hess is not None else None
+                  self._grad = _MatrixStub(grad) if grad is not None else None
+                  self._vars = vars_dict or {{}}
+              def energy(self):
+                  return self._e
+              def frequencies(self):
+                  return self._freqs
+              def hessian(self):
+                  return self._hess
+              def gradient(self):
+                  return self._grad
+              def variable(self, key):
+                  return self._vars.get(key.upper(), 0.0)
 
           class _Core:
               @staticmethod
@@ -199,7 +232,15 @@ jobs:
               @staticmethod
               def clean_options(): _OPTS.clear()
               @staticmethod
+              def clean_variables(): _VARS.clear()
+              @staticmethod
               def set_output_file(path, append=False): pass
+              @staticmethod
+              def be_quiet(): pass
+              @staticmethod
+              def variable(key): return _VARS.get(key.upper(), 0.0)
+              @staticmethod
+              def get_variable(key): return _VARS.get(key.upper(), 0.0)
 
           core = _Core()
 
@@ -208,103 +249,257 @@ jobs:
                   self.geom_str = geom_str
                   self._coords = None
               def geometry(self):
-                  return self._coords
+                  return _MatrixStub(self._coords) if self._coords is not None else None
+              def update_geometry(self):
+                  pass
+              def symmetrize(self, tol=1e-3):
+                  pass
 
-          def geometry(geom_str):
-              return _Mol(geom_str)
+          def geometry(geom_str, name="default"):
+              global _LAST_MOL
+              _LAST_MOL = _Mol(geom_str)
+              return _LAST_MOL
 
           def set_options(opts):
               _OPTS.update(opts)
 
-          def optimize(method, molecule=None, dertype=None):
+          def set_memory(mem_str):
+              global _MEM
+              _MEM = str(mem_str)
+
+          def set_num_threads(nthreads):
+              global _THREADS
+              _THREADS = int(nthreads)
+
+          def _run_psi4_task(task, method, molecule=None, dertype=None, return_wfn=False, **kwargs):
+              mol_obj = molecule or _LAST_MOL
               payload = json.dumps({{
+                  "task": task,
                   "method": method,
-                  "geom": molecule.geom_str,
+                  "geom": mol_obj.geom_str if mol_obj else "",
                   "opts": _OPTS,
                   "dertype": dertype,
+                  "mem": _MEM,
+                  "threads": _THREADS,
               }})
               runner = """import os, sys, json, tempfile, numpy as np
           os.environ["PSI_SCRATCH"] = "/dev/shm" if os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK) else tempfile.gettempdir()
           import psi4
-          psi4.set_num_threads(int(os.environ.get("OMP_NUM_THREADS", "4")))
-          psi4.set_memory("4 GB")
-          psi4.core.set_output_file("/dev/null", False)
           data = json.loads(sys.argv[1])
+          psi4.set_num_threads(int(data.get("threads", 4)))
+          psi4.set_memory(data.get("mem", "4 GB"))
+          psi4.core.set_output_file("/dev/null", False)
           psi4.core.clean()
           psi4.core.clean_options()
           mol = psi4.geometry(data["geom"])
           psi4.set_options(data["opts"])
+          task = data["task"]
+          kw = {{"molecule": mol, "return_wfn": True}}
           if data["dertype"] is not None:
-              e = float(psi4.optimize(data["method"], molecule=mol, dertype=data["dertype"]))
-          else:
-              e = float(psi4.optimize(data["method"], molecule=mol))
+              kw["dertype"] = data["dertype"]
+          freqs, hess, grad = None, None, None
+          if task == "optimize":
+              e, wfn = psi4.optimize(data["method"], **kw)
+          elif task == "energy":
+              e, wfn = psi4.energy(data["method"], **kw)
+          elif task in ("frequency", "frequencies"):
+              e, wfn = psi4.frequencies(data["method"], **kw)
+              if wfn.frequencies() is not None:
+                  freqs = np.asarray(wfn.frequencies()).tolist()
+              if wfn.hessian() is not None:
+                  hess = np.asarray(wfn.hessian()).tolist()
+          elif task == "gradient":
+              g_mat, wfn = psi4.gradient(data["method"], **kw)
+              e = wfn.energy()
+              grad = np.asarray(g_mat).tolist()
+          elif task == "hessian":
+              h_mat, wfn = psi4.hessian(data["method"], **kw)
+              e = wfn.energy()
+              hess = np.asarray(h_mat).tolist()
           coords = np.asarray(mol.geometry()).tolist()
-          print("PSI4_JSON_RESULT:" + json.dumps({{"e": e, "coords": coords}}))
+          vars_out = {{k: float(v) for k, v in psi4.core.variables().items() if isinstance(v, (int, float))}}
+          print("PSI4_JSON_RESULT:" + json.dumps({{"e": float(e), "coords": coords, "freqs": freqs, "hess": hess, "grad": grad, "vars": vars_out}}))
           """
               proc = subprocess.run([PSI4_BIN, "-c", runner, payload], capture_output=True, text=True, check=True)
               for line in reversed(proc.stdout.splitlines()):
                   if line.startswith("PSI4_JSON_RESULT:"):
                       res = json.loads(line.split("PSI4_JSON_RESULT:", 1)[1])
-                      molecule._coords = np.asarray(res["coords"], dtype=np.float64)
-                      return float(res["e"])
+                      if mol_obj is not None:
+                          mol_obj._coords = np.asarray(res["coords"], dtype=np.float64)
+                      _VARS.update(res.get("vars", {{}}))
+                      wfn_stub = _WfnStub(res["e"], freqs=res["freqs"], hess=res["hess"], grad=res["grad"], vars_dict=_VARS)
+                      if task == "gradient":
+                          ret_val = _MatrixStub(res["grad"])
+                      elif task == "hessian":
+                          ret_val = _MatrixStub(res["hess"])
+                      else:
+                          ret_val = float(res["e"])
+                      return (ret_val, wfn_stub) if return_wfn else ret_val
               raise RuntimeError(f"Psi4 subprocess gagal:\\n{{proc.stdout}}\\n{{proc.stderr}}")
+
+          def energy(method, molecule=None, return_wfn=False, **kwargs):
+              return _run_psi4_task("energy", method, molecule=molecule, return_wfn=return_wfn, **kwargs)
+
+          def optimize(method, molecule=None, dertype=None, return_wfn=False, **kwargs):
+              return _run_psi4_task("optimize", method, molecule=molecule, dertype=dertype, return_wfn=return_wfn, **kwargs)
+
+          def frequency(method, molecule=None, dertype=None, return_wfn=False, **kwargs):
+              return _run_psi4_task("frequency", method, molecule=molecule, dertype=dertype, return_wfn=return_wfn, **kwargs)
+
+          frequencies = frequency
+
+          def gradient(method, molecule=None, dertype=None, return_wfn=False, **kwargs):
+              return _run_psi4_task("gradient", method, molecule=molecule, dertype=dertype, return_wfn=return_wfn, **kwargs)
+
+          def hessian(method, molecule=None, dertype=None, return_wfn=False, **kwargs):
+              return _run_psi4_task("hessian", method, molecule=molecule, dertype=dertype, return_wfn=return_wfn, **kwargs)
           '''
           (purelib / "psi4.py").write_text(bridge_code, encoding="utf-8")
           print("Subprocess bridge psi4.py berhasil dipasang di:", purelib / "psi4.py")
           EOF
 
-      - name: Run Unit Test Universal Geometry Optimizer (test_universal_geom_opt.py)
+      # =========================================================================
+      # BAGIAN 1: UNIT TESTS & CORE SOLVER VALIDATION
+      # =========================================================================
+      - name: "[01/15] Run Core Unit Test 1 (test_mshqc.py)"
         shell: bash -el {0}
         run: |
           set -o pipefail
           micromamba activate geom_env
-          python -u tests/test_universal_geom_opt.py 2>&1 | tee 01_test_universal_geom_opt_log.txt
+          python -u tests/test_mshqc.py 2>&1 | tee 01_test_mshqc_log.txt
 
-      - name: Run .OH Radical Geometry & Frequency Benchmark (benchmark_geom_omp2_psi4.py)
+      - name: "[02/15] Run Core Unit Test 2 (test_mshqc2.py)"
         shell: bash -el {0}
         run: |
           set -o pipefail
           micromamba activate geom_env
-          python -u tests/benchmark_geom_omp2_psi4.py 2>&1 | tee 02_benchmark_geom_oh_psi4_log.txt
-          if grep -q "N/A" 02_benchmark_geom_oh_psi4_log.txt; then
-            echo "ERROR: Ditemukan nilai N/A pada hasil Psi4 di 02_benchmark_geom_oh_psi4_log.txt!"
+          python -u tests/test_mshqc2.py 2>&1 | tee 02_test_mshqc2_log.txt
+
+      - name: "[03/15] Run Unit Test Universal Geometry Optimizer (test_universal_geom_opt.py)"
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate geom_env
+          python -u tests/test_universal_geom_opt.py 2>&1 | tee 03_test_universal_geom_opt_log.txt
+
+      # =========================================================================
+      # BAGIAN 2: STANDALONE & DIRECT HEAD-TO-HEAD BENCHMARKS
+      # =========================================================================
+      - name: "[04/15] Run General Benchmark Script (benc.py)"
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate geom_env
+          python -u tests/benc.py 2>&1 | tee 04_benc_log.txt
+
+      - name: "[05/15] Run Direct mshqc vs Psi4 Comparison (compare_mshqc_psi4.py)"
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate geom_env
+          python -u tests/compare_mshqc_psi4.py 2>&1 | tee 05_compare_mshqc_psi4_log.txt
+
+      - name: "[06/15] Run .OH Radical Geometry & Frequency Benchmark (benchmark_geom_omp2_psi4.py)"
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate geom_env
+          python -u tests/benchmark_geom_omp2_psi4.py 2>&1 | tee 06_benchmark_geom_oh_psi4_log.txt
+          if grep -q "N/A" 06_benchmark_geom_oh_psi4_log.txt; then
+            echo "ERROR: Ditemukan nilai N/A pada hasil Psi4 di 06_benchmark_geom_oh_psi4_log.txt!"
             exit 1
           fi
 
-      - name: Run mshqc Multi-System Geometry Suite (run_mshqc_geom.py)
+      # =========================================================================
+      # BAGIAN 3: MULTI-SYSTEM UNIVERSAL SUITE (mshqc vs Psi4)
+      # =========================================================================
+      - name: "[07/15] Run mshqc Universal Suite (run_mshqc_universal.py)"
         shell: bash -el {0}
         run: |
           set -o pipefail
           micromamba activate geom_env
-          python -u tests/run_mshqc_geom.py 2>&1 | tee 03_mshqc_geom_running_log.txt
+          python -u tests/run_mshqc_universal.py 2>&1 | tee 07_mshqc_universal_running_log.txt
 
-      - name: Run Psi4 Multi-System Geometry Reference Suite (run_psi4_geom.py)
+      - name: "[08/15] Run Psi4 Universal Reference Suite (run_psi4_universal.py)"
         shell: bash -el {0}
         run: |
           set -o pipefail
           micromamba activate psi4_env
-          python -u tests/run_psi4_geom.py 2>&1 | tee 04_psi4_geom_running_log.txt
-          test -s psi4_geom_raw.json
+          python -u tests/run_psi4_universal.py 2>&1 | tee 08_psi4_universal_running_log.txt
 
-      - name: Compare Head-to-Head Geometry & Vibrational Tables (compare_geom.py)
+      - name: "[09/15] Compare Universal Benchmark Tables (compare_universal.py)"
         shell: bash -el {0}
         run: |
           set -o pipefail
           micromamba activate geom_env
-          python -u tests/compare_geom.py mshqc_geom_raw.json psi4_geom_raw.json 2>&1 | tee 05_compare_geom_log.txt
-          grep -q "Total Matched Geometry Runs: 24" 05_compare_geom_log.txt
+          if [ -f "mshqc_universal_raw.json" ] && [ -f "psi4_universal_raw.json" ]; then
+            python -u tests/compare_universal.py mshqc_universal_raw.json psi4_universal_raw.json 2>&1 | tee 09_compare_universal_log.txt
+          else
+            python -u tests/compare_universal.py 2>&1 | tee 09_compare_universal_log.txt
+          fi
 
-      - name: Upload Geometry Benchmark Logs (.txt & .json)
+      # =========================================================================
+      # BAGIAN 4: MULTI-SYSTEM BAB 4 SUITE (mshqc vs Psi4)
+      # =========================================================================
+      - name: "[10/15] Run mshqc Bab 4 Suite (run_mshqc_bab4.py)"
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate geom_env
+          python -u tests/run_mshqc_bab4.py 2>&1 | tee 10_mshqc_bab4_running_log.txt
+
+      - name: "[11/15] Run Psi4 Bab 4 Reference Suite (run_psi4_bab4.py)"
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate psi4_env
+          python -u tests/run_psi4_bab4.py 2>&1 | tee 11_psi4_bab4_running_log.txt
+
+      - name: "[12/15] Compare Bab 4 Benchmark Tables (compare_bab4.py)"
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate geom_env
+          if [ -f "mshqc_bab4_raw.json" ] && [ -f "psi4_bab4_raw.json" ]; then
+            python -u tests/compare_bab4.py mshqc_bab4_raw.json psi4_bab4_raw.json 2>&1 | tee 12_compare_bab4_log.txt
+          else
+            python -u tests/compare_bab4.py 2>&1 | tee 12_compare_bab4_log.txt
+          fi
+
+      # =========================================================================
+      # BAGIAN 5: MULTI-SYSTEM GEOMETRY & VIBRATIONAL SUITE (mshqc vs Psi4)
+      # =========================================================================
+      - name: "[13/15] Run mshqc Multi-System Geometry Suite (run_mshqc_geom.py)"
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate geom_env
+          python -u tests/run_mshqc_geom.py 2>&1 | tee 13_mshqc_geom_running_log.txt
+
+      - name: "[14/15] Run Psi4 Multi-System Geometry Reference Suite (run_psi4_geom.py)"
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate psi4_env
+          python -u tests/run_psi4_geom.py 2>&1 | tee 14_psi4_geom_running_log.txt
+          test -s psi4_geom_raw.json
+
+      - name: "[15/15] Compare Head-to-Head Geometry & Vibrational Tables (compare_geom.py)"
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate geom_env
+          python -u tests/compare_geom.py mshqc_geom_raw.json psi4_geom_raw.json 2>&1 | tee 15_compare_geom_log.txt
+          grep -q "Total Matched Geometry Runs: 24" 15_compare_geom_log.txt
+
+      # =========================================================================
+      # UPLOAD ARTIFACTS (.txt LOGS & .json RAW DATA)
+      # =========================================================================
+      - name: Upload Full Test & Benchmark Logs (.txt & .json)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: mshqc-vs-psi4-geom-logs-${{ matrix.os }}
+          name: mshqc-full-test-suite-logs-${{ matrix.os }}
           path: |
-            01_test_universal_geom_opt_log.txt
-            02_benchmark_geom_oh_psi4_log.txt
-            03_mshqc_geom_running_log.txt
-            04_psi4_geom_running_log.txt
-            05_compare_geom_log.txt
-            test_geom_validation.txt
-            mshqc_geom_raw.json
-            psi4_geom_raw.json
+            *.txt
+            *.json
