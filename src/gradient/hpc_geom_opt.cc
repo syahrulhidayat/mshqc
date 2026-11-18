@@ -717,9 +717,13 @@ GeomOptResult HPCGeometryOptimizer::optimize_molecule(
 
     if ((grad_ok && step_ok) || tight_grad || quadratic_polish_ok || stationary_ok || natoms <= 1) {
       if (natoms > 1 && pred_de_last <= 0.0 && dx_rms > 0.0 && dx_rms < 1.0e-4) {
-        x += dx;
-        if (!res.energy_history.empty()) {
-          res.energy_history.back() = evaluate_single_point_cpp(make_displaced_molecule(mol, x), cfg);
+        Eigen::VectorXd x_polish = x + dx;
+        double e_polish = evaluate_single_point_cpp(make_displaced_molecule(mol, x_polish), cfg);
+        if (e_polish <= energy + 1.0e-12) {
+            x = x_polish;
+            if (!res.energy_history.empty()) {
+                res.energy_history.back() = e_polish;
+            }
         }
       }
       res.converged = true;

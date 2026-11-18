@@ -211,9 +211,7 @@ def get_scratch_mb(folder: str) -> float:
 
 def build_psi4_mol(sys_name: str, mode_lower: str):
     info = SYSTEMS[sys_name]
-    lines = [f"{info['charge']} {info['mult']}", "units bohr"]
-    if mode_lower in ("df", "cholesky") or sys_name == "OH":
-        lines.append("symmetry c1")
+    lines = [f"{info['charge']} {info['mult']}", "units bohr", "symmetry c1"]
     for sym, x, y, z in info["atoms"]:
         lines.append(f"{sym} {x * ANG_TO_BOHR:.12f} {y * ANG_TO_BOHR:.12f} {z * ANG_TO_BOHR:.12f}")
     return psi4.geometry("\n".join(lines))
@@ -371,7 +369,7 @@ def run_ram_worker(payload_str: str):
         if mode_lower in ("cholesky", "df"):
             psi4.set_options({"scf_type": "pk", "read_scf_3index": False})
 
-        set_blas_threads(1)
+        set_blas_threads(N_THREADS if mode_lower == "exact" else 1)
         psi4.energy(p["method"].lower(), ref_wfn=scf_wfn, molecule=mol)
         set_blas_threads(1)
 
@@ -476,7 +474,7 @@ def compute_psi4_suite():
             if mode_lower in ("cholesky", "df"):
                 psi4.set_options({"scf_type": "pk", "read_scf_3index": False})
 
-            set_blas_threads(1)
+            set_blas_threads(N_THREADS if mode_lower == "exact" else 1)
             try:
                 for m_key, m_call, m_lbl in (("MP2", "mp2", f"{ref_lbl}MP2"), ("MP3", "mp3", f"{ref_lbl}MP3")):
                     try:

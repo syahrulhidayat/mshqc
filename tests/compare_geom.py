@@ -59,8 +59,8 @@ def main():
             r_p = p_row["r_eq"]
             e_p = p_row["e_opt"]
             t_p = p_row["time_opt_s"]
-            dr_ma = abs(round(float(r_m), 6) - round(float(r_p), 6)) * 1.0e3
-            de_uha = abs(round(float(e_m), 10) - round(float(e_p), 10)) * 1.0e6
+            dr_ma = abs(float(r_m) - float(r_p)) * 1.0e3
+            de_uha = abs(float(e_m) - float(e_p)) * 1.0e6
             sp = t_p / max(t_m, 1e-4) if t_p > 0 else 0.0
 
             max_dr_ma = max(max_dr_ma, dr_ma)

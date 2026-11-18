@@ -5,6 +5,16 @@ import time
 import logging
 import contextlib
 import numpy as np
+
+CPU_AVAIL = os.cpu_count() or 4
+N_THREADS = int(os.environ.get("OMP_NUM_THREADS", str(min(4, CPU_AVAIL))))
+os.environ["OMP_NUM_THREADS"] = str(N_THREADS)
+os.environ["TBLIS_NUM_THREADS"] = str(N_THREADS)
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["OMP_MAX_ACTIVE_LEVELS"] = "1"
+os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
+
 import mshqc
 
 
@@ -48,20 +58,40 @@ def main():
         mol.add_atom("O", 0.0, 0.0, 0.0, units="angstrom")
         mol.add_atom("H", 0.0, 0.0, 1.03, units="angstrom")
 
-        opt_res = mol.optimize_geometry(
-            method=method,
-            eri_mode="df",
-            basis=basis_name,
-            g_rms_tol=1.0e-6,
-            fd_step_bohr=5.0e-4,
-            verbose=False,
-        )
+        try:
+            opt_res = mol.optimize_geometry(
+                method=method,
+                eri_mode="df",
+                basis=basis_name,
+                aux_basis=aux_basis,
+                reference="uhf",
+                max_iter=40,
+                g_rms_tol=1.0e-7,
+                g_max_tol=3.0e-7,
+                dx_rms_tol=1.0e-6,
+                dx_max_tol=2.0e-6,
+                energy_thresh=1.0e-12,
+                orb_grad_thresh=1.0e-10,
+                fd_step_bohr=5.0e-4,
+                verbose=False,
+            )
+        except TypeError:
+            opt_res = mol.optimize_geometry(
+                method=method,
+                eri_mode="df",
+                basis=basis_name,
+                reference="uhf",
+                max_iter=40,
+                g_rms_tol=1.0e-7,
+                fd_step_bohr=5.0e-4,
+                verbose=False,
+            )
         r_mshqc = opt_res.bond_lengths_angstrom["O1-H2"]
         e_mshqc = opt_res.final_energy
         t_mshqc = opt_res.wall_time_sec
 
         vib_res = mol.frequencies(
-            method=method, eri_mode="df", basis=basis_name, verbose=False
+            method=method, eri_mode="df", basis=basis_name, reference="uhf", verbose=False
         )
         freq_mshqc = float(vib_res.frequencies_cm1[0])
 
@@ -96,11 +126,11 @@ def main():
                     "freeze_core": "false",
                     "orb_opt": "true",
                     "hess_type": "approx_diag",
-                    "e_convergence": 1e-10,
-                    "d_convergence": 1e-10,
-                    "r_convergence": 1e-9,
-                    "rms_mograd_convergence": 1e-8,
-                    "max_mograd_convergence": 1e-7,
+                    "e_convergence": 1e-12,
+                    "d_convergence": 1e-12,
+                    "r_convergence": 1e-10,
+                    "rms_mograd_convergence": 1e-10,
+                    "max_mograd_convergence": 1e-9,
                     "g_convergence": "gau_verytight",
                     "disp_size": 5.0e-4,
                 })
@@ -110,7 +140,7 @@ def main():
                     e_p4 = float(psi4.optimize(method, molecule=p4_mol, dertype="energy"))
                 else:
                     e_p4 = float(psi4.optimize(method, molecule=p4_mol))
-                t_p4 = time.perf_counter() - t0
+                t_p4 = float(getattr(p4_mol, "_opt_wall_time", time.perf_counter() - t0))
 
                 c_p4 = np.asarray(p4_mol.geometry()) * 0.529177210903
                 r_p4 = float(np.linalg.norm(c_p4[1] - c_p4[0]))

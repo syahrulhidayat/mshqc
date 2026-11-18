@@ -91,9 +91,7 @@ def build_psi4_mol(atoms, chg, mult, eri_mode="exact"):
     - Mode EXACT menggunakan simetri Abelian penuh (D2h untuk atom, C2v untuk H2O).
     - Mode DF & CHOLESKY menggunakan symmetry c1 (karena modul dfocc Psi4 hanya mendukung C1).
     """
-    lines = [f"{chg} {mult}", "units bohr"]
-    if eri_mode in ["df", "cholesky"]:
-        lines.append("symmetry c1")
+    lines = [f"{chg} {mult}", "units bohr", "symmetry c1"]
     for z, x, y, z_c in atoms:
         lines.append(f"{Z_TO_SYM[z]} {x:.12f} {y:.12f} {z_c:.12f}")
     return psi4.geometry("\n".join(lines))
@@ -187,8 +185,8 @@ def run_psi4_bench(sys_name, atoms, chg, mult, ref, basis_name, eri_mode):
     if eri_mode in ["cholesky", "df"]:
         psi4.set_options({"scf_type": "pk", "read_scf_3index": False})
 
-    # Aktifkan multi-thread BLAS untuk seluruh modul pasca-HF (occ maupun dfocc)
-    set_blas_threads(1)
+    # Aktifkan multi-thread BLAS untuk modul pasca-HF mode exact (occ)
+    set_blas_threads(n_threads if eri_mode == "exact" else 1)
 
     try:
         # --- 2. MP2 ---

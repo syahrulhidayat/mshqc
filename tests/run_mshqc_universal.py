@@ -166,7 +166,7 @@ def run_mshqc_system(spec, actual_basis: str, eri_mode: str) -> dict:
     scf_cls  = mshqc.RHF if is_closed else mshqc.UHF
     scf_conf = mshqc.SCFConfig(
         eri_method=mode_lower,
-        threshold=1e-10,
+        threshold=1e-9,
         aux_basis_name=aux_basis,
         max_iterations=200,
     )

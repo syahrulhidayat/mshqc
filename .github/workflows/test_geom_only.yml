@@ -387,14 +387,17 @@ jobs:
           data = json.loads(sys.argv[1])
           psi4.core.clean()
           psi4.core.clean_options()
+          import time
           mol = psi4.geometry(data["geom"])
           psi4.set_options(data["opts"])
+          t0 = time.perf_counter()
           if data["dertype"] is not None:
               e = float(psi4.optimize(data["method"], molecule=mol, dertype=data["dertype"]))
           else:
               e = float(psi4.optimize(data["method"], molecule=mol))
+          dt = time.perf_counter() - t0
           coords = np.asarray(mol.geometry()).tolist()
-          print("PSI4_JSON_RESULT:" + json.dumps({{"e": e, "coords": coords}}))
+          print("PSI4_JSON_RESULT:" + json.dumps({{"e": e, "coords": coords, "dt": dt}}))
           """
               proc = subprocess.run([PSI4_BIN, "-c", runner, payload], capture_output=True, text=True, check=True)
               for line in reversed(proc.stdout.splitlines()):
