@@ -256,11 +256,9 @@ using integrals::ERITransformer;
 using tblis::len_type;
 using tblis::stride_type;
 using tblis::varray_view;
-
 BaseMP3::BaseMP3(const SCFResult& scf, const MP2Result& mp2, const MP2Config& config, std::shared_ptr<IntegralEngine> ints)
     : scf_(scf), mp2_(mp2), config_(config), ints_(ints) 
 {
-    // Normalisasi eri_method ke huruf kecil agar "EXACT", "CHOLESKY", "DF" selalu dikenali
     std::transform(config_.eri_method.begin(), config_.eri_method.end(), config_.eri_method.begin(),
                    [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
     if (config_.eri_method == "df") {
@@ -273,7 +271,13 @@ BaseMP3::BaseMP3(const SCFResult& scf, const MP2Result& mp2, const MP2Config& co
     no_a_ = scf_.n_occ_alpha; no_b_ = scf_.n_occ_beta;
     nv_a_ = nbf_ - no_a_;     nv_b_ = nbf_ - no_b_;
     n_aux_ = scf_.L_mat.cols(); 
-    
+
+    if (mp2_.C_alpha.rows() == nbf_) scf_.C_alpha = mp2_.C_alpha;
+    if (mp2_.C_beta.rows() == nbf_)  scf_.C_beta  = mp2_.C_beta;
+    if (mp2_.orbital_energies_alpha.size() == nbf_) scf_.orbital_energies_alpha = mp2_.orbital_energies_alpha;
+    if (mp2_.orbital_energies_beta.size() == nbf_)  scf_.orbital_energies_beta  = mp2_.orbital_energies_beta;
+    if (mp2_.energy_scf != 0.0) scf_.energy_total = mp2_.energy_scf;
+
     if (mp2_.t2_aa.size() > 0) t2_aa_ = mp2_.t2_aa;
     if (mp2_.t2_bb.size() > 0) t2_bb_ = mp2_.t2_bb;
     if (mp2_.t2_ab.size() > 0) t2_ab_ = mp2_.t2_ab;

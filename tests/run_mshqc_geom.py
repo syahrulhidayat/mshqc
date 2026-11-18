@@ -95,8 +95,8 @@ def main():
             for sym, x, y, z in spec["atoms"]:
                 mol.add_atom(sym, x, y, z, units="angstrom")
 
-            # Samakan ukuran langkah finite-difference dengan disp_size di run_psi4_geom.py
-            fd_step = 5.0e-3 if m.lower() in ("ump2", "ump3") else 5.0e-4
+          
+            fd_step = 5.0e-4
 
             t0 = time.perf_counter()
             try:
@@ -107,10 +107,10 @@ def main():
                     aux_basis=aux_basis,
                     reference=spec["ref"],
                     max_iter=40,
-                    g_rms_tol=1.0e-6,
-                    g_max_tol=2.0e-6,
-                    dx_rms_tol=4.0e-6,
-                    dx_max_tol=6.0e-6,
+                    g_rms_tol=1.0e-7,
+                    g_max_tol=3.0e-7,
+                    dx_rms_tol=1.0e-6,
+                    dx_max_tol=2.0e-6,
                     energy_thresh=1.0e-12,
                     orb_grad_thresh=1.0e-10,
                     fd_step_bohr=fd_step,

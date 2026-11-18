@@ -287,13 +287,7 @@ GradCurvatureResult compute_gradient_and_curvature_internal(
   }
 
 
-  const std::string m_fd = to_lower_copy(cfg.method);
-  const bool is_ump_fd = (m_fd == "ump2" || m_fd == "ump3" ||
-                          m_fd == "df-ump2" || m_fd == "df-ump3" ||
-                          m_fd == "cholesky-ump2" || m_fd == "cholesky-ump3");
-  const double h = is_ump_fd
-      ? std::max(cfg.fd_step_bohr, 5.0e-3)
-      : (cfg.fd_step_bohr > 0.0 ? cfg.fd_step_bohr : 5.0e-4);
+  const double h = (cfg.fd_step_bohr > 0.0) ? cfg.fd_step_bohr : 5.0e-4;
 
   for (int a = 0; a < natoms - 1; ++a) {
     for (int xyz = 0; xyz < 3; ++xyz) {
@@ -725,7 +719,7 @@ GeomOptResult HPCGeometryOptimizer::optimize_molecule(
       if (natoms > 1 && pred_de_last <= 0.0 && dx_rms > 0.0 && dx_rms < 1.0e-4) {
         x += dx;
         if (!res.energy_history.empty()) {
-          res.energy_history.back() += pred_de_last;
+          res.energy_history.back() = evaluate_single_point_cpp(make_displaced_molecule(mol, x), cfg);
         }
       }
       res.converged = true;
@@ -816,13 +810,7 @@ VibThermoResult HPCGeometryOptimizer::compute_frequencies(
     masses[i] = get_exact_isotopic_mass(mol.atom(i).atomic_number);
   }
 
-  double e0 = evaluate_single_point_cpp(mol, cfg);
-  Eigen::MatrixXd hess = Eigen::MatrixXd::Zero(ndof, ndof);
-  const std::string m_freq = to_lower_copy(cfg.method);
-  const bool is_ump_freq = (m_freq == "ump2" || m_freq == "ump3" ||
-                            m_freq == "df-ump2" || m_freq == "df-ump3" ||
-                            m_freq == "cholesky-ump2" || m_freq == "cholesky-ump3");
-  const double h = is_ump_freq ? 5.0e-3 : 2.0e-3;
+  const double h = 2.0e-3;
 
   GeomOptConfig grad_cfg = cfg;
   grad_cfg.project_trans_rot = false;

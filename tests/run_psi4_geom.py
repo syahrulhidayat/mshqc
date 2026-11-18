@@ -173,7 +173,7 @@ def main():
                     "rms_mograd_convergence": 1e-10,
                     "max_mograd_convergence": 1e-9,
                     "g_convergence": "gau_verytight",
-                    "disp_size": 5.0e-3 if m.lower() in ("ump2", "ump3") else 5.0e-4,
+                    "disp_size": 5.0e-4,
                 }
                 psi4.set_options(opts)
 

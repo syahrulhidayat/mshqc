@@ -395,11 +395,109 @@ double UMP2::compute_os() {
     if (is_exact) eri_aabb_.resize(0,0,0,0);
     return e_sum;
 }
-
 MP2Result UMP2::compute() {
     auto start_time = std::chrono::high_resolution_clock::now();
 
+    // Pemurnian Fock & kanonikalisasi orbital pasca-UHF untuk menghilangkan residu DIIS
+    if (config_.eri_method != "exact" && scf_.L_mat.rows() == nbf_ * nbf_) {
+        const Eigen::MatrixXd H_core = integrals_->compute_core_hamiltonian();
+        const int n_aux = scf_.L_mat.cols();
+        Eigen::Map<const Eigen::MatrixXd> L_flat_J(scf_.L_mat.data(), nbf_ * nbf_, n_aux);
 
+        auto build_uhf_df_fock = [&](const Eigen::MatrixXd& Ca, const Eigen::MatrixXd& Cb,
+                                     Eigen::MatrixXd& Fa, Eigen::MatrixXd& Fb) {
+            Eigen::MatrixXd Pa = Ca.leftCols(nocc_a_) * Ca.leftCols(nocc_a_).transpose();
+            Eigen::MatrixXd Pb = (nocc_b_ > 0)
+                ? (Cb.leftCols(nocc_b_) * Cb.leftCols(nocc_b_).transpose())
+                : Eigen::MatrixXd::Zero(nbf_, nbf_);
+            Eigen::MatrixXd P_tot = Pa + Pb;
+            Eigen::Map<const Eigen::VectorXd> P_flat(P_tot.data(), nbf_ * nbf_);
+            Eigen::VectorXd X_J = L_flat_J.transpose() * P_flat;
+            Eigen::VectorXd J_flat = L_flat_J * X_J;
+            Eigen::Map<const Eigen::MatrixXd> J_mat(J_flat.data(), nbf_, nbf_);
+
+            Eigen::MatrixXd Ka = Eigen::MatrixXd::Zero(nbf_, nbf_);
+            Eigen::MatrixXd Kb = Eigen::MatrixXd::Zero(nbf_, nbf_);
+            const Eigen::MatrixXd Ca_o = Ca.leftCols(nocc_a_);
+            const Eigen::MatrixXd Cb_o = (nocc_b_ > 0) ? Cb.leftCols(nocc_b_) : Eigen::MatrixXd();
+
+            for (int P = 0; P < n_aux; ++P) {
+                Eigen::Map<const Eigen::MatrixXd> L_P(scf_.L_mat.col(P).data(), nbf_, nbf_);
+                Eigen::MatrixXd Ta = L_P * Ca_o;
+                Ka.noalias() += Ta * Ta.transpose();
+                if (nocc_b_ > 0) {
+                    Eigen::MatrixXd Tb = L_P * Cb_o;
+                    Kb.noalias() += Tb * Tb.transpose();
+                }
+            }
+            Fa = H_core + J_mat - Ka;
+            Fb = H_core + J_mat - Kb;
+            scf_.P_alpha = Pa;
+            scf_.P_beta  = Pb;
+            return 0.5 * ((Pa.cwiseProduct(H_core + Fa)).sum() +
+                          (Pb.cwiseProduct(H_core + Fb)).sum()) + mol_.nuclear_repulsion_energy();
+        };
+
+        // Maksimal 5 langkah Roothaan-Hall murni (tanpa DIIS) jika residu Brillouin F_ov > 1e-12
+        for (int polish = 0; polish < 5; ++polish) {
+            double e_cur = build_uhf_df_fock(scf_.C_alpha, scf_.C_beta, scf_.F_alpha, scf_.F_beta);
+            scf_.energy_total = e_cur;
+
+            Eigen::MatrixXd F_mo_a = scf_.C_alpha.transpose() * scf_.F_alpha * scf_.C_alpha;
+            double fov_a = (nocc_a_ > 0 && nvir_a_ > 0)
+                ? F_mo_a.topRightCorner(nocc_a_, nvir_a_).cwiseAbs().maxCoeff() : 0.0;
+
+            Eigen::MatrixXd F_mo_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
+            double fov_b = 0.0;
+            if (nocc_b_ > 0 && nvir_b_ > 0) {
+                F_mo_b = scf_.C_beta.transpose() * scf_.F_beta * scf_.C_beta;
+                fov_b = F_mo_b.topRightCorner(nocc_b_, nvir_b_).cwiseAbs().maxCoeff();
+            }
+
+            if (std::max(fov_a, fov_b) < 1.0e-12) break;
+
+            Eigen::MatrixXd Ca_prev = scf_.C_alpha;
+            Eigen::MatrixXd Cb_prev = scf_.C_beta;
+
+            Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_a(0.5 * (F_mo_a + F_mo_a.transpose()));
+            scf_.C_alpha.noalias() = Ca_prev * es_a.eigenvectors();
+            scf_.orbital_energies_alpha = es_a.eigenvalues();
+
+            if (nocc_b_ > 0 && nvir_b_ > 0) {
+                Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_b(0.5 * (F_mo_b + F_mo_b.transpose()));
+                scf_.C_beta.noalias() = Cb_prev * es_b.eigenvectors();
+                scf_.orbital_energies_beta = es_b.eigenvalues();
+            }
+
+            Eigen::MatrixXd Fa_try, Fb_try;
+            double e_try = build_uhf_df_fock(scf_.C_alpha, scf_.C_beta, Fa_try, Fb_try);
+            if (e_try > e_cur + 1.0e-13) {
+                scf_.C_alpha = Ca_prev;
+                scf_.C_beta  = Cb_prev;
+                break;
+            }
+        }
+
+        // Kanonikalisasi eksak subruang OO dan VV pada matriks Fock murni terakhir
+        scf_.energy_total = build_uhf_df_fock(scf_.C_alpha, scf_.C_beta, scf_.F_alpha, scf_.F_beta);
+        auto canonicalize_subspace = [&](const Eigen::MatrixXd& F_ao, Eigen::MatrixXd& C,
+                                         Eigen::VectorXd& eps, int nocc, int nvir) {
+            if (nocc <= 0 || nvir <= 0) return;
+            Eigen::MatrixXd C_occ = C.leftCols(nocc);
+            Eigen::MatrixXd C_vir = C.rightCols(nvir);
+            Eigen::MatrixXd F_oo = C_occ.transpose() * F_ao * C_occ;
+            Eigen::MatrixXd F_vv = C_vir.transpose() * F_ao * C_vir;
+            Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_o(0.5 * (F_oo + F_oo.transpose()));
+            Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_v(0.5 * (F_vv + F_vv.transpose()));
+            C.leftCols(nocc).noalias()  = C_occ * es_o.eigenvectors();
+            C.rightCols(nvir).noalias() = C_vir * es_v.eigenvectors();
+            eps.resize(nocc + nvir);
+            eps.head(nocc) = es_o.eigenvalues();
+            eps.tail(nvir) = es_v.eigenvalues();
+        };
+        canonicalize_subspace(scf_.F_alpha, scf_.C_alpha, scf_.orbital_energies_alpha, nocc_a_, nvir_a_);
+        canonicalize_subspace(scf_.F_beta,  scf_.C_beta,  scf_.orbital_energies_beta,  nocc_b_, nvir_b_);
+    }
 
     transform_integrals();
     double e_ss_aa = compute_ss_alpha();
@@ -420,6 +518,10 @@ MP2Result UMP2::compute() {
     result.t2_ab = t2_ab_;
     result.B_ia_P_alpha = B_ia_P_alpha_; 
     result.B_ia_P_beta  = B_ia_P_beta_;  
+    result.C_alpha = scf_.C_alpha;
+    result.C_beta  = scf_.C_beta;
+    result.orbital_energies_alpha = scf_.orbital_energies_alpha;
+    result.orbital_energies_beta  = scf_.orbital_energies_beta;
     if(config_.print_level > 0) {
         std::cout << "\n=== UMP2 Results (" << config_.eri_method << ") ===\n";
         std::cout << std::fixed << std::setprecision(8);
