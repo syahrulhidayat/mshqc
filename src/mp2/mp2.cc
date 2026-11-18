@@ -270,11 +270,11 @@ double UMP2::compute_ss_alpha() {
                         val_ibja = G_aa(i * nvir_a_ + b, j * nvir_a_ + a);
                     }
 
-                    double val_num = val_iajb - val_ibja;
-                    double safe_den = (std::abs(den) < config_.level_shift) 
-                                    ? std::copysign(config_.level_shift, den) : den;
-                   
-                    double val_t = val_num / safe_den;
+                    if (std::abs(den) < 1e-12) { t2_aa_(i, j, a, b) = 0.0; continue; }
+          double val_num = val_iajb - val_ibja;
+          double safe_den = (config_.level_shift > 1e-12 && std::abs(den) < config_.level_shift)
+                            ? std::copysign(config_.level_shift, den) : den;
+          double val_t = val_num / safe_den;
                     t2_aa_(i, j, a, b) = val_t;
                     e_sum += val_t * val_num;
                 }

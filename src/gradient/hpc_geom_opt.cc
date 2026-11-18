@@ -393,8 +393,8 @@ double HPCGeometryOptimizer::evaluate_single_point_cpp(
   scf_conf.aux_basis_name = cfg.aux_basis_name.empty()
       ? (basis_name + "-RI")
       : cfg.aux_basis_name;
-  scf_conf.energy_threshold = (cfg.energy_thresh > 0.0) ? cfg.energy_thresh : 1.0e-12;
-  scf_conf.density_threshold = (cfg.energy_thresh > 0.0) ? cfg.energy_thresh : 1.0e-12;
+  scf_conf.energy_threshold = (cfg.energy_thresh > 0.0) ? std::min(1.0e-12, cfg.energy_thresh) : 1.0e-12;
+  scf_conf.density_threshold = (cfg.energy_thresh > 0.0) ? std::min(1.0e-12, cfg.energy_thresh) : 1.0e-12;
   scf_conf.cholesky_threshold = std::min(1.0e-11, scf_conf.energy_threshold);
   scf_conf.df_threshold = std::min(1.0e-12, scf_conf.energy_threshold);
   scf_conf.print_level = 0;
@@ -421,10 +421,10 @@ double HPCGeometryOptimizer::evaluate_single_point_cpp(
   mp2_conf.eri_method = eri_mode;
   mp2_conf.use_df = (eri_mode == "df");
   mp2_conf.aux_basis_name = scf_conf.aux_basis_name;
-  mp2_conf.energy_threshold = (cfg.energy_thresh > 0.0) ? cfg.energy_thresh : 1.0e-12;
+  mp2_conf.energy_threshold = (cfg.energy_thresh > 0.0) ? std::min(1.0e-12, cfg.energy_thresh) : 1.0e-12;
   mp2_conf.df_threshold = std::min(1.0e-12, mp2_conf.energy_threshold);
   mp2_conf.cholesky_threshold = std::min(1.0e-11, mp2_conf.energy_threshold);
-  mp2_conf.gradient_threshold = (cfg.orb_grad_thresh > 0.0) ? cfg.orb_grad_thresh : 1.0e-10;
+  mp2_conf.gradient_threshold = (cfg.orb_grad_thresh > 0.0) ? std::min(1.0e-10, cfg.orb_grad_thresh) : 1.0e-10;
   mp2_conf.opt_method = cfg.opt_method;
   mp2_conf.print_level = 0;
   mp2_conf.max_iterations = 100;
@@ -722,7 +722,7 @@ GeomOptResult HPCGeometryOptimizer::optimize_molecule(
                          (dx_rms < 5.0e-7) && (g_rms < std::min(eff_g_rms_tol, 1.0e-7));
 
     if ((grad_ok && step_ok) || tight_grad || quadratic_polish_ok || stationary_ok || natoms <= 1) {
-      if (natoms > 1 && pred_de_last <= 0.0 && dx_rms < 5.0e-7) {
+      if (natoms > 1 && pred_de_last <= 0.0 && dx_rms > 0.0 && dx_rms < 1.0e-4) {
         x += dx;
         if (!res.energy_history.empty()) {
           res.energy_history.back() += pred_de_last;

@@ -203,3 +203,96 @@ for _sym in ("GeomOptConfig", "GeomOptResult", "VibThermoResult", "PESScanPoint"
         __all__.append(_sym)
 from .geom_opt import UniversalGeomOptimizer, GeomOptResult, project_translation_rotation
 from .calculators import optimize_geometry_universal
+
+# ==============================================================================
+# [MSHQC-SYNC] Psi4-Compatible Convergence & Geometry Optimization Wrapper
+# ==============================================================================
+_G_CONV_PRESETS = {
+    "gau": (3.0e-4, 4.5e-4, 1.2e-3, 1.8e-3),
+    "gau_tight": (1.0e-5, 1.5e-5, 4.0e-5, 6.0e-5),
+    "gau_verytight": (1.0e-6, 2.0e-6, 4.0e-6, 6.0e-6),
+    "qchem": (3.0e-4, 3.0e-4, 1.2e-3, 1.2e-3),
+    "cfour": (1.0e-4, 1.0e-4, 1.0e-4, 1.0e-4),
+}
+
+_orig_mol_opt_geom = getattr(Molecule, "optimize_geometry", None)
+_orig_mol_freqs = getattr(Molecule, "frequencies", None)
+
+def _psi4_compatible_optimize_geometry(
+    self,
+    method: str = "omp2",
+    eri_mode: str = "df",
+    basis: str = "cc-pVDZ",
+    aux_basis: str = "",
+    reference: str = "auto",
+    opt_method: str = "soscf",
+    max_iter: int = 40,
+    g_convergence: str = "",
+    g_rms_tol: float = 1.0e-6,
+    g_max_tol: float = 2.0e-6,
+    dx_rms_tol: float = 4.0e-6,
+    dx_max_tol: float = 6.0e-6,
+    energy_thresh: float = 1.0e-12,
+    orb_grad_thresh: float = 1.0e-10,
+    e_convergence: float = 0.0,
+    d_convergence: float = 0.0,
+    r_convergence: float = 0.0,
+    rms_mograd_convergence: float = 0.0,
+    max_mograd_convergence: float = 0.0,
+    fd_step_bohr: float = 5.0e-4,
+    disp_size: float = 0.0,
+    project_trans_rot: bool = True,
+    verbose: bool = False,
+    xyz_traj_file: str = "",
+):
+    if g_convergence:
+        key = g_convergence.strip().lower()
+        if key in _G_CONV_PRESETS:
+            g_rms_tol, g_max_tol, dx_rms_tol, dx_max_tol = _G_CONV_PRESETS[key]
+    if e_convergence > 0.0:
+        energy_thresh = e_convergence
+    if d_convergence > 0.0:
+        energy_thresh = min(energy_thresh, d_convergence)
+    if rms_mograd_convergence > 0.0:
+        orb_grad_thresh = rms_mograd_convergence
+    elif r_convergence > 0.0:
+        orb_grad_thresh = min(orb_grad_thresh, r_convergence)
+    if disp_size > 0.0:
+        fd_step_bohr = disp_size
+
+    if hasattr(_mshqc, "GeomOptConfig") and hasattr(_mshqc, "HPCGeometryOptimizer"):
+        cfg = _mshqc.GeomOptConfig()
+        cfg.method = method
+        cfg.eri_method = eri_mode
+        cfg.basis_name = basis
+        cfg.aux_basis_name = aux_basis or f"{basis}-RI"
+        cfg.reference = reference
+        cfg.opt_method = opt_method
+        cfg.max_iter = max_iter
+        cfg.g_rms_tol = g_rms_tol
+        cfg.g_max_tol = g_max_tol
+        cfg.dx_rms_tol = dx_rms_tol
+        cfg.dx_max_tol = dx_max_tol
+        cfg.energy_thresh = energy_thresh
+        cfg.orb_grad_thresh = orb_grad_thresh
+        cfg.fd_step_bohr = fd_step_bohr
+        cfg.project_trans_rot = project_trans_rot
+        cfg.verbose = verbose
+        cfg.xyz_traj_file = xyz_traj_file
+        return _mshqc.HPCGeometryOptimizer.optimize_molecule(self, cfg)
+
+    return _orig_mol_opt_geom(
+        self,
+        method=method,
+        eri_mode=eri_mode,
+        basis=basis,
+        reference=reference,
+        max_iter=max_iter,
+        g_rms_tol=g_rms_tol,
+        fd_step_bohr=fd_step_bohr,
+        verbose=verbose,
+    )
+
+if _orig_mol_opt_geom is not None and "_psi4_compatible_optimize_geometry" not in txt:
+    Molecule.optimize_geometry = _psi4_compatible_optimize_geometry
+

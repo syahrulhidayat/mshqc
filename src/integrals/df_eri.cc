@@ -168,7 +168,9 @@ void DensityFittingERI::compute(bool save_hdf5) {
     const Eigen::VectorXd& evals = es.eigenvalues();
     const Eigen::MatrixXd& evecs = es.eigenvectors();
 
-    double eig_tol = std::max(1e-14, cutoff_);
+    double max_eval = (evals.size() > 0) ? std::max(1.0, evals.maxCoeff()) : 1.0;
+  double rel_cond = (cutoff_ > 0.0 && cutoff_ <= 1e-10) ? cutoff_ : 1e-12;
+  double eig_tol = std::max(1e-14, rel_cond * max_eval);
     int n_aux_rank = 0;
     for (int i = 0; i < n_aux_; ++i) {
         if (evals(i) >= eig_tol) n_aux_rank++;
