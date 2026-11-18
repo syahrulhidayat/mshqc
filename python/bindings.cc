@@ -318,18 +318,30 @@ NB_MODULE(_mshqc, m) {
                                      const std::string& eri_mode,
                                      const std::string& eri_method,
                                      const std::string& basis,
+                                     const std::string& aux_basis,
                                      const std::string& reference,
                                      int max_iter,
                                      double g_rms_tol,
+                                     double g_max_tol,
+                                     double dx_rms_tol,
+                                     double dx_max_tol,
+                                     double energy_thresh,
+                                     double orb_grad_thresh,
                                      double fd_step_bohr,
                                      bool verbose) {
             mshqc::gradient::GeomOptConfig cfg;
             cfg.method = method;
             cfg.eri_method = !eri_method.empty() ? eri_method : eri_mode;
             cfg.basis_name = basis;
+            cfg.aux_basis_name = aux_basis;
             cfg.reference = reference;
             cfg.max_iter = max_iter;
             cfg.g_rms_tol = g_rms_tol;
+            cfg.g_max_tol = g_max_tol;
+            cfg.dx_rms_tol = dx_rms_tol;
+            cfg.dx_max_tol = dx_max_tol;
+            cfg.energy_thresh = energy_thresh;
+            cfg.orb_grad_thresh = orb_grad_thresh;
             cfg.fd_step_bohr = fd_step_bohr;
             cfg.verbose = verbose;
             nb::gil_scoped_release release;
@@ -338,9 +350,15 @@ NB_MODULE(_mshqc, m) {
            nb::arg("eri_mode") = "df",
            nb::arg("eri_method") = "",
            nb::arg("basis") = "cc-pVDZ",
+           nb::arg("aux_basis") = "",
            nb::arg("reference") = "auto",
            nb::arg("max_iter") = 40,
-           nb::arg("g_rms_tol") = 2.0e-8,
+           nb::arg("g_rms_tol") = 1.0e-8,
+           nb::arg("g_max_tol") = 3.0e-8,
+           nb::arg("dx_rms_tol") = 1.0e-6,
+           nb::arg("dx_max_tol") = 3.0e-6,
+           nb::arg("energy_thresh") = 1.0e-12,
+           nb::arg("orb_grad_thresh") = 1.0e-10,
            nb::arg("fd_step_bohr") = 5.0e-4,
            nb::arg("verbose") = true,
            "Optimize molecular geometry in C++20 and update coordinates in-place")

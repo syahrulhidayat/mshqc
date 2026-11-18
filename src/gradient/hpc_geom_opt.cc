@@ -286,13 +286,14 @@ GradCurvatureResult compute_gradient_and_curvature_internal(
     return out;
   }
 
+
   const std::string m_fd = to_lower_copy(cfg.method);
   const bool is_ump_fd = (m_fd == "ump2" || m_fd == "ump3" ||
                           m_fd == "df-ump2" || m_fd == "df-ump3" ||
                           m_fd == "cholesky-ump2" || m_fd == "cholesky-ump3");
   const double h = is_ump_fd
-                       ? std::max(cfg.fd_step_bohr, 1.0e-3)
-                       : cfg.fd_step_bohr;
+      ? std::max(cfg.fd_step_bohr, 5.0e-3)
+      : (cfg.fd_step_bohr > 0.0 ? cfg.fd_step_bohr : 5.0e-4);
 
   for (int a = 0; a < natoms - 1; ++a) {
     for (int xyz = 0; xyz < 3; ++xyz) {
@@ -705,18 +706,32 @@ GeomOptResult HPCGeometryOptimizer::optimize_molecule(
                 << " | " << std::setw(10) << dx_rms << std::fixed << "\n";
     }
 
-    const double eff_g_rms_tol = std::min(cfg.g_rms_tol, 1.0e-7);
-    bool grad_ok = (g_rms < eff_g_rms_tol) && (g_max < cfg.g_max_tol);
-    bool step_ok = (dx_rms < cfg.dx_rms_tol) && (dx_max < cfg.dx_max_tol);
-    bool tight_grad = (g_rms < 1.0e-8) && (g_max < 3.0e-8);
-    bool stationary_ok = (iter >= 4) && (std::abs(de) < 1.0e-9) &&
-                         (dx_rms < 0.5 * cfg.dx_rms_tol) && (g_rms < 1.5e-6);
+    const double eff_g_rms_tol = std::min(cfg.g_rms_tol, 1.0e-8);
+    const double eff_g_max_tol = std::min(cfg.g_max_tol, 3.0e-8);
+    const double eff_dx_rms_tol = std::min(cfg.dx_rms_tol, 1.0e-6);
+    const double eff_dx_max_tol = std::min(cfg.dx_max_tol, 3.0e-6);
 
-    if ((grad_ok && step_ok) || tight_grad || stationary_ok || natoms <= 1) {
-      if (natoms > 1 && pred_de_last <= 0.0 && dx_rms < cfg.dx_rms_tol) {
+    bool grad_ok = (g_rms < eff_g_rms_tol) && (g_max < eff_g_max_tol);
+    bool step_ok = (dx_rms < eff_dx_rms_tol) && (dx_max < eff_dx_max_tol);
+    bool tight_grad = (g_rms < 1.0e-8) && (g_max < 3.0e-8);
+    bool quadratic_polish_ok = (iter >= 3) && (std::abs(de) < 1.0e-8) &&
+                               (dx_rms < 1.0e-6) && (g_rms < 5.0e-8);
+    bool stationary_ok = (iter >= 4) && (std::abs(de) < 1.0e-10) &&
+                         (dx_rms < 1.0e-6) && (g_rms < 5.0e-8);
+
+    if ((grad_ok && step_ok) || tight_grad || quadratic_polish_ok || stationary_ok || natoms <= 1) {
+      if (natoms > 1 && pred_de_last <= 0.0 && dx_rms < 1.0e-5) {
         x += dx;
+        g += H * dx;
+        if (cfg.project_trans_rot) {
+          g = project_out_trans_rot(x, g, masses);
+        }
+        g_rms = std::sqrt(g.squaredNorm() / static_cast<double>(ndof));
         if (!res.energy_history.empty()) {
           res.energy_history.back() += pred_de_last;
+        }
+        if (!res.g_rms_history.empty()) {
+          res.g_rms_history.back() = g_rms;
         }
       }
       res.converged = true;
@@ -810,7 +825,10 @@ VibThermoResult HPCGeometryOptimizer::compute_frequencies(
   double e0 = evaluate_single_point_cpp(mol, cfg);
   Eigen::MatrixXd hess = Eigen::MatrixXd::Zero(ndof, ndof);
   const std::string m_freq = to_lower_copy(cfg.method);
-  const double h = (m_freq == "ump2" || m_freq == "ump3") ? 5.0e-3 : 2.0e-3;
+  const bool is_ump_freq = (m_freq == "ump2" || m_freq == "ump3" ||
+                            m_freq == "df-ump2" || m_freq == "df-ump3" ||
+                            m_freq == "cholesky-ump2" || m_freq == "cholesky-ump3");
+  const double h = is_ump_freq ? 5.0e-3 : 2.0e-3;
 
   GeomOptConfig grad_cfg = cfg;
   grad_cfg.project_trans_rot = false;
