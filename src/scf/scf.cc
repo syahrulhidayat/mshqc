@@ -535,8 +535,7 @@ SCFResult BaseSCF::compute() {
         : (P_alpha_ - Pa_snapshot).norm() / nbasis_;
 
     if (config_.print_level > 0) {
-      printf(" %4d %18.10f %10.2e %10.2e
-", iter_scf_, energy(), dE, dP);
+      printf(" %4d %18.10f %10.2e %10.2e\n", iter_scf_, energy(), dE, dP);
     }
 
     double e_tol = (config_.energy_threshold > 0.0) ? config_.energy_threshold : 1e-12;
