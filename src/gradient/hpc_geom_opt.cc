@@ -810,6 +810,8 @@ VibThermoResult HPCGeometryOptimizer::compute_frequencies(
     masses[i] = get_exact_isotopic_mass(mol.atom(i).atomic_number);
   }
 
+  double e0 = evaluate_single_point_cpp(mol, cfg);
+  Eigen::MatrixXd hess = Eigen::MatrixXd::Zero(ndof, ndof);
   const double h = 2.0e-3;
 
   GeomOptConfig grad_cfg = cfg;
