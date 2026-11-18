@@ -647,7 +647,8 @@ GeomOptResult HPCGeometryOptimizer::optimize_molecule(
         }
       }
 
-      if (std::abs(pred_de_last) > 1.0e-14) {
+      // TIMPA DENGAN BLOK INI:
+      if (std::abs(pred_de_last) > 1.0e-7) {
         const double rho = de / pred_de_last;
         if (rho < 0.25) {
           tr = std::max(cfg.trust_radius_min, 0.5 * s_norm);
@@ -708,30 +709,22 @@ GeomOptResult HPCGeometryOptimizer::optimize_molecule(
 
     const double eff_g_rms_tol = std::min(cfg.g_rms_tol, 1.0e-8);
     const double eff_g_max_tol = std::min(cfg.g_max_tol, 3.0e-8);
-    const double eff_dx_rms_tol = std::min(cfg.dx_rms_tol, 1.0e-6);
-    const double eff_dx_max_tol = std::min(cfg.dx_max_tol, 3.0e-6);
+    const double eff_dx_rms_tol = std::min(cfg.dx_rms_tol, 3.0e-7);
+    const double eff_dx_max_tol = std::min(cfg.dx_max_tol, 1.0e-6);
 
     bool grad_ok = (g_rms < eff_g_rms_tol) && (g_max < eff_g_max_tol);
     bool step_ok = (dx_rms < eff_dx_rms_tol) && (dx_max < eff_dx_max_tol);
-    bool tight_grad = (g_rms < 1.0e-8) && (g_max < 3.0e-8);
+    bool tight_grad = (g_rms < 5.0e-9) && (g_max < 1.5e-8);
     bool quadratic_polish_ok = (iter >= 3) && (std::abs(de) < 1.0e-8) &&
-                               (dx_rms < 1.0e-6) && (g_rms < 5.0e-8);
-    bool stationary_ok = (iter >= 4) && (std::abs(de) < 1.0e-10) &&
-                         (dx_rms < 1.0e-6) && (g_rms < 5.0e-8);
+                               (dx_rms < 5.0e-7) && (g_rms < 1.0e-7);
+    bool stationary_ok = (iter >= 4) && (std::abs(de) < 1.0e-9) &&
+                         (dx_rms < 5.0e-7) && (g_rms < 1.0e-7);
 
     if ((grad_ok && step_ok) || tight_grad || quadratic_polish_ok || stationary_ok || natoms <= 1) {
-      if (natoms > 1 && pred_de_last <= 0.0 && dx_rms < 1.0e-5) {
+      if (natoms > 1 && pred_de_last <= 0.0 && dx_rms < 5.0e-7) {
         x += dx;
-        g += H * dx;
-        if (cfg.project_trans_rot) {
-          g = project_out_trans_rot(x, g, masses);
-        }
-        g_rms = std::sqrt(g.squaredNorm() / static_cast<double>(ndof));
         if (!res.energy_history.empty()) {
           res.energy_history.back() += pred_de_last;
-        }
-        if (!res.g_rms_history.empty()) {
-          res.g_rms_history.back() = g_rms;
         }
       }
       res.converged = true;
