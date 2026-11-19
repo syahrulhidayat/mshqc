@@ -1,36 +1,30 @@
-name: Compile Locally and Run Full Parallel Test & Benchmark Suite (mshqc vs Psi4)
+name: Compile Locally and Run Full Test & Benchmark Suite (mshqc vs Psi4)
 
 on:
   push:
     branches:
-      - build-pypi
-      - test-geom
-      - test
-      - main
+      
   workflow_dispatch:
 
-env:
-  OMP_NUM_THREADS: "4"
-  OMP_WAIT_POLICY: "PASSIVE"
-  TBLIS_NUM_THREADS: "4"
-  MKL_NUM_THREADS: "1"
-  OPENBLAS_NUM_THREADS: "1"
-  HDF5_USE_FILE_LOCKING: "FALSE"
-  PYTHONUNBUFFERED: "1"
-  PYTHONIOENCODING: "utf-8"
-
 jobs:
-  # ===========================================================================
-  # TAHAP 1A: KOMPILASI mshqc SEKALI PER OS MENJADI WHEEL (.whl)
-  # ===========================================================================
-  build_mshqc:
-    name: "Build mshqc Wheel (${{ matrix.os }})"
+  full_test_suite:
+    name: Local Build & Full Suite (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
+    timeout-minutes: 360
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
+
+    env:
+      OMP_NUM_THREADS: "4"
+      OMP_WAIT_POLICY: "PASSIVE"
+      TBLIS_NUM_THREADS: "4"
+      MKL_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      HDF5_USE_FILE_LOCKING: "FALSE"
+      PYTHONUNBUFFERED: "1"
+      PYTHONIOENCODING: "utf-8"
 
     steps:
       - name: Checkout Source Code
@@ -148,7 +142,7 @@ jobs:
             cp -rf "$CONDA_PREFIX/lib/libcint.a" "$CONDA_PREFIX/lib/libtblis.a" "$CONDA_PREFIX/lib/libtci.a" .cache_local_deps/lib/
           fi
 
-      - name: Build Precompiled mshqc Wheel
+      - name: Compile mshqc In-Place in geom_env
         shell: bash -el {0}
         run: |
           set -o pipefail
@@ -158,83 +152,15 @@ jobs:
           export CMAKE_PREFIX_PATH="$CONDA_PREFIX"
           export CMAKE_ARGS="-DOpenMP_ROOT=$CONDA_PREFIX"
           export CMAKE_BUILD_PARALLEL_LEVEL=4
-          mkdir -p dist
-          python -m pip wheel --no-build-isolation --no-deps -w dist . -v
-          python -m pip install --no-deps dist/*.whl
-          python -c "import mshqc; print('Compiled mshqc wheel:', getattr(mshqc, '__version__', 'local-build'))"
+          python -m pip install --no-build-isolation --no-deps -e . -v
+          python -c "import mshqc; print('Compiled mshqc version:', getattr(mshqc, '__version__', 'local-build'))"
 
-      - name: Upload Precompiled mshqc Wheel
-        uses: actions/upload-artifact@v4
-        with:
-          name: mshqc-wheel-${{ matrix.os }}
-          retention-days: 1
-          path: dist/*.whl
-
-  # ===========================================================================
-  # TAHAP 1B: SEMUA SUITE PSI4 BERJALAN PARALEL SEJAK DETIK KE-0
-  # ===========================================================================
-  psi4_suites:
-    name: "${{ matrix.label }} (${{ matrix.os }})"
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 240
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        include:
-          - id: psi4_core
-            label: "[05/19] Psi4 Core Benchmark (benc.py)"
-            cmd: |
-              python -u tests/benc.py 2>&1 | tee 05_psi4_out.txt
-              cp 05_psi4_out.txt psi4_out.txt
-
-          - id: psi4_bab4
-            label: "[08/19] Psi4 Bab 4 Reference (run_psi4_bab4.py)"
-            cmd: |
-              python -u tests/run_psi4_bab4.py 2>&1 | tee psi4_bab4_stdout.txt
-              if [ -f psi4_bab4_test.txt ]; then
-                cp psi4_bab4_test.txt 08_psi4_bab4_running_log.txt
-              else
-                cp psi4_bab4_stdout.txt 08_psi4_bab4_running_log.txt
-              fi
-
-          - id: psi4_universal
-            label: "[11/19] Psi4 Universal Reference (run_psi4_universal.py)"
-            cmd: |
-              python -u tests/run_psi4_universal.py 2>&1 | tee 11_psi4_universal_running_log.txt
-
-          - id: psi4_geom
-            label: "[14/19] Psi4 Multi-System Geometry (run_psi4_geom.py)"
-            cmd: |
-              python -u tests/run_psi4_geom.py 2>&1 | tee 14_psi4_geom_running_log.txt
-              test -s psi4_geom_raw.json
-
-          - id: psi4_heavy_large
-            label: "[18/19] Psi4 Heavy & Large (run_psi4_heavy_large.py)"
-            cmd: |
-              python -u tests/run_psi4_heavy_large.py 2>&1 | tee 18_psi4_heavy_large_running_log.txt
-              test -s psi4_heavy_large_raw.json
-
-    steps:
-      - name: Checkout Source Code
-        uses: actions/checkout@v4
-
-      - name: Set up Clean Psi4 Environment (psi4_env)
-        uses: mamba-org/setup-micromamba@v2
-        with:
-          environment-name: psi4_env
-          create-args: >-
-            -c conda-forge
-            python=3.11
-            psi4
-            numpy
-            scipy
-            pip
-
-      - name: Verify Psi4 & Patch LibXC Table if Needed
+      - name: Create Clean Psi4 Environment (psi4_env) & Patch LibXC Table
         shell: bash -el {0}
         run: |
           set -o pipefail
+          micromamba create -y -n psi4_env -c conda-forge python=3.11 psi4 numpy scipy pip
+
           micromamba activate psi4_env
           if ! python -c "import psi4" >/dev/null 2>&1; then
             echo "Mendeteksi ketidakcocokan fungsional LibXC pada Psi4, menerapkan patch proc_table.py..."
@@ -259,416 +185,281 @@ jobs:
           fi
           python -c "import psi4; print('Psi4 berhasil dimuat di psi4_env, versi:', psi4.__version__)"
 
-      - name: Run ${{ matrix.label }}
-        shell: bash -el {0}
-        run: |
-          set -o pipefail
-          micromamba activate psi4_env
-          ${{ matrix.cmd }}
-
-      - name: Upload Psi4 Outputs (${{ matrix.id }})
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: part-${{ matrix.os }}-${{ matrix.id }}
-          retention-days: 1
-          if-no-files-found: ignore
-          path: |
-            05_psi4_out.txt
-            psi4_out.txt
-            08_psi4_bab4_running_log.txt
-            psi4_bab4_test.txt
-            11_psi4_universal_running_log.txt
-            psi4_universal_raw.json
-            14_psi4_geom_running_log.txt
-            psi4_geom_raw.json
-            18_psi4_heavy_large_running_log.txt
-            psi4_heavy_large_raw.json
-
-  # ===========================================================================
-  # TAHAP 2: SELURUH 10 SUITE mshqc + HYBRID (.OH) BERJALAN PARALEL SERENTAK
-  # ===========================================================================
-  mshqc_and_hybrid_suites:
-    name: "${{ matrix.label }} (${{ matrix.os }})"
-    needs: build_mshqc
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 240
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        include:
-          - id: unit_pytest
-            label: "[01/19] Pytest Validation Suite (test_mshqc.py)"
-            needs_psi4: "false"
-            cmd: |
-              python -m pytest tests/test_mshqc.py -v -s 2>&1 | tee 01_pytest_mshqc_log.txt
-
-          - id: unit_geom_opt
-            label: "[02/19] Universal Geom Optimizer (test_universal_geom_opt.py)"
-            needs_psi4: "false"
-            cmd: |
-              python -u tests/test_universal_geom_opt.py 2>&1 | tee 02_test_universal_geom_opt_log.txt
-
-          - id: unit_grad_2e
-            label: "[03/19] Analytic 2e Gradient (verify_analytic_grad_2e.py)"
-            needs_psi4: "false"
-            cmd: |
-              python -u tests/verify_analytic_grad_2e.py 2>&1 | tee 03_verify_analytic_grad_2e_log.txt
-
-          - id: unit_audit_scaling
-            label: "[03b/19] Audit & Scaling (verify_audit_and_scaling.py)"
-            needs_psi4: "false"
-            cmd: |
-              python -u tests/verify_audit_and_scaling.py 2>&1 | tee 03b_verify_audit_and_scaling_log.txt
-
-          - id: mshqc_core
-            label: "[04/19] mshqc Core Benchmark (test_mshqc2.py)"
-            needs_psi4: "false"
-            cmd: |
-              python -u tests/test_mshqc2.py 2>&1 | tee 04_mshqc_out.txt
-              cp 04_mshqc_out.txt mshqc_out.txt
-
-          - id: mshqc_bab4
-            label: "[07/19] mshqc Bab 4 Benchmark (run_mshqc_bab4.py)"
-            needs_psi4: "false"
-            cmd: |
-              python -u tests/run_mshqc_bab4.py 2>&1 | tee mshqc_bab4_stdout.txt
-              if [ -f mshqc_bab4_test.txt ]; then
-                cp mshqc_bab4_test.txt 07_mshqc_bab4_running_log.txt
-              else
-                cp mshqc_bab4_stdout.txt 07_mshqc_bab4_running_log.txt
-              fi
-
-          - id: mshqc_universal
-            label: "[10/19] mshqc Universal Suite (run_mshqc_universal.py)"
-            needs_psi4: "false"
-            cmd: |
-              python -u tests/run_mshqc_universal.py 2>&1 | tee 10_mshqc_universal_running_log.txt
-
-          - id: mshqc_geom
-            label: "[13/19] mshqc Multi-System Geometry (run_mshqc_geom.py)"
-            needs_psi4: "false"
-            cmd: |
-              python -u tests/run_mshqc_geom.py 2>&1 | tee 13_mshqc_geom_running_log.txt
-
-          - id: mshqc_heavy_large
-            label: "[17/19] mshqc Heavy & Large (run_mshqc_heavy_large.py)"
-            needs_psi4: "false"
-            cmd: |
-              python -u tests/run_mshqc_heavy_large.py 2>&1 | tee 17_mshqc_heavy_large_running_log.txt
-              test -s mshqc_heavy_large_raw.json
-
-          - id: hybrid_oh_radical
-            label: "[16/19] .OH Radical Hybrid Benchmark (benchmark_geom_omp2_psi4.py)"
-            needs_psi4: "true"
-            cmd: |
-              PSI4_PY="$MAMBA_ROOT_PREFIX/envs/psi4_env/bin/python"
-              export PSI4_PY
-              python - << 'EOF'
-              import os, pathlib, sysconfig
-              purelib = pathlib.Path(sysconfig.get_paths()["purelib"])
-              psi4_py = os.environ["PSI4_PY"]
-              bridge_code = f'''import json, subprocess, numpy as np
-
-              PSI4_BIN = {psi4_py!r}
-              _OPTS = {{}}
-
-              class _Core:
-                  @staticmethod
-                  def clean(): pass
-                  @staticmethod
-                  def clean_options(): _OPTS.clear()
-                  @staticmethod
-                  def set_output_file(path, append=False): pass
-
-              core = _Core()
-
-              class _Mol:
-                  def __init__(self, geom_str):
-                      self.geom_str = geom_str
-                      self._coords = None
-                  def geometry(self):
-                      return self._coords
-
-              def geometry(geom_str):
-                  return _Mol(geom_str)
-
-              def set_options(opts):
-                  _OPTS.update(opts)
-
-              def optimize(method, molecule=None, dertype=None):
-                  payload = json.dumps({{
-                      "method": method,
-                      "geom": molecule.geom_str,
-                      "opts": _OPTS,
-                      "dertype": dertype,
-                  }})
-                  runner = """import os, sys, json, tempfile, numpy as np
-              os.environ["PSI_SCRATCH"] = "/dev/shm" if os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK) else tempfile.gettempdir()
-              import psi4
-              psi4.set_num_threads(int(os.environ.get("OMP_NUM_THREADS", "4")))
-              psi4.set_memory("4 GB")
-              psi4.core.set_output_file("/dev/null", False)
-              data = json.loads(sys.argv[1])
-              psi4.core.clean()
-              psi4.core.clean_options()
-              import time
-              mol = psi4.geometry(data["geom"])
-              psi4.set_options(data["opts"])
-              t0 = time.perf_counter()
-              if data["dertype"] is not None:
-                  e = float(psi4.optimize(data["method"], molecule=mol, dertype=data["dertype"]))
-              else:
-                  e = float(psi4.optimize(data["method"], molecule=mol))
-              dt = time.perf_counter() - t0
-              coords = np.asarray(mol.geometry()).tolist()
-              print("PSI4_JSON_RESULT:" + json.dumps({{"e": e, "coords": coords, "dt": dt}}))
-              """
-                  proc = subprocess.run([PSI4_BIN, "-c", runner, payload], capture_output=True, text=True, check=True)
-                  for line in reversed(proc.stdout.splitlines()):
-                      if line.startswith("PSI4_JSON_RESULT:"):
-                          res = json.loads(line.split("PSI4_JSON_RESULT:", 1)[1])
-                          molecule._coords = np.asarray(res["coords"], dtype=np.float64)
-                          return float(res["e"])
-                  raise RuntimeError(f"Psi4 subprocess gagal:\\n{{proc.stdout}}\\n{{proc.stderr}}")
-              '''
-              (purelib / "psi4.py").write_text(bridge_code, encoding="utf-8")
-              EOF
-
-              python -u tests/benchmark_geom_omp2_psi4.py 2>&1 | tee 16_benchmark_geom_oh_psi4_log.txt
-              if grep -q "N/A" 16_benchmark_geom_oh_psi4_log.txt; then
-                echo "ERROR: Ditemukan nilai N/A pada hasil Psi4 di 16_benchmark_geom_oh_psi4_log.txt!"
-                exit 1
-              fi
-
-    steps:
-      - name: Checkout Source Code
-        uses: actions/checkout@v4
-
-      - name: Fetch Basis Sets from mshqc-basis
-        shell: bash -eo pipefail {0}
-        run: |
-          git clone --depth 1 https://github.com/syahrulhidayat/mshqc-basis.git /tmp/mshqc-basis
-          mkdir -p data/basis python/mshqc/basis
-          cp -rf /tmp/mshqc-basis/data/basis/* data/basis/
-          cp -rf /tmp/mshqc-basis/data/basis/* python/mshqc/basis/
-          rm -rf /tmp/mshqc-basis
-
-      - name: Download Precompiled mshqc Wheel
-        uses: actions/download-artifact@v4
-        with:
-          name: mshqc-wheel-${{ matrix.os }}
-          path: dist
-
-      - name: Set up Micromamba Runtime Environment (geom_env)
-        uses: mamba-org/setup-micromamba@v2
-        with:
-          environment-name: geom_env
-          create-args: >-
-            -c conda-forge
-            python=3.11
-            llvm-openmp
-            hdf5=1.14.3
-            openblas
-            liblapacke
-            numpy
-            scipy
-            pytest
-
-      - name: Install Precompiled mshqc Wheel
+      # =========================================================================
+      # BAGIAN 1: UNIT TESTS mshqc (geom_env)
+      # =========================================================================
+      - name: "[01/16] Run Automated Pytest Validation Suite (test_mshqc.py)"
         shell: bash -el {0}
         run: |
           set -o pipefail
           micromamba activate geom_env
-          python -m pip install --no-deps dist/*.whl
-          python -c "import mshqc; print('Loaded mshqc:', getattr(mshqc, '__version__', 'local-build'))"
+          python -m pytest tests/test_mshqc.py -v -s 2>&1 | tee 01_pytest_mshqc_log.txt
 
-      - name: Set up Psi4 Environment (Hanya untuk Hybrid .OH Suite)
-        if: matrix.needs_psi4 == 'true'
+      - name: "[02/16] Run Universal Geometry Optimizer Unit Test (test_universal_geom_opt.py)"
         shell: bash -el {0}
         run: |
           set -o pipefail
-          micromamba create -y -n psi4_env -c conda-forge python=3.11 psi4 numpy scipy pip
+          micromamba activate geom_env
+          python -u tests/test_universal_geom_opt.py 2>&1 | tee 02_test_universal_geom_opt_log.txt
+
+      - name: "[03/16] Run Analytic 2e Gradient Verification (verify_analytic_grad_2e.py)"
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate geom_env
+          python -u tests/verify_analytic_grad_2e.py 2>&1 | tee 03_verify_analytic_grad_2e_log.txt
+      - name: "[03b/16] Run Audit & Computational Scaling Verification (verify_audit_and_scaling.py)"
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate geom_env
+          python -u tests/verify_audit_and_scaling.py 2>&1 | tee 03b_verify_audit_and_scaling_log.txt
+
+      # =========================================================================
+      # BAGIAN 2: CORE BENCHMARK SUITE (mshqc vs Psi4 Terpisah)
+      # =========================================================================
+      - name: "[04/16] Run mshqc Core Benchmark (test_mshqc2.py)"
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate geom_env
+          python -u tests/test_mshqc2.py 2>&1 | tee 04_mshqc_out.txt
+          cp 04_mshqc_out.txt mshqc_out.txt
+
+      - name: "[05/16] Run Psi4 Core Benchmark (benc.py)"
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
           micromamba activate psi4_env
-          if ! python -c "import psi4" >/dev/null 2>&1; then
-            python - << 'EOF'
-          import pathlib, re, sys
-          for p in pathlib.Path(sys.prefix).rglob("psi4/driver/procrouting/proc_table.py"):
-              txt = p.read_text(encoding="utf-8")
-              pattern = r"for key in functionals:\s+ssuper = build_superfunctional_from_dictionary\(functionals\[key\], 1, 1, True\)\[0\]"
-              replacement = (
-                  "for key in list(functionals.keys()):\n"
-                  "    try:\n"
-                  "        ssuper = build_superfunctional_from_dictionary(functionals[key], 1, 1, True)[0]\n"
-                  "    except Exception:\n"
-                  "        functionals.pop(key, None)\n"
-                  "        continue"
-              )
-              new_txt, count = re.subn(pattern, replacement, txt)
-              if count > 0:
-                  p.write_text(new_txt, encoding="utf-8")
-          EOF
+          python -u tests/benc.py 2>&1 | tee 05_psi4_out.txt
+          cp 05_psi4_out.txt psi4_out.txt
+
+      - name: "[06/16] Compare Head-to-Head mshqc vs Psi4 (compare_mshqc_psi4.py)"
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate geom_env
+          python -u tests/compare_mshqc_psi4.py mshqc_out.txt psi4_out.txt 2>&1 | tee 06_compare_mshqc_psi4_log.txt
+
+      # =========================================================================
+      # BAGIAN 3: BAB 4 BENCHMARK SUITE (mshqc vs Psi4 Terpisah)
+      # =========================================================================
+      - name: "[07/16] Run mshqc Bab 4 Benchmark (run_mshqc_bab4.py)"
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate geom_env
+          python -u tests/run_mshqc_bab4.py 2>&1 | tee mshqc_bab4_stdout.txt
+          if [ -f mshqc_bab4_test.txt ]; then
+            cp mshqc_bab4_test.txt 07_mshqc_bab4_running_log.txt
+          else
+            cp mshqc_bab4_stdout.txt 07_mshqc_bab4_running_log.txt
           fi
-          python -c "import psi4; print('Psi4 siap di psi4_env, versi:', psi4.__version__)"
 
-      - name: Run ${{ matrix.label }}
+      - name: "[08/16] Run Psi4 Bab 4 Reference Benchmark (run_psi4_bab4.py)"
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate psi4_env
+          python -u tests/run_psi4_bab4.py 2>&1 | tee psi4_bab4_stdout.txt
+          if [ -f psi4_bab4_test.txt ]; then
+            cp psi4_bab4_test.txt 08_psi4_bab4_running_log.txt
+          else
+            cp psi4_bab4_stdout.txt 08_psi4_bab4_running_log.txt
+          fi
+
+      - name: "[09/16] Compare Bab 4 Results (compare_bab4.py)"
         shell: bash -el {0}
         run: |
           set -o pipefail
           micromamba activate geom_env
-          ${{ matrix.cmd }}
+          python -u tests/compare_bab4.py 2>&1 | tee compare_bab4_stdout.txt
+          if [ -f test_bab4_benchmark.txt ]; then
+            cp test_bab4_benchmark.txt 09_compare_bab4_log.txt
+          else
+            cp compare_bab4_stdout.txt 09_compare_bab4_log.txt
+          fi
 
-      - name: Upload Outputs (${{ matrix.id }})
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: part-${{ matrix.os }}-${{ matrix.id }}
-          retention-days: 1
-          if-no-files-found: ignore
-          path: |
-            01_pytest_mshqc_log.txt
-            02_test_universal_geom_opt_log.txt
-            03_verify_analytic_grad_2e_log.txt
-            03b_verify_audit_and_scaling_log.txt
-            04_mshqc_out.txt
-            mshqc_out.txt
-            07_mshqc_bab4_running_log.txt
-            mshqc_bab4_test.txt
-            10_mshqc_universal_running_log.txt
-            mshqc_universal_raw.json
-            13_mshqc_geom_running_log.txt
-            mshqc_geom_raw.json
-            16_benchmark_geom_oh_psi4_log.txt
-            17_mshqc_heavy_large_running_log.txt
-            mshqc_heavy_large_raw.json
-
-  # ===========================================================================
-  # TAHAP 3: SEMUA 5 COMPARE HEAD-TO-HEAD BERJALAN PARALEL
-  # ===========================================================================
-  compare_suites:
-    name: "${{ matrix.label }} (${{ matrix.os }})"
-    needs: [mshqc_and_hybrid_suites, psi4_suites]
-    if: always()
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-        include:
-          - id: compare_core
-            label: "[06/19] Compare Core mshqc vs Psi4 (compare_mshqc_psi4.py)"
-            cmd: |
-              python -u tests/compare_mshqc_psi4.py mshqc_out.txt psi4_out.txt 2>&1 | tee 06_compare_mshqc_psi4_log.txt
-
-          - id: compare_bab4
-            label: "[09/19] Compare Bab 4 Results (compare_bab4.py)"
-            cmd: |
-              python -u tests/compare_bab4.py 2>&1 | tee compare_bab4_stdout.txt
-              if [ -f test_bab4_benchmark.txt ]; then
-                cp test_bab4_benchmark.txt 09_compare_bab4_log.txt
-              else
-                cp compare_bab4_stdout.txt 09_compare_bab4_log.txt
-              fi
-
-          - id: compare_universal
-            label: "[12/19] Compare Universal Tables (compare_universal.py)"
-            cmd: |
-              if [ -f "mshqc_universal_raw.json" ] && [ -f "psi4_universal_raw.json" ]; then
-                python -u tests/compare_universal.py mshqc_universal_raw.json psi4_universal_raw.json 2>&1 | tee 12_compare_universal_log.txt
-              else
-                python -u tests/compare_universal.py 2>&1 | tee 12_compare_universal_log.txt
-              fi
-
-          - id: compare_geom
-            label: "[15/19] Compare Geometry & Vibrational (compare_geom.py)"
-            cmd: |
-              python -u tests/compare_geom.py mshqc_geom_raw.json psi4_geom_raw.json 2>&1 | tee compare_geom_stdout.txt
-              if [ -f test_geom_validation.txt ]; then
-                cp test_geom_validation.txt 15_compare_geom_log.txt
-              else
-                cp compare_geom_stdout.txt 15_compare_geom_log.txt
-              fi
-              grep -q "Total Matched Geometry Runs: 24" 15_compare_geom_log.txt
-
-          - id: compare_heavy_large
-            label: "[19/19] Compare Heavy & Large (compare_heavy_large.py)"
-            cmd: |
-              python -u tests/compare_heavy_large.py mshqc_heavy_large_raw.json psi4_heavy_large_raw.json 2>&1 | tee 19_compare_heavy_large_log.txt
-              grep -q "Total Matched Heavy/Large Runs: 8" 19_compare_heavy_large_log.txt
-
-    steps:
-      - name: Checkout Source Code
-        uses: actions/checkout@v4
-
-      - name: Download All Partial Logs & JSONs (${{ matrix.os }})
-        uses: actions/download-artifact@v4
-        with:
-          pattern: "part-${{ matrix.os }}-*"
-          merge-multiple: true
-
-      - name: Set up Lightweight Python Environment (cmp_env)
-        uses: mamba-org/setup-micromamba@v2
-        with:
-          environment-name: cmp_env
-          create-args: >-
-            -c conda-forge
-            python=3.11
-            numpy
-            scipy
-
-      - name: Run ${{ matrix.label }}
+      # =========================================================================
+      # BAGIAN 4: UNIVERSAL BENCHMARK SUITE (mshqc vs Psi4 Terpisah)
+      # =========================================================================
+      - name: "[10/16] Run mshqc Universal Suite (run_mshqc_universal.py)"
         shell: bash -el {0}
         run: |
           set -o pipefail
-          micromamba activate cmp_env
-          ${{ matrix.cmd }}
+          micromamba activate geom_env
+          python -u tests/run_mshqc_universal.py 2>&1 | tee 10_mshqc_universal_running_log.txt
 
-      - name: Upload Comparison Report (${{ matrix.id }})
+      - name: "[11/16] Run Psi4 Universal Reference Suite (run_psi4_universal.py)"
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate psi4_env
+          python -u tests/run_psi4_universal.py 2>&1 | tee 11_psi4_universal_running_log.txt
+
+      - name: "[12/16] Compare Universal Benchmark Tables (compare_universal.py)"
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate geom_env
+          if [ -f "mshqc_universal_raw.json" ] && [ -f "psi4_universal_raw.json" ]; then
+            python -u tests/compare_universal.py mshqc_universal_raw.json psi4_universal_raw.json 2>&1 | tee 12_compare_universal_log.txt
+          else
+            python -u tests/compare_universal.py 2>&1 | tee 12_compare_universal_log.txt
+          fi
+
+      # =========================================================================
+      # BAGIAN 5: GEOMETRY & VIBRATIONAL SUITE (mshqc vs Psi4 Terpisah)
+      # =========================================================================
+      - name: "[13/16] Run mshqc Multi-System Geometry Suite (run_mshqc_geom.py)"
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate geom_env
+          python -u tests/run_mshqc_geom.py 2>&1 | tee 13_mshqc_geom_running_log.txt
+
+      - name: "[14/16] Run Psi4 Multi-System Geometry Reference Suite (run_psi4_geom.py)"
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate psi4_env
+          python -u tests/run_psi4_geom.py 2>&1 | tee 14_psi4_geom_running_log.txt
+          test -s psi4_geom_raw.json
+
+      - name: "[15/16] Compare Head-to-Head Geometry & Vibrational Tables (compare_geom.py)"
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate geom_env
+          python -u tests/compare_geom.py mshqc_geom_raw.json psi4_geom_raw.json 2>&1 | tee compare_geom_stdout.txt
+          if [ -f test_geom_validation.txt ]; then
+            cp test_geom_validation.txt 15_compare_geom_log.txt
+          else
+            cp compare_geom_stdout.txt 15_compare_geom_log.txt
+          fi
+          grep -q "Total Matched Geometry Runs: 24" 15_compare_geom_log.txt
+
+      # =========================================================================
+      # BAGIAN 6: HYBRID BENCHMARK (.OH RADICAL) VIA ISOLATED SUBPROCESS BRIDGE
+      # =========================================================================
+      - name: "[16/16] Run .OH Radical Geometry & Frequency Benchmark (benchmark_geom_omp2_psi4.py)"
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate geom_env
+          PSI4_PY="$MAMBA_ROOT_PREFIX/envs/psi4_env/bin/python"
+          export PSI4_PY
+          python - << 'EOF'
+          import os, pathlib, sysconfig
+          purelib = pathlib.Path(sysconfig.get_paths()["purelib"])
+          psi4_py = os.environ["PSI4_PY"]
+          bridge_code = f'''import json, subprocess, numpy as np
+
+          PSI4_BIN = {psi4_py!r}
+          _OPTS = {{}}
+
+          class _Core:
+              @staticmethod
+              def clean(): pass
+              @staticmethod
+              def clean_options(): _OPTS.clear()
+              @staticmethod
+              def set_output_file(path, append=False): pass
+
+          core = _Core()
+
+          class _Mol:
+              def __init__(self, geom_str):
+                  self.geom_str = geom_str
+                  self._coords = None
+              def geometry(self):
+                  return self._coords
+
+          def geometry(geom_str):
+              return _Mol(geom_str)
+
+          def set_options(opts):
+              _OPTS.update(opts)
+
+          def optimize(method, molecule=None, dertype=None):
+              payload = json.dumps({{
+                  "method": method,
+                  "geom": molecule.geom_str,
+                  "opts": _OPTS,
+                  "dertype": dertype,
+              }})
+              runner = """import os, sys, json, tempfile, numpy as np
+          os.environ["PSI_SCRATCH"] = "/dev/shm" if os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK) else tempfile.gettempdir()
+          import psi4
+          psi4.set_num_threads(int(os.environ.get("OMP_NUM_THREADS", "4")))
+          psi4.set_memory("4 GB")
+          psi4.core.set_output_file("/dev/null", False)
+          data = json.loads(sys.argv[1])
+          psi4.core.clean()
+          psi4.core.clean_options()
+          import time
+          mol = psi4.geometry(data["geom"])
+          psi4.set_options(data["opts"])
+          t0 = time.perf_counter()
+          if data["dertype"] is not None:
+              e = float(psi4.optimize(data["method"], molecule=mol, dertype=data["dertype"]))
+          else:
+              e = float(psi4.optimize(data["method"], molecule=mol))
+          dt = time.perf_counter() - t0
+          coords = np.asarray(mol.geometry()).tolist()
+          print("PSI4_JSON_RESULT:" + json.dumps({{"e": e, "coords": coords, "dt": dt}}))
+          """
+              proc = subprocess.run([PSI4_BIN, "-c", runner, payload], capture_output=True, text=True, check=True)
+              for line in reversed(proc.stdout.splitlines()):
+                  if line.startswith("PSI4_JSON_RESULT:"):
+                      res = json.loads(line.split("PSI4_JSON_RESULT:", 1)[1])
+                      molecule._coords = np.asarray(res["coords"], dtype=np.float64)
+                      return float(res["e"])
+              raise RuntimeError(f"Psi4 subprocess gagal:\\n{{proc.stdout}}\\n{{proc.stderr}}")
+          '''
+          (purelib / "psi4.py").write_text(bridge_code, encoding="utf-8")
+          EOF
+
+          python -u tests/benchmark_geom_omp2_psi4.py 2>&1 | tee 16_benchmark_geom_oh_psi4_log.txt
+          if grep -q "N/A" 16_benchmark_geom_oh_psi4_log.txt; then
+            echo "ERROR: Ditemukan nilai N/A pada hasil Psi4 di 16_benchmark_geom_oh_psi4_log.txt!"
+            exit 1
+          fi
+
+      # =========================================================================
+      # BAGIAN 7: HEAVY ATOMS (Z=18..36) & LARGE MOLECULES (mshqc vs Psi4 Terpisah)
+      # =========================================================================
+      - name: "[17/19] Run mshqc Heavy & Large Molecule Suite (run_mshqc_heavy_large.py)"
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate geom_env
+          python -u tests/run_mshqc_heavy_large.py 2>&1 | tee 17_mshqc_heavy_large_running_log.txt
+          test -s mshqc_heavy_large_raw.json
+
+      - name: "[18/19] Run Psi4 Heavy & Large Molecule Reference Suite (run_psi4_heavy_large.py)"
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate psi4_env
+          python -u tests/run_psi4_heavy_large.py 2>&1 | tee 18_psi4_heavy_large_running_log.txt
+          test -s psi4_heavy_large_raw.json
+
+      - name: "[19/19] Compare Heavy & Large Molecule Tables (compare_heavy_large.py)"
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate geom_env
+          python -u tests/compare_heavy_large.py mshqc_heavy_large_raw.json psi4_heavy_large_raw.json 2>&1 | tee 19_compare_heavy_large_log.txt
+          grep -q "Total Matched Heavy/Large Runs: 8" 19_compare_heavy_large_log.txt
+      # =========================================================================
+      # UPLOAD ARTIFACTS (.txt & .json)
+      # =========================================================================
+      - name: Upload All Test & Benchmark Logs (.txt & .json)
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: part-${{ matrix.os }}-${{ matrix.id }}
-          retention-days: 1
-          if-no-files-found: ignore
-          path: |
-            06_compare_mshqc_psi4_log.txt
-            09_compare_bab4_log.txt
-            test_bab4_benchmark.txt
-            12_compare_universal_log.txt
-            15_compare_geom_log.txt
-            test_geom_validation.txt
-            comparison_summary.md
-            19_compare_heavy_large_log.txt
-            test_heavy_large_validation.txt
-
-  # ===========================================================================
-  # TAHAP 4: GABUNGKAN SEMUA LOG & JSON MENJADI 1 ARTIFACT LENGKAP PER OS
-  # ===========================================================================
-  bundle_all_logs:
-    name: "Bundle All Logs & JSONs (${{ matrix.os }})"
-    needs: [psi4_suites, mshqc_and_hybrid_suites, compare_suites]
-    if: always()
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 10
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-
-    steps:
-      - name: Download All Logs & JSONs (${{ matrix.os }})
-        uses: actions/download-artifact@v4
-        with:
-          pattern: "part-${{ matrix.os }}-*"
-          merge-multiple: true
-
-      - name: Upload Combined Test & Benchmark Logs (.txt, .json, .md)
         uses: actions/upload-artifact@v4
         with:
           name: mshqc-vs-psi4-full-logs-${{ matrix.os }}
-          if-no-files-found: warn
           path: |
             01_pytest_mshqc_log.txt
             02_test_universal_geom_opt_log.txt
@@ -687,14 +478,7 @@ jobs:
             14_psi4_geom_running_log.txt
             15_compare_geom_log.txt
             16_benchmark_geom_oh_psi4_log.txt
-            17_mshqc_heavy_large_running_log.txt
-            18_psi4_heavy_large_running_log.txt
-            19_compare_heavy_large_log.txt
             mshqc_geom_raw.json
             psi4_geom_raw.json
-            mshqc_heavy_large_raw.json
-            psi4_heavy_large_raw.json
-            mshqc_universal_raw.json
-            psi4_universal_raw.json
             comparison_summary.md
-            test_heavy_large_validation.txt
+        
