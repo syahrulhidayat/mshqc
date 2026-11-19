@@ -181,12 +181,22 @@ class MSHQCCalculator:
     def run_scf(self, ref: Optional[str] = None) -> mshqc.SCFResult:
         ref_mode = (ref or self.reference).lower()
         conf = self._make_scf_config()
+        use_sym = (self.pg is not None and self.pl is not None)
         if ref_mode == "rhf":
-            solver = mshqc.RHF(self.molecule, self.basis, self.integrals, self.pg, self.pl, conf)
+            if use_sym:
+                solver = mshqc.RHF(self.molecule, self.basis, self.integrals, self.pg, self.pl, conf)
+            else:
+                solver = mshqc.RHF(self.molecule, self.basis, self.integrals, conf)
         elif ref_mode == "rohf":
-            solver = mshqc.ROHF(self.molecule, self.basis, self.integrals, self.pg, self.pl, self.n_alpha, self.n_beta, conf)
+            if use_sym:
+                solver = mshqc.ROHF(self.molecule, self.basis, self.integrals, self.pg, self.pl, self.n_alpha, self.n_beta, conf)
+            else:
+                solver = mshqc.ROHF(self.molecule, self.basis, self.integrals, self.n_alpha, self.n_beta, conf)
         else:
-            solver = mshqc.UHF(self.molecule, self.basis, self.integrals, self.pg, self.pl, self.n_alpha, self.n_beta, conf)
+            if use_sym:
+                solver = mshqc.UHF(self.molecule, self.basis, self.integrals, self.pg, self.pl, self.n_alpha, self.n_beta, conf)
+            else:
+                solver = mshqc.UHF(self.molecule, self.basis, self.integrals, self.n_alpha, self.n_beta, conf)
         self.scf_res = solver.compute()
         return self.scf_res
 
@@ -194,12 +204,13 @@ class MSHQCCalculator:
         if scf_res is None:
             scf_res = self.scf_res or self.run_scf()
         conf = self._make_mp2_config()
+        sym_args = (self.pg, self.pl) if (self.pg is not None and self.pl is not None) else ()
         if self.reference == "rhf":
-            solver = mshqc.RMP2(self.molecule, self.basis, self.integrals, scf_res, conf, self.pg, self.pl)
+            solver = mshqc.RMP2(self.molecule, self.basis, self.integrals, scf_res, conf, *sym_args)
         elif self.reference == "rohf":
-            solver = mshqc.ROMP2(self.molecule, self.basis, self.integrals, scf_res, conf, self.pg, self.pl)
+            solver = mshqc.ROMP2(self.molecule, self.basis, self.integrals, scf_res, conf, *sym_args)
         else:
-            solver = mshqc.UMP2(self.molecule, self.basis, self.integrals, scf_res, conf, self.pg, self.pl)
+            solver = mshqc.UMP2(self.molecule, self.basis, self.integrals, scf_res, conf, *sym_args)
         self.mp2_res = solver.compute()
         return self.mp2_res
 
@@ -221,14 +232,16 @@ class MSHQCCalculator:
         if scf_res is None:
             scf_res = self.scf_res or self.run_scf()
         conf = self._make_mp2_config(opt_method=opt_method, grad_thresh=grad_thresh, max_iter=max_iter)
-        solver = mshqc.OMP2(self.molecule, self.basis, self.integrals, scf_res, conf, self.pg, self.pl)
+        sym_args = (self.pg, self.pl) if (self.pg is not None and self.pl is not None) else ()
+        solver = mshqc.OMP2(self.molecule, self.basis, self.integrals, scf_res, conf, *sym_args)
         return solver.compute()
 
     def run_omp3(self, scf_res: Optional[mshqc.SCFResult] = None, opt_method: str = "soscf", grad_thresh: float = 1e-5, max_iter: int = 50) -> mshqc.MP3Result:
         if scf_res is None:
             scf_res = self.scf_res or self.run_scf()
         conf = self._make_mp2_config(opt_method=opt_method, grad_thresh=grad_thresh, max_iter=max_iter)
-        solver = mshqc.OMP3(self.molecule, self.basis, self.integrals, scf_res, conf, self.pg, self.pl)
+        sym_args = (self.pg, self.pl) if (self.pg is not None and self.pl is not None) else ()
+        solver = mshqc.OMP3(self.molecule, self.basis, self.integrals, scf_res, conf, *sym_args)
         return solver.compute()
 
 

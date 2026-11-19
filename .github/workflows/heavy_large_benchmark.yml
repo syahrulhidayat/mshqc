@@ -48,6 +48,7 @@ jobs:
       - name: Set up Micromamba Build Environment for mshqc (geom_env)
         uses: mamba-org/setup-micromamba@v2
         with:
+          init-shell: bash
           environment-name: geom_env
           create-args: >-
             -c conda-forge
@@ -82,6 +83,7 @@ jobs:
         shell: bash -el {0}
         run: |
           set -o pipefail
+          eval "$("$MAMBA_EXE" shell hook --shell bash)"
           micromamba activate geom_env
           mkdir -p .cache_local_deps/include .cache_local_deps/lib
           if [ -f ".cache_local_deps/lib/libtblis.a" ] && ( [ -f ".cache_local_deps/lib/libcint.a" ] || [ -f ".cache_local_deps/lib64/libcint.a" ] ); then
@@ -152,6 +154,7 @@ jobs:
         shell: bash -el {0}
         run: |
           set -o pipefail
+          eval "$("$MAMBA_EXE" shell hook --shell bash)"
           micromamba activate geom_env
           export TBLIS_DIR="$CONDA_PREFIX"
           export OpenMP_ROOT="$CONDA_PREFIX"
@@ -165,6 +168,7 @@ jobs:
         shell: bash -el {0}
         run: |
           set -o pipefail
+          eval "$("$MAMBA_EXE" shell hook --shell bash)"
           micromamba activate geom_env
           python -u tests/run_mshqc_heavy_large.py 2>&1 | tee mshqc_heavy_large_running_log.txt
           test -s mshqc_heavy_large_raw.json
@@ -196,12 +200,24 @@ jobs:
       - name: Checkout Source Code
         uses: actions/checkout@v4
 
-      - name: Create Clean Psi4 Environment (psi4_env) & Patch LibXC Table
+      - name: Set up Clean Psi4 Environment (psi4_env)
+        uses: mamba-org/setup-micromamba@v2
+        with:
+          init-shell: bash
+          environment-name: psi4_env
+          create-args: >-
+            -c conda-forge
+            python=3.11
+            psi4
+            numpy
+            scipy
+            pip
+
+      - name: Patch LibXC Table & Verify Psi4
         shell: bash -el {0}
         run: |
           set -o pipefail
-          micromamba create -y -n psi4_env -c conda-forge python=3.11 psi4 numpy scipy pip
-
+          eval "$("$MAMBA_EXE" shell hook --shell bash)"
           micromamba activate psi4_env
           if ! python -c "import psi4" >/dev/null 2>&1; then
             echo "Mendeteksi ketidakcocokan fungsional LibXC pada Psi4, menerapkan patch proc_table.py..."
@@ -230,6 +246,7 @@ jobs:
         shell: bash -el {0}
         run: |
           set -o pipefail
+          eval "$("$MAMBA_EXE" shell hook --shell bash)"
           micromamba activate psi4_env
           python -u tests/run_psi4_heavy_large.py 2>&1 | tee psi4_heavy_large_running_log.txt
           test -s psi4_heavy_large_raw.json
