@@ -258,12 +258,304 @@ struct GradCurvatureResult {
   Eigen::VectorXi has_curv;
 };
 
+// [INJECTED_PRIORITAS_2E_ANALYTIC_GRAD]
+Eigen::MatrixXd compute_nuclear_repulsion_gradient(const Molecule& mol) {
+  const int natoms = static_cast<int>(mol.n_atoms());
+  Eigen::MatrixXd g = Eigen::MatrixXd::Zero(natoms, 3);
+  for (int a = 0; a < natoms; ++a) {
+    const double Za = static_cast<double>(mol.atom(a).atomic_number);
+    const Eigen::Vector3d ra(mol.atom(a).x, mol.atom(a).y, mol.atom(a).z);
+    for (int b = a + 1; b < natoms; ++b) {
+      const double Zb = static_cast<double>(mol.atom(b).atomic_number);
+      const Eigen::Vector3d rb(mol.atom(b).x, mol.atom(b).y, mol.atom(b).z);
+      const Eigen::Vector3d rab = ra - rb;
+      const double r2 = rab.squaredNorm();
+      const double inv_r3 = 1.0 / (r2 * std::sqrt(r2));
+      const Eigen::Vector3d f = -Za * Zb * inv_r3 * rab;
+      g.row(a) += f.transpose();
+      g.row(b) -= f.transpose();
+    }
+  }
+  return g;
+}
+
+Eigen::MatrixXd compute_df_metric_inv_sqrt(
+    const BasisSet& primary_basis,
+    const BasisSet& aux_basis,
+    const std::shared_ptr<IntegralEngine>& df_ints,
+    double cutoff) {
+
+  const int n_shells_prim = primary_basis.n_shells();
+  const int n_shells_aux  = aux_basis.n_shells();
+  const int n_aux = aux_basis.n_basis_functions();
+
+  std::vector<int> aux_starts(n_shells_aux), aux_sizes(n_shells_aux);
+  int off = 0, max_a = 1;
+  for (int i = 0; i < n_shells_aux; ++i) {
+    aux_starts[i] = off;
+    aux_sizes[i] = aux_basis.shell(i).n_functions();
+    max_a = std::max(max_a, aux_sizes[i]);
+    off += aux_sizes[i];
+  }
+
+  Eigen::MatrixXd J_metric = Eigen::MatrixXd::Zero(n_aux, n_aux);
+  const size_t buf_sz = std::max<size_t>(64, static_cast<size_t>(max_a) * max_a);
+  #pragma omp parallel
+  {
+    std::vector<double> buf(buf_sz);
+    #pragma omp for schedule(dynamic, 1) nowait
+    for (int R = 0; R < n_shells_aux; ++R) {
+      const int abs_R = n_shells_prim + R, dim_R = aux_sizes[R], st_R = aux_starts[R];
+      for (int S = 0; S <= R; ++S) {
+        const int abs_S = n_shells_prim + S, dim_S = aux_sizes[S], st_S = aux_starts[S];
+        if (!df_ints->compute_2c2e_block_raw(abs_R, abs_S, buf.data())) continue;
+        for (int s = 0; s < dim_S; ++s) {
+          for (int r = 0; r < dim_R; ++r) {
+            double val = buf[r + dim_R * s];
+            J_metric(st_R + r, st_S + s) = val;
+            if (st_R + r != st_S + s) J_metric(st_S + s, st_R + r) = val;
+          }
+        }
+      }
+    }
+  }
+
+  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(J_metric);
+  const Eigen::VectorXd& evals = es.eigenvalues();
+  const Eigen::MatrixXd& evecs = es.eigenvectors();
+  double max_eval = (evals.size() > 0) ? std::max(1.0, evals.maxCoeff()) : 1.0;
+  double rel_cond = (cutoff > 0.0 && cutoff <= 1e-10) ? cutoff : 1e-12;
+  double eig_tol = std::max(1e-14, rel_cond * max_eval);
+
+  int rank = 0;
+  for (int i = 0; i < n_aux; ++i) if (evals(i) >= eig_tol) ++rank;
+  Eigen::MatrixXd U_kept(n_aux, rank);
+  Eigen::VectorXd inv_sq(rank);
+  int c = 0;
+  for (int i = 0; i < n_aux; ++i) {
+    if (evals(i) >= eig_tol) {
+      U_kept.col(c) = evecs.col(i);
+      inv_sq(c) = 1.0 / std::sqrt(evals(i));
+      ++c;
+    }
+  }
+  Eigen::MatrixXd U_sc = U_kept * inv_sq.asDiagonal();
+  Eigen::MatrixXd J_inv_sqrt(n_aux, n_aux);
+  constexpr int tile = 64;
+  #pragma omp parallel for schedule(dynamic)
+  for (int r = 0; r < n_aux; r += tile) {
+    int rows = std::min(tile, n_aux - r);
+    J_inv_sqrt.middleRows(r, rows).noalias() = U_sc.middleRows(r, rows) * U_kept.transpose();
+  }
+  return J_inv_sqrt;
+}
+
+bool supports_analytic_df_gradient(const GeomOptConfig& cfg) {
+  if (!cfg.use_analytic_gradient) return false;
+  std::string method = to_lower_copy(cfg.method);
+  std::string eri    = to_lower_copy(cfg.eri_method);
+  if (eri == "ri") eri = "df";
+  if (method.rfind("df-", 0) == 0 || method.rfind("df_", 0) == 0) {
+    eri = "df";
+    method = method.substr(3);
+  }
+  if (eri != "df") return false;
+  return (method == "scf" || method == "hf" || method == "rhf" || method == "uhf" || method == "omp2");
+}
+
+GradCurvatureResult compute_analytic_df_gradient_internal(
+    const Molecule& mol,
+    const GeomOptConfig& cfg) {
+
+  ScopedCoutSilencer silencer(true);
+  const int natoms = static_cast<int>(mol.n_atoms());
+  const int ndof   = 3 * natoms;
+
+  GradCurvatureResult out;
+  out.grad      = Eigen::VectorXd::Zero(ndof);
+  out.diag_curv = Eigen::VectorXd::Zero(ndof);
+  out.has_curv  = Eigen::VectorXi::Zero(ndof);
+
+  std::string method = to_lower_copy(cfg.method);
+  if (method.rfind("df-", 0) == 0 || method.rfind("df_", 0) == 0) method = method.substr(3);
+
+  const std::string basis_name = cfg.basis_name.empty() ? "cc-pVDZ" : cfg.basis_name;
+  const std::string aux_name   = cfg.aux_basis_name.empty() ? (basis_name + "-RI") : cfg.aux_basis_name;
+
+  BasisSet basis(basis_name, mol);
+  auto integrals = std::make_shared<IntegralEngine>(mol, basis);
+  const int nbf = basis.n_basis_functions();
+
+  const int n_elec = mol.n_electrons();
+  const int mult   = mol.multiplicity();
+  const int na     = (n_elec + mult - 1) / 2;
+  const int nb     = n_elec - na;
+
+  std::string ref = to_lower_copy(cfg.reference);
+  if (ref.empty() || ref == "auto") {
+    if (method == "rhf") ref = "rhf";
+    else if (method == "uhf") ref = "uhf";
+    else ref = (mult == 1) ? "rhf" : "uhf";
+  }
+
+  SCFConfig scf_conf;
+  scf_conf.scf_type          = "incore";
+  scf_conf.eri_method        = "df";
+  scf_conf.use_df            = true;
+  scf_conf.aux_basis_name    = aux_name;
+  scf_conf.energy_threshold  = (cfg.energy_thresh > 0.0) ? std::min(1.0e-12, cfg.energy_thresh) : 1.0e-12;
+  scf_conf.density_threshold = scf_conf.energy_threshold;
+  scf_conf.df_threshold      = std::min(1.0e-12, scf_conf.energy_threshold);
+  scf_conf.print_level       = 0;
+  scf_conf.max_iterations    = 200;
+
+  SCFResult scf_res;
+  if (ref == "rhf") {
+    RHF solver(mol, basis, integrals, scf_conf);
+    scf_res = solver.compute();
+  } else {
+    UHF solver(mol, basis, integrals, na, nb, scf_conf);
+    scf_res = solver.compute();
+  }
+
+  Eigen::MatrixXd P_eff_ao, W_eff_ao, Gamma_3c, gamma_2c;
+  const int n_aux = static_cast<int>(scf_res.L_mat.cols());
+
+  if (method == "omp2") {
+    MP2Config mp2_conf;
+    mp2_conf.scf_type           = "incore";
+    mp2_conf.eri_method         = "df";
+    mp2_conf.use_df             = true;
+    mp2_conf.aux_basis_name     = aux_name;
+    mp2_conf.energy_threshold   = scf_conf.energy_threshold;
+    mp2_conf.df_threshold       = scf_conf.df_threshold;
+    mp2_conf.gradient_threshold = (cfg.orb_grad_thresh > 0.0) ? std::min(1.0e-10, cfg.orb_grad_thresh) : 1.0e-10;
+    mp2_conf.opt_method         = cfg.opt_method;
+    mp2_conf.print_level        = 0;
+    mp2_conf.max_iterations     = 100;
+
+    OMP2 omp2_solver(mol, basis, integrals, scf_res, mp2_conf);
+    MP2Result omp2_res = omp2_solver.compute();
+    out.energy = omp2_res.energy_total;
+
+    OMP2GradientData gd = omp2_solver.build_df_gradient_data();
+    P_eff_ao = std::move(gd.P_eff_ao);
+    W_eff_ao = std::move(gd.W_eff_ao);
+    Gamma_3c = std::move(gd.Gamma_3c);
+    gamma_2c = std::move(gd.gamma_2c);
+  } else {
+    out.energy = scf_res.energy_total;
+    const bool is_rhf = (ref == "rhf");
+    const Eigen::MatrixXd& Pa = scf_res.P_alpha;
+    const Eigen::MatrixXd& Pb = is_rhf ? scf_res.P_alpha : scf_res.P_beta;
+    P_eff_ao = Pa + Pb;
+
+    const Eigen::MatrixXd Ca_o = scf_res.C_alpha.leftCols(na);
+    W_eff_ao = Ca_o * scf_res.orbital_energies_alpha.head(na).asDiagonal() * Ca_o.transpose();
+    if (is_rhf) {
+      W_eff_ao *= 2.0;
+    } else if (nb > 0) {
+      const Eigen::MatrixXd Cb_o = scf_res.C_beta.leftCols(nb);
+      W_eff_ao.noalias() += Cb_o * scf_res.orbital_energies_beta.head(nb).asDiagonal() * Cb_o.transpose();
+    }
+
+    Eigen::Map<const Eigen::VectorXd> P_flat(P_eff_ao.data(), nbf * nbf);
+    Eigen::VectorXd c_vec = scf_res.L_mat.transpose() * P_flat;
+    Gamma_3c.resize(static_cast<Eigen::Index>(nbf) * nbf, n_aux);
+
+    const Eigen::MatrixXd Cb_o = (!is_rhf && nb > 0) ? scf_res.C_beta.leftCols(nb) : Eigen::MatrixXd();
+    #pragma omp parallel
+    {
+      Eigen::MatrixXd G_P(nbf, nbf), T_a(nbf, na), T_b;
+      if (!is_rhf && nb > 0) T_b.resize(nbf, nb);
+
+      #pragma omp for schedule(static) nowait
+      for (int P = 0; P < n_aux; ++P) {
+        Eigen::Map<const Eigen::MatrixXd> B_P(scf_res.L_mat.col(P).data(), nbf, nbf);
+        G_P.noalias() = P_eff_ao * c_vec(P);
+        T_a.noalias() = B_P * Ca_o;
+        Eigen::MatrixXd Boo_a = Ca_o.transpose() * T_a;
+        G_P.noalias() -= (is_rhf ? 2.0 : 1.0) * (Ca_o * Boo_a * Ca_o.transpose());
+        if (!is_rhf && nb > 0) {
+          T_b.noalias() = B_P * Cb_o;
+          Eigen::MatrixXd Boo_b = Cb_o.transpose() * T_b;
+          G_P.noalias() -= Cb_o * Boo_b * Cb_o.transpose();
+        }
+        Gamma_3c.col(P) = Eigen::Map<const Eigen::VectorXd>(G_P.data(), nbf * nbf);
+      }
+    }
+
+    gamma_2c.resize(n_aux, n_aux);
+    constexpr int tile_g = 64;
+    #pragma omp parallel for schedule(dynamic)
+    for (int r = 0; r < n_aux; r += tile_g) {
+      int rows = std::min(tile_g, n_aux - r);
+      gamma_2c.middleRows(r, rows).noalias() = Gamma_3c.middleCols(r, rows).transpose() * scf_res.L_mat;
+    }
+    gamma_2c = 0.5 * (gamma_2c + gamma_2c.transpose());
+  }
+
+  BasisSet aux_basis(aux_name, mol);
+  BasisSet combined = basis;
+  combined.append(aux_basis);
+  auto df_ints = std::make_shared<IntegralEngine>(mol, combined);
+  Eigen::MatrixXd J_inv_sqrt = compute_df_metric_inv_sqrt(basis, aux_basis, df_ints, scf_conf.df_threshold);
+
+  Eigen::MatrixXd Gamma_tilde(static_cast<Eigen::Index>(nbf) * nbf, n_aux);
+  constexpr int tile_m = 256;
+  #pragma omp parallel for schedule(dynamic)
+  for (int r = 0; r < nbf * nbf; r += tile_m) {
+    int rows = std::min(tile_m, nbf * nbf - r);
+    Gamma_tilde.middleRows(r, rows).noalias() = Gamma_3c.middleRows(r, rows) * J_inv_sqrt;
+  }
+
+  Eigen::MatrixXd tmp_g(n_aux, n_aux), gamma_tilde(n_aux, n_aux);
+  constexpr int tile_a = 64;
+  #pragma omp parallel for schedule(dynamic)
+  for (int r = 0; r < n_aux; r += tile_a) {
+    int rows = std::min(tile_a, n_aux - r);
+    tmp_g.middleRows(r, rows).noalias() = J_inv_sqrt.middleRows(r, rows) * gamma_2c;
+  }
+  #pragma omp parallel for schedule(dynamic)
+  for (int r = 0; r < n_aux; r += tile_a) {
+    int rows = std::min(tile_a, n_aux - r);
+    gamma_tilde.middleRows(r, rows).noalias() = tmp_g.middleRows(r, rows) * J_inv_sqrt;
+  }
+
+  Eigen::MatrixXd g_tot = compute_nuclear_repulsion_gradient(mol)
+                        + integrals->compute_1e_gradient(P_eff_ao, W_eff_ao)
+                        + df_ints->compute_df_2e_gradient(
+                              basis.n_shells(), aux_basis.n_shells(),
+                              nbf, aux_basis.n_basis_functions(),
+                              Gamma_tilde, gamma_tilde);
+
+  Eigen::VectorXd x0(ndof);
+  std::vector<double> masses(natoms);
+  for (int a = 0; a < natoms; ++a) {
+    x0(3 * a + 0) = mol.atom(a).x;
+    x0(3 * a + 1) = mol.atom(a).y;
+    x0(3 * a + 2) = mol.atom(a).z;
+    masses[a] = get_exact_isotopic_mass(mol.atom(a).atomic_number);
+    out.grad(3 * a + 0) = g_tot(a, 0);
+    out.grad(3 * a + 1) = g_tot(a, 1);
+    out.grad(3 * a + 2) = g_tot(a, 2);
+  }
+  if (cfg.project_trans_rot) {
+    out.grad = HPCGeometryOptimizer::project_out_trans_rot(x0, out.grad, masses);
+  }
+  return out;
+}
+
 // Mengevaluasi energi, gradien nuklir Central Finite-Difference, sekaligus
 // mengekstrak kurvatur turunan kedua lokal d^2E/dx_i^2 = (E+ - 2*E0 + E-) / h^2
 // dari titik-titik stensil yang sama tanpa tambahan evaluasi single-point.
 GradCurvatureResult compute_gradient_and_curvature_internal(
     const Molecule& mol,
     const GeomOptConfig& cfg) {
+
+  if (supports_analytic_df_gradient(cfg)) {
+    return compute_analytic_df_gradient_internal(mol, cfg);
+  }
 
   const int natoms = static_cast<int>(mol.n_atoms());
   const int ndof = 3 * natoms;
@@ -618,7 +910,8 @@ GeomOptResult HPCGeometryOptimizer::optimize_molecule(
       const double s_norm = s.norm();
       const double y_norm = y.norm();
 
-      if (natoms >= 3 && s_norm > 1.0e-4 && y_norm > 1.0e-6) {
+      const bool allow_bofill = (natoms >= 3) || (natoms == 2 && !gc.has_curv.any());
+      if (allow_bofill && s_norm > 1.0e-4 && y_norm > 1.0e-6) {
         Eigen::VectorXd r = y - H * s;
         const double s2 = s.squaredNorm();
         const double r2 = r.squaredNorm();

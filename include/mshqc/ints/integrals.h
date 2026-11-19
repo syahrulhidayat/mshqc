@@ -70,6 +70,19 @@ public:
     const std::vector<int>& get_bas() const { return bas_; }
     const std::vector<int>& get_atm() const { return atm_; }
     const std::vector<double>& get_env() const { return env_; }
+
+    // [INJECTED_PRIORITAS_2E_ANALYTIC_GRAD]
+    Eigen::MatrixXd compute_1e_gradient(
+        const Eigen::MatrixXd& P_tot_ao,
+        const Eigen::MatrixXd& W_eff_ao) const;
+
+    Eigen::MatrixXd compute_df_2e_gradient(
+        int n_shells_prim,
+        int n_shells_aux,
+        int n_prim_bf,
+        int n_aux_bf,
+        const Eigen::MatrixXd& Gamma_tilde_3c,
+        const Eigen::MatrixXd& gamma_tilde_2c) const;
     
 private:
     const Molecule& mol_;

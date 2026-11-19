@@ -232,6 +232,14 @@ protected:
 
 
 
+// [INJECTED_PRIORITAS_2E_ANALYTIC_GRAD]
+struct OMP2GradientData {
+    Eigen::MatrixXd P_eff_ao;   // P_ref_tot + P_corr_tot (nbf x nbf)
+    Eigen::MatrixXd W_eff_ao;   // Energi-weighted density AO penuh 4-blok
+    Eigen::MatrixXd Gamma_3c;   // (nbf^2 x n_aux) dalam basis B
+    Eigen::MatrixXd gamma_2c;   // (n_aux x n_aux) = 0.5 * (Gamma_3c^T * B + B^T * Gamma_3c)
+};
+
 class OMP2 : public BaseMP2 {
 public:
     OMP2(const Molecule& mol, const BasisSet& basis, 
@@ -248,6 +256,7 @@ public:
     void reset_diis();
     Eigen::MatrixXd build_opdm();
     Eigen::MatrixXd extrapolate_diis(std::vector<Eigen::MatrixXd>&, std::vector<Eigen::MatrixXd>&);
+    OMP2GradientData build_df_gradient_data();
 
 // ======= PASTIKAN HANYA ADA SATU BLOK PROTECTED =======
 protected: 

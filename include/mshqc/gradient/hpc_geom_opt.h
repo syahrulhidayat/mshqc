@@ -36,6 +36,8 @@ struct GeomOptConfig {
   double trust_radius_max = 0.50;    // Bohr
   double trust_radius_min = 1.0e-3;  // Bohr
   double fd_step_bohr = 5.0e-4;      // Langkah finite-difference inti (Bohr)
+  // [INJECTED_PRIORITAS_2E_ANALYTIC_GRAD]
+  bool use_analytic_gradient = true; // Pakai gradien analitik otomatis untuk DF-RHF, DF-UHF, dan DF-OMP2
   bool project_trans_rot = true;
   bool verbose = true;
   std::string xyz_traj_file = "mshqc_opt_traj.xyz";

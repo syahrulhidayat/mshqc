@@ -34,6 +34,24 @@
 namespace mshqc {
 using integrals::ERITransformer;
 
+// [INJECTED_PRIORITAS_2E_ANALYTIC_GRAD]
+namespace {
+Eigen::MatrixXd parallel_gemm_abt_mp2(const Eigen::MatrixXd& A, const Eigen::MatrixXd& B) {
+    if (A.rows() <= 0 || B.rows() <= 0 || A.cols() <= 0 || B.cols() <= 0) {
+        return Eigen::MatrixXd();
+    }
+    Eigen::MatrixXd C(A.rows(), B.rows());
+    const int m = static_cast<int>(A.rows());
+    constexpr int tile = 64;
+    #pragma omp parallel for schedule(dynamic)
+    for (int i = 0; i < m; i += tile) {
+        int rows = std::min(tile, m - i);
+        C.middleRows(i, rows).noalias() = A.middleRows(i, rows) * B.transpose();
+    }
+    return C;
+}
+} // namespace
+
 BaseMP2::BaseMP2(const Molecule& mol, const BasisSet& basis, 
                  std::shared_ptr<IntegralEngine> integrals, 
                  const SCFResult& scf_guess,
@@ -78,46 +96,43 @@ MP2Result BaseMP2::compute() {
     return MP2Result();
 }
 void BaseMP2::transform_3center_mo() {
-    int n_aux = scf_.L_mat.cols();
-    bool is_restricted = (nocc_a_ == nocc_b_ && nvir_a_ == nvir_b_ && scf_.n_occ_alpha == scf_.n_occ_beta);
-    B_ia_P_alpha_ = Eigen::MatrixXd::Zero(nocc_a_ * nvir_a_, n_aux);
+    const int n_aux = static_cast<int>(scf_.L_mat.cols());
+    const bool is_restricted = (nocc_a_ == nocc_b_ && nvir_a_ == nvir_b_ && scf_.n_occ_alpha == scf_.n_occ_beta);
+    const bool has_beta = (!is_restricted && nocc_b_ > 0 && nvir_b_ > 0);
+
+    B_ia_P_alpha_.resize(static_cast<Eigen::Index>(nocc_a_) * nvir_a_, n_aux);
+    if (has_beta) B_ia_P_beta_.resize(static_cast<Eigen::Index>(nocc_b_) * nvir_b_, n_aux);
 
     const Eigen::MatrixXd& Ca_occ = scf_.C_alpha.leftCols(nocc_a_);
     const Eigen::MatrixXd& Ca_vir = scf_.C_alpha.rightCols(nvir_a_);
-    Eigen::Map<const Eigen::MatrixXd> L_flat(scf_.L_mat.data(), nbf_, nbf_ * n_aux);
+    Eigen::MatrixXd Cb_occ, Cb_vir;
+    if (has_beta) {
+        Cb_occ = scf_.C_beta.leftCols(nocc_b_);
+        Cb_vir = scf_.C_beta.rightCols(nvir_b_);
+    }
 
-    Eigen::MatrixXd X_a = Ca_vir.transpose() * L_flat; 
-    #pragma omp parallel for schedule(static)
-    for (int P = 0; P < n_aux; ++P) {
-        Eigen::Map<Eigen::MatrixXd> X_P(X_a.data() + P * nvir_a_ * nbf_, nvir_a_, nbf_);
-        Eigen::MatrixXd B_MO_a = X_P * Ca_occ; 
-        
-        for (int i = 0; i < nocc_a_; ++i) {
-            for (int a = 0; a < nvir_a_; ++a) {
-                B_ia_P_alpha_(i * nvir_a_ + a, P) = B_MO_a(a, i);
+    constexpr int chunk_size = 128;
+    #pragma omp parallel for schedule(dynamic)
+    for (int P_start = 0; P_start < n_aux; P_start += chunk_size) {
+        const int P_size = std::min(chunk_size, n_aux - P_start);
+        Eigen::Map<const Eigen::MatrixXd> L_res(scf_.L_mat.col(P_start).data(), nbf_, nbf_ * P_size);
+
+        Eigen::MatrixXd X_a = Ca_vir.transpose() * L_res;
+        for (int p = 0; p < P_size; ++p) {
+            Eigen::Map<const Eigen::MatrixXd> X_P(X_a.data() + p * nvir_a_ * nbf_, nvir_a_, nbf_);
+            Eigen::MatrixXd B_mo = X_P * Ca_occ;
+            B_ia_P_alpha_.col(P_start + p) = Eigen::Map<const Eigen::VectorXd>(B_mo.data(), nvir_a_ * nocc_a_);
+        }
+
+        if (has_beta) {
+            Eigen::MatrixXd X_b = Cb_vir.transpose() * L_res;
+            for (int p = 0; p < P_size; ++p) {
+                Eigen::Map<const Eigen::MatrixXd> X_Pb(X_b.data() + p * nvir_b_ * nbf_, nvir_b_, nbf_);
+                Eigen::MatrixXd B_mo_b = X_Pb * Cb_occ;
+                B_ia_P_beta_.col(P_start + p) = Eigen::Map<const Eigen::VectorXd>(B_mo_b.data(), nvir_b_ * nocc_b_);
             }
         }
     }
-
-    if (!is_restricted && nocc_b_ > 0 && nvir_b_ > 0) {
-        B_ia_P_beta_ = Eigen::MatrixXd::Zero(nocc_b_ * nvir_b_, n_aux);
-        const Eigen::MatrixXd& Cb_occ = scf_.C_beta.leftCols(nocc_b_);
-        const Eigen::MatrixXd& Cb_vir = scf_.C_beta.rightCols(nvir_b_);
-        Eigen::MatrixXd X_b = Cb_vir.transpose() * L_flat;
-
-        #pragma omp parallel for schedule(static)
-        for (int P = 0; P < n_aux; ++P) {
-            Eigen::Map<Eigen::MatrixXd> X_P_b(X_b.data() + P * nvir_b_ * nbf_, nvir_b_, nbf_);
-            Eigen::MatrixXd B_MO_b = X_P_b * Cb_occ;
-
-            for (int i = 0; i < nocc_b_; ++i) {
-                for (int a = 0; a < nvir_b_; ++a) {
-                    B_ia_P_beta_(i * nvir_b_ + a, P) = B_MO_b(a, i);
-                }
-            }
-        }
-    }
-
 }
 
 
@@ -149,7 +164,7 @@ void RMP2::compute_amplitudes_and_energy() {
     // TAHAP OPTIMASI: GIANT DGEMM PENGGANTI LOOP .DOT()
     Eigen::MatrixXd G_aa;
     if (!is_exact) {
-        G_aa = B_ia_P_alpha_ * B_ia_P_alpha_.transpose();
+        G_aa = parallel_gemm_abt_mp2(B_ia_P_alpha_, B_ia_P_alpha_);
     }
 
     #pragma omp parallel for collapse(2) reduction(+:e_corr_sum) schedule(static)
@@ -248,7 +263,7 @@ double UMP2::compute_ss_alpha() {
     double e_sum = 0.0;
 
     Eigen::MatrixXd G_aa;
-    if (!is_exact) G_aa = B_ia_P_alpha_ * B_ia_P_alpha_.transpose();
+    if (!is_exact) G_aa = parallel_gemm_abt_mp2(B_ia_P_alpha_, B_ia_P_alpha_);
 
     #pragma omp parallel for collapse(3) reduction(+:e_sum) schedule(static)
     for(int b = 0; b < nvir_a_; ++b) {
@@ -307,7 +322,7 @@ double UMP2::compute_ss_beta() {
 
     // GIANT DGEMM: Hitung seluruh integral (ia|jb)_beta sekaligus dengan BLAS-3
     Eigen::MatrixXd G_bb;
-    if (!is_exact) G_bb = B_ia_P_beta_ * B_ia_P_beta_.transpose();
+    if (!is_exact) G_bb = parallel_gemm_abt_mp2(B_ia_P_beta_, B_ia_P_beta_);
 
     #pragma omp parallel for collapse(3) reduction(+:e_sum) schedule(static)
     for(int b = 0; b < nvir_b_; ++b) {
@@ -368,7 +383,7 @@ double UMP2::compute_os() {
 
     // GIANT DGEMM: Hitung seluruh integral (ia|jb)_alpha_beta sekaligus dengan BLAS-3
     Eigen::MatrixXd G_ab;
-    if (!is_exact) G_ab = B_ia_P_alpha_ * B_ia_P_beta_.transpose();
+    if (!is_exact) G_ab = parallel_gemm_abt_mp2(B_ia_P_alpha_, B_ia_P_beta_);
 
     #pragma omp parallel for collapse(3) reduction(+:e_sum) schedule(static)
     for(int b = 0; b < nvir_b_; ++b) {
@@ -426,14 +441,44 @@ MP2Result UMP2::compute() {
                 Cb_o = Cb.leftCols(nocc_b_);
             }
 
-            for (int P = 0; P < n_aux; ++P) {
-                Eigen::Map<const Eigen::MatrixXd> L_P(scf_.L_mat.col(P).data(), nbf_, nbf_);
-                Eigen::MatrixXd Ta = L_P * Ca_o;
-                Ka.noalias() += Ta * Ta.transpose();
-                if (nocc_b_ > 0) {
-                    Eigen::MatrixXd Tb = L_P * Cb_o;
-                    Kb.noalias() += Tb * Tb.transpose();
+            constexpr int BATCH_P = 32;
+            const int max_threads = omp_get_max_threads();
+            std::vector<Eigen::MatrixXd> Ka_tls(max_threads, Eigen::MatrixXd::Zero(nbf_, nbf_));
+            std::vector<Eigen::MatrixXd> Kb_tls(nocc_b_ > 0 ? max_threads : 0, Eigen::MatrixXd::Zero(nbf_, nbf_));
+
+            #pragma omp parallel
+            {
+                const int tid = omp_get_thread_num();
+                Eigen::MatrixXd Ta_batch(nbf_, nocc_a_ * BATCH_P);
+                Eigen::MatrixXd Tb_batch(nbf_, (nocc_b_ > 0 ? nocc_b_ * BATCH_P : 0));
+                int cnt = 0;
+
+                #pragma omp for schedule(static) nowait
+                for (int P = 0; P < n_aux; ++P) {
+                    Eigen::Map<const Eigen::MatrixXd> L_P(scf_.L_mat.col(P).data(), nbf_, nbf_);
+                    Ta_batch.middleCols(cnt * nocc_a_, nocc_a_).noalias() = L_P * Ca_o;
+                    if (nocc_b_ > 0) {
+                        Tb_batch.middleCols(cnt * nocc_b_, nocc_b_).noalias() = L_P * Cb_o;
+                    }
+                    cnt++;
+                    if (cnt == BATCH_P) {
+                        Ka_tls[tid].noalias() += Ta_batch * Ta_batch.transpose();
+                        if (nocc_b_ > 0) Kb_tls[tid].noalias() += Tb_batch * Tb_batch.transpose();
+                        cnt = 0;
+                    }
                 }
+                if (cnt > 0) {
+                    auto Ta_rem = Ta_batch.leftCols(cnt * nocc_a_);
+                    Ka_tls[tid].noalias() += Ta_rem * Ta_rem.transpose();
+                    if (nocc_b_ > 0) {
+                        auto Tb_rem = Tb_batch.leftCols(cnt * nocc_b_);
+                        Kb_tls[tid].noalias() += Tb_rem * Tb_rem.transpose();
+                    }
+                }
+            }
+            for (int t = 0; t < max_threads; ++t) {
+                Ka.noalias() += Ka_tls[t];
+                if (nocc_b_ > 0) Kb.noalias() += Kb_tls[t];
             }
             Fa = H_core + J_mat - Ka;
             Fb = H_core + J_mat - Kb;
