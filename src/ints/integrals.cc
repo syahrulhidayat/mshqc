@@ -594,6 +594,20 @@ Eigen::MatrixXd IntegralEngine::compute_df_2e_gradient(
     const size_t buf_3c_sz = std::max<size_t>(64, static_cast<size_t>(max_p) * max_p * max_a * 3);
     const size_t buf_2c_sz = std::max<size_t>(64, static_cast<size_t>(max_a) * max_a * 3);
 
+  // [INJECTED_AUDIT_FIX_DF_2E_GRAD_SCREEN]
+  auto block_has_density = [&](int bf1, int dim1, int bf2, int dim2, int bfR, int dimR) -> bool {
+    for (int p = 0; p < dimR; ++p) {
+      const double* g_col = Gamma_tilde_3c.col(bfR + p).data();
+      for (int j = 0; j < dim2; ++j) {
+        const int row_base = (bf2 + j) * n_prim_bf + bf1;
+        for (int i = 0; i < dim1; ++i) {
+          if (std::abs(g_col[row_base + i]) > 1e-14) return true;
+        }
+      }
+    }
+    return false;
+  };
+
     #pragma omp parallel
     {
         Eigen::MatrixXd g_loc = Eigen::MatrixXd::Zero(natm, 3);
@@ -609,7 +623,8 @@ Eigen::MatrixXd IntegralEngine::compute_df_2e_gradient(
                 for (int r = 0; r < n_shells_aux; ++r) {
                     const int abs_r = n_shells_prim + r;
                     const int dimR = aux_dim[r], bfR = aux_bf[r];
-                    int shls[3] = {s1, s2, abs_r};
+                    if (!block_has_density(bf1, dim1, bf2, dim2, bfR, dimR)) continue;
+          int shls[3] = {s1, s2, abs_r};
                     if (!cint3c2e_ip1_sph(buf.data(), shls, const_cast<int*>(atm_.data()), natm,
                                           const_cast<int*>(bas_.data()), nbas, const_cast<double*>(env_.data()), opt_3c_ip1)) continue;
 
@@ -645,7 +660,8 @@ Eigen::MatrixXd IntegralEngine::compute_df_2e_gradient(
                     const int abs_r = n_shells_prim + r;
                     const int atmR = bas_[abs_r * BAS_SLOTS + ATOM_OF];
                     const int dimR = aux_dim[r], bfR = aux_bf[r];
-                    int shls[3] = {s1, s2, abs_r};
+                    if (!block_has_density(bf1, dim1, bf2, dim2, bfR, dimR)) continue;
+          int shls[3] = {s1, s2, abs_r};
                     if (!cint3c2e_ip2_sph(buf.data(), shls, const_cast<int*>(atm_.data()), natm,
                                           const_cast<int*>(bas_.data()), nbas, const_cast<double*>(env_.data()), opt_3c_ip2)) continue;
 

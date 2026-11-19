@@ -125,7 +125,7 @@ void BasisSymmetrizer::build_map_and_matrices() {
                 
                 for (int d = 0; d < dim; ++d) {
                     double phase = get_universal_phase(basis_.shell(i).is_spherical(), l_target, d, sx, sy, sz);
-                    R_ao_[k](start_j + d, start_i + d) = phase;
+          // [INJECTED_AUDIT_FIX_NO_RAO_WRITE]
                     ao_perm_[k][start_i + d] = start_j + d;
                     ao_phase_[k][start_i + d] = phase;
                 }

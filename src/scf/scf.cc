@@ -388,7 +388,8 @@ void BaseSCF::init_integrals_incore() {
 
     double shell_cutoff = 1e-12;
 
-    if (pl_ && pl_->get_unique_quartets().empty()) pl_->build();
+    // [INJECTED_AUDIT_FIX_SCF_CLEANUP]
+  if (pl_ && pl_->get_unique_quartets().empty()) pl_->build(schwarz_, 1e-12);
 
     size_t total_ints = 0;
     auto register_quartet = [&](int M, int N, int P, int Q, double weight) {
@@ -510,7 +511,7 @@ SCFResult BaseSCF::compute() {
     DIIS diis_a(config_.diis_max_vectors);
     DIIS diis_b(config_.diis_max_vectors);
 
-    if (config_.scf_type == "direct") {
+    if (config_.scf_type == "direct" && !config_.use_df && config_.eri_method != "cholesky") {
         fock_engine_ = std::make_unique<FockBuilder>(integrals_, basis_, H_, schwarz_);
         if (pl_) fock_engine_->set_petite_list(pl_.get());
     }
@@ -1527,7 +1528,7 @@ SCFResult ROHF::compute() {
     if (n_alpha_ == n_beta_) { RHF rhf_engine(mol_, basis_, integrals_, pg_, pl_, config_); return rhf_engine.compute(); }
     init_integrals();
     initial_guess();
-    if (config_.scf_type == "direct") {
+    if (config_.scf_type == "direct" && !config_.use_df && config_.eri_method != "cholesky") {
         fock_engine_ = std::make_unique<FockBuilder>(integrals_, basis_, H_, schwarz_);
         if (pl_) fock_engine_->set_petite_list(pl_.get());
     }

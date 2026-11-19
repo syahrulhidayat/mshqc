@@ -503,27 +503,28 @@ void CholeskyERI::save_to_hdf5(const std::string& filename, const std::string& d
     }
 }
 
+// [INJECTED_AUDIT_FIX_CHOL_HDF5_LOAD]
 void CholeskyERI::load_from_hdf5(const std::string& filename, const std::string& dataset_name) {
-    utils::HDF5TensorIO io(filename, utils::HDF5TensorIO::Mode::READ_ONLY);
-    
-    Eigen::Tensor<double, 4> tensor_in = io.read_tensor_4d(dataset_name);
-    
-    long n_vec = tensor_in.dimension(0);
-    n_basis_ = static_cast<int>(tensor_in.dimension(1));
-    long n_pairs = n_basis_ * n_basis_;
-    
-    n_vectors_ = static_cast<int>(n_vec);
-    
-    
-    L_mat_.resize(n_pairs, n_vectors_);
-    
-    for (int k = 0; k < n_vectors_; ++k) {
-        std::array<long, 4> offset = {k, 0, 0, 0};
-        std::array<long, 4> slice_dims = {1, n_basis_, n_basis_, 1};
-        
-        io.read_slice_4d(dataset_name, offset, slice_dims, L_mat_.col(k).data());
+  utils::HDF5TensorIO io(filename, utils::HDF5TensorIO::Mode::READ_ONLY);
+  Eigen::Tensor<double, 4> tensor_in = io.read_tensor_4d(dataset_name);
+
+  const long n_vec = tensor_in.dimension(0);
+  n_basis_ = static_cast<int>(tensor_in.dimension(1));
+  n_vectors_ = static_cast<int>(n_vec);
+  const int n_tri = ao_tri_size(n_basis_);
+
+  L_mat_.resize(n_tri, n_vectors_);
+  #pragma omp parallel for schedule(static)
+  for (int k = 0; k < n_vectors_; ++k) {
+    double* dst = L_mat_.col(k).data();
+    for (int r = 0; r < n_basis_; ++r) {
+      const int base = r * (r + 1) / 2;
+      for (int q = 0; q <= r; ++q) {
+        dst[base + q] = tensor_in(k, r, q, 0);
+      }
     }
-    decomposed_ = true;
+  }
+  decomposed_ = true;
 }
 
 

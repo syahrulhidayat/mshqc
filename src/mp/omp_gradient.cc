@@ -292,11 +292,12 @@ Eigen::VectorXd OMP2::compute_soscf_step(double trust_radius, double& expected_c
             #pragma omp parallel
             {
                 const int tid = omp_get_thread_num();
-                Eigen::MatrixXd T_oo_a(na_, va_), T_vo_a(va_, na_);
-                Eigen::MatrixXd T_oo_b, T_vo_b;
+                // [INJECTED_AUDIT_FIX_SOSCF_O2V]
+      Eigen::MatrixXd T_oo_a(na_, va_), T_oo2_a(na_, na_);
+                Eigen::MatrixXd T_oo_b, T_oo2_b;
                 if (!is_restricted && dim_b > 0) {
-                    T_oo_b.resize(nb_, vb_);
-                    T_vo_b.resize(vb_, nb_);
+                  T_oo_b.resize(nb_, vb_);
+                  T_oo2_b.resize(nb_, nb_);
                 }
 
                 #pragma omp for schedule(static) nowait
@@ -307,8 +308,8 @@ Eigen::VectorXd OMP2::compute_soscf_step(double trust_radius, double& expected_c
                         Eigen::Map<const Eigen::MatrixXd> Bvv_a(B_vv_P_alpha_.col(P).data(), va_, va_);
                         T_oo_a.noalias() = Boo_a * kappa_a;
                         Ka_tls[tid].noalias() += T_oo_a * Bvv_a;
-                        T_vo_a.noalias() = Bvo_a * kappa_a;
-                        Ka_tls[tid].noalias() += (T_vo_a * Bvo_a).transpose();
+                        T_oo2_a.noalias() = kappa_a * Bvo_a;
+          Ka_tls[tid].noalias() += T_oo2_a.transpose() * Bvo_a.transpose();
                     }
                     if (!is_restricted && dim_b > 0 && B_oo_P_beta_.cols() == n_aux) {
                         Eigen::Map<const Eigen::MatrixXd> Boo_b(B_oo_P_beta_.col(P).data(), nb_, nb_);
@@ -316,8 +317,8 @@ Eigen::VectorXd OMP2::compute_soscf_step(double trust_radius, double& expected_c
                         Eigen::Map<const Eigen::MatrixXd> Bvv_b(B_vv_P_beta_.col(P).data(), vb_, vb_);
                         T_oo_b.noalias() = Boo_b * kappa_b;
                         Kb_tls[tid].noalias() += T_oo_b * Bvv_b;
-                        T_vo_b.noalias() = Bvo_b * kappa_b;
-                        Kb_tls[tid].noalias() += (T_vo_b * Bvo_b).transpose();
+                        T_oo2_b.noalias() = kappa_b * Bvo_b;
+          Kb_tls[tid].noalias() += T_oo2_b.transpose() * Bvo_b.transpose();
                     }
                 }
             }
@@ -497,7 +498,7 @@ Eigen::MatrixXd OMP2::solve_cphf_pcg_ov(const Eigen::MatrixXd& Z_ov, const Eigen
             #pragma omp parallel
             {
                 const int tid = omp_get_thread_num();
-                Eigen::MatrixXd T_oo(na, va), T_vo(va, na);
+                Eigen::MatrixXd T_oo(na, va), T_oo2(na, na);
                 #pragma omp for schedule(static) nowait
                 for (int K = 0; K < n_aux_cphf; ++K) {
                     Eigen::Map<const Eigen::MatrixXd> Boo(B_oo_P_alpha_.col(K).data(), na, na);
@@ -505,8 +506,8 @@ Eigen::MatrixXd OMP2::solve_cphf_pcg_ov(const Eigen::MatrixXd& Z_ov, const Eigen
                     Eigen::Map<const Eigen::MatrixXd> Bvv(B_vv_P_alpha_.col(K).data(), va, va);
                     T_oo.noalias() = Boo * kappa_ov;
                     K_tls[tid].noalias() += (T_oo * Bvv).transpose();
-                    T_vo.noalias() = Bvo * kappa_ov;
-                    K_tls[tid].noalias() += T_vo * Bvo;
+                    T_oo2.noalias() = kappa_ov * Bvo;
+          K_tls[tid].noalias() += Bvo * T_oo2;
                 }
             }
             for (int t = 0; t < max_t; ++t) {

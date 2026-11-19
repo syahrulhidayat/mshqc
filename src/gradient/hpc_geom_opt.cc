@@ -260,6 +260,23 @@ struct GradCurvatureResult {
   Eigen::VectorXi has_curv;
 };
 
+// [INJECTED_AUDIT_FIX_ROHF_WARMSTART_FREQ]
+struct WarmStartGuess {
+  bool has_scf = false;
+  bool has_omp = false;
+  Eigen::MatrixXd scf_C_alpha;
+  Eigen::MatrixXd scf_C_beta;
+  Eigen::MatrixXd omp_C_alpha;
+  Eigen::MatrixXd omp_C_beta;
+};
+
+double evaluate_single_point_with_guess(
+    const Molecule& mol,
+    const GeomOptConfig& cfg,
+    const WarmStartGuess* guess_in,
+    WarmStartGuess* guess_out);
+
+
 // [INJECTED_PRIORITAS_2E_ANALYTIC_GRAD]
 Eigen::MatrixXd compute_nuclear_repulsion_gradient(const Molecule& mol) {
   const int natoms = static_cast<int>(mol.n_atoms());
@@ -368,57 +385,77 @@ bool supports_analytic_df_gradient(const GeomOptConfig& cfg) {
 
 GradCurvatureResult compute_analytic_df_gradient_internal(
     const Molecule& mol,
-    const GeomOptConfig& cfg) {
+    const GeomOptConfig& cfg,
+    const WarmStartGuess* guess_in = nullptr,
+    WarmStartGuess* guess_out = nullptr) {
 
   ScopedCoutSilencer silencer(true);
   const int natoms = static_cast<int>(mol.n_atoms());
-  const int ndof   = 3 * natoms;
+  const int ndof = 3 * natoms;
 
   GradCurvatureResult out;
-  out.grad      = Eigen::VectorXd::Zero(ndof);
+  out.grad = Eigen::VectorXd::Zero(ndof);
   out.diag_curv = Eigen::VectorXd::Zero(ndof);
-  out.has_curv  = Eigen::VectorXi::Zero(ndof);
+  out.has_curv = Eigen::VectorXi::Zero(ndof);
 
   std::string method = to_lower_copy(cfg.method);
   if (method.rfind("df-", 0) == 0 || method.rfind("df_", 0) == 0) method = method.substr(3);
 
   const std::string basis_name = cfg.basis_name.empty() ? "cc-pVDZ" : cfg.basis_name;
-  const std::string aux_name   = cfg.aux_basis_name.empty() ? (basis_name + "-RI") : cfg.aux_basis_name;
+  const std::string aux_name = cfg.aux_basis_name.empty() ? (basis_name + "-RI") : cfg.aux_basis_name;
 
   BasisSet basis(basis_name, mol);
   auto integrals = std::make_shared<IntegralEngine>(mol, basis);
   const int nbf = basis.n_basis_functions();
 
   const int n_elec = mol.n_electrons();
-  const int mult   = mol.multiplicity();
-  const int na     = (n_elec + mult - 1) / 2;
-  const int nb     = n_elec - na;
+  const int mult = mol.multiplicity();
+  const int na = (n_elec + mult - 1) / 2;
+  const int nb = n_elec - na;
 
   std::string ref = to_lower_copy(cfg.reference);
   if (ref.empty() || ref == "auto") {
     if (method == "rhf") ref = "rhf";
+    else if (method == "rohf") ref = "rohf";
     else if (method == "uhf") ref = "uhf";
     else ref = (mult == 1) ? "rhf" : "uhf";
   }
 
   SCFConfig scf_conf;
-  scf_conf.scf_type          = "incore";
-  scf_conf.eri_method        = "df";
-  scf_conf.use_df            = true;
-  scf_conf.aux_basis_name    = aux_name;
-  scf_conf.energy_threshold  = (cfg.energy_thresh > 0.0) ? std::min(1.0e-12, cfg.energy_thresh) : 1.0e-12;
+  scf_conf.scf_type = "incore";
+  scf_conf.eri_method = "df";
+  scf_conf.use_df = true;
+  scf_conf.aux_basis_name = aux_name;
+  scf_conf.energy_threshold = (cfg.energy_thresh > 0.0) ? std::min(1.0e-12, cfg.energy_thresh) : 1.0e-12;
   scf_conf.density_threshold = scf_conf.energy_threshold;
-  scf_conf.df_threshold      = std::min(1.0e-12, scf_conf.energy_threshold);
-  scf_conf.print_level       = 0;
-  scf_conf.max_iterations    = 200;
+  scf_conf.df_threshold = std::min(1.0e-12, scf_conf.energy_threshold);
+  scf_conf.print_level = 0;
+  scf_conf.max_iterations = 200;
+
+  if (guess_in && guess_in->has_scf && guess_in->scf_C_alpha.rows() == nbf) {
+    scf_conf.has_initial_guess = true;
+    scf_conf.init_C_alpha = guess_in->scf_C_alpha;
+    if (guess_in->scf_C_beta.rows() == nbf) {
+      scf_conf.init_C_beta = guess_in->scf_C_beta;
+    }
+  }
 
   SCFResult scf_res;
   if (ref == "rhf") {
     RHF solver(mol, basis, integrals, scf_conf);
     scf_res = solver.compute();
+  } else if (ref == "rohf") {
+    ROHF solver(mol, basis, integrals, na, nb, scf_conf);
+    scf_res = solver.compute();
   } else {
     UHF solver(mol, basis, integrals, na, nb, scf_conf);
     scf_res = solver.compute();
+  }
+
+  if (guess_out) {
+    guess_out->scf_C_alpha = scf_res.C_alpha;
+    guess_out->scf_C_beta = scf_res.C_beta;
+    guess_out->has_scf = (scf_res.C_alpha.rows() == nbf);
   }
 
   Eigen::MatrixXd P_eff_ao, W_eff_ao, Gamma_3c, gamma_2c;
@@ -426,20 +463,34 @@ GradCurvatureResult compute_analytic_df_gradient_internal(
 
   if (method == "omp2") {
     MP2Config mp2_conf;
-    mp2_conf.scf_type           = "incore";
-    mp2_conf.eri_method         = "df";
-    mp2_conf.use_df             = true;
-    mp2_conf.aux_basis_name     = aux_name;
-    mp2_conf.energy_threshold   = scf_conf.energy_threshold;
-    mp2_conf.df_threshold       = scf_conf.df_threshold;
+    mp2_conf.scf_type = "incore";
+    mp2_conf.eri_method = "df";
+    mp2_conf.use_df = true;
+    mp2_conf.aux_basis_name = aux_name;
+    mp2_conf.energy_threshold = scf_conf.energy_threshold;
+    mp2_conf.df_threshold = scf_conf.df_threshold;
     mp2_conf.gradient_threshold = (cfg.orb_grad_thresh > 0.0) ? std::min(1.0e-10, cfg.orb_grad_thresh) : 1.0e-10;
-    mp2_conf.opt_method         = cfg.opt_method;
-    mp2_conf.print_level        = 0;
-    mp2_conf.max_iterations     = 100;
+    mp2_conf.opt_method = cfg.opt_method;
+    mp2_conf.print_level = 0;
+    mp2_conf.max_iterations = 100;
+
+    if (guess_in && guess_in->has_omp && guess_in->omp_C_alpha.rows() == nbf) {
+      mp2_conf.has_initial_guess = true;
+      mp2_conf.init_C_alpha = guess_in->omp_C_alpha;
+      if (guess_in->omp_C_beta.rows() == nbf) {
+        mp2_conf.init_C_beta = guess_in->omp_C_beta;
+      }
+    }
 
     OMP2 omp2_solver(mol, basis, integrals, scf_res, mp2_conf);
     MP2Result omp2_res = omp2_solver.compute();
     out.energy = omp2_res.energy_total;
+
+    if (guess_out) {
+      guess_out->omp_C_alpha = omp2_res.C_alpha;
+      guess_out->omp_C_beta = omp2_res.C_beta;
+      guess_out->has_omp = (omp2_res.C_alpha.rows() == nbf);
+    }
 
     OMP2GradientData gd = omp2_solver.build_df_gradient_data();
     P_eff_ao = std::move(gd.P_eff_ao);
@@ -454,35 +505,34 @@ GradCurvatureResult compute_analytic_df_gradient_internal(
     P_eff_ao = Pa + Pb;
 
     const Eigen::MatrixXd Ca_o = scf_res.C_alpha.leftCols(na);
-        if (ref == "rohf") {
-            // [INJECTED_FINAL_OPT_ROHF_PULAY_LAGRANGIAN]
-            const int n_c = nb;
-            const int n_o = na - nb;
-            const Eigen::MatrixXd& C = scf_res.C_alpha;
-            Eigen::MatrixXd Fa_mo = C.transpose() * scf_res.F_alpha * C;
-            Eigen::MatrixXd Fb_mo = C.transpose() * scf_res.F_beta * C;
-            Eigen::MatrixXd W_mo = Eigen::MatrixXd::Zero(nbf, nbf);
-            if (n_c > 0) {
-                W_mo.topLeftCorner(n_c, n_c) = Fa_mo.topLeftCorner(n_c, n_c) + Fb_mo.topLeftCorner(n_c, n_c);
-            }
-            if (n_o > 0) {
-                W_mo.block(n_c, n_c, n_o, n_o) = Fa_mo.block(n_c, n_c, n_o, n_o);
-            }
-            if (n_c > 0 && n_o > 0) {
-                Eigen::MatrixXd W_co = Fa_mo.block(0, n_c, n_c, n_o) + 0.5 * Fb_mo.block(0, n_c, n_c, n_o);
-                W_mo.block(0, n_c, n_c, n_o) = W_co;
-                W_mo.block(n_c, 0, n_o, n_c) = W_co.transpose();
-            }
-            W_eff_ao = C * W_mo * C.transpose();
-        } else {
-            W_eff_ao = Ca_o * scf_res.orbital_energies_alpha.head(na).asDiagonal() * Ca_o.transpose();
-            if (is_rhf) {
-                W_eff_ao *= 2.0;
-            } else if (nb > 0) {
-                const Eigen::MatrixXd Cb_o = scf_res.C_beta.leftCols(nb);
-                W_eff_ao.noalias() += Cb_o * scf_res.orbital_energies_beta.head(nb).asDiagonal() * Cb_o.transpose();
-            }
-        }
+    if (ref == "rohf") {
+      const int n_c = nb;
+      const int n_o = na - nb;
+      const Eigen::MatrixXd& C = scf_res.C_alpha;
+      Eigen::MatrixXd Fa_mo = C.transpose() * scf_res.F_alpha * C;
+      Eigen::MatrixXd Fb_mo = C.transpose() * scf_res.F_beta * C;
+      Eigen::MatrixXd W_mo = Eigen::MatrixXd::Zero(nbf, nbf);
+      if (n_c > 0) {
+        W_mo.topLeftCorner(n_c, n_c) = Fa_mo.topLeftCorner(n_c, n_c) + Fb_mo.topLeftCorner(n_c, n_c);
+      }
+      if (n_o > 0) {
+        W_mo.block(n_c, n_c, n_o, n_o) = Fa_mo.block(n_c, n_c, n_o, n_o);
+      }
+      if (n_c > 0 && n_o > 0) {
+        Eigen::MatrixXd W_co = Fa_mo.block(0, n_c, n_c, n_o) + 0.5 * Fb_mo.block(0, n_c, n_c, n_o);
+        W_mo.block(0, n_c, n_c, n_o) = W_co;
+        W_mo.block(n_c, 0, n_o, n_c) = W_co.transpose();
+      }
+      W_eff_ao = C * W_mo * C.transpose();
+    } else {
+      W_eff_ao = Ca_o * scf_res.orbital_energies_alpha.head(na).asDiagonal() * Ca_o.transpose();
+      if (is_rhf) {
+        W_eff_ao *= 2.0;
+      } else if (nb > 0) {
+        const Eigen::MatrixXd Cb_o = scf_res.C_beta.leftCols(nb);
+        W_eff_ao.noalias() += Cb_o * scf_res.orbital_energies_beta.head(nb).asDiagonal() * Cb_o.transpose();
+      }
+    }
 
     const bool is_packed = integrals::is_packed_ao_matrix(scf_res.L_mat, nbf);
     Eigen::VectorXd c_vec = integrals::contract_ao_factor_with_sym(scf_res.L_mat, P_eff_ao, nbf);
@@ -545,11 +595,11 @@ GradCurvatureResult compute_analytic_df_gradient_internal(
   }
 
   Eigen::MatrixXd g_tot = compute_nuclear_repulsion_gradient(mol)
-                        + integrals->compute_1e_gradient(P_eff_ao, W_eff_ao)
-                        + df_ints->compute_df_2e_gradient(
-                              basis.n_shells(), aux_basis.n_shells(),
-                              nbf, aux_basis.n_basis_functions(),
-                              Gamma_tilde, gamma_tilde);
+      + integrals->compute_1e_gradient(P_eff_ao, W_eff_ao)
+      + df_ints->compute_df_2e_gradient(
+          basis.n_shells(), aux_basis.n_shells(),
+          nbf, aux_basis.n_basis_functions(),
+          Gamma_tilde, gamma_tilde);
 
   Eigen::VectorXd x0(ndof);
   std::vector<double> masses(natoms);
@@ -573,10 +623,11 @@ GradCurvatureResult compute_analytic_df_gradient_internal(
 // dari titik-titik stensil yang sama tanpa tambahan evaluasi single-point.
 GradCurvatureResult compute_gradient_and_curvature_internal(
     const Molecule& mol,
-    const GeomOptConfig& cfg) {
+    const GeomOptConfig& cfg,
+    WarmStartGuess* guess_io = nullptr) {
 
   if (supports_analytic_df_gradient(cfg)) {
-    return compute_analytic_df_gradient_internal(mol, cfg);
+    return compute_analytic_df_gradient_internal(mol, cfg, guess_io, guess_io);
   }
 
   const int natoms = static_cast<int>(mol.n_atoms());
@@ -590,8 +641,11 @@ GradCurvatureResult compute_gradient_and_curvature_internal(
     masses[i] = get_exact_isotopic_mass(mol.atom(i).atomic_number);
   }
 
+  WarmStartGuess center_guess;
   GradCurvatureResult out;
-  out.energy = HPCGeometryOptimizer::evaluate_single_point_cpp(mol, cfg);
+  out.energy = evaluate_single_point_with_guess(mol, cfg, guess_io, &center_guess);
+  if (guess_io) *guess_io = center_guess;
+
   out.grad = Eigen::VectorXd::Zero(ndof);
   out.diag_curv = Eigen::VectorXd::Zero(ndof);
   out.has_curv = Eigen::VectorXi::Zero(ndof);
@@ -599,7 +653,6 @@ GradCurvatureResult compute_gradient_and_curvature_internal(
   if (natoms <= 1) {
     return out;
   }
-
 
   const double h = (cfg.fd_step_bohr > 0.0) ? cfg.fd_step_bohr : 5.0e-4;
 
@@ -622,10 +675,10 @@ GradCurvatureResult compute_gradient_and_curvature_internal(
       xp(3 * a + xyz) += h;
       xm(3 * a + xyz) -= h;
 
-      const double ep = HPCGeometryOptimizer::evaluate_single_point_cpp(
-          make_displaced_molecule(mol, xp), cfg);
-      const double em = HPCGeometryOptimizer::evaluate_single_point_cpp(
-          make_displaced_molecule(mol, xm), cfg);
+      const double ep = evaluate_single_point_with_guess(
+          make_displaced_molecule(mol, xp), cfg, &center_guess, nullptr);
+      const double em = evaluate_single_point_with_guess(
+          make_displaced_molecule(mol, xm), cfg, &center_guess, nullptr);
 
       out.grad(3 * a + xyz) = (ep - em) / (2.0 * h);
       const double curv = (ep - 2.0 * out.energy + em) / (h * h);
@@ -636,7 +689,6 @@ GradCurvatureResult compute_gradient_and_curvature_internal(
     }
   }
 
-  // Suku atom terakhir dari invarian translasi eksak (Hukum III Newton)
   for (int xyz = 0; xyz < 3; ++xyz) {
     double sum_other = 0.0;
     for (int a = 0; a < natoms - 1; ++a) {
@@ -652,11 +704,11 @@ GradCurvatureResult compute_gradient_and_curvature_internal(
   return out;
 }
 
-} // namespace
-
-double HPCGeometryOptimizer::evaluate_single_point_cpp(
+double evaluate_single_point_with_guess(
     const Molecule& mol,
-    const GeomOptConfig& cfg) {
+    const GeomOptConfig& cfg,
+    const WarmStartGuess* guess_in,
+    WarmStartGuess* guess_out) {
 
   ScopedCoutSilencer silencer(true);
 
@@ -675,6 +727,7 @@ double HPCGeometryOptimizer::evaluate_single_point_cpp(
   std::string basis_name = cfg.basis_name.empty() ? "cc-pVDZ" : cfg.basis_name;
   BasisSet basis(basis_name, mol);
   auto integrals = std::make_shared<IntegralEngine>(mol, basis);
+  const int nbf = basis.n_basis_functions();
 
   int n_elec = mol.n_electrons();
   int mult = mol.multiplicity();
@@ -708,6 +761,14 @@ double HPCGeometryOptimizer::evaluate_single_point_cpp(
   scf_conf.print_level = 0;
   scf_conf.max_iterations = 200;
 
+  if (guess_in && guess_in->has_scf && guess_in->scf_C_alpha.rows() == nbf) {
+    scf_conf.has_initial_guess = true;
+    scf_conf.init_C_alpha = guess_in->scf_C_alpha;
+    if (guess_in->scf_C_beta.rows() == nbf) {
+      scf_conf.init_C_beta = guess_in->scf_C_beta;
+    }
+  }
+
   SCFResult scf_res;
   if (ref == "rhf") {
     RHF rhf_solver(mol, basis, integrals, scf_conf);
@@ -718,6 +779,12 @@ double HPCGeometryOptimizer::evaluate_single_point_cpp(
   } else {
     UHF uhf_solver(mol, basis, integrals, na, nb, scf_conf);
     scf_res = uhf_solver.compute();
+  }
+
+  if (guess_out) {
+    guess_out->scf_C_alpha = scf_res.C_alpha;
+    guess_out->scf_C_beta = scf_res.C_beta;
+    guess_out->has_scf = (scf_res.C_alpha.rows() == nbf);
   }
 
   if (method == "scf" || method == "hf" || method == "rhf" || method == "uhf" || method == "rohf") {
@@ -736,6 +803,14 @@ double HPCGeometryOptimizer::evaluate_single_point_cpp(
   mp2_conf.opt_method = cfg.opt_method;
   mp2_conf.print_level = 0;
   mp2_conf.max_iterations = 100;
+
+  if (guess_in && guess_in->has_omp && guess_in->omp_C_alpha.rows() == nbf) {
+    mp2_conf.has_initial_guess = true;
+    mp2_conf.init_C_alpha = guess_in->omp_C_alpha;
+    if (guess_in->omp_C_beta.rows() == nbf) {
+      mp2_conf.init_C_beta = guess_in->omp_C_beta;
+    }
+  }
 
   if (method == "mp2" || method == "rmp2" || method == "ump2" || method == "romp2") {
     if (method == "rmp2" || (method == "mp2" && ref == "rhf")) {
@@ -771,15 +846,35 @@ double HPCGeometryOptimizer::evaluate_single_point_cpp(
 
   if (method == "omp2") {
     OMP2 solver(mol, basis, integrals, scf_res, mp2_conf);
-    return solver.compute().energy_total;
+    MP2Result r = solver.compute();
+    if (guess_out) {
+      guess_out->omp_C_alpha = r.C_alpha;
+      guess_out->omp_C_beta = r.C_beta;
+      guess_out->has_omp = (r.C_alpha.rows() == nbf);
+    }
+    return r.energy_total;
   }
 
   if (method == "omp3") {
     OMP3 solver(mol, basis, integrals, scf_res, mp2_conf);
-    return solver.compute_omp3().e_total;
+    MP3Result r = solver.compute_omp3();
+    if (guess_out) {
+      guess_out->omp_C_alpha = r.C_alpha;
+      guess_out->omp_C_beta = r.C_beta;
+      guess_out->has_omp = (r.C_alpha.rows() == nbf);
+    }
+    return r.e_total;
   }
 
   throw std::invalid_argument("Metode tidak dikenali pada HPCGeometryOptimizer: " + cfg.method);
+}
+
+} // namespace
+
+double HPCGeometryOptimizer::evaluate_single_point_cpp(
+    const Molecule& mol,
+    const GeomOptConfig& cfg) {
+  return evaluate_single_point_with_guess(mol, cfg, nullptr, nullptr);
 }
 
 Eigen::VectorXd HPCGeometryOptimizer::project_out_trans_rot(
@@ -854,6 +949,7 @@ GeomOptResult HPCGeometryOptimizer::optimize_molecule(
   double pred_de_last = 0.0;
   bool hit_boundary_last = false;
   double tr = cfg.trust_radius_init;
+  WarmStartGuess opt_guess;
 
   if (cfg.verbose) {
     std::cout << "============================================================================\n";
@@ -866,7 +962,7 @@ GeomOptResult HPCGeometryOptimizer::optimize_molecule(
 
   for (int iter = 0; iter < cfg.max_iter; ++iter) {
     Molecule cur_mol = make_displaced_molecule(mol, x);
-    GradCurvatureResult gc = compute_gradient_and_curvature_internal(cur_mol, cfg);
+    GradCurvatureResult gc = compute_gradient_and_curvature_internal(cur_mol, cfg, &opt_guess);
     double energy = gc.energy;
     g = gc.grad;
 
@@ -875,7 +971,7 @@ GeomOptResult HPCGeometryOptimizer::optimize_molecule(
       tr = std::max(cfg.trust_radius_min, 0.4 * (x - x_prev).norm());
       x = 0.5 * (x + x_prev);
       cur_mol = make_displaced_molecule(mol, x);
-      gc = compute_gradient_and_curvature_internal(cur_mol, cfg);
+      gc = compute_gradient_and_curvature_internal(cur_mol, cfg, &opt_guess);
       energy = gc.energy;
       g = gc.grad;
     }
@@ -1033,7 +1129,7 @@ GeomOptResult HPCGeometryOptimizer::optimize_molecule(
     if ((grad_ok && step_ok) || tight_grad || quadratic_polish_ok || stationary_ok || natoms <= 1) {
       if (natoms > 1 && pred_de_last <= 0.0 && dx_rms > 0.0 && dx_rms < 1.0e-4) {
         Eigen::VectorXd x_polish = x + dx;
-        double e_polish = evaluate_single_point_cpp(make_displaced_molecule(mol, x_polish), cfg);
+        double e_polish = evaluate_single_point_with_guess(make_displaced_molecule(mol, x_polish), cfg, &opt_guess, nullptr);
         if (e_polish <= energy + 1.0e-12) {
             x = x_polish;
             if (!res.energy_history.empty()) {
@@ -1129,53 +1225,76 @@ VibThermoResult HPCGeometryOptimizer::compute_frequencies(
     masses[i] = get_exact_isotopic_mass(mol.atom(i).atomic_number);
   }
 
-  double e0 = evaluate_single_point_cpp(mol, cfg);
+  WarmStartGuess freq_guess;
+  double e0 = evaluate_single_point_with_guess(mol, cfg, nullptr, &freq_guess);
   Eigen::MatrixXd hess = Eigen::MatrixXd::Zero(ndof, ndof);
   const double h = 2.0e-3;
-  const double inv_h2 = 1.0 / (h * h);
   const int n_indep = 3 * std::max(0, natoms - 1);
 
-  std::vector<double> ep_1d(n_indep, 0.0);
-  std::vector<double> em_1d(n_indep, 0.0);
-
-  // 1. Evaluasi 1D (+h, -h) untuk elemen diagonal H_{kk}
-  for (int k = 0; k < n_indep; ++k) {
-    Eigen::VectorXd xp = x0, xm = x0;
-    xp(k) += h;
-    xm(k) -= h;
-    ep_1d[k] = evaluate_single_point_cpp(make_displaced_molecule(mol, xp), cfg);
-    em_1d[k] = evaluate_single_point_cpp(make_displaced_molecule(mol, xm), cfg);
-    hess(k, k) = (ep_1d[k] - 2.0 * e0 + em_1d[k]) * inv_h2;
-  }
-
-  // 2. Evaluasi 2D simetris (+h,+h) dan (-h,-h) untuk elemen non-diagonal H_{kl} (k < l)
-  for (int k = 0; k < n_indep; ++k) {
-    for (int l = k + 1; l < n_indep; ++l) {
-      Eigen::VectorXd xpp = x0, xmm = x0;
-      xpp(k) += h; xpp(l) += h;
-      xmm(k) -= h; xmm(l) -= h;
-      const double epp = evaluate_single_point_cpp(make_displaced_molecule(mol, xpp), cfg);
-      const double emm = evaluate_single_point_cpp(make_displaced_molecule(mol, xmm), cfg);
-      const double h_kl = 0.5 * (epp + emm - ep_1d[k] - em_1d[k] - ep_1d[l] - em_1d[l] + 2.0 * e0) * inv_h2;
-      hess(k, l) = h_kl;
-      hess(l, k) = h_kl;
-    }
-  }
-
-  // 3. Rekonstruksi baris & kolom atom terakhir dari invarian translasi eksak (Hukum III Newton)
-  for (int xyz = 0; xyz < 3; ++xyz) {
+  if (supports_analytic_df_gradient(cfg)) {
+    // O(N) Hessian via Central Finite-Difference Gradien Analitik (hanya 6*(N-1) evaluasi!)
+    GeomOptConfig grad_cfg = cfg;
+    grad_cfg.project_trans_rot = false;
+    const double inv_2h = 1.0 / (2.0 * h);
     for (int k = 0; k < n_indep; ++k) {
-      double s = 0.0;
-      for (int a = 0; a < natoms - 1; ++a) s += hess(k, 3 * a + xyz);
-      hess(k, n_indep + xyz) = -s;
-      hess(n_indep + xyz, k) = -s;
+      Eigen::VectorXd xp = x0, xm = x0;
+      xp(k) += h;
+      xm(k) -= h;
+      GradCurvatureResult gp = compute_analytic_df_gradient_internal(
+          make_displaced_molecule(mol, xp), grad_cfg, &freq_guess, nullptr);
+      GradCurvatureResult gm = compute_analytic_df_gradient_internal(
+          make_displaced_molecule(mol, xm), grad_cfg, &freq_guess, nullptr);
+      hess.col(k) = (gp.grad - gm.grad) * inv_2h;
     }
-  }
-  for (int x1 = 0; x1 < 3; ++x1) {
-    for (int x2 = 0; x2 < 3; ++x2) {
-      double s = 0.0;
-      for (int a = 0; a < natoms - 1; ++a) s += hess(n_indep + x1, 3 * a + x2);
-      hess(n_indep + x1, n_indep + x2) = -s;
+    // Lengkapi kolom atom terakhir dari invarian translasi eksak
+    for (int xyz = 0; xyz < 3; ++xyz) {
+      for (int r = 0; r < ndof; ++r) {
+        double s = 0.0;
+        for (int a = 0; a < natoms - 1; ++a) s += hess(r, 3 * a + xyz);
+        hess(r, n_indep + xyz) = -s;
+      }
+    }
+  } else {
+    const double inv_h2 = 1.0 / (h * h);
+    std::vector<double> ep_1d(n_indep, 0.0);
+    std::vector<double> em_1d(n_indep, 0.0);
+
+    for (int k = 0; k < n_indep; ++k) {
+      Eigen::VectorXd xp = x0, xm = x0;
+      xp(k) += h;
+      xm(k) -= h;
+      ep_1d[k] = evaluate_single_point_with_guess(make_displaced_molecule(mol, xp), cfg, &freq_guess, nullptr);
+      em_1d[k] = evaluate_single_point_with_guess(make_displaced_molecule(mol, xm), cfg, &freq_guess, nullptr);
+      hess(k, k) = (ep_1d[k] - 2.0 * e0 + em_1d[k]) * inv_h2;
+    }
+
+    for (int k = 0; k < n_indep; ++k) {
+      for (int l = k + 1; l < n_indep; ++l) {
+        Eigen::VectorXd xpp = x0, xmm = x0;
+        xpp(k) += h; xpp(l) += h;
+        xmm(k) -= h; xmm(l) -= h;
+        const double epp = evaluate_single_point_with_guess(make_displaced_molecule(mol, xpp), cfg, &freq_guess, nullptr);
+        const double emm = evaluate_single_point_with_guess(make_displaced_molecule(mol, xmm), cfg, &freq_guess, nullptr);
+        const double h_kl = 0.5 * (epp + emm - ep_1d[k] - em_1d[k] - ep_1d[l] - em_1d[l] + 2.0 * e0) * inv_h2;
+        hess(k, l) = h_kl;
+        hess(l, k) = h_kl;
+      }
+    }
+
+    for (int xyz = 0; xyz < 3; ++xyz) {
+      for (int k = 0; k < n_indep; ++k) {
+        double s = 0.0;
+        for (int a = 0; a < natoms - 1; ++a) s += hess(k, 3 * a + xyz);
+        hess(k, n_indep + xyz) = -s;
+        hess(n_indep + xyz, k) = -s;
+      }
+    }
+    for (int x1 = 0; x1 < 3; ++x1) {
+      for (int x2 = 0; x2 < 3; ++x2) {
+        double s = 0.0;
+        for (int a = 0; a < natoms - 1; ++a) s += hess(n_indep + x1, 3 * a + x2);
+        hess(n_indep + x1, n_indep + x2) = -s;
+      }
     }
   }
   hess = 0.5 * (hess + hess.transpose());
@@ -1282,11 +1401,12 @@ std::vector<PESScanPoint> HPCGeometryOptimizer::scan_bond_pes(
   Eigen::Vector3d u_ij = (r0 > 1.0e-8) ? (vij / r0) : Eigen::Vector3d(0.0, 0.0, 1.0);
 
   std::vector<PESScanPoint> pts;
+  WarmStartGuess scan_guess;
   for (double r_ang : distances_angstrom) {
     double r_bohr = r_ang * ANGSTROM_TO_BOHR;
     Eigen::VectorXd x_scan = x0;
     x_scan.segment<3>(3 * atom_j) = x0.segment<3>(3 * atom_i) + r_bohr * u_ij;
-    double e_val = evaluate_single_point_cpp(make_displaced_molecule(mol, x_scan), cfg);
+    double e_val = evaluate_single_point_with_guess(make_displaced_molecule(mol, x_scan), cfg, &scan_guess, &scan_guess);
     pts.push_back({r_ang, r_bohr, e_val});
   }
   return pts;

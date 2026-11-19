@@ -589,8 +589,17 @@ MP3Result UMP3::compute() {
     Eigen::MatrixXd Bov_a_saved, Bov_b_saved;
 
     if (f_a > 0 || f_b > 0) {
-        const int na_act = no_a_ - f_a;
+        // [INJECTED_AUDIT_FIX_UMP3_FROZEN_GUARD]
+const int na_act = no_a_ - f_a;
         const int nb_act = no_b_ - f_b;
+    if (na_act <= 0 || nv_a_ <= 0) {
+      MP3Result empty_res;
+      empty_res.e_hf = scf_.energy_total;
+      empty_res.e_mp2 = mp2_.energy_mp2_corr;
+      empty_res.e_corr_total = empty_res.e_mp2;
+      empty_res.e_total = empty_res.e_hf + empty_res.e_corr_total;
+      return empty_res;
+    }
         t2_aa_saved = std::move(t2_aa_);
         t2_aa_ = Eigen::Tensor<double, 4>(na_act, na_act, nv_a_, nv_a_);
         #pragma omp parallel for collapse(4) schedule(static)
@@ -621,8 +630,10 @@ MP3Result UMP3::compute() {
                             t2_ab_(i, j, a, b) = t2_ab_saved(f_a + i, f_b + j, a, b);
         }
         if (config_.eri_method != "exact") {
-            Bov_a_saved = std::move(mp2_.B_ia_P_alpha);
-            mp2_.B_ia_P_alpha = Bov_a_saved.bottomRows(static_cast<Eigen::Index>(na_act) * nv_a_);
+            if (mp2_.B_ia_P_alpha.rows() >= static_cast<Eigen::Index>(no_a_) * nv_a_) {
+        Bov_a_saved = std::move(mp2_.B_ia_P_alpha);
+        mp2_.B_ia_P_alpha = Bov_a_saved.bottomRows(static_cast<Eigen::Index>(na_act) * nv_a_);
+      }
             if (Bov_b_saved.rows() == 0 && mp2_.B_ia_P_beta.rows() > 0 && nb_act > 0) {
                 Bov_b_saved = std::move(mp2_.B_ia_P_beta);
                 mp2_.B_ia_P_beta = Bov_b_saved.bottomRows(static_cast<Eigen::Index>(nb_act) * nv_b_);
