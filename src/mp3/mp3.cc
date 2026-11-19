@@ -1995,8 +1995,10 @@ void OMP3::build_opdm_beta() {
             ? std::max(1, static_cast<int>(kMaxChunkBytes / slice_bytes))
             : nm;
 
-        TBLIS_VIEW_4D(t_Tbra, const_cast<Eigen::Tensor<double, 4>&>(T_bra), no1, no2, nv1, nv2);
-        TBLIS_VIEW_4D(t_Tket, const_cast<Eigen::Tensor<double, 4>&>(T_ket), no1, no2, nv1, nv2);
+        auto& T_bra_nc = const_cast<Eigen::Tensor<double, 4>&>(T_bra);
+        auto& T_ket_nc = const_cast<Eigen::Tensor<double, 4>&>(T_ket);
+        TBLIS_VIEW_4D(t_Tbra, T_bra_nc, no1, no2, nv1, nv2);
+        TBLIS_VIEW_4D(t_Tket, T_ket_nc, no1, no2, nv1, nv2);
 
         for (int m0 = 0; m0 < nm; m0 += mb_max) {
             const int mb = std::min(mb_max, nm - m0);
