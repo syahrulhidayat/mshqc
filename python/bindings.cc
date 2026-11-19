@@ -526,7 +526,9 @@ NB_MODULE(_mshqc, m) {
 
     nb::class_<PetiteList>(m, "PetiteList")
         .def(nb::init<const BasisSet&, const PointGroup&>())
-        .def("build", &PetiteList::build)
+        .def("build", nb::overload_cast<>(&PetiteList::build))
+        .def("build", nb::overload_cast<const Eigen::MatrixXd&, double>(&PetiteList::build),
+             nb::arg("schwarz"), nb::arg("cutoff") = 1e-12)
         .def("get_unique_pairs", &PetiteList::get_unique_pairs);
 
     nb::class_<BasisSymmetrizer>(m, "BasisSymmetrizer")
