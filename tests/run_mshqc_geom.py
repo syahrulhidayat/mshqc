@@ -107,13 +107,13 @@ def main():
                     aux_basis=aux_basis,
                     reference=spec["ref"],
                     max_iter=40,
-                    g_rms_tol=1.0e-7,
-                    g_max_tol=3.0e-7,
-                    dx_rms_tol=1.0e-6,
-                    dx_max_tol=2.0e-6,
+                    g_rms_tol=1.0e-6,     
+                    g_max_tol=2.0e-6,    
+                    dx_rms_tol=4.0e-6,  
+                    dx_max_tol=6.0e-6,    
                     energy_thresh=1.0e-12,
                     orb_grad_thresh=1.0e-10,
-                    fd_step_bohr=fd_step,
+                    fd_step_bohr=5.0e-4,
                     verbose=False,
                 )
             except TypeError:
