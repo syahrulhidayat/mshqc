@@ -374,14 +374,42 @@ double BaseMP3::tensor_dot(const Eigen::Tensor<double, 4>& A, const Eigen::Tenso
     varray_view<double> name({(len_type)d1, (len_type)d2}, ptr, \
     {1, (stride_type)d1})
 
+// [INJECTED_FINAL_OPT_RMP3_FROZEN_FIXED]
 MP3Result RMP3::compute() {
     auto t_start = std::chrono::high_resolution_clock::now();
     if(omp_get_thread_num() == 0) std::cout << "\n=== RMP3 (Unified Native TBLIS - Cholesky) ===\n";
 
-    const auto& Co = scf_.C_alpha.leftCols(no_a_);
+    const int f_a = std::clamp(n_frozen_, 0, no_a_);
+    const int no_act = no_a_ - f_a;
+    if (no_act <= 0 || nv_a_ <= 0) {
+        MP3Result empty_res;
+        empty_res.e_hf = scf_.energy_total;
+        empty_res.e_mp2 = mp2_.energy_mp2_corr;
+        empty_res.e_corr_total = empty_res.e_mp2;
+        empty_res.e_total = empty_res.e_hf + empty_res.e_corr_total;
+        return empty_res;
+    }
+
+    Eigen::Tensor<double, 4> t2_act_buf;
+    Eigen::Tensor<double, 4>* t2_ptr = &t2_aa_;
+    if (f_a > 0) {
+        t2_act_buf = Eigen::Tensor<double, 4>(no_act, no_act, nv_a_, nv_a_);
+        #pragma omp parallel for collapse(4) schedule(static)
+        for (int i = 0; i < no_act; ++i)
+            for (int j = 0; j < no_act; ++j)
+                for (int a = 0; a < nv_a_; ++a)
+                    for (int b = 0; b < nv_a_; ++b)
+                        t2_act_buf(i, j, a, b) = t2_aa_(f_a + i, f_a + j, a, b);
+        t2_ptr = &t2_act_buf;
+    }
+    Eigen::Tensor<double, 4>& t2_use = *t2_ptr;
+    const int no_full_saved = no_a_;
+    no_a_ = no_act;
+
+    const Eigen::MatrixXd Co = scf_.C_alpha.middleCols(f_a, no_a_);
     const auto& Cv = scf_.C_alpha.rightCols(nv_a_);
 
-    TBLIS_VIEW_4D(t_T, t2_aa_, no_a_, no_a_, nv_a_, nv_a_);
+    TBLIS_VIEW_4D(t_T, t2_use, no_a_, no_a_, nv_a_, nv_a_);
     Eigen::Tensor< double, 4 > W(no_a_, no_a_, nv_a_, nv_a_); W.setZero();
     TBLIS_VIEW_4D(t_W, W, no_a_, no_a_, nv_a_, nv_a_);
 
@@ -390,8 +418,10 @@ MP3Result RMP3::compute() {
 
     Eigen::MatrixXd B_oo, B_ov, B_vv;
     if (config_.eri_method != "exact") {
-        B_ov = mp2_.B_ia_P_alpha; 
-        
+        B_ov = (f_a > 0)
+            ? mp2_.B_ia_P_alpha.bottomRows(static_cast<Eigen::Index>(no_a_) * nv_a_).eval()
+            : mp2_.B_ia_P_alpha;
+
         auto build_B_fast = [&](const Eigen::MatrixXd& C1, const Eigen::MatrixXd& C2) {
             return integrals::transform_3c_ao_to_mo_block(scf_.L_mat, C1, C2, nbf_);
         };
@@ -419,7 +449,7 @@ MP3Result RMP3::compute() {
                 Eigen::MatrixXd Tij_vv(nv_a_, nv_a_);
                 for (int e = 0; e < nv_a_; ++e)
                     for (int f = 0; f < nv_a_; ++f)
-                        Tij_vv(e, f) = t2_aa_(i, j, e, f);
+                        Tij_vv(e, f) = t2_use(i, j, e, f);
                 Eigen::MatrixXd Tij_ao = Cv * Tij_vv * Cv.transpose();
                 for (int mu = 0; mu < nbf_; ++mu)
                     for (int lam = 0; lam < nbf_; ++lam)
@@ -457,7 +487,7 @@ MP3Result RMP3::compute() {
             for (int j = i; j < no_a_; ++j) {
                 for (int e = 0; e < nv_a_; ++e)
                     for (int f = 0; f < nv_a_; ++f)
-                        T_pairs[p_idx](e, f) = t2_aa_(i, j, e, f);
+                        T_pairs[p_idx](e, f) = t2_use(i, j, e, f);
                 p_idx++;
             }
         }
@@ -479,7 +509,7 @@ MP3Result RMP3::compute() {
     // 2 & 3. Ladder term (oooo) + Ring terms (ovov & oovv)
     if (config_.eri_method == "exact") {
         auto half_oo = ERITransformer::transform_half_bra(*eri_ao_ptr, Co, Co, nbf_, no_a_, no_a_);
-        Eigen::Tensor<double, 4> V      = ERITransformer::transform_finish_ket(half_oo, Co, Co, nbf_, no_a_, no_a_, no_a_, no_a_);
+        Eigen::Tensor<double, 4> V = ERITransformer::transform_finish_ket(half_oo, Co, Co, nbf_, no_a_, no_a_, no_a_, no_a_);
         Eigen::Tensor<double, 4> V_oovv = ERITransformer::transform_finish_ket(half_oo, Cv, Cv, nbf_, no_a_, no_a_, nv_a_, nv_a_);
         half_oo.resize(0, 0, 0, 0);
         Eigen::Tensor<double, 4> V_ovov = ERITransformer::transform_custom(*eri_ao_ptr, Co, Cv, Co, Cv, nbf_, no_a_, nv_a_, no_a_, nv_a_);
@@ -488,33 +518,33 @@ MP3Result RMP3::compute() {
         TBLIS_VIEW_4D(t_Vovov, V_ovov, no_a_, nv_a_, no_a_, nv_a_);
         TBLIS_VIEW_4D(t_Voovv, V_oovv, no_a_, no_a_, nv_a_, nv_a_);
 
-        tblis::mult<double>( 1.0, t_T,     "mnab", t_V,     "minj", 1.0, t_W, "ijab");
-        tblis::mult<double>( 2.0, t_Vovov, "iakc", t_T,     "kjcb", 1.0, t_W, "ijab");
-        tblis::mult<double>( 2.0, t_T,     "ikac", t_Vovov, "kcjb", 1.0, t_W, "ijab");
-        tblis::mult<double>(-1.0, t_T,     "ikca", t_Vovov, "kcjb", 1.0, t_W, "ijab");
-        tblis::mult<double>(-1.0, t_Vovov, "iakc", t_T,     "kjbc", 1.0, t_W, "ijab");
-        tblis::mult<double>(-1.0, t_Voovv, "ikac", t_T,     "kjcb", 1.0, t_W, "ijab");
-        tblis::mult<double>(-1.0, t_T,     "ikac", t_Voovv, "kjcb", 1.0, t_W, "ijab");
-        tblis::mult<double>(-1.0, t_Voovv, "ikbc", t_T,     "kjac", 1.0, t_W, "ijab");
-        tblis::mult<double>(-1.0, t_T,     "ikcb", t_Voovv, "jkac", 1.0, t_W, "ijab");
+        tblis::mult<double>( 1.0, t_T, "mnab", t_V, "minj", 1.0, t_W, "ijab");
+        tblis::mult<double>( 2.0, t_Vovov, "iakc", t_T, "kjcb", 1.0, t_W, "ijab");
+        tblis::mult<double>( 2.0, t_T, "ikac", t_Vovov, "kcjb", 1.0, t_W, "ijab");
+        tblis::mult<double>(-1.0, t_T, "ikca", t_Vovov, "kcjb", 1.0, t_W, "ijab");
+        tblis::mult<double>(-1.0, t_Vovov, "iakc", t_T, "kjbc", 1.0, t_W, "ijab");
+        tblis::mult<double>(-1.0, t_Voovv, "ikac", t_T, "kjcb", 1.0, t_W, "ijab");
+        tblis::mult<double>(-1.0, t_T, "ikac", t_Voovv, "kjcb", 1.0, t_W, "ijab");
+        tblis::mult<double>(-1.0, t_Voovv, "ikbc", t_T, "kjac", 1.0, t_W, "ijab");
+        tblis::mult<double>(-1.0, t_T, "ikcb", t_Voovv, "jkac", 1.0, t_W, "ijab");
     } else {
         Eigen::MatrixXd M_oooo = parallel_gemm_abt_mp3(B_oo, B_oo);
         Eigen::MatrixXd M_ovov = parallel_gemm_abt_mp3(B_ov, B_ov);
         Eigen::MatrixXd M_oovv = parallel_gemm_abt_mp3(B_oo, B_vv);
 
-        auto t_V     = make_mat_view_4d_mp3(M_oooo, no_a_, no_a_, no_a_, no_a_);
+        auto t_V = make_mat_view_4d_mp3(M_oooo, no_a_, no_a_, no_a_, no_a_);
         auto t_Vovov = make_mat_view_4d_mp3(M_ovov, no_a_, nv_a_, no_a_, nv_a_);
         auto t_Voovv = make_mat_view_4d_mp3(M_oovv, no_a_, no_a_, nv_a_, nv_a_);
 
-        tblis::mult<double>( 1.0, t_T,     "mnab", t_V,     "minj", 1.0, t_W, "ijab");
-        tblis::mult<double>( 2.0, t_Vovov, "iakc", t_T,     "kjcb", 1.0, t_W, "ijab");
-        tblis::mult<double>( 2.0, t_T,     "ikac", t_Vovov, "kcjb", 1.0, t_W, "ijab");
-        tblis::mult<double>(-1.0, t_T,     "ikca", t_Vovov, "kcjb", 1.0, t_W, "ijab");
-        tblis::mult<double>(-1.0, t_Vovov, "iakc", t_T,     "kjbc", 1.0, t_W, "ijab");
-        tblis::mult<double>(-1.0, t_Voovv, "ikac", t_T,     "kjcb", 1.0, t_W, "ijab");
-        tblis::mult<double>(-1.0, t_T,     "ikac", t_Voovv, "kjcb", 1.0, t_W, "ijab");
-        tblis::mult<double>(-1.0, t_Voovv, "ikbc", t_T,     "kjac", 1.0, t_W, "ijab");
-        tblis::mult<double>(-1.0, t_T,     "ikcb", t_Voovv, "jkac", 1.0, t_W, "ijab");
+        tblis::mult<double>( 1.0, t_T, "mnab", t_V, "minj", 1.0, t_W, "ijab");
+        tblis::mult<double>( 2.0, t_Vovov, "iakc", t_T, "kjcb", 1.0, t_W, "ijab");
+        tblis::mult<double>( 2.0, t_T, "ikac", t_Vovov, "kcjb", 1.0, t_W, "ijab");
+        tblis::mult<double>(-1.0, t_T, "ikca", t_Vovov, "kcjb", 1.0, t_W, "ijab");
+        tblis::mult<double>(-1.0, t_Vovov, "iakc", t_T, "kjbc", 1.0, t_W, "ijab");
+        tblis::mult<double>(-1.0, t_Voovv, "ikac", t_T, "kjcb", 1.0, t_W, "ijab");
+        tblis::mult<double>(-1.0, t_T, "ikac", t_Voovv, "kjcb", 1.0, t_W, "ijab");
+        tblis::mult<double>(-1.0, t_Voovv, "ikbc", t_T, "kjac", 1.0, t_W, "ijab");
+        tblis::mult<double>(-1.0, t_T, "ikcb", t_Voovv, "jkac", 1.0, t_W, "ijab");
     }
 
     double e_mp3 = 0.0;
@@ -528,6 +558,8 @@ MP3Result RMP3::compute() {
             }
         }
     }
+
+    no_a_ = no_full_saved;
 
     MP3Result res;
     res.e_hf = scf_.energy_total;

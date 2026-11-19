@@ -323,14 +323,19 @@ void OMP2::build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_
             }
         }
 
-        Eigen::MatrixXd Ka_mat = Eigen::MatrixXd::Zero(nbf_, nbf_);
-        Eigen::MatrixXd Kb_mat = Eigen::MatrixXd::Zero(nbf_, nbf_);
-        for (int t = 0; t < max_threads; ++t) {
-            Ka_mat += Ka_tls[t];
-            if (!is_restricted && nb_ > 0) Kb_mat += Kb_tls[t];
-        }
+        // [INJECTED_FINAL_OPT_OMP_FOCK_SYMM]
+    Eigen::MatrixXd Ka_mat = Eigen::MatrixXd::Zero(nbf_, nbf_);
+    Eigen::MatrixXd Kb_mat = Eigen::MatrixXd::Zero(nbf_, nbf_);
+    for (int t = 0; t < max_threads; ++t) {
+        Ka_mat.noalias() += Ka_tls[t];
+        if (!is_restricted && nb_ > 0) Kb_mat.noalias() += Kb_tls[t];
+    }
+    if (!is_idempotent_pa) {
+        Ka_mat = 0.5 * (Ka_mat + Ka_mat.transpose());
+        if (!is_restricted && nb_ > 0) Kb_mat = 0.5 * (Kb_mat + Kb_mat.transpose());
+    }
 
-        F_a = H_core_ + J_mat - Ka_mat;
+    F_a = H_core_ + J_mat - Ka_mat;
         if (is_restricted) F_b = F_a;
         else if (nb_ > 0) F_b = H_core_ + J_mat - Kb_mat;
         else F_b = F_a;

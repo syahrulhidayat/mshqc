@@ -254,44 +254,128 @@ Eigen::VectorXd OMP2::compute_soscf_step(double trust_radius, double& expected_c
             }
         }
         
-        Eigen::MatrixXd P1_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
-        if (dim_a > 0) {
-            P1_a = scf_.C_alpha.leftCols(na_) * kappa_a * scf_.C_alpha.rightCols(va_).transpose();
-            P1_a = (P1_a + P1_a.transpose()).eval(); 
-        }
-        
-        Eigen::MatrixXd P1_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
-        if (!is_restricted && dim_b > 0) {
-            P1_b = scf_.C_beta.leftCols(nb_) * kappa_b * scf_.C_beta.rightCols(vb_).transpose();
-            P1_b = (P1_b + P1_b.transpose()).eval();
-        } else if (is_restricted) {
-            P1_b = P1_a; 
-        }
-    
-        Eigen::MatrixXd F1_a, F1_b;
-        build_fock_fast(P1_a, P1_b, F1_a, F1_b);
-        F1_a -= H_core_; 
-        if (!is_restricted || nb_ > 0) F1_b -= H_core_;
-    
-        if (dim_a > 0) {
-            Eigen::MatrixXd H_kappa_a = scf_.C_alpha.leftCols(na_).transpose() * F1_a * scf_.C_alpha.rightCols(va_);
-            
-            int idx_h = 0;
-            for (int i = 0; i < na_; ++i) {
-                for (int a = 0; a < va_; ++a) {
-                    double val = H_kappa_a(i, a);
-                    double factor = spin_factor; 
-                    Hp(idx_h++) += factor * val;
+        // [INJECTED_FINAL_OPT_MO_SOSCF]
+        const int n_aux = static_cast<int>(B_ia_P_alpha_.cols());
+        const bool can_use_mo_df = (config_.eri_method != "exact" && n_aux > 0 &&
+                                    B_oo_P_alpha_.cols() == n_aux && B_vv_P_alpha_.cols() == n_aux);
+        if (can_use_mo_df) {
+            Eigen::VectorXd w_aux = Eigen::VectorXd::Zero(n_aux);
+            if (dim_a > 0) {
+                Eigen::MatrixXd ka_T = kappa_a.transpose();
+                Eigen::Map<const Eigen::VectorXd> ka_vec(ka_T.data(), dim_a);
+                w_aux.noalias() += (is_restricted ? 4.0 : 2.0) * (B_ia_P_alpha_.transpose() * ka_vec);
+            }
+            if (!is_restricted && dim_b > 0 && B_ia_P_beta_.cols() == n_aux) {
+                Eigen::MatrixXd kb_T = kappa_b.transpose();
+                Eigen::Map<const Eigen::VectorXd> kb_vec(kb_T.data(), dim_b);
+                w_aux.noalias() += 2.0 * (B_ia_P_beta_.transpose() * kb_vec);
+            }
+
+            Eigen::MatrixXd H_kappa_a = Eigen::MatrixXd::Zero(na_, va_);
+            Eigen::MatrixXd H_kappa_b = (!is_restricted && dim_b > 0) ? Eigen::MatrixXd::Zero(nb_, vb_) : Eigen::MatrixXd();
+
+            if (dim_a > 0) {
+                Eigen::VectorXd j_vo_a = B_ia_P_alpha_ * w_aux;
+                Eigen::Map<const Eigen::MatrixXd> J_vo_a_mat(j_vo_a.data(), va_, na_);
+                H_kappa_a.noalias() = J_vo_a_mat.transpose();
+            }
+            if (!is_restricted && dim_b > 0 && B_ia_P_beta_.cols() == n_aux) {
+                Eigen::VectorXd j_vo_b = B_ia_P_beta_ * w_aux;
+                Eigen::Map<const Eigen::MatrixXd> J_vo_b_mat(j_vo_b.data(), vb_, nb_);
+                H_kappa_b.noalias() = J_vo_b_mat.transpose();
+            }
+
+            const int max_t = omp_get_max_threads();
+            std::vector<Eigen::MatrixXd> Ka_tls(max_t, Eigen::MatrixXd::Zero(na_, va_));
+            std::vector<Eigen::MatrixXd> Kb_tls((!is_restricted && dim_b > 0) ? max_t : 0, Eigen::MatrixXd::Zero(nb_, vb_));
+
+            #pragma omp parallel
+            {
+                const int tid = omp_get_thread_num();
+                Eigen::MatrixXd T_oo_a(na_, va_), T_vo_a(va_, na_);
+                Eigen::MatrixXd T_oo_b, T_vo_b;
+                if (!is_restricted && dim_b > 0) {
+                    T_oo_b.resize(nb_, vb_);
+                    T_vo_b.resize(vb_, nb_);
+                }
+
+                #pragma omp for schedule(static) nowait
+                for (int P = 0; P < n_aux; ++P) {
+                    if (dim_a > 0) {
+                        Eigen::Map<const Eigen::MatrixXd> Boo_a(B_oo_P_alpha_.col(P).data(), na_, na_);
+                        Eigen::Map<const Eigen::MatrixXd> Bvo_a(B_ia_P_alpha_.col(P).data(), va_, na_);
+                        Eigen::Map<const Eigen::MatrixXd> Bvv_a(B_vv_P_alpha_.col(P).data(), va_, va_);
+                        T_oo_a.noalias() = Boo_a * kappa_a;
+                        Ka_tls[tid].noalias() += T_oo_a * Bvv_a;
+                        T_vo_a.noalias() = Bvo_a * kappa_a;
+                        Ka_tls[tid].noalias() += (T_vo_a * Bvo_a).transpose();
+                    }
+                    if (!is_restricted && dim_b > 0 && B_oo_P_beta_.cols() == n_aux) {
+                        Eigen::Map<const Eigen::MatrixXd> Boo_b(B_oo_P_beta_.col(P).data(), nb_, nb_);
+                        Eigen::Map<const Eigen::MatrixXd> Bvo_b(B_ia_P_beta_.col(P).data(), vb_, nb_);
+                        Eigen::Map<const Eigen::MatrixXd> Bvv_b(B_vv_P_beta_.col(P).data(), vb_, vb_);
+                        T_oo_b.noalias() = Boo_b * kappa_b;
+                        Kb_tls[tid].noalias() += T_oo_b * Bvv_b;
+                        T_vo_b.noalias() = Bvo_b * kappa_b;
+                        Kb_tls[tid].noalias() += (T_vo_b * Bvo_b).transpose();
+                    }
                 }
             }
-        }
-        
-        if (!is_restricted && dim_b > 0) {
-            Eigen::MatrixXd H_kappa_b = scf_.C_beta.leftCols(nb_).transpose() * F1_b * scf_.C_beta.rightCols(vb_);
-            int idx_h = dim_a;
-            for (int i = 0; i < nb_; ++i) {
-                for (int a = 0; a < vb_; ++a) {
-                    Hp(idx_h++) += 2.0 * H_kappa_b(i, a);
+
+            for (int t = 0; t < max_t; ++t) {
+                if (dim_a > 0) H_kappa_a.noalias() -= Ka_tls[t];
+                if (!is_restricted && dim_b > 0) H_kappa_b.noalias() -= Kb_tls[t];
+            }
+
+            if (dim_a > 0) {
+                int idx_h = 0;
+                for (int i = 0; i < na_; ++i) {
+                    for (int a = 0; a < va_; ++a) {
+                        Hp(idx_h++) += spin_factor * H_kappa_a(i, a);
+                    }
+                }
+            }
+            if (!is_restricted && dim_b > 0) {
+                int idx_h = dim_a;
+                for (int i = 0; i < nb_; ++i) {
+                    for (int a = 0; a < vb_; ++a) {
+                        Hp(idx_h++) += 2.0 * H_kappa_b(i, a);
+                    }
+                }
+            }
+        } else {
+            Eigen::MatrixXd P1_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
+            if (dim_a > 0) {
+                P1_a = scf_.C_alpha.leftCols(na_) * kappa_a * scf_.C_alpha.rightCols(va_).transpose();
+                P1_a = (P1_a + P1_a.transpose()).eval();
+            }
+            Eigen::MatrixXd P1_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
+            if (!is_restricted && dim_b > 0) {
+                P1_b = scf_.C_beta.leftCols(nb_) * kappa_b * scf_.C_beta.rightCols(vb_).transpose();
+                P1_b = (P1_b + P1_b.transpose()).eval();
+            } else if (is_restricted) {
+                P1_b = P1_a;
+            }
+            Eigen::MatrixXd F1_a, F1_b;
+            build_fock_fast(P1_a, P1_b, F1_a, F1_b);
+            F1_a -= H_core_;
+            if (!is_restricted || nb_ > 0) F1_b -= H_core_;
+            if (dim_a > 0) {
+                Eigen::MatrixXd H_kappa_a = scf_.C_alpha.leftCols(na_).transpose() * F1_a * scf_.C_alpha.rightCols(va_);
+                int idx_h = 0;
+                for (int i = 0; i < na_; ++i) {
+                    for (int a = 0; a < va_; ++a) {
+                        Hp(idx_h++) += spin_factor * H_kappa_a(i, a);
+                    }
+                }
+            }
+            if (!is_restricted && dim_b > 0) {
+                Eigen::MatrixXd H_kappa_b = scf_.C_beta.leftCols(nb_).transpose() * F1_b * scf_.C_beta.rightCols(vb_);
+                int idx_h = dim_a;
+                for (int i = 0; i < nb_; ++i) {
+                    for (int a = 0; a < vb_; ++a) {
+                        Hp(idx_h++) += 2.0 * H_kappa_b(i, a);
+                    }
                 }
             }
         }
@@ -398,16 +482,44 @@ Eigen::MatrixXd OMP2::solve_cphf_pcg_ov(const Eigen::MatrixXd& Z_ov, const Eigen
 
         // 2. Evaluasi On-The-Fly Interaksi 2-Elektron (Hessian-Vector Product)
         // Membentuk matriks pseudo-densitas P1 dari tebakan P
-        Eigen::MatrixXd P1 = scf_.C_alpha.leftCols(na) * P.transpose() * scf_.C_alpha.rightCols(va).transpose();
-        P1 = (P1 + P1.transpose()).eval();
-        
-        Eigen::MatrixXd F1_a, F1_b;
-        // build_fock_fast akan menangani kontraksi tensor 2-elektron secara efisien
-        build_fock_fast(P1, P1, F1_a, F1_b); 
-        F1_a -= H_core_; // Menghilangkan komponen 1-elektron untuk mengekstraksi murni respons J dan K
-        
-        // Menambahkan respons 2-elektron ke dalam AP
-        AP += 2.0 * scf_.C_alpha.rightCols(va).transpose() * F1_a * scf_.C_alpha.leftCols(na);
+        const int n_aux_cphf = static_cast<int>(B_ia_P_alpha_.cols());
+        if (config_.eri_method != "exact" && n_aux_cphf > 0 && na == na_ && va == va_ &&
+            B_oo_P_alpha_.cols() == n_aux_cphf && B_vv_P_alpha_.cols() == n_aux_cphf) {
+            Eigen::Map<const Eigen::VectorXd> p_vec_flat(P.data(), va * na);
+            Eigen::VectorXd w_cphf = 4.0 * (B_ia_P_alpha_.transpose() * p_vec_flat);
+            Eigen::VectorXd j_vo = B_ia_P_alpha_ * w_cphf;
+            Eigen::Map<const Eigen::MatrixXd> J_vo_mat(j_vo.data(), va, na);
+            AP.noalias() += 2.0 * J_vo_mat;
+
+            Eigen::MatrixXd kappa_ov = P.transpose();
+            const int max_t = omp_get_max_threads();
+            std::vector<Eigen::MatrixXd> K_tls(max_t, Eigen::MatrixXd::Zero(va, na));
+            #pragma omp parallel
+            {
+                const int tid = omp_get_thread_num();
+                Eigen::MatrixXd T_oo(na, va), T_vo(va, na);
+                #pragma omp for schedule(static) nowait
+                for (int K = 0; K < n_aux_cphf; ++K) {
+                    Eigen::Map<const Eigen::MatrixXd> Boo(B_oo_P_alpha_.col(K).data(), na, na);
+                    Eigen::Map<const Eigen::MatrixXd> Bvo(B_ia_P_alpha_.col(K).data(), va, na);
+                    Eigen::Map<const Eigen::MatrixXd> Bvv(B_vv_P_alpha_.col(K).data(), va, va);
+                    T_oo.noalias() = Boo * kappa_ov;
+                    K_tls[tid].noalias() += (T_oo * Bvv).transpose();
+                    T_vo.noalias() = Bvo * kappa_ov;
+                    K_tls[tid].noalias() += T_vo * Bvo;
+                }
+            }
+            for (int t = 0; t < max_t; ++t) {
+                AP.noalias() -= 2.0 * K_tls[t];
+            }
+        } else {
+            Eigen::MatrixXd P1 = scf_.C_alpha.leftCols(na) * P.transpose() * scf_.C_alpha.rightCols(va).transpose();
+            P1 = (P1 + P1.transpose()).eval();
+            Eigen::MatrixXd F1_a, F1_b;
+            build_fock_fast(P1, P1, F1_a, F1_b);
+            F1_a -= H_core_;
+            AP += 2.0 * scf_.C_alpha.rightCols(va).transpose() * F1_a * scf_.C_alpha.leftCols(na);
+        }
 
         // 3. Update Preconditioned Conjugate Gradient
         double alpha = rsold / P.cwiseProduct(AP).sum();

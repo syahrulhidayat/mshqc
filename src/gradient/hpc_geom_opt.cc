@@ -454,13 +454,35 @@ GradCurvatureResult compute_analytic_df_gradient_internal(
     P_eff_ao = Pa + Pb;
 
     const Eigen::MatrixXd Ca_o = scf_res.C_alpha.leftCols(na);
-    W_eff_ao = Ca_o * scf_res.orbital_energies_alpha.head(na).asDiagonal() * Ca_o.transpose();
-    if (is_rhf) {
-      W_eff_ao *= 2.0;
-    } else if (nb > 0) {
-      const Eigen::MatrixXd Cb_o = scf_res.C_beta.leftCols(nb);
-      W_eff_ao.noalias() += Cb_o * scf_res.orbital_energies_beta.head(nb).asDiagonal() * Cb_o.transpose();
-    }
+        if (ref == "rohf") {
+            // [INJECTED_FINAL_OPT_ROHF_PULAY_LAGRANGIAN]
+            const int n_c = nb;
+            const int n_o = na - nb;
+            const Eigen::MatrixXd& C = scf_res.C_alpha;
+            Eigen::MatrixXd Fa_mo = C.transpose() * scf_res.F_alpha * C;
+            Eigen::MatrixXd Fb_mo = C.transpose() * scf_res.F_beta * C;
+            Eigen::MatrixXd W_mo = Eigen::MatrixXd::Zero(nbf, nbf);
+            if (n_c > 0) {
+                W_mo.topLeftCorner(n_c, n_c) = Fa_mo.topLeftCorner(n_c, n_c) + Fb_mo.topLeftCorner(n_c, n_c);
+            }
+            if (n_o > 0) {
+                W_mo.block(n_c, n_c, n_o, n_o) = Fa_mo.block(n_c, n_c, n_o, n_o);
+            }
+            if (n_c > 0 && n_o > 0) {
+                Eigen::MatrixXd W_co = Fa_mo.block(0, n_c, n_c, n_o) + 0.5 * Fb_mo.block(0, n_c, n_c, n_o);
+                W_mo.block(0, n_c, n_c, n_o) = W_co;
+                W_mo.block(n_c, 0, n_o, n_c) = W_co.transpose();
+            }
+            W_eff_ao = C * W_mo * C.transpose();
+        } else {
+            W_eff_ao = Ca_o * scf_res.orbital_energies_alpha.head(na).asDiagonal() * Ca_o.transpose();
+            if (is_rhf) {
+                W_eff_ao *= 2.0;
+            } else if (nb > 0) {
+                const Eigen::MatrixXd Cb_o = scf_res.C_beta.leftCols(nb);
+                W_eff_ao.noalias() += Cb_o * scf_res.orbital_energies_beta.head(nb).asDiagonal() * Cb_o.transpose();
+            }
+        }
 
     const bool is_packed = integrals::is_packed_ao_matrix(scf_res.L_mat, nbf);
     Eigen::VectorXd c_vec = integrals::contract_ao_factor_with_sym(scf_res.L_mat, P_eff_ao, nbf);
