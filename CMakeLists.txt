@@ -313,7 +313,9 @@ set_target_properties(mshqc PROPERTIES
 )
 
 if(MKL_LIBRARY AND MKL_INCLUDE_DIR AND NOT MSVC)
-    target_compile_definitions(mshqc PUBLIC EIGEN_USE_MKL_ALL)
+  target_compile_definitions(mshqc PUBLIC EIGEN_USE_MKL_ALL)
+elseif(UNIX AND NOT APPLE)
+  target_compile_definitions(mshqc PUBLIC EIGEN_USE_BLAS)
 endif()
 target_compile_definitions(mshqc PUBLIC EIGEN_NO_DEBUG EIGEN_MPL2_ONLY)
 

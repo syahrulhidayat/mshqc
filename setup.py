@@ -147,10 +147,14 @@ class CMakeBuild(build_ext):
             dst_wheel_basis_dir = os.path.join(extdir, "basis")
             os.makedirs(pkg_src_basis_dir, exist_ok=True)
             os.makedirs(dst_wheel_basis_dir, exist_ok=True)
+            def _copy_if_newer(src_f, dst_d):
+                dst_f = os.path.join(dst_d, os.path.basename(src_f))
+                if not os.path.exists(dst_f) or os.path.getsize(dst_f) != os.path.getsize(src_f) or os.path.getmtime(src_f) > os.path.getmtime(dst_f):
+                    shutil.copy2(src_f, dst_f)
             for gbs_file in glob.glob(os.path.join(src_basis_dir, "*.gbs")):
-                shutil.copy2(gbs_file, pkg_src_basis_dir)
+                _copy_if_newer(gbs_file, pkg_src_basis_dir)
                 if os.path.abspath(pkg_src_basis_dir) != os.path.abspath(dst_wheel_basis_dir):
-                    shutil.copy2(gbs_file, dst_wheel_basis_dir)
+                    _copy_if_newer(gbs_file, dst_wheel_basis_dir)
 
 
 setup(

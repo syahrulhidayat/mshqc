@@ -29,7 +29,7 @@
 namespace mshqc {
 
 enum class AngularMomentum {
-    S = 0, P = 1, D = 2, F = 3, G = 4, H = 5
+    S = 0, P = 1, D = 2, F = 3, G = 4, H = 5, I = 6, K = 7
 };
 
 inline int am_to_int(AngularMomentum am) {

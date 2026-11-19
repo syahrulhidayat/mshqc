@@ -27,7 +27,11 @@ _SYMBOL_TO_Z = {
     'Co': 27, 'Ni': 28, 'Cu': 29, 'Zn': 30, 'Ga': 31, 'Ge': 32, 'As': 33, 'Se': 34,
     'Br': 35, 'Kr': 36, 'Rb': 37, 'Sr': 38, 'Y': 39, 'Zr': 40, 'Nb': 41, 'Mo': 42,
     'Tc': 43, 'Ru': 44, 'Rh': 45, 'Pd': 46, 'Ag': 47, 'Cd': 48, 'In': 49, 'Sn': 50,
-    'Sb': 51, 'Te': 52, 'I': 53, 'Xe': 54
+    'Sb': 51, 'Te': 52, 'I': 53, 'Xe': 54,
+    'Cs': 55, 'Ba': 56, 'La': 57, 'Ce': 58, 'Pr': 59, 'Nd': 60, 'Pm': 61, 'Sm': 62, 'Eu': 63, 'Gd': 64,
+    'Tb': 65, 'Dy': 66, 'Ho': 67, 'Er': 68, 'Tm': 69, 'Yb': 70, 'Lu': 71,
+    'Hf': 72, 'Ta': 73, 'W': 74, 'Re': 75, 'Os': 76, 'Ir': 77, 'Pt': 78, 'Au': 79, 'Hg': 80,
+    'Tl': 81, 'Pb': 82, 'Bi': 83, 'Po': 84, 'At': 85, 'Rn': 86
 }
 
 def build_molecule(atoms: Union[mshqc.Molecule, str, List[Tuple]],
@@ -65,6 +69,7 @@ def build_molecule(atoms: Union[mshqc.Molecule, str, List[Tuple]],
 class MSHQCCalculator:
     """High-level Pythonic interface untuk Unified Engine MSHQC (RHF/UHF/ROHF, MP2/MP3, OMP2/OMP3)."""
 
+    # [INJECTED_HPC_V3_CALCULATORS]
     def __init__(self,
                  molecule: Union[mshqc.Molecule, str, List[Tuple]],
                  basis_name: str = "cc-pVTZ",
@@ -77,19 +82,34 @@ class MSHQCCalculator:
                  threshold: float = 1e-9,
                  scf_type: str = "incore",
                  print_level: int = 0,
-                 basis_dir: Optional[str] = None):
+                 basis_dir: Optional[str] = None,
+                 freeze_core: bool = False,
+                 n_frozen: int = 0,
+                 memory_limit_gb: float = 4.0,
+                 use_symmetry: bool = True):
 
         raw_mol = build_molecule(molecule, charge=charge, multiplicity=multiplicity, units=units)
-        self.pg = mshqc.PointGroup(raw_mol)
-        self.pg.detect()
-        self.molecule = self.pg.get_aligned_molecule()
+        self.eri_method = eri_method.lower()
+        self.use_symmetry = use_symmetry
+
+        if use_symmetry:
+            self.pg = mshqc.PointGroup(raw_mol)
+            self.pg.detect()
+            self.molecule = self.pg.get_aligned_molecule()
+        else:
+            self.pg = None
+            self.molecule = raw_mol
 
         self.basis_name = basis_name
-        self.eri_method = eri_method.lower()
         self.aux_basis_name = aux_basis_name or f"{basis_name}-RI"
         self.threshold = threshold
         self.scf_type = scf_type
         self.print_level = print_level
+        self.freeze_core = freeze_core
+        self.n_frozen = n_frozen if n_frozen > 0 else (
+            mshqc.standard_frozen_core(self.molecule) if freeze_core else 0
+        )
+        self.memory_limit_gb = memory_limit_gb
 
         if basis_dir is None:
             basis_dir = os.environ.get("MSHQC_BASIS_PATH", "data/basis")
@@ -97,8 +117,13 @@ class MSHQCCalculator:
 
         self.basis = mshqc.BasisSet(basis_name, self.molecule, self.basis_dir)
         self.integrals = mshqc.IntegralEngine(self.molecule, self.basis)
-        self.pl = mshqc.PetiteList(self.basis, self.pg)
-        self.pl.build()
+        # Jangan pernah bangun PetiteList 4D O(N^4) saat mode DF/Cholesky!
+        if self.pg is not None:
+            self.pl = mshqc.PetiteList(self.basis, self.pg)
+            if self.eri_method == "exact":
+                self.pl.build()
+        else:
+            self.pl = None
 
         n_elec = int(self.molecule.total_nuclear_charge()) - self.molecule.charge()
         mult = self.molecule.multiplicity()
@@ -120,6 +145,9 @@ class MSHQCCalculator:
         conf.density_threshold = self.threshold
         conf.print_level = self.print_level
         conf.eri_method = self.eri_method
+        if hasattr(conf, 'freeze_core'): conf.freeze_core = self.freeze_core
+        if hasattr(conf, 'n_frozen'): conf.n_frozen = self.n_frozen
+        if hasattr(conf, 'memory_limit_gb'): conf.memory_limit_gb = self.memory_limit_gb
         if self.eri_method == "df":
             conf.use_df = True
             conf.aux_basis_name = self.aux_basis_name
@@ -138,6 +166,9 @@ class MSHQCCalculator:
         conf.opt_method = opt_method
         conf.print_level = self.print_level
         conf.eri_method = self.eri_method
+        if hasattr(conf, 'freeze_core'): conf.freeze_core = self.freeze_core
+        if hasattr(conf, 'n_frozen'): conf.n_frozen = self.n_frozen
+        if hasattr(conf, 'memory_limit_gb'): conf.memory_limit_gb = self.memory_limit_gb
         if self.eri_method == "df":
             conf.use_df = True
             conf.aux_basis_name = self.aux_basis_name
@@ -165,6 +196,8 @@ class MSHQCCalculator:
         conf = self._make_mp2_config()
         if self.reference == "rhf":
             solver = mshqc.RMP2(self.molecule, self.basis, self.integrals, scf_res, conf, self.pg, self.pl)
+        elif self.reference == "rohf":
+            solver = mshqc.ROMP2(self.molecule, self.basis, self.integrals, scf_res, conf, self.pg, self.pl)
         else:
             solver = mshqc.UMP2(self.molecule, self.basis, self.integrals, scf_res, conf, self.pg, self.pl)
         self.mp2_res = solver.compute()
@@ -178,6 +211,8 @@ class MSHQCCalculator:
         conf = self._make_mp2_config()
         if self.reference == "rhf":
             solver = mshqc.RMP3(scf_res, mp2_res, conf, self.integrals)
+        elif self.reference == "rohf":
+            solver = mshqc.ROMP3(scf_res, mp2_res, conf, self.integrals)
         else:
             solver = mshqc.UMP3(scf_res, mp2_res, conf, self.integrals)
         return solver.compute()
@@ -209,7 +244,11 @@ def run(molecule: Union[mshqc.Molecule, str, List[Tuple]],
         threshold: float = 1e-9,
         grad_thresh: float = 1e-5,
         opt_method: str = "soscf",
-        print_level: int = 0) -> Union[Any, Dict[str, Any]]:
+        print_level: int = 0,
+        freeze_core: bool = False,
+        n_frozen: int = 0,
+        memory_limit_gb: float = 4.0,
+        use_symmetry: bool = True) -> Union[Any, Dict[str, Any]]:
     """
     Fungsi satu baris (one-liner) untuk menjalankan satu atau beberapa metode sekaligus.
     Contoh:
@@ -220,7 +259,8 @@ def run(molecule: Union[mshqc.Molecule, str, List[Tuple]],
     calc = MSHQCCalculator(
         molecule=molecule, basis_name=basis, eri_method=eri_method,
         aux_basis_name=aux_basis, charge=charge, multiplicity=multiplicity,
-        units=units, reference=reference, threshold=threshold, print_level=print_level
+        units=units, reference=reference, threshold=threshold, print_level=print_level,
+        freeze_core=freeze_core, n_frozen=n_frozen, memory_limit_gb=memory_limit_gb, use_symmetry=use_symmetry
     )
 
     methods = [method] if isinstance(method, str) else list(method)
@@ -231,9 +271,9 @@ def run(molecule: Union[mshqc.Molecule, str, List[Tuple]],
         t0 = time.perf_counter()
         if m_low in ("scf", "hf", "rhf", "uhf", "rohf"):
             res = calc.run_scf(ref=m_low if m_low in ("rhf", "uhf", "rohf") else None)
-        elif m_low in ("mp2", "rmp2", "ump2"):
+        elif m_low in ("mp2", "rmp2", "ump2", "romp2"):
             res = calc.run_mp2()
-        elif m_low in ("mp3", "rmp3", "ump3"):
+        elif m_low in ("mp3", "rmp3", "ump3", "romp3"):
             res = calc.run_mp3()
         elif m_low == "omp2":
             res = calc.run_omp2(opt_method=opt_method, grad_thresh=grad_thresh)

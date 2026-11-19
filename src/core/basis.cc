@@ -302,6 +302,8 @@ AngularMomentum char_to_am(char c) {
         case 'F': return AngularMomentum::F;
         case 'G': return AngularMomentum::G;
         case 'H': return AngularMomentum::H;
+        case 'I': return AngularMomentum::I;
+        case 'K': return AngularMomentum::K;
         default: return AngularMomentum::S; 
     }
 }
@@ -314,6 +316,8 @@ std::string am_to_string(AngularMomentum am) {
         case AngularMomentum::F: return "f";
         case AngularMomentum::G: return "g";
         case AngularMomentum::H: return "h";
+        case AngularMomentum::I: return "i";
+        case AngularMomentum::K: return "k";
         default: return "?";
     }
 }

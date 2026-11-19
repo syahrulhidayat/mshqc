@@ -446,7 +446,9 @@ NB_MODULE(_mshqc, m) {
         .value("D", AngularMomentum::D)
         .value("F", AngularMomentum::F)
         .value("G", AngularMomentum::G)
-        .value("H", AngularMomentum::H);
+        .value("H", AngularMomentum::H)
+        .value("I", AngularMomentum::I)
+        .value("K", AngularMomentum::K);
 
     nb::class_<GaussianPrimitive>(m, "GaussianPrimitive")
         .def(nb::init<double, double>(), nb::arg("exponent"), nb::arg("coefficient"))
@@ -854,6 +856,7 @@ NB_MODULE(_mshqc, m) {
                             std::shared_ptr<IntegralEngine> integrals, const SCFResult& scf_guess,
                             const MP2Config& config, std::shared_ptr<PointGroup> pg, std::shared_ptr<PetiteList> pl) {
             auto norm_conf = mshqc_auto_tune::normalize_mp2_config(config, basis, scf_guess);
+      if (norm_conf.freeze_core && norm_conf.n_frozen == 0) norm_conf.n_frozen = mshqc::compute_standard_frozen_core(mol);
             foundation::RMP2 rmp2_solver(mol, basis, integrals, scf_guess, norm_conf, pg, pl);
             MP2Result mp2_res = rmp2_solver.compute();
             new (t) RMP3(scf_guess, mp2_res, norm_conf, integrals);
@@ -870,6 +873,7 @@ NB_MODULE(_mshqc, m) {
                             std::shared_ptr<IntegralEngine> integrals, const SCFResult& scf_guess,
                             const MP2Config& config, std::shared_ptr<PointGroup> pg, std::shared_ptr<PetiteList> pl) {
             auto norm_conf = mshqc_auto_tune::normalize_mp2_config(config, basis, scf_guess);
+      if (norm_conf.freeze_core && norm_conf.n_frozen == 0) norm_conf.n_frozen = mshqc::compute_standard_frozen_core(mol);
             mshqc::UMP2 ump2_solver(mol, basis, integrals, scf_guess, norm_conf, pg, pl);
             MP2Result mp2_res = ump2_solver.compute();
             new (t) UMP3(scf_guess, mp2_res, norm_conf, integrals);
@@ -885,6 +889,7 @@ NB_MODULE(_mshqc, m) {
                             std::shared_ptr<IntegralEngine> integrals, const SCFResult& scf_guess,
                             const MP2Config& config, std::shared_ptr<PointGroup> pg, std::shared_ptr<PetiteList> pl) {
             auto norm_conf = mshqc_auto_tune::normalize_mp2_config(config, basis, scf_guess);
+      if (norm_conf.freeze_core && norm_conf.n_frozen == 0) norm_conf.n_frozen = mshqc::compute_standard_frozen_core(mol);
             mshqc::ROMP2 romp2_solver(mol, basis, integrals, scf_guess, norm_conf, pg, pl);
             MP2Result mp2_res = romp2_solver.compute();
             new (t) ROMP3(scf_guess, mp2_res, norm_conf, integrals);

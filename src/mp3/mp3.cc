@@ -278,6 +278,7 @@ tblis::varray_view<double> make_mat_view_4d_mp3(Eigen::MatrixXd& M, int d1, int 
     );
 }
 
+
 void contract_vvvv_pairs_df(
     const Eigen::MatrixXd& B_vv_left, int nv_l,
     const Eigen::MatrixXd& B_vv_right, int nv_r,
@@ -285,40 +286,255 @@ void contract_vvvv_pairs_df(
     const std::vector<Eigen::MatrixXd>& T_pairs,
     std::vector<Eigen::MatrixXd>& W_pairs)
 {
-    const int n_pairs = static_cast<int>(T_pairs.size());
-    if (n_pairs <= 0 || n_aux <= 0 || nv_l <= 0 || nv_r <= 0) return;
+  const int n_pairs = static_cast<int>(T_pairs.size());
+  if (n_pairs <= 0 || n_aux <= 0 || nv_l <= 0 || nv_r <= 0) return;
 
-    if (n_pairs >= omp_get_max_threads()) {
+  const bool same_B = (&B_vv_left == &B_vv_right) && (nv_l == nv_r);
+  const double flops_loop_p = 4.0 * static_cast<double>(n_pairs) * nv_l * nv_r * std::max(nv_l, nv_r) * n_aux;
+
+  // Jalur 1: Adaptive Batched T+/T- BLAS-3 DGEMM untuk same-spin / restricted (hemat hingga 6-15x FLOPs, RAM <= 64 MB)
+  if (same_B && nv_l >= 8) {
+    const int V = nv_l;
+    bool is_antisym = true;
+    for (int k = 0; k < n_pairs && is_antisym; ++k) {
+      if ((T_pairs[k] + T_pairs[k].transpose()).cwiseAbs().maxCoeff() > 1e-13) {
+        is_antisym = false;
+      }
+    }
+    const double V4 = static_cast<double>(V) * V * V * V;
+    const double flops_batched = V4 * n_aux + (is_antisym ? 0.5 : 1.0) * V4 * n_pairs;
+
+    if (flops_batched < 0.85 * flops_loop_p) {
+      const int n_tri = V * (V + 1) / 2;
+      const int n_strict = V * (V - 1) / 2;
+
+      Eigen::MatrixXd T_plus;
+      if (!is_antisym) {
+        T_plus.resize(n_tri, n_pairs);
         #pragma omp parallel for schedule(static)
         for (int k = 0; k < n_pairs; ++k) {
-            Eigen::MatrixXd X_tmp(nv_l, nv_r);
-            for (int P = 0; P < n_aux; ++P) {
-                Eigen::Map<const Eigen::MatrixXd> B_Pl(B_vv_left.col(P).data(), nv_l, nv_l);
-                Eigen::Map<const Eigen::MatrixXd> B_Pr(B_vv_right.col(P).data(), nv_r, nv_r);
-                X_tmp.noalias() = T_pairs[k] * B_Pr;
-                W_pairs[k].noalias() += B_Pl.transpose() * X_tmp;
-            }
+          double* col = T_plus.col(k).data();
+          const Eigen::MatrixXd& Tk = T_pairs[k];
+          for (int e = 0; e < V; ++e) {
+            const int base = e * (e + 1) / 2;
+            for (int f = 0; f < e; ++f) col[base + f] = Tk(e, f) + Tk(f, e);
+            col[base + e] = Tk(e, e);
+          }
         }
-    } else {
+      }
+
+      Eigen::MatrixXd T_minus;
+      if (n_strict > 0) {
+        T_minus.resize(n_strict, n_pairs);
+        #pragma omp parallel for schedule(static)
+        for (int k = 0; k < n_pairs; ++k) {
+          double* col = T_minus.col(k).data();
+          const Eigen::MatrixXd& Tk = T_pairs[k];
+          for (int e = 1; e < V; ++e) {
+            const int base = e * (e - 1) / 2;
+            for (int f = 0; f < e; ++f) col[base + f] = Tk(e, f) - Tk(f, e);
+          }
+        }
+      }
+
+      std::vector<int> pair_a(n_tri), pair_b(n_tri);
+      for (int a = 0; a < V; ++a) {
+        const int base = a * (a + 1) / 2;
+        for (int b = 0; b <= a; ++b) {
+          pair_a[base + b] = a;
+          pair_b[base + b] = b;
+        }
+      }
+
+      // Batasi ukuran buffer batch V+/V- <= 64 MB agar tetap O(V^4)-memory-free
+      constexpr size_t kMaxBatchBytes = 64ULL * 1024ULL * 1024ULL;
+      const size_t col_bytes = static_cast<size_t>((is_antisym ? 0 : n_tri) + n_strict) * sizeof(double);
+      const int batch_ab = std::max(1, std::min(n_tri, static_cast<int>(kMaxBatchBytes / std::max<size_t>(1, col_bytes))));
+
+      Eigen::MatrixXd V_plus_T;
+      Eigen::MatrixXd V_minus_T;
+      Eigen::MatrixXd W_plus_b;
+      Eigen::MatrixXd W_minus_b;
+
+      for (int p0 = 0; p0 < n_tri; p0 += batch_ab) {
+        const int bsz = std::min(batch_ab, n_tri - p0);
+        if (!is_antisym) V_plus_T.resize(n_tri, bsz);
+        if (n_strict > 0) V_minus_T.resize(n_strict, bsz);
+
         #pragma omp parallel
         {
-            std::vector<Eigen::MatrixXd> W_loc(n_pairs, Eigen::MatrixXd::Zero(nv_l, nv_r));
-            Eigen::MatrixXd X_tmp(nv_l, nv_r);
-            #pragma omp for schedule(static) nowait
-            for (int P = 0; P < n_aux; ++P) {
-                Eigen::Map<const Eigen::MatrixXd> B_Pl(B_vv_left.col(P).data(), nv_l, nv_l);
-                Eigen::Map<const Eigen::MatrixXd> B_Pr(B_vv_right.col(P).data(), nv_r, nv_r);
-                for (int k = 0; k < n_pairs; ++k) {
-                    X_tmp.noalias() = T_pairs[k] * B_Pr;
-                    W_loc[k].noalias() += B_Pl.transpose() * X_tmp;
+          Eigen::MatrixXd Ba_loc(V, n_aux), Bb_loc(V, n_aux), M_ab(V, V);
+          int last_a = -1;
+          #pragma omp for schedule(static) nowait
+          for (int r = 0; r < bsz; ++r) {
+            const int a = pair_a[p0 + r];
+            const int b = pair_b[p0 + r];
+            if (a != last_a) {
+              Ba_loc = B_vv_left.middleRows(static_cast<Eigen::Index>(a) * V, V);
+              last_a = a;
+            }
+            if (b == a) {
+              M_ab.noalias() = Ba_loc * Ba_loc.transpose();
+            } else {
+              Bb_loc = B_vv_left.middleRows(static_cast<Eigen::Index>(b) * V, V);
+              M_ab.noalias() = Ba_loc * Bb_loc.transpose();
+            }
+
+            if (!is_antisym) {
+              double* vp = V_plus_T.col(r).data();
+              for (int e = 0; e < V; ++e) {
+                const int base = e * (e + 1) / 2;
+                for (int f = 0; f < e; ++f) vp[base + f] = 0.5 * (M_ab(e, f) + M_ab(f, e));
+                vp[base + e] = M_ab(e, e);
+              }
+            }
+            if (n_strict > 0) {
+              double* vm = V_minus_T.col(r).data();
+              if (a == b) {
+                std::fill(vm, vm + n_strict, 0.0);
+              } else {
+                for (int e = 1; e < V; ++e) {
+                  const int base = e * (e - 1) / 2;
+                  for (int f = 0; f < e; ++f) vm[base + f] = 0.5 * (M_ab(e, f) - M_ab(f, e));
                 }
+              }
             }
-            #pragma omp critical
-            {
-                for (int k = 0; k < n_pairs; ++k) W_pairs[k].noalias() += W_loc[k];
-            }
+          }
         }
+
+        if (!is_antisym) {
+          W_plus_b.resize(bsz, n_pairs);
+          constexpr int tile_r = 32;
+          #pragma omp parallel for schedule(dynamic)
+          for (int r0 = 0; r0 < bsz; r0 += tile_r) {
+            const int rlen = std::min(tile_r, bsz - r0);
+            W_plus_b.middleRows(r0, rlen).noalias() = V_plus_T.middleCols(r0, rlen).transpose() * T_plus;
+          }
+        }
+        if (n_strict > 0) {
+          W_minus_b.resize(bsz, n_pairs);
+          constexpr int tile_r = 32;
+          #pragma omp parallel for schedule(dynamic)
+          for (int r0 = 0; r0 < bsz; r0 += tile_r) {
+            const int rlen = std::min(tile_r, bsz - r0);
+            W_minus_b.middleRows(r0, rlen).noalias() = V_minus_T.middleCols(r0, rlen).transpose() * T_minus;
+          }
+        }
+
+        #pragma omp parallel for schedule(static)
+        for (int k = 0; k < n_pairs; ++k) {
+          Eigen::MatrixXd& Wk = W_pairs[k];
+          for (int r = 0; r < bsz; ++r) {
+            const int a = pair_a[p0 + r];
+            const int b = pair_b[p0 + r];
+            const double wp = is_antisym ? 0.0 : W_plus_b(r, k);
+            const double wm = (n_strict > 0) ? W_minus_b(r, k) : 0.0;
+            if (a == b) {
+              Wk(a, a) += wp;
+            } else {
+              Wk(a, b) += wp + wm;
+              Wk(b, a) += wp - wm;
+            }
+          }
+        }
+      }
+      return;
     }
+  }
+
+  // Jalur 2: Adaptive Batched BLAS-3 DGEMM untuk kanal opposite-spin (UHF AB) saat O_a*O_b besar
+  if (!same_B && nv_l >= 8 && nv_r >= 8) {
+    const double n_ab = static_cast<double>(nv_l) * nv_r;
+    const double flops_batched_ab = 2.0 * n_ab * n_ab * n_aux + 2.0 * n_ab * n_ab * n_pairs;
+    if (flops_batched_ab < 0.85 * flops_loop_p) {
+      const int n_ef = nv_l * nv_r;
+      Eigen::MatrixXd T_pack(n_ef, n_pairs);
+      #pragma omp parallel for schedule(static)
+      for (int k = 0; k < n_pairs; ++k) {
+        std::copy(T_pairs[k].data(), T_pairs[k].data() + n_ef, T_pack.col(k).data());
+      }
+
+      constexpr size_t kMaxBatchBytes = 64ULL * 1024ULL * 1024ULL;
+      const int batch_ab = std::max(1, std::min(n_ef, static_cast<int>(kMaxBatchBytes / std::max<size_t>(1, static_cast<size_t>(n_ef) * sizeof(double)))));
+
+      Eigen::MatrixXd V_b_T;
+      Eigen::MatrixXd W_b;
+      for (int p0 = 0; p0 < n_ef; p0 += batch_ab) {
+        const int bsz = std::min(batch_ab, n_ef - p0);
+        V_b_T.resize(n_ef, bsz);
+
+        #pragma omp parallel
+        {
+          Eigen::MatrixXd Ba_loc(nv_l, n_aux), Bb_loc(nv_r, n_aux), M_ab(nv_l, nv_r);
+          int last_a = -1;
+          #pragma omp for schedule(static) nowait
+          for (int r = 0; r < bsz; ++r) {
+            const int idx = p0 + r;
+            const int a = idx / nv_r;
+            const int b = idx % nv_r;
+            if (a != last_a) {
+              Ba_loc = B_vv_left.middleRows(static_cast<Eigen::Index>(a) * nv_l, nv_l);
+              last_a = a;
+            }
+            Bb_loc = B_vv_right.middleRows(static_cast<Eigen::Index>(b) * nv_r, nv_r);
+            M_ab.noalias() = Ba_loc * Bb_loc.transpose();
+            std::copy(M_ab.data(), M_ab.data() + n_ef, V_b_T.col(r).data());
+          }
+        }
+
+        W_b.resize(bsz, n_pairs);
+        constexpr int tile_r = 32;
+        #pragma omp parallel for schedule(dynamic)
+        for (int r0 = 0; r0 < bsz; r0 += tile_r) {
+          const int rlen = std::min(tile_r, bsz - r0);
+          W_b.middleRows(r0, rlen).noalias() = V_b_T.middleCols(r0, rlen).transpose() * T_pack;
+        }
+
+        #pragma omp parallel for schedule(static)
+        for (int k = 0; k < n_pairs; ++k) {
+          Eigen::MatrixXd& Wk = W_pairs[k];
+          for (int r = 0; r < bsz; ++r) {
+            const int idx = p0 + r;
+            Wk(idx / nv_r, idx % nv_r) += W_b(r, k);
+          }
+        }
+      }
+      return;
+    }
+  }
+
+  // Jalur 3: Loop-P original (optimal saat jumlah pasangan terisi n_pairs kecil dibanding V)
+  if (n_pairs >= omp_get_max_threads()) {
+    #pragma omp parallel for schedule(static)
+    for (int k = 0; k < n_pairs; ++k) {
+      Eigen::MatrixXd X_tmp(nv_l, nv_r);
+      for (int P = 0; P < n_aux; ++P) {
+        Eigen::Map<const Eigen::MatrixXd> B_Pl(B_vv_left.col(P).data(), nv_l, nv_l);
+        Eigen::Map<const Eigen::MatrixXd> B_Pr(B_vv_right.col(P).data(), nv_r, nv_r);
+        X_tmp.noalias() = T_pairs[k] * B_Pr;
+        W_pairs[k].noalias() += B_Pl.transpose() * X_tmp;
+      }
+    }
+  } else {
+    #pragma omp parallel
+    {
+      std::vector<Eigen::MatrixXd> W_loc(n_pairs, Eigen::MatrixXd::Zero(nv_l, nv_r));
+      Eigen::MatrixXd X_tmp(nv_l, nv_r);
+      #pragma omp for schedule(static) nowait
+      for (int P = 0; P < n_aux; ++P) {
+        Eigen::Map<const Eigen::MatrixXd> B_Pl(B_vv_left.col(P).data(), nv_l, nv_l);
+        Eigen::Map<const Eigen::MatrixXd> B_Pr(B_vv_right.col(P).data(), nv_r, nv_r);
+        for (int k = 0; k < n_pairs; ++k) {
+          X_tmp.noalias() = T_pairs[k] * B_Pr;
+          W_loc[k].noalias() += B_Pl.transpose() * X_tmp;
+        }
+      }
+      #pragma omp critical
+      {
+        for (int k = 0; k < n_pairs; ++k) W_pairs[k].noalias() += W_loc[k];
+      }
+    }
+  }
 }
 
 } // namespace
@@ -1271,8 +1487,9 @@ void OMP3::compute_mp3_correction() {
                 for (int j = 0; j < na_; ++j) {
                     for (int a = 0; a < va_; ++a) {
                         for (int b = 0; b < va_; ++b) {
-                            double D = ea(i) + ea(j) - ea(na_ + a) - ea(na_ + b);
-                            t2_3rd_aa_(i, j, a, b) = W(i, j, a, b) / D; 
+                            if (i < n_frozen_ || j < n_frozen_) { t2_3rd_aa_(i, j, a, b) = 0.0; continue; }
+              double D = ea(i) + ea(j) - ea(na_ + a) - ea(na_ + b);
+              t2_3rd_aa_(i, j, a, b) = W(i, j, a, b) / D; 
                             e3_aa += W(i, j, a, b) * (2.0 * T2_aa_ijab(i, j, a, b) - T2_aa_ijab(i, j, b, a));
                         }
                     }
@@ -1552,6 +1769,335 @@ void OMP3::compute_mp3_correction() {
     // IMPLEMENTASI CHOLESKY & DENSITY FITTING (ZERO-COPY & PARALLEL GEMM)
     // =========================================================================
     int n_aux = scf_.L_mat.cols();
+    const int nf_a = std::clamp(n_frozen_, 0, na_);
+    const int nf_b = std::clamp(n_frozen_, 0, nb_);
+    if (nf_a > 0 || nf_b > 0) {
+        auto slice_boo = [&](const Eigen::MatrixXd& Boo, int n_full, int nf) {
+        const int n_act = n_full - nf;
+        Eigen::MatrixXd out(static_cast<Eigen::Index>(n_act) * n_act, n_aux);
+        #pragma omp parallel for schedule(static)
+        for (int P = 0; P < n_aux; ++P) {
+            const double* s = Boo.col(P).data();
+            double* d = out.col(P).data();
+            for (int j = 0; j < n_act; ++j)
+            for (int i = 0; i < n_act; ++i)
+                d[i + j * n_act] = s[(nf + i) + (nf + j) * n_full];
+        }
+        return out;
+        };
+
+        if (is_restricted) {
+        const int na_act = na_ - nf_a;
+        t2_3rd_aa_ = Eigen::Tensor<double, 4>(na_, na_, va_, va_);
+        t2_3rd_aa_.setZero();
+        if (na_act <= 0 || va_ <= 0) { e_mp3_tot_ = 0.0; return; }
+
+        Eigen::Tensor<double, 4> T_act(na_act, na_act, va_, va_);
+        #pragma omp parallel for collapse(4) schedule(static)
+        for (int i = 0; i < na_act; ++i)
+            for (int j = 0; j < na_act; ++j)
+            for (int a = 0; a < va_; ++a)
+                for (int b = 0; b < va_; ++b)
+                T_act(i, j, a, b) = T2_aa_ijab(nf_a + i, nf_a + j, a, b);
+
+        Eigen::Tensor<double, 4> W(na_act, na_act, va_, va_);
+        W.setZero();
+        TBLIS_VIEW_4D(t_T, T_act, na_act, na_act, va_, va_);
+        TBLIS_VIEW_4D(t_W, W, na_act, na_act, va_, va_);
+
+        Eigen::MatrixXd B_ij_act = slice_boo(B_oo_P_alpha_, na_, nf_a);
+        Eigen::MatrixXd B_ia_act = B_ia_P_alpha_.bottomRows(static_cast<Eigen::Index>(na_act) * va_);
+        const Eigen::MatrixXd& B_ab_a = B_vv_P_alpha_;
+
+        Eigen::MatrixXd M_oooo = parallel_gemm_abt_mp3(B_ij_act, B_ij_act);
+        Eigen::MatrixXd M_ovov = parallel_gemm_abt_mp3(B_ia_act, B_ia_act);
+        Eigen::MatrixXd M_oovv = parallel_gemm_abt_mp3(B_ij_act, B_ab_a);
+
+        auto t_Voooo = make_mat_view_4d_mp3(M_oooo, na_act, na_act, na_act, na_act);
+        auto t_Vovov = make_mat_view_4d_mp3(M_ovov, na_act, va_, na_act, va_);
+        auto t_Voovv = make_mat_view_4d_mp3(M_oovv, na_act, na_act, va_, va_);
+
+        tblis::mult<double>( 1.0, t_T, "mnab", t_Voooo, "minj", 1.0, t_W, "ijab");
+        tblis::mult<double>( 2.0, t_Vovov, "iakc", t_T, "kjcb", 1.0, t_W, "ijab");
+        tblis::mult<double>(-1.0, t_Voovv, "ikac", t_T, "kjcb", 1.0, t_W, "ijab");
+        tblis::mult<double>( 2.0, t_T, "ikac", t_Vovov, "kcjb", 1.0, t_W, "ijab");
+        tblis::mult<double>(-1.0, t_T, "ikac", t_Voovv, "kjcb", 1.0, t_W, "ijab");
+        tblis::mult<double>(-1.0, t_T, "ikca", t_Vovov, "kcjb", 1.0, t_W, "ijab");
+        tblis::mult<double>(-1.0, t_Vovov, "iakc", t_T, "kjbc", 1.0, t_W, "ijab");
+        tblis::mult<double>(-1.0, t_Voovv, "ikbc", t_T, "kjac", 1.0, t_W, "ijab");
+        tblis::mult<double>(-1.0, t_T, "ikcb", t_Voovv, "jkac", 1.0, t_W, "ijab");
+
+        const int n_pairs_sym = na_act * (na_act + 1) / 2;
+        std::vector<Eigen::MatrixXd> T_pairs(n_pairs_sym, Eigen::MatrixXd(va_, va_));
+        std::vector<Eigen::MatrixXd> W_pairs(n_pairs_sym, Eigen::MatrixXd::Zero(va_, va_));
+        int p_idx = 0;
+        for (int i = 0; i < na_act; ++i)
+            for (int j = i; j < na_act; ++j) {
+            for (int e = 0; e < va_; ++e)
+                for (int f = 0; f < va_; ++f)
+                T_pairs[p_idx](e, f) = T_act(i, j, e, f);
+            ++p_idx;
+            }
+        contract_vvvv_pairs_df(B_ab_a, va_, B_ab_a, va_, n_aux, T_pairs, W_pairs);
+        p_idx = 0;
+        for (int i = 0; i < na_act; ++i)
+            for (int j = i; j < na_act; ++j) {
+            for (int a = 0; a < va_; ++a)
+                for (int b = 0; b < va_; ++b) {
+                W(i, j, a, b) += W_pairs[p_idx](a, b);
+                if (i != j) W(j, i, b, a) += W_pairs[p_idx](a, b);
+                }
+            ++p_idx;
+            }
+
+        double e3_aa = 0.0;
+        #pragma omp parallel for collapse(4) reduction(+:e3_aa) schedule(static)
+        for (int i = 0; i < na_act; ++i)
+            for (int j = 0; j < na_act; ++j)
+            for (int a = 0; a < va_; ++a)
+                for (int b = 0; b < va_; ++b) {
+                const double D = ea(nf_a + i) + ea(nf_a + j) - ea(na_ + a) - ea(na_ + b);
+                t2_3rd_aa_(nf_a + i, nf_a + j, a, b) = W(i, j, a, b) / D;
+                e3_aa += W(i, j, a, b) * (2.0 * T_act(i, j, a, b) - T_act(i, j, b, a));
+                }
+        e_mp3_tot_ = e3_aa;
+        return;
+        } else {
+        // Unrestricted DF/Cholesky OMP3 Frozen Core: zero out frozen rows di akhir secara aman
+        // (tetap mempercepat vvvv via skip pasangan < nf)
+        const int na_act = na_ - nf_a;
+        const int nb_act = nb_ - nf_b;
+        t2_3rd_aa_ = Eigen::Tensor<double, 4>(na_, na_, va_, va_); t2_3rd_aa_.setZero();
+        if (nb_ > 0 && vb_ > 0) {
+            t2_3rd_bb_ = Eigen::Tensor<double, 4>(nb_, nb_, vb_, vb_); t2_3rd_bb_.setZero();
+            t2_3rd_ab_ = Eigen::Tensor<double, 4>(na_, nb_, va_, vb_); t2_3rd_ab_.setZero();
+        }
+        if (na_act <= 0 || va_ <= 0) { e_mp3_tot_ = 0.0; return; }
+
+        double e3_aa = 0.0, e3_bb = 0.0, e3_ab = 0.0;
+        Eigen::Tensor<double, 4> Taa_act(na_act, na_act, va_, va_);
+        #pragma omp parallel for collapse(4) schedule(static)
+        for (int i = 0; i < na_act; ++i)
+            for (int j = 0; j < na_act; ++j)
+            for (int a = 0; a < va_; ++a)
+                for (int b = 0; b < va_; ++b)
+                Taa_act(i, j, a, b) = T2_aa_ijab(nf_a + i, nf_a + j, a, b);
+
+        const bool has_b_act = (nb_act > 0 && vb_ > 0);
+        Eigen::Tensor<double, 4> Tbb_act, Tab_act;
+        if (has_b_act) {
+            auto* t2_bb_d = t2_bb_.get_block(0, 0, 0, 0);
+            auto* t2_ab_d = t2_ab_.get_block(0, 0, 0, 0);
+            Tbb_act = Eigen::Tensor<double, 4>(nb_act, nb_act, vb_, vb_); Tbb_act.setZero();
+            Tab_act = Eigen::Tensor<double, 4>(na_act, nb_act, va_, vb_); Tab_act.setZero();
+            if (t2_bb_d) {
+            #pragma omp parallel for collapse(4) schedule(static)
+            for (int i = 0; i < nb_act; ++i)
+                for (int j = 0; j < nb_act; ++j)
+                for (int a = 0; a < vb_; ++a)
+                    for (int b = 0; b < vb_; ++b)
+                    Tbb_act(i, j, a, b) = (*t2_bb_d)(nf_b + i, nf_b + j, a, b);
+            }
+            if (t2_ab_d) {
+            #pragma omp parallel for collapse(4) schedule(static)
+            for (int i = 0; i < na_act; ++i)
+                for (int j = 0; j < nb_act; ++j)
+                for (int a = 0; a < va_; ++a)
+                    for (int b = 0; b < vb_; ++b)
+                    Tab_act(i, j, a, b) = (*t2_ab_d)(nf_a + i, nf_b + j, a, b);
+            }
+        }
+
+        Eigen::MatrixXd B_ij_a = slice_boo(B_oo_P_alpha_, na_, nf_a);
+        Eigen::MatrixXd B_ia_a = B_ia_P_alpha_.bottomRows(static_cast<Eigen::Index>(na_act) * va_);
+        const Eigen::MatrixXd& B_ab_a = B_vv_P_alpha_;
+
+        Eigen::MatrixXd B_ij_b, B_ia_b;
+        if (has_b_act) {
+            B_ij_b = slice_boo(B_oo_P_beta_, nb_, nf_b);
+            B_ia_b = B_ia_P_beta_.bottomRows(static_cast<Eigen::Index>(nb_act) * vb_);
+        }
+
+        Eigen::MatrixXd M_oooo_aa = parallel_gemm_abt_mp3(B_ij_a, B_ij_a);
+        Eigen::MatrixXd M_ovov_aa = parallel_gemm_abt_mp3(B_ia_a, B_ia_a);
+        Eigen::MatrixXd M_oovv_aa = parallel_gemm_abt_mp3(B_ij_a, B_ab_a);
+        Eigen::MatrixXd M_ovov_ab;
+        if (has_b_act) M_ovov_ab = parallel_gemm_abt_mp3(B_ia_a, B_ia_b);
+
+        TBLIS_VIEW_4D(t_Taa, Taa_act, na_act, na_act, va_, va_);
+        {
+            Eigen::Tensor<double, 4> Waa_l(na_act, na_act, va_, va_); Waa_l.setZero();
+            Eigen::Tensor<double, 4> Waa_r(na_act, na_act, va_, va_); Waa_r.setZero();
+            TBLIS_VIEW_4D(t_Wl, Waa_l, na_act, na_act, va_, va_);
+            TBLIS_VIEW_4D(t_Wr, Waa_r, na_act, na_act, va_, va_);
+            auto t_Voooo = make_mat_view_4d_mp3(M_oooo_aa, na_act, na_act, na_act, na_act);
+            auto t_Vovov = make_mat_view_4d_mp3(M_ovov_aa, na_act, va_, na_act, va_);
+            auto t_Voovv = make_mat_view_4d_mp3(M_oovv_aa, na_act, na_act, va_, va_);
+            if (na_act > 1) {
+            tblis::mult<double>( 0.5, t_Taa, "mnab", t_Voooo, "minj", 1.0, t_Wl, "ijab");
+            tblis::mult<double>(-0.5, t_Taa, "mnab", t_Voooo, "mjni", 1.0, t_Wl, "ijab");
+            tblis::mult<double>( 1.0, t_Vovov, "iakc", t_Taa, "kjcb", 1.0, t_Wr, "ijab");
+            tblis::mult<double>(-1.0, t_Voovv, "ikac", t_Taa, "kjcb", 1.0, t_Wr, "ijab");
+            if (has_b_act) {
+                auto t_Vovov_ab = make_mat_view_4d_mp3(M_ovov_ab, na_act, va_, nb_act, vb_);
+                TBLIS_VIEW_4D(t_Tab, Tab_act, na_act, nb_act, va_, vb_);
+                tblis::mult<double>(1.0, t_Vovov_ab, "iakc", t_Tab, "jkbc", 1.0, t_Wr, "ijab");
+            }
+            const int n_p = na_act * (na_act - 1) / 2;
+            std::vector<Eigen::MatrixXd> Tp(n_p, Eigen::MatrixXd(va_, va_));
+            std::vector<Eigen::MatrixXd> Wp(n_p, Eigen::MatrixXd::Zero(va_, va_));
+            int pi = 0;
+            for (int i = 0; i < na_act; ++i)
+                for (int j = i + 1; j < na_act; ++j) {
+                for (int e = 0; e < va_; ++e)
+                    for (int f = 0; f < va_; ++f) Tp[pi](e, f) = Taa_act(i, j, e, f);
+                ++pi;
+                }
+            contract_vvvv_pairs_df(B_ab_a, va_, B_ab_a, va_, n_aux, Tp, Wp);
+            pi = 0;
+            for (int i = 0; i < na_act; ++i)
+                for (int j = i + 1; j < na_act; ++j) {
+                for (int a = 0; a < va_; ++a)
+                    for (int b = 0; b < va_; ++b) {
+                    const double v = 0.5 * (Wp[pi](a, b) - Wp[pi](b, a));
+                    Waa_l(i, j, a, b) += v;
+                    Waa_l(j, i, a, b) -= v;
+                    }
+                ++pi;
+                }
+            #pragma omp parallel for collapse(4) reduction(+:e3_aa) schedule(static)
+            for (int i = 0; i < na_act; ++i)
+                for (int j = 0; j < na_act; ++j)
+                for (int a = 0; a < va_; ++a)
+                    for (int b = 0; b < va_; ++b) {
+                    const double ra = Waa_r(i, j, a, b) - Waa_r(j, i, a, b) - Waa_r(i, j, b, a) + Waa_r(j, i, b, a);
+                    const double wt = Waa_l(i, j, a, b) + ra;
+                    const double D = ea(nf_a + i) + ea(nf_a + j) - ea(na_ + a) - ea(na_ + b);
+                    t2_3rd_aa_(nf_a + i, nf_a + j, a, b) = wt / D;
+                    e3_aa += 0.25 * Taa_act(i, j, a, b) * wt;
+                    }
+            }
+        }
+
+        if (has_b_act) {
+            const auto& eb = scf_.orbital_energies_beta;
+            const Eigen::MatrixXd& B_ab_b = B_vv_P_beta_;
+            TBLIS_VIEW_4D(t_Tbb, Tbb_act, nb_act, nb_act, vb_, vb_);
+            TBLIS_VIEW_4D(t_Tab, Tab_act, na_act, nb_act, va_, vb_);
+
+            Eigen::MatrixXd M_oooo_bb = parallel_gemm_abt_mp3(B_ij_b, B_ij_b);
+            Eigen::MatrixXd M_ovov_bb = parallel_gemm_abt_mp3(B_ia_b, B_ia_b);
+            Eigen::MatrixXd M_oovv_bb = parallel_gemm_abt_mp3(B_ij_b, B_ab_b);
+
+            if (nb_act > 1) {
+            Eigen::Tensor<double, 4> Wbb_l(nb_act, nb_act, vb_, vb_); Wbb_l.setZero();
+            Eigen::Tensor<double, 4> Wbb_r(nb_act, nb_act, vb_, vb_); Wbb_r.setZero();
+            TBLIS_VIEW_4D(t_Wl, Wbb_l, nb_act, nb_act, vb_, vb_);
+            TBLIS_VIEW_4D(t_Wr, Wbb_r, nb_act, nb_act, vb_, vb_);
+            auto t_Voooo = make_mat_view_4d_mp3(M_oooo_bb, nb_act, nb_act, nb_act, nb_act);
+            auto t_Vovov = make_mat_view_4d_mp3(M_ovov_bb, nb_act, vb_, nb_act, vb_);
+            auto t_Voovv = make_mat_view_4d_mp3(M_oovv_bb, nb_act, nb_act, vb_, vb_);
+            auto t_Vovov_ab = make_mat_view_4d_mp3(M_ovov_ab, na_act, va_, nb_act, vb_);
+            tblis::mult<double>( 0.5, t_Tbb, "mnab", t_Voooo, "minj", 1.0, t_Wl, "ijab");
+            tblis::mult<double>(-0.5, t_Tbb, "mnab", t_Voooo, "mjni", 1.0, t_Wl, "ijab");
+            tblis::mult<double>( 1.0, t_Vovov, "iakc", t_Tbb, "kjcb", 1.0, t_Wr, "ijab");
+            tblis::mult<double>(-1.0, t_Voovv, "ikac", t_Tbb, "kjcb", 1.0, t_Wr, "ijab");
+            tblis::mult<double>( 1.0, t_Vovov_ab, "kcia", t_Tab, "kjcb", 1.0, t_Wr, "ijab");
+
+            const int n_p = nb_act * (nb_act - 1) / 2;
+            std::vector<Eigen::MatrixXd> Tp(n_p, Eigen::MatrixXd(vb_, vb_));
+            std::vector<Eigen::MatrixXd> Wp(n_p, Eigen::MatrixXd::Zero(vb_, vb_));
+            int pi = 0;
+            for (int i = 0; i < nb_act; ++i)
+                for (int j = i + 1; j < nb_act; ++j) {
+                for (int e = 0; e < vb_; ++e)
+                    for (int f = 0; f < vb_; ++f) Tp[pi](e, f) = Tbb_act(i, j, e, f);
+                ++pi;
+                }
+            contract_vvvv_pairs_df(B_ab_b, vb_, B_ab_b, vb_, n_aux, Tp, Wp);
+            pi = 0;
+            for (int i = 0; i < nb_act; ++i)
+                for (int j = i + 1; j < nb_act; ++j) {
+                for (int a = 0; a < vb_; ++a)
+                    for (int b = 0; b < vb_; ++b) {
+                    const double v = 0.5 * (Wp[pi](a, b) - Wp[pi](b, a));
+                    Wbb_l(i, j, a, b) += v;
+                    Wbb_l(j, i, a, b) -= v;
+                    }
+                ++pi;
+                }
+            #pragma omp parallel for collapse(4) reduction(+:e3_bb) schedule(static)
+            for (int i = 0; i < nb_act; ++i)
+                for (int j = 0; j < nb_act; ++j)
+                for (int a = 0; a < vb_; ++a)
+                    for (int b = 0; b < vb_; ++b) {
+                    const double ra = Wbb_r(i, j, a, b) - Wbb_r(j, i, a, b) - Wbb_r(i, j, b, a) + Wbb_r(j, i, b, a);
+                    const double wt = Wbb_l(i, j, a, b) + ra;
+                    const double D = eb(nf_b + i) + eb(nf_b + j) - eb(nb_ + a) - eb(nb_ + b);
+                    t2_3rd_bb_(nf_b + i, nf_b + j, a, b) = wt / D;
+                    e3_bb += 0.25 * Tbb_act(i, j, a, b) * wt;
+                    }
+            }
+
+            {
+            Eigen::Tensor<double, 4> Wab_l(na_act, nb_act, va_, vb_); Wab_l.setZero();
+            Eigen::Tensor<double, 4> Wab_r(na_act, nb_act, va_, vb_); Wab_r.setZero();
+            TBLIS_VIEW_4D(t_Wl, Wab_l, na_act, nb_act, va_, vb_);
+            TBLIS_VIEW_4D(t_Wr, Wab_r, na_act, nb_act, va_, vb_);
+            Eigen::MatrixXd M_oooo_ab = parallel_gemm_abt_mp3(B_ij_a, B_ij_b);
+            auto t_Voooo_ab = make_mat_view_4d_mp3(M_oooo_ab, na_act, na_act, nb_act, nb_act);
+            tblis::mult<double>(1.0, t_Tab, "mnab", t_Voooo_ab, "minj", 1.0, t_Wl, "ijab");
+
+            auto t_Vovov_aa = make_mat_view_4d_mp3(M_ovov_aa, na_act, va_, na_act, va_);
+            auto t_Voovv_aa = make_mat_view_4d_mp3(M_oovv_aa, na_act, na_act, va_, va_);
+            auto t_Vovov_bb = make_mat_view_4d_mp3(M_ovov_bb, nb_act, vb_, nb_act, vb_);
+            auto t_Voovv_bb = make_mat_view_4d_mp3(M_oovv_bb, nb_act, nb_act, vb_, vb_);
+            auto t_Vovov_ab = make_mat_view_4d_mp3(M_ovov_ab, na_act, va_, nb_act, vb_);
+            tblis::mult<double>( 1.0, t_Vovov_aa, "iakc", t_Tab, "kjcb", 1.0, t_Wr, "ijab");
+            tblis::mult<double>(-1.0, t_Voovv_aa, "ikac", t_Tab, "kjcb", 1.0, t_Wr, "ijab");
+            tblis::mult<double>( 1.0, t_Tab, "ikac", t_Vovov_bb, "kcjb", 1.0, t_Wr, "ijab");
+            tblis::mult<double>(-1.0, t_Tab, "ikac", t_Voovv_bb, "kjcb", 1.0, t_Wr, "ijab");
+            if (na_act > 1) tblis::mult<double>(1.0, t_Taa, "ikac", t_Vovov_ab, "kcjb", 1.0, t_Wr, "ijab");
+            if (nb_act > 1) tblis::mult<double>(1.0, t_Vovov_ab, "iakc", t_Tbb, "kjcb", 1.0, t_Wr, "ijab");
+
+            Eigen::MatrixXd M_oovv_ab_ex = parallel_gemm_abt_mp3(B_ij_a, B_ab_b);
+            Eigen::MatrixXd M_oovv_ba_ex = parallel_gemm_abt_mp3(B_ij_b, B_ab_a);
+            auto t_Voovv_ab_ex = make_mat_view_4d_mp3(M_oovv_ab_ex, na_act, na_act, vb_, vb_);
+            auto t_Voovv_ba_ex = make_mat_view_4d_mp3(M_oovv_ba_ex, nb_act, nb_act, va_, va_);
+            tblis::mult<double>(-1.0, t_Voovv_ab_ex, "ikbc", t_Tab, "kjac", 1.0, t_Wr, "ijab");
+            tblis::mult<double>(-1.0, t_Tab, "ikcb", t_Voovv_ba_ex, "jkac", 1.0, t_Wr, "ijab");
+
+            const int n_p = na_act * nb_act;
+            std::vector<Eigen::MatrixXd> Tp(n_p, Eigen::MatrixXd(va_, vb_));
+            std::vector<Eigen::MatrixXd> Wp(n_p, Eigen::MatrixXd::Zero(va_, vb_));
+            for (int i = 0; i < na_act; ++i)
+                for (int j = 0; j < nb_act; ++j)
+                for (int e = 0; e < va_; ++e)
+                    for (int f = 0; f < vb_; ++f)
+                    Tp[i * nb_act + j](e, f) = Tab_act(i, j, e, f);
+            contract_vvvv_pairs_df(B_ab_a, va_, B_ab_b, vb_, n_aux, Tp, Wp);
+            for (int i = 0; i < na_act; ++i)
+                for (int j = 0; j < nb_act; ++j)
+                for (int a = 0; a < va_; ++a)
+                    for (int b = 0; b < vb_; ++b)
+                    Wab_l(i, j, a, b) += Wp[i * nb_act + j](a, b);
+
+            #pragma omp parallel for collapse(4) reduction(+:e3_ab) schedule(static)
+            for (int i = 0; i < na_act; ++i)
+                for (int j = 0; j < nb_act; ++j)
+                for (int a = 0; a < va_; ++a)
+                    for (int b = 0; b < vb_; ++b) {
+                    const double wt = Wab_l(i, j, a, b) + Wab_r(i, j, a, b);
+                    const double D = ea(nf_a + i) + eb(nf_b + j) - ea(na_ + a) - eb(nb_ + b);
+                    t2_3rd_ab_(nf_a + i, nf_b + j, a, b) = wt / D;
+                    e3_ab += Tab_act(i, j, a, b) * wt;
+                    }
+            }
+        }
+        e_mp3_tot_ = e3_aa + e3_bb + e3_ab;
+        return;
+        }
+    }
 
     const Eigen::MatrixXd& B_ij_a = B_oo_P_alpha_;
     const Eigen::MatrixXd& B_ab_a = B_vv_P_alpha_;
@@ -2079,7 +2625,8 @@ void OMP3::build_opdm_beta() {
         TBLIS_VIEW_4D(t_Tbra, T_bra_nc, no1, no2, nv1, nv2);
         TBLIS_VIEW_4D(t_Tket, T_ket_nc, no1, no2, nv1, nv2);
 
-        for (int m0 = 0; m0 < nm; m0 += mb_max) {
+        const int m_start = std::clamp(n_frozen_, 0, nm);
+        for (int m0 = m_start; m0 < nm; m0 += mb_max) {
             const int mb = std::min(mb_max, nm - m0);
             Eigen::MatrixXd B_chunk_buf;
             const Eigen::MatrixXd* B_chunk_ptr = &B_ov_m;

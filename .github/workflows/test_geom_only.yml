@@ -430,6 +430,32 @@ jobs:
           fi
 
       # =========================================================================
+      # BAGIAN 7: HEAVY ATOMS (Z=18..36) & LARGE MOLECULES (mshqc vs Psi4 Terpisah)
+      # =========================================================================
+      - name: "[17/19] Run mshqc Heavy & Large Molecule Suite (run_mshqc_heavy_large.py)"
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate geom_env
+          python -u tests/run_mshqc_heavy_large.py 2>&1 | tee 17_mshqc_heavy_large_running_log.txt
+          test -s mshqc_heavy_large_raw.json
+
+      - name: "[18/19] Run Psi4 Heavy & Large Molecule Reference Suite (run_psi4_heavy_large.py)"
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate psi4_env
+          python -u tests/run_psi4_heavy_large.py 2>&1 | tee 18_psi4_heavy_large_running_log.txt
+          test -s psi4_heavy_large_raw.json
+
+      - name: "[19/19] Compare Heavy & Large Molecule Tables (compare_heavy_large.py)"
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate geom_env
+          python -u tests/compare_heavy_large.py mshqc_heavy_large_raw.json psi4_heavy_large_raw.json 2>&1 | tee 19_compare_heavy_large_log.txt
+          grep -q "Total Matched Heavy/Large Runs: 8" 19_compare_heavy_large_log.txt
+      # =========================================================================
       # UPLOAD ARTIFACTS (.txt & .json)
       # =========================================================================
       - name: Upload All Test & Benchmark Logs (.txt & .json)
@@ -458,3 +484,9 @@ jobs:
             mshqc_geom_raw.json
             psi4_geom_raw.json
             comparison_summary.md
+            17_mshqc_heavy_large_running_log.txt
+            18_psi4_heavy_large_running_log.txt
+            19_compare_heavy_large_log.txt
+            mshqc_heavy_large_raw.json
+            psi4_heavy_large_raw.json
+            test_heavy_large_validation.txt

@@ -134,16 +134,13 @@ Eigen::MatrixXd SADGuess::build(const Molecule& mol, const BasisSet& basis) {
         for (int s = current_shell_idx; s < basis.n_shells(); ++s) {
             const auto& shell = basis.shell(s);
             if (shell.center_index() == i) {
-                int nf = shell.n_functions();
-                if (nf == 1) {
-                    s_shells.push_back({n_atom_bf, nf});
-                } else if (nf == 3) {
-                    p_shells.push_back({n_atom_bf, nf});
-                } else if (nf == 5 || nf == 6) {
-                    d_shells.push_back({n_atom_bf, nf});
-                } else if (nf == 7 || nf == 10) {
-                    f_shells.push_back({n_atom_bf, nf});
-                }
+               
+                const int l = shell.l();
+                const int nf = shell.n_functions();
+                if (l == 0) s_shells.push_back({n_atom_bf, nf});
+                else if (l == 1) p_shells.push_back({n_atom_bf, nf});
+                else if (l == 2) d_shells.push_back({n_atom_bf, nf});
+                else if (l == 3) f_shells.push_back({n_atom_bf, nf});
                 n_atom_bf += nf;
                 shells_for_this_atom++;
             } else {

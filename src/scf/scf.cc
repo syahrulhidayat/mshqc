@@ -319,13 +319,27 @@ void BaseSCF::init_integrals() {
     } else {
         mshqc::utils::ScopedBlasThreads blas_s_mt(nbasis_, 96);
     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(S_);
-        X_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
-        for (int i = 0; i < nbasis_; i++) {
-            if (es.eigenvalues()(i) >= 1e-6) {
-                double val = 1.0 / std::sqrt(es.eigenvalues()(i));
-                X_ += val * es.eigenvectors().col(i) * es.eigenvectors().col(i).transpose();
-            }
-        }
+    const Eigen::VectorXd& s_evals = es.eigenvalues();
+    const Eigen::MatrixXd& s_evecs = es.eigenvectors();
+    int n_kept = 0;
+    for (int i = 0; i < nbasis_; ++i) if (s_evals(i) >= 1e-6) ++n_kept;
+    Eigen::MatrixXd U_k(nbasis_, n_kept);
+    Eigen::VectorXd inv_sq(n_kept);
+    int kc = 0;
+    for (int i = 0; i < nbasis_; ++i) {
+      if (s_evals(i) >= 1e-6) {
+        U_k.col(kc) = s_evecs.col(i);
+        inv_sq(kc) = 1.0 / std::sqrt(s_evals(i));
+        ++kc;
+      }
+    }
+    X_.resize(nbasis_, nbasis_);
+    if (n_kept > 0) {
+      Eigen::MatrixXd U_sc = U_k * inv_sq.asDiagonal();
+      X_.noalias() = U_sc * U_k.transpose();
+    } else {
+      X_.setZero();
+    }
         salc_irreps_.assign(nbasis_, 0);
     }
     if (config_.print_level > 0) std::cout << "Done.\n";
