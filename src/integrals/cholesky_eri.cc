@@ -182,188 +182,291 @@ CholeskyDecompositionResult CholeskyERI::decompose(const Eigen::Tensor<double, 4
 void CholeskyERI::decompose_direct() {
     if (!integrals_ptr_ || !basis_ptr_) return;
     const auto& basis = *basis_ptr_;
-    int nshells = basis.n_shells();
-    int npair = n_basis_ * n_basis_;
+    const int nshells = basis.n_shells();
+    const int n_tri = n_basis_ * (n_basis_ + 1) / 2;
     reset();
 
     std::vector<int> shell_starts(nshells);
+    int max_shell_dim = 1;
     int offset = 0;
     for (int s = 0; s < nshells; ++s) {
         shell_starts[s] = offset;
-        offset += basis.shell(s).n_functions();
+        int dim_s = basis.shell(s).n_functions();
+        max_shell_dim = std::max(max_shell_dim, dim_s);
+        offset += dim_s;
+    }
+    const size_t max_buf_sz = std::max<size_t>(
+        64, static_cast<size_t>(max_shell_dim) * max_shell_dim * max_shell_dim * max_shell_dim
+    );
+
+    auto tri_index = [](int a, int b) -> int {
+        if (a < b) std::swap(a, b);
+        return a * (a + 1) / 2 + b;
+    };
+
+    std::vector<int> tri_p(n_tri), tri_q(n_tri);
+    for (int p = 0; p < n_basis_; ++p) {
+        const int base = p * (p + 1) / 2;
+        for (int q = 0; q <= p; ++q) {
+            tri_p[base + q] = p;
+            tri_q[base + q] = q;
+        }
     }
 
-    Eigen::VectorXd D(npair);
-    D.setZero();
-    std::vector<double> shell_max(nshells * nshells, 0.0);
+    Eigen::VectorXd D = Eigen::VectorXd::Zero(n_tri);
+    std::vector<double> shell_max(static_cast<size_t>(nshells) * nshells, 0.0);
     std::vector<std::pair<int, int>> valid_pairs;
 
-    #pragma omp parallel for schedule(dynamic, 1)
-    for (int s1 = 0; s1 < nshells; ++s1) {
-        for (int s2 = 0; s2 <= s1; ++s2) {
-            const auto& buf = integrals_ptr_->compute_shell_block(s1, s2, s1, s2);
-            if (buf.empty()) continue;
+    #pragma omp parallel
+    {
+        std::vector<double> buf(max_buf_sz);
+        #pragma omp for schedule(dynamic, 1) nowait
+        for (int s1 = 0; s1 < nshells; ++s1) {
+            const int dim1 = basis.shell(s1).n_functions();
+            const int st1  = shell_starts[s1];
+            for (int s2 = 0; s2 <= s1; ++s2) {
+                if (!integrals_ptr_->compute_shell_block_raw(s1, s2, s1, s2, buf.data())) continue;
+                const int dim2 = basis.shell(s2).n_functions();
+                const int st2  = shell_starts[s2];
+                double max_val_block = 0.0;
 
-            int dim1 = basis.shell(s1).n_functions();
-            int dim2 = basis.shell(s2).n_functions();
-            int st1 = shell_starts[s1];
-            int st2 = shell_starts[s2];
-            double max_val_block = 0.0;
-
-            for (int i = 0; i < dim1; ++i) {
-                for (int j = 0; j < dim2; ++j) {
-                    size_t idx_buf = i + dim1 * (j + dim2 * (i + dim1 * j));
-                    if (idx_buf >= buf.size()) continue;
-
-                    double val = buf[idx_buf];
-                    int p = st1 + i;
-                    int q = st2 + j;
-
-                    if (p * n_basis_ + q < npair) D(p * n_basis_ + q) = val;
-                    if (q * n_basis_ + p < npair) D(q * n_basis_ + p) = val;
-                    max_val_block = std::max(max_val_block, std::abs(val));
+                for (int i = 0; i < dim1; ++i) {
+                    const int p = st1 + i;
+                    for (int j = 0; j < dim2; ++j) {
+                        const int q = st2 + j;
+                        const size_t idx_buf = static_cast<size_t>(i) + dim1 * (j + dim2 * (i + dim1 * j));
+                        const double val = buf[idx_buf];
+                        if (p >= q) D(p * (p + 1) / 2 + q) = val;
+                        max_val_block = std::max(max_val_block, std::abs(val));
+                    }
                 }
-            }
-            double s_max = std::sqrt(max_val_block);
-            shell_max[s1 * nshells + s2] = s_max;
-            shell_max[s2 * nshells + s1] = s_max;
+                const double s_max = std::sqrt(max_val_block);
+                shell_max[s1 * nshells + s2] = s_max;
+                shell_max[s2 * nshells + s1] = s_max;
 
-            if (s_max > 1e-15) {
-                #pragma omp critical
-                valid_pairs.push_back({s1, s2});
+                if (s_max > 1e-15) {
+                    #pragma omp critical
+                    valid_pairs.push_back({s1, s2});
+                }
             }
         }
     }
 
-    int est_rank = std::min(npair, std::max(200, n_basis_ * 5));
-    Eigen::MatrixXd L_store(npair, est_rank);
+    int est_rank = std::min(n_tri, std::max(200, n_basis_ * 5));
+    Eigen::MatrixXd L_tri(n_tri, est_rank);
 
-    // Cutoff screening diperketat ke 1e-15 agar tidak teramplifikasi oleh 1/sqrt(D_max)
     const double screen_cutoff = std::min(1e-15, threshold_ * 1e-6);
-
-    int n_shell_pairs = nshells * (nshells + 1) / 2;
+    const int n_shell_pairs = nshells * (nshells + 1) / 2;
     std::vector<Eigen::MatrixXd> shell_pair_cache(n_shell_pairs);
 
-    int iter = 0;
-    while (true) {
-        int pivot_idx = -1;
-        double D_max = D.maxCoeff(&pivot_idx);
+    constexpr int kMaxBlock = 32;
+    constexpr double kSpanFactor = 0.05;
 
-        if (D_max < threshold_ || pivot_idx == -1 || iter >= npair) break;
-        if (iter >= L_store.cols()) {
-            L_store.conservativeResize(Eigen::NoChange, L_store.cols() * 2);
+    int iter = 0;
+    std::vector<int> cand_idx;
+    cand_idx.reserve(n_tri);
+
+    while (iter < n_tri) {
+        int max_piv = -1;
+        double D_max = D.maxCoeff(&max_piv);
+        if (D_max < threshold_ || max_piv < 0) break;
+
+        // 1. Pilih batch hingga kMaxBlock poros teratas dalam span [max(threshold, 0.05*D_max), D_max]
+        const double span_cut = std::max(threshold_, kSpanFactor * D_max);
+        cand_idx.clear();
+        for (int idx = 0; idx < n_tri; ++idx) {
+            if (D(idx) >= span_cut) cand_idx.push_back(idx);
+        }
+        const int q_cnt = std::min(kMaxBlock, static_cast<int>(cand_idx.size()));
+        if (q_cnt <= 0) break;
+
+        std::partial_sort(cand_idx.begin(), cand_idx.begin() + q_cnt, cand_idx.end(),
+                          [&D](int a, int b) { return D(a) > D(b); });
+        cand_idx.resize(q_cnt);
+
+        if (iter + q_cnt > L_tri.cols()) {
+            L_tri.conservativeResize(Eigen::NoChange, std::max(iter + q_cnt, static_cast<int>(L_tri.cols()) * 2));
         }
 
-        int p = pivot_idx / n_basis_;
-        int q = pivot_idx % n_basis_;
-        if (p < q) std::swap(p, q);
+        // 2. Evaluasi kolom integral mentah untuk seluruh poros di batch (hanya simpan n_tri baris)
+        Eigen::MatrixXd V_panel(n_tri, q_cnt);
+        std::vector<int> touched_shell_pairs;
+        touched_shell_pairs.reserve(q_cnt);
 
-        int sp = bf2shell_[p];
-        int sq = bf2shell_[q];
-        int rel_p = p - shell_starts[sp];
-        int rel_q = q - shell_starts[sq];
-        int pair_pq = sp * (sp + 1) / 2 + sq;
-        int dimP = basis.shell(sp).n_functions();
-        int dimQ = basis.shell(sq).n_functions();
+        for (int c = 0; c < q_cnt; ++c) {
+            const int piv = cand_idx[c];
+            const int p = tri_p[piv];
+            const int q = tri_q[piv];
+            const int sp = bf2shell_[p];
+            const int sq = bf2shell_[q];
+            const int rel_p = p - shell_starts[sp];
+            const int rel_q = q - shell_starts[sq];
+            const int pair_pq = sp * (sp + 1) / 2 + sq;
+            const int dimP = basis.shell(sp).n_functions();
+            const int dimQ = basis.shell(sq).n_functions();
 
-        if (shell_pair_cache[pair_pq].rows() == 0) {
-            Eigen::MatrixXd blk_mat = Eigen::MatrixXd::Zero(npair, dimP * dimQ);
-            double pivot_schwarz = shell_max[sp * nshells + sq];
+            touched_shell_pairs.push_back(pair_pq);
 
-            #pragma omp parallel
-            {
-                std::vector<double> thread_buf(10000);
-                #pragma omp for schedule(dynamic, 16) nowait
-                for (size_t v = 0; v < valid_pairs.size(); ++v) {
-                    int s1 = valid_pairs[v].first;
-                    int s2 = valid_pairs[v].second;
-                    if (shell_max[s1 * nshells + s2] * pivot_schwarz < screen_cutoff) continue;
+            if (shell_pair_cache[pair_pq].rows() == 0) {
+                Eigen::MatrixXd blk_mat = Eigen::MatrixXd::Zero(n_tri, dimP * dimQ);
+                const double pivot_schwarz = shell_max[sp * nshells + sq];
 
-                    int pair_s = s1 * (s1 + 1) / 2 + s2;
-                    bool swap_pairs = (pair_s < pair_pq);
-                    int u1 = swap_pairs ? sp : s1;
-                    int u2 = swap_pairs ? sq : s2;
-                    int u3 = swap_pairs ? s1 : sp;
-                    int u4 = swap_pairs ? s2 : sq;
+                #pragma omp parallel
+                {
+                    std::vector<double> thread_buf(max_buf_sz);
+                    #pragma omp for schedule(dynamic, 16) nowait
+                    for (size_t v = 0; v < valid_pairs.size(); ++v) {
+                        const int s1 = valid_pairs[v].first;
+                        const int s2 = valid_pairs[v].second;
+                        if (shell_max[s1 * nshells + s2] * pivot_schwarz < screen_cutoff) continue;
 
-                    if (!integrals_ptr_->compute_shell_block_raw(u1, u2, u3, u4, thread_buf.data())) continue;
+                        const int pair_s = s1 * (s1 + 1) / 2 + s2;
+                        const bool swap_pairs = (pair_s < pair_pq);
+                        const int u1 = swap_pairs ? sp : s1;
+                        const int u2 = swap_pairs ? sq : s2;
+                        const int u3 = swap_pairs ? s1 : sp;
+                        const int u4 = swap_pairs ? s2 : sq;
 
-                    int dim1 = basis.shell(s1).n_functions();
-                    int dim2 = basis.shell(s2).n_functions();
-                    int st1 = shell_starts[s1];
-                    int st2 = shell_starts[s2];
+                        if (!integrals_ptr_->compute_shell_block_raw(u1, u2, u3, u4, thread_buf.data())) continue;
 
-                    for (int rp = 0; rp < dimP; ++rp) {
-                        for (int rq = 0; rq < dimQ; ++rq) {
-                            int col_pq = rp + dimP * rq;
-                            for (int i = 0; i < dim1; ++i) {
-                                int global_i = st1 + i;
-                                for (int j = 0; j < dim2; ++j) {
-                                    int global_j = st2 + j;
-                                    size_t idx_buf = (!swap_pairs)
-                                        ? (i + dim1 * (j + dim2 * (rp + dimP * rq)))
-                                        : (rp + dimP * (rq + dimQ * (i + dim1 * j)));
-                                    double val = thread_buf[idx_buf];
-                                    blk_mat(global_i * n_basis_ + global_j, col_pq) = val;
-                                    if (global_i != global_j) blk_mat(global_j * n_basis_ + global_i, col_pq) = val;
+                        const int dim1 = basis.shell(s1).n_functions();
+                        const int dim2 = basis.shell(s2).n_functions();
+                        const int st1  = shell_starts[s1];
+                        const int st2  = shell_starts[s2];
+
+                        for (int rp = 0; rp < dimP; ++rp) {
+                            for (int rq = 0; rq < dimQ; ++rq) {
+                                const int col_pq = rp + dimP * rq;
+                                double* dst_col = blk_mat.col(col_pq).data();
+                                for (int i = 0; i < dim1; ++i) {
+                                    const int gi = st1 + i;
+                                    for (int j = 0; j < dim2; ++j) {
+                                        const int gj = st2 + j;
+                                        if (gi < gj) continue;
+                                        const size_t idx_buf = (!swap_pairs)
+                                            ? (static_cast<size_t>(i) + dim1 * (j + dim2 * (rp + dimP * rq)))
+                                            : (static_cast<size_t>(rp) + dimP * (rq + dimQ * (i + dim1 * j)));
+                                        dst_col[gi * (gi + 1) / 2 + gj] = thread_buf[idx_buf];
+                                    }
                                 }
                             }
                         }
                     }
                 }
+                shell_pair_cache[pair_pq] = std::move(blk_mat);
             }
-            shell_pair_cache[pair_pq] = std::move(blk_mat);
+            V_panel.col(c) = shell_pair_cache[pair_pq].col(rel_p + dimP * rel_q);
         }
 
-        Eigen::VectorXd col_buf = shell_pair_cache[pair_pq].col(rel_p + dimP * rel_q);
-
+        // 3. Proyeksi BLAS-3 DGEMM (1 pass atas L_tri untuk seluruh panel q_cnt kolom)
         if (iter > 0) {
-            Eigen::Map<const Eigen::MatrixXd> L_prev(L_store.data(), npair, iter);
-            Eigen::VectorXd L_piv = L_prev.row(pivot_idx).transpose();
+            Eigen::MatrixXd L_piv_T(iter, q_cnt);
+            for (int c = 0; c < q_cnt; ++c) {
+                L_piv_T.col(c) = L_tri.row(cand_idx[c]).head(iter).transpose();
+            }
+            Eigen::Map<const Eigen::MatrixXd> L_prev(L_tri.data(), n_tri, iter);
+            constexpr int row_tile = 256;
             #pragma omp parallel for schedule(static)
-            for (int r = 0; r < npair; r += 256) {
-                int r_len = std::min(256, npair - r);
-                col_buf.segment(r, r_len).noalias() -= L_prev.middleRows(r, r_len) * L_piv;
+            for (int r = 0; r < n_tri; r += row_tile) {
+                const int r_len = std::min(row_tile, n_tri - r);
+                V_panel.middleRows(r, r_len).noalias() -= L_prev.middleRows(r, r_len) * L_piv_T;
             }
         }
 
-        double exact_diag = col_buf(pivot_idx);
-        if (exact_diag < threshold_) {
-            D(p * n_basis_ + q) = 0.0;
-            D(q * n_basis_ + p) = 0.0;
-            shell_pair_cache[pair_pq].resize(0, 0);
-            continue;
+        // 4. Pivoted Cholesky di dalam panel (<= 32 kolom)
+        std::vector<char> used(q_cnt, 0);
+        int accepted_in_block = 0;
+
+        for (int step = 0; step < q_cnt; ++step) {
+            int best_c = -1;
+            double best_d = -1.0;
+            for (int c = 0; c < q_cnt; ++c) {
+                if (used[c]) continue;
+                const double d_val = V_panel(cand_idx[c], c);
+                if (d_val > best_d) {
+                    best_d = d_val;
+                    best_c = c;
+                }
+            }
+            if (best_c < 0) break;
+
+            // Berhenti jika diagonal terbaik di panel turun di bawah span_cut (kecuali langkah pertama)
+            if (best_d < threshold_) {
+                if (accepted_in_block == 0) {
+                    D(cand_idx[best_c]) = 0.0;
+                }
+                break;
+            }
+            if (accepted_in_block > 0 && best_d < span_cut) break;
+
+            used[best_c] = 1;
+            const int piv = cand_idx[best_c];
+            const double inv_sqrt = 1.0 / std::sqrt(best_d);
+
+            L_tri.col(iter).noalias() = V_panel.col(best_c) * inv_sqrt;
+            D.array() -= L_tri.col(iter).array().square();
+            D(piv) = 0.0;
+            D = D.cwiseMax(0.0);
+
+            // Perbarui kolom sisa di panel secara eksak: V(:, c) -= L_new * L_new(piv_c)
+            #pragma omp parallel for schedule(static)
+            for (int c = 0; c < q_cnt; ++c) {
+                if (used[c]) continue;
+                const double proj = L_tri(cand_idx[c], iter);
+                V_panel.col(c).noalias() -= proj * L_tri.col(iter);
+            }
+
+            iter++;
+            accepted_in_block++;
         }
-        double inv_sqrt = 1.0 / std::sqrt(exact_diag);
 
-        L_store.col(iter) = col_buf * inv_sqrt;
-        D.array() -= L_store.col(iter).array().square();
+        // 5. Eviksi cache blok shell yang sudah selesai
+        std::sort(touched_shell_pairs.begin(), touched_shell_pairs.end());
+        touched_shell_pairs.erase(std::unique(touched_shell_pairs.begin(), touched_shell_pairs.end()),
+                                  touched_shell_pairs.end());
+        const double evict_cut = std::max(threshold_, 0.1 * D_max);
+        for (int pair_pq : touched_shell_pairs) {
+            if (shell_pair_cache[pair_pq].rows() == 0) continue;
+            // Cari sp, sq dari indeks segitiga pair_pq
+            int sp = static_cast<int>((std::sqrt(8.0 * pair_pq + 1.0) - 1.0) * 0.5);
+            while ((sp + 1) * (sp + 2) / 2 <= pair_pq) ++sp;
+            while (sp * (sp + 1) / 2 > pair_pq) --sp;
+            const int sq = pair_pq - sp * (sp + 1) / 2;
 
-        D(p * n_basis_ + q) = 0.0;
-        D(q * n_basis_ + p) = 0.0;
-        D = D.cwiseMax(0.0);
-
-       
-        double max_rem_in_shell = 0.0;
-        int stP = shell_starts[sp], stQ = shell_starts[sq];
-        for (int rp = 0; rp < dimP; ++rp) {
-            for (int rq = 0; rq < dimQ; ++rq) {
-                max_rem_in_shell = std::max(max_rem_in_shell, D((stP + rp) * n_basis_ + (stQ + rq)));
+            double max_rem = 0.0;
+            const int stP = shell_starts[sp], dimP = basis.shell(sp).n_functions();
+            const int stQ = shell_starts[sq], dimQ = basis.shell(sq).n_functions();
+            for (int rp = 0; rp < dimP; ++rp) {
+                for (int rq = 0; rq < dimQ; ++rq) {
+                    max_rem = std::max(max_rem, D(tri_index(stP + rp, stQ + rq)));
+                }
+            }
+            if (max_rem < evict_cut) {
+                shell_pair_cache[pair_pq].resize(0, 0);
             }
         }
-        if (max_rem_in_shell < std::max(threshold_, 0.1 * D_max)) {
-            shell_pair_cache[pair_pq].resize(0, 0);
-        }
-
-        iter++;
     }
 
     shell_pair_cache.clear();
     shell_pair_cache.shrink_to_fit();
     n_vectors_ = iter;
     decomposed_ = true;
-    L_store.conservativeResize(Eigen::NoChange, n_vectors_);
-    L_mat_ = std::move(L_store);
+
+    // 6. Unpack segitiga atas (n_tri x M) -> L_mat_ (n_basis^2 x M) untuk kompatibilitas hilir
+    L_mat_.resize(static_cast<Eigen::Index>(n_basis_) * n_basis_, n_vectors_);
+    #pragma omp parallel for schedule(static)
+    for (int k = 0; k < n_vectors_; ++k) {
+        const double* src = L_tri.col(k).data();
+        double* dst = L_mat_.col(k).data();
+        for (int p = 0; p < n_basis_; ++p) {
+            const int base = p * (p + 1) / 2;
+            for (int q = 0; q <= p; ++q) {
+                const double val = src[base + q];
+                dst[p * n_basis_ + q] = val;
+                dst[q * n_basis_ + p] = val;
+            }
+        }
+    }
 }
 
 
