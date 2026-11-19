@@ -20,6 +20,7 @@
 #include "mshqc/symmetry/molecule_sym.h"
 #include <iostream>
 #include <cmath>
+#include <vector>
 
 namespace mshqc {
 
@@ -28,8 +29,6 @@ BasisSymmetrizer::BasisSymmetrizer(const BasisSet& basis, const PointGroup& pg, 
     build_map_and_matrices();
 }
 
-// THE UNIVERSAL PHASE SOLVER FOR D2h/C2v (Menangani semua s, p, d, f, g, dst)
-// THE UNIVERSAL PHASE SOLVER FOR D2h/C2v (Menangani semua s, p, d, f, g, dst)
 // THE UNIVERSAL PHASE SOLVER FOR D2h/C2v (Menangani semua s, p, d, f, g, dst)
 double get_universal_phase(bool is_spherical, int l, int idx, double sx, double sy, double sz) {
     if (!is_spherical) {
@@ -77,10 +76,12 @@ void BasisSymmetrizer::build_map_and_matrices() {
     int nshells = basis_.n_shells();
     int nbasis = basis_.n_basis_functions();
     const auto& ops = pg_.get_operations();
-    int n_ops = ops.size();
+    int n_ops = static_cast<int>(ops.size());
 
     shell_map_.assign(n_ops, std::vector<int>(nshells, -1));
     R_ao_.assign(n_ops, Eigen::MatrixXd::Zero(nbasis, nbasis));
+    ao_perm_.assign(n_ops, std::vector<int>(nbasis, -1));
+    ao_phase_.assign(n_ops, std::vector<double>(nbasis, 0.0));
 
     auto map = basis_.shell_to_basis_function_map();
 
@@ -124,6 +125,8 @@ void BasisSymmetrizer::build_map_and_matrices() {
                 for (int d = 0; d < dim; ++d) {
                     double phase = get_universal_phase(basis_.shell(i).is_spherical(), l_target, d, sx, sy, sz);
                     R_ao_[k](start_j + d, start_i + d) = phase;
+                    ao_perm_[k][start_i + d] = start_j + d;
+                    ao_phase_[k][start_i + d] = phase;
                 }
             }
         }
@@ -131,52 +134,69 @@ void BasisSymmetrizer::build_map_and_matrices() {
 }
 
 void BasisSymmetrizer::symmetrize(Eigen::MatrixXd& F) const {
-    if (R_ao_.empty()) return; 
+    const int n_ops = static_cast<int>(ao_perm_.size());
+    if (n_ops == 0) return;
 
-    Eigen::MatrixXd F_sym = Eigen::MatrixXd::Zero(F.rows(), F.cols());
-    Eigen::MatrixXd temp_FR(F.rows(), F.cols()); 
+    const int n = static_cast<int>(F.rows());
+    Eigen::MatrixXd F_sym = Eigen::MatrixXd::Zero(n, n);
 
-    for (const auto& R : R_ao_) {
-        temp_FR.noalias() = F * R;
-        F_sym.noalias() += R.transpose() * temp_FR;
+    for (int k = 0; k < n_ops; ++k) {
+        const auto& perm = ao_perm_[k];
+        const auto& ph   = ao_phase_[k];
+        for (int q = 0; q < n; ++q) {
+            const int rq = perm[q];
+            if (rq < 0) continue;
+            const double ph_q = ph[q];
+            const double* F_col = F.col(rq).data();
+            double* dst_col = F_sym.col(q).data();
+            for (int p = 0; p < n; ++p) {
+                const int rp = perm[p];
+                if (rp >= 0) dst_col[p] += ph[p] * ph_q * F_col[rp];
+            }
+        }
     }
-    F = F_sym / static_cast<double>(R_ao_.size());
+    F.noalias() = F_sym / static_cast<double>(n_ops);
 }
+
 std::vector<int> BasisSymmetrizer::assign_mo_irreps(const Eigen::MatrixXd& C, double threshold) const {
-    int n_mo = C.cols();
+    (void)threshold;
+    const int nbf = static_cast<int>(C.rows());
+    const int n_mo = static_cast<int>(C.cols());
+    const int n_ops = static_cast<int>(ao_perm_.size());
     std::vector<int> irreps(n_mo, 0);
-    int n_ops = R_ao_.size();
-    std::map<int, int> irrep_counts;
 
     for (int mo = 0; mo < n_mo; ++mo) {
-        Eigen::VectorXd C_i = C.col(mo);
+        const double* c_ptr = C.col(mo).data();
+        double norm_c = C.col(mo).norm();
         int irrep_id = 0;
 
         for (int k = 0; k < n_ops; ++k) {
-            Eigen::VectorXd C_trans = R_ao_[k] * C_i;
-            double chi = C_i.dot(C_trans); 
-            
-            double norm = C_i.norm() * C_trans.norm();
-            if (norm > 1e-10 && (chi / norm) < -0.5) {
+            const auto& perm = ao_perm_[k];
+            const auto& ph   = ao_phase_[k];
+            double chi = 0.0;
+            double norm_t_sq = 0.0;
+            for (int p = 0; p < nbf; ++p) {
+                const int rp = perm[p];
+                if (rp >= 0) {
+                    const double val = ph[p] * c_ptr[p];
+                    chi += c_ptr[rp] * val;
+                    norm_t_sq += val * val;
+                }
+            }
+            double denom = norm_c * std::sqrt(norm_t_sq);
+            if (denom > 1e-10 && (chi / denom) < -0.5) {
                 irrep_id |= (1 << k);
             }
         }
-        
-        // ==============================================================
-        // GF(2) ISOMORPHISM (SEKARANG 100% AMAN KARENA SCF SUDAH PURE)
-        // Mampatkan Bitmask 8-bit menjadi ID 0-7 untuk mencegah Hash Collision
-        // ==============================================================
+
+        // GF(2) ISOMORPHISM: Mampatkan Bitmask 8-bit menjadi ID 0-7
         int mapped_id = 0;
-        if (irrep_id & (1 << 1)) mapped_id ^= 1; 
-        if (irrep_id & (1 << 2)) mapped_id ^= 2; 
-        if (irrep_id & (1 << 4)) mapped_id ^= 4; 
-
+        if (irrep_id & (1 << 1)) mapped_id ^= 1;
+        if (irrep_id & (1 << 2)) mapped_id ^= 2;
+        if (irrep_id & (1 << 4)) mapped_id ^= 4;
         irreps[mo] = mapped_id;
-        irrep_counts[mapped_id]++;
     }
-
-   
-
     return irreps;
 }
+
 } // namespace mshqc

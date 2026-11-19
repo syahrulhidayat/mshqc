@@ -249,6 +249,77 @@ inline void safe_tblis_mult(
 } // namespace tblis
 
 #define mult safe_tblis_mult
+namespace {
+
+Eigen::MatrixXd parallel_gemm_abt_mp3(const Eigen::MatrixXd& A, const Eigen::MatrixXd& B) {
+    if (A.rows() <= 0 || B.rows() <= 0 || A.cols() <= 0 || B.cols() <= 0) {
+        return Eigen::MatrixXd();
+    }
+    Eigen::MatrixXd C(A.rows(), B.rows());
+    const int m = static_cast<int>(A.rows());
+    constexpr int tile = 64;
+    #pragma omp parallel for schedule(dynamic)
+    for (int i = 0; i < m; i += tile) {
+        int rows = std::min(tile, m - i);
+        C.middleRows(i, rows).noalias() = A.middleRows(i, rows) * B.transpose();
+    }
+    return C;
+}
+
+tblis::varray_view<double> make_mat_view_4d_mp3(Eigen::MatrixXd& M, int d1, int d2, int d3, int d4) {
+    using tblis::len_type;
+    using tblis::stride_type;
+    return tblis::varray_view<double>(
+        {(len_type)d1, (len_type)d2, (len_type)d3, (len_type)d4},
+        M.data(),
+        {(stride_type)d2, 1, (stride_type)(d1 * d2 * d4), (stride_type)(d1 * d2)}
+    );
+}
+
+void contract_vvvv_pairs_df(
+    const Eigen::MatrixXd& B_vv_left, int nv_l,
+    const Eigen::MatrixXd& B_vv_right, int nv_r,
+    int n_aux,
+    const std::vector<Eigen::MatrixXd>& T_pairs,
+    std::vector<Eigen::MatrixXd>& W_pairs)
+{
+    const int n_pairs = static_cast<int>(T_pairs.size());
+    if (n_pairs <= 0 || n_aux <= 0 || nv_l <= 0 || nv_r <= 0) return;
+
+    if (n_pairs >= omp_get_max_threads()) {
+        #pragma omp parallel for schedule(static)
+        for (int k = 0; k < n_pairs; ++k) {
+            Eigen::MatrixXd X_tmp(nv_l, nv_r);
+            for (int P = 0; P < n_aux; ++P) {
+                Eigen::Map<const Eigen::MatrixXd> B_Pl(B_vv_left.col(P).data(), nv_l, nv_l);
+                Eigen::Map<const Eigen::MatrixXd> B_Pr(B_vv_right.col(P).data(), nv_r, nv_r);
+                X_tmp.noalias() = T_pairs[k] * B_Pr;
+                W_pairs[k].noalias() += B_Pl.transpose() * X_tmp;
+            }
+        }
+    } else {
+        #pragma omp parallel
+        {
+            std::vector<Eigen::MatrixXd> W_loc(n_pairs, Eigen::MatrixXd::Zero(nv_l, nv_r));
+            Eigen::MatrixXd X_tmp(nv_l, nv_r);
+            #pragma omp for schedule(static) nowait
+            for (int P = 0; P < n_aux; ++P) {
+                Eigen::Map<const Eigen::MatrixXd> B_Pl(B_vv_left.col(P).data(), nv_l, nv_l);
+                Eigen::Map<const Eigen::MatrixXd> B_Pr(B_vv_right.col(P).data(), nv_r, nv_r);
+                for (int k = 0; k < n_pairs; ++k) {
+                    X_tmp.noalias() = T_pairs[k] * B_Pr;
+                    W_loc[k].noalias() += B_Pl.transpose() * X_tmp;
+                }
+            }
+            #pragma omp critical
+            {
+                for (int k = 0; k < n_pairs; ++k) W_pairs[k].noalias() += W_loc[k];
+            }
+        }
+    }
+}
+
+} // namespace
 
 namespace mshqc {
 
@@ -314,46 +385,6 @@ MP3Result RMP3::compute() {
 
     const Eigen::Tensor<double, 4>* eri_ao_ptr = nullptr;
     if (config_.eri_method == "exact") eri_ao_ptr = &(ints_->compute_eri());
-
-    // Bypass TBLIS/MKL thread limits with Tiled Level-3 BLAS DGEMM & layout-respecting mapping
-    auto make_V_from_B_inplace = [&](const Eigen::MatrixXd& B1, const Eigen::MatrixXd& B2, Eigen::Tensor<double, 4>& V_mo) {
-        int d1 = B1.rows(); int d2 = B2.rows(); 
-        if (d1 <= 0 || d2 <= 0 || B1.cols() <= 0 || B2.cols() <= 0) {
-            V_mo.setZero();
-            return false;
-        }
-        Eigen::MatrixXd V_mat(d1, d2);
-        constexpr int tile = 64;
-        #pragma omp parallel for schedule(dynamic)
-        for (int i = 0; i < d1; i += tile) {
-            int rows = std::min(tile, d1 - i);
-            V_mat.middleRows(i, rows).noalias() = B1.middleRows(i, rows) * B2.transpose();
-        }
-
-        if (V_mat.cwiseAbs().maxCoeff() < 1e-12) {
-            V_mo.setZero();
-            return false;
-        }
-        
-        int dim0 = V_mo.dimension(0);
-        int dim1 = V_mo.dimension(1);
-        int dim2 = V_mo.dimension(2);
-        int dim3 = V_mo.dimension(3);
-
-        #pragma omp parallel for collapse(4)
-        for (int i = 0; i < dim0; ++i) {
-            for (int j = 0; j < dim1; ++j) {
-                for (int k = 0; k < dim2; ++k) {
-                    for (int l = 0; l < dim3; ++l) {
-                        int row = i * dim1 + j; 
-                        int col = k * dim3 + l;
-                        V_mo(i, j, k, l) = V_mat(row, col);
-                    }
-                }
-            }
-        }
-        return true;
-    };
 
     Eigen::MatrixXd B_oo, B_ov, B_vv;
     if (config_.eri_method != "exact") {
@@ -442,23 +473,7 @@ MP3Result RMP3::compute() {
                 p_idx++;
             }
         }
-        #pragma omp parallel
-        {
-            std::vector<Eigen::MatrixXd> W_loc(n_pairs_sym, Eigen::MatrixXd::Zero(nv_a_, nv_a_));
-            Eigen::MatrixXd X_tmp(nv_a_, nv_a_);
-            #pragma omp for schedule(static) nowait
-            for (int P = 0; P < n_aux_; ++P) {
-                Eigen::Map<const Eigen::MatrixXd> B_P(B_vv.col(P).data(), nv_a_, nv_a_);
-                for (int k = 0; k < n_pairs_sym; ++k) {
-                    X_tmp.noalias() = T_pairs[k] * B_P;
-                    W_loc[k].noalias() += B_P.transpose() * X_tmp;
-                }
-            }
-            #pragma omp critical
-            {
-                for (int k = 0; k < n_pairs_sym; ++k) W_pairs[k] += W_loc[k];
-            }
-        }
+        contract_vvvv_pairs_df(B_vv, nv_a_, B_vv, nv_a_, n_aux_, T_pairs, W_pairs);
         p_idx = 0;
         for (int i = 0; i < no_a_; ++i) {
             for (int j = i; j < no_a_; ++j) {
@@ -473,46 +488,45 @@ MP3Result RMP3::compute() {
         }
     }
 
-    // 2 & 3. Ladder term (oooo) + Ring terms (ovov & oovv) dengan Shared Half-Bra (Co, Co)
-    {
-        Eigen::Tensor<double, 4> V(no_a_, no_a_, no_a_, no_a_);
-        Eigen::Tensor<double, 4> V_ovov(no_a_, nv_a_, no_a_, nv_a_);
-        Eigen::Tensor<double, 4> V_oovv(no_a_, no_a_, nv_a_, nv_a_);
-        bool calc_ovov = true, calc_oovv = true;
+    // 2 & 3. Ladder term (oooo) + Ring terms (ovov & oovv)
+    if (config_.eri_method == "exact") {
+        auto half_oo = ERITransformer::transform_half_bra(*eri_ao_ptr, Co, Co, nbf_, no_a_, no_a_);
+        Eigen::Tensor<double, 4> V      = ERITransformer::transform_finish_ket(half_oo, Co, Co, nbf_, no_a_, no_a_, no_a_, no_a_);
+        Eigen::Tensor<double, 4> V_oovv = ERITransformer::transform_finish_ket(half_oo, Cv, Cv, nbf_, no_a_, no_a_, nv_a_, nv_a_);
+        half_oo.resize(0, 0, 0, 0);
+        Eigen::Tensor<double, 4> V_ovov = ERITransformer::transform_custom(*eri_ao_ptr, Co, Cv, Co, Cv, nbf_, no_a_, nv_a_, no_a_, nv_a_);
 
-        if (config_.eri_method == "exact") {
-            auto half_oo = ERITransformer::transform_half_bra(*eri_ao_ptr, Co, Co, nbf_, no_a_, no_a_);
-            V      = ERITransformer::transform_finish_ket(half_oo, Co, Co, nbf_, no_a_, no_a_, no_a_, no_a_);
-            V_oovv = ERITransformer::transform_finish_ket(half_oo, Cv, Cv, nbf_, no_a_, no_a_, nv_a_, nv_a_);
-            half_oo.resize(0, 0, 0, 0);
-            V_ovov = ERITransformer::transform_custom(*eri_ao_ptr, Co, Cv, Co, Cv, nbf_, no_a_, nv_a_, no_a_, nv_a_);
-
-            TBLIS_VIEW_4D(t_V, V, no_a_, no_a_, no_a_, no_a_);
-            tblis::mult< double >(1.0, t_T, "mnab", t_V, "minj", 1.0, t_W, "ijab");
-        } else {
-            if (make_V_from_B_inplace(B_oo, B_oo, V)) {
-                TBLIS_VIEW_4D(t_V, V, no_a_, no_a_, no_a_, no_a_);
-                tblis::mult< double >(1.0, t_T, "mnab", t_V, "minj", 1.0, t_W, "ijab");
-            }
-            calc_ovov = make_V_from_B_inplace(B_ov, B_ov, V_ovov);
-            calc_oovv = make_V_from_B_inplace(B_oo, B_vv, V_oovv);
-        }
-
+        TBLIS_VIEW_4D(t_V, V, no_a_, no_a_, no_a_, no_a_);
         TBLIS_VIEW_4D(t_Vovov, V_ovov, no_a_, nv_a_, no_a_, nv_a_);
         TBLIS_VIEW_4D(t_Voovv, V_oovv, no_a_, no_a_, nv_a_, nv_a_);
 
-        if (calc_ovov) {
-            tblis::mult< double >(2.0,  t_Vovov, "iakc", t_T, "kjcb", 1.0, t_W, "ijab");
-            tblis::mult< double >(2.0,  t_T, "ikac", t_Vovov, "kcjb", 1.0, t_W, "ijab");
-            tblis::mult< double >(-1.0, t_T, "ikca", t_Vovov, "kcjb", 1.0, t_W, "ijab");
-            tblis::mult< double >(-1.0, t_Vovov, "iakc", t_T, "kjbc", 1.0, t_W, "ijab");
-        }
-        if (calc_oovv) {
-            tblis::mult< double >(-1.0, t_Voovv, "ikac", t_T, "kjcb", 1.0, t_W, "ijab");
-            tblis::mult< double >(-1.0, t_T, "ikac", t_Voovv, "kjcb", 1.0, t_W, "ijab");
-            tblis::mult< double >(-1.0, t_Voovv, "ikbc", t_T, "kjac", 1.0, t_W, "ijab");
-            tblis::mult< double >(-1.0, t_T, "ikcb", t_Voovv, "jkac", 1.0, t_W, "ijab");
-        }
+        tblis::mult<double>( 1.0, t_T,     "mnab", t_V,     "minj", 1.0, t_W, "ijab");
+        tblis::mult<double>( 2.0, t_Vovov, "iakc", t_T,     "kjcb", 1.0, t_W, "ijab");
+        tblis::mult<double>( 2.0, t_T,     "ikac", t_Vovov, "kcjb", 1.0, t_W, "ijab");
+        tblis::mult<double>(-1.0, t_T,     "ikca", t_Vovov, "kcjb", 1.0, t_W, "ijab");
+        tblis::mult<double>(-1.0, t_Vovov, "iakc", t_T,     "kjbc", 1.0, t_W, "ijab");
+        tblis::mult<double>(-1.0, t_Voovv, "ikac", t_T,     "kjcb", 1.0, t_W, "ijab");
+        tblis::mult<double>(-1.0, t_T,     "ikac", t_Voovv, "kjcb", 1.0, t_W, "ijab");
+        tblis::mult<double>(-1.0, t_Voovv, "ikbc", t_T,     "kjac", 1.0, t_W, "ijab");
+        tblis::mult<double>(-1.0, t_T,     "ikcb", t_Voovv, "jkac", 1.0, t_W, "ijab");
+    } else {
+        Eigen::MatrixXd M_oooo = parallel_gemm_abt_mp3(B_oo, B_oo);
+        Eigen::MatrixXd M_ovov = parallel_gemm_abt_mp3(B_ov, B_ov);
+        Eigen::MatrixXd M_oovv = parallel_gemm_abt_mp3(B_oo, B_vv);
+
+        auto t_V     = make_mat_view_4d_mp3(M_oooo, no_a_, no_a_, no_a_, no_a_);
+        auto t_Vovov = make_mat_view_4d_mp3(M_ovov, no_a_, nv_a_, no_a_, nv_a_);
+        auto t_Voovv = make_mat_view_4d_mp3(M_oovv, no_a_, no_a_, nv_a_, nv_a_);
+
+        tblis::mult<double>( 1.0, t_T,     "mnab", t_V,     "minj", 1.0, t_W, "ijab");
+        tblis::mult<double>( 2.0, t_Vovov, "iakc", t_T,     "kjcb", 1.0, t_W, "ijab");
+        tblis::mult<double>( 2.0, t_T,     "ikac", t_Vovov, "kcjb", 1.0, t_W, "ijab");
+        tblis::mult<double>(-1.0, t_T,     "ikca", t_Vovov, "kcjb", 1.0, t_W, "ijab");
+        tblis::mult<double>(-1.0, t_Vovov, "iakc", t_T,     "kjbc", 1.0, t_W, "ijab");
+        tblis::mult<double>(-1.0, t_Voovv, "ikac", t_T,     "kjcb", 1.0, t_W, "ijab");
+        tblis::mult<double>(-1.0, t_T,     "ikac", t_Voovv, "kjcb", 1.0, t_W, "ijab");
+        tblis::mult<double>(-1.0, t_Voovv, "ikbc", t_T,     "kjac", 1.0, t_W, "ijab");
+        tblis::mult<double>(-1.0, t_T,     "ikcb", t_Voovv, "jkac", 1.0, t_W, "ijab");
     }
 
     double e_mp3 = 0.0;
@@ -585,45 +599,6 @@ MP3Result UMP3::compute() {
 
     const Eigen::Tensor<double, 4>* eri_ao_ptr = nullptr;
     if (config_.eri_method == "exact") eri_ao_ptr = &(ints_->compute_eri());
-
-    auto make_V_from_B_inplace = [&](const Eigen::MatrixXd& B1, const Eigen::MatrixXd& B2, Eigen::Tensor<double, 4>& V_mo) {
-        int d1 = B1.rows(); int d2 = B2.rows(); 
-        if (d1 <= 0 || d2 <= 0 || B1.cols() <= 0 || B2.cols() <= 0) {
-            V_mo.setZero();
-            return false;
-        }
-        Eigen::MatrixXd V_mat(d1, d2);
-        constexpr int tile = 64;
-        #pragma omp parallel for schedule(dynamic)
-        for (int i = 0; i < d1; i += tile) {
-            int rows = std::min(tile, d1 - i);
-            V_mat.middleRows(i, rows).noalias() = B1.middleRows(i, rows) * B2.transpose();
-        }
-
-        if (V_mat.cwiseAbs().maxCoeff() < 1e-12) {
-            V_mo.setZero();
-            return false;
-        }
-
-        int dim0 = V_mo.dimension(0);
-        int dim1 = V_mo.dimension(1);
-        int dim2 = V_mo.dimension(2);
-        int dim3 = V_mo.dimension(3);
-
-        #pragma omp parallel for collapse(4)
-        for (int i = 0; i < dim0; ++i) {
-            for (int j = 0; j < dim1; ++j) {
-                for (int k = 0; k < dim2; ++k) {
-                    for (int l = 0; l < dim3; ++l) {
-                        int row = i * dim1 + j; 
-                        int col = k * dim3 + l;
-                        V_mo(i, j, k, l) = V_mat(row, col);
-                    }
-                }
-            }
-        }
-        return true;
-    };
 
     Eigen::MatrixXd B_oo_a, B_ov_a, B_vv_a;
     Eigen::MatrixXd B_oo_b, B_ov_b, B_vv_b;
@@ -786,23 +761,7 @@ MP3Result UMP3::compute() {
                     p_idx++;
                 }
             }
-            #pragma omp parallel
-            {
-                std::vector<Eigen::MatrixXd> W_loc(n_pairs_aa, Eigen::MatrixXd::Zero(nv_a_, nv_a_));
-                Eigen::MatrixXd X_tmp(nv_a_, nv_a_);
-                #pragma omp for schedule(static) nowait
-                for (int P = 0; P < n_aux_; ++P) {
-                    Eigen::Map<const Eigen::MatrixXd> B_P(B_vv_a.col(P).data(), nv_a_, nv_a_);
-                    for (int k = 0; k < n_pairs_aa; ++k) {
-                        X_tmp.noalias() = T_aa_pairs[k] * B_P;
-                        W_loc[k].noalias() += B_P.transpose() * X_tmp;
-                    }
-                }
-                #pragma omp critical
-                {
-                    for (int k = 0; k < n_pairs_aa; ++k) W_aa_pairs[k] += W_loc[k];
-                }
-            }
+            contract_vvvv_pairs_df(B_vv_a, nv_a_, B_vv_a, nv_a_, n_aux_, T_aa_pairs, W_aa_pairs);
             double sum_aa = 0.0;
             for (int k = 0; k < n_pairs_aa; ++k) {
                 Eigen::MatrixXd W_asym = W_aa_pairs[k] - W_aa_pairs[k].transpose();
@@ -824,23 +783,7 @@ MP3Result UMP3::compute() {
                         p_idx++;
                     }
                 }
-                #pragma omp parallel
-                {
-                    std::vector<Eigen::MatrixXd> W_loc(n_pairs_bb, Eigen::MatrixXd::Zero(nv_b_, nv_b_));
-                    Eigen::MatrixXd X_tmp(nv_b_, nv_b_);
-                    #pragma omp for schedule(static) nowait
-                    for (int P = 0; P < n_aux_; ++P) {
-                        Eigen::Map<const Eigen::MatrixXd> B_P(B_vv_b.col(P).data(), nv_b_, nv_b_);
-                        for (int k = 0; k < n_pairs_bb; ++k) {
-                            X_tmp.noalias() = T_bb_pairs[k] * B_P;
-                            W_loc[k].noalias() += B_P.transpose() * X_tmp;
-                        }
-                    }
-                    #pragma omp critical
-                    {
-                        for (int k = 0; k < n_pairs_bb; ++k) W_bb_pairs[k] += W_loc[k];
-                    }
-                }
+                contract_vvvv_pairs_df(B_vv_b, nv_b_, B_vv_b, nv_b_, n_aux_, T_bb_pairs, W_bb_pairs);
                 double sum_bb = 0.0;
                 for (int k = 0; k < n_pairs_bb; ++k) {
                     Eigen::MatrixXd W_asym = W_bb_pairs[k] - W_bb_pairs[k].transpose();
@@ -859,24 +802,7 @@ MP3Result UMP3::compute() {
                             T_ab_pairs[k](e, f) = t2_ab_(i, j, e, f);
                 }
             }
-            #pragma omp parallel
-            {
-                std::vector<Eigen::MatrixXd> W_loc(n_pairs_ab, Eigen::MatrixXd::Zero(nv_a_, nv_b_));
-                Eigen::MatrixXd X_tmp(nv_a_, nv_b_);
-                #pragma omp for schedule(static) nowait
-                for (int P = 0; P < n_aux_; ++P) {
-                    Eigen::Map<const Eigen::MatrixXd> B_Pa(B_vv_a.col(P).data(), nv_a_, nv_a_);
-                    Eigen::Map<const Eigen::MatrixXd> B_Pb(B_vv_b.col(P).data(), nv_b_, nv_b_);
-                    for (int k = 0; k < n_pairs_ab; ++k) {
-                        X_tmp.noalias() = T_ab_pairs[k] * B_Pb;
-                        W_loc[k].noalias() += B_Pa.transpose() * X_tmp;
-                    }
-                }
-                #pragma omp critical
-                {
-                    for (int k = 0; k < n_pairs_ab; ++k) W_ab_pairs[k] += W_loc[k];
-                }
-            }
+            contract_vvvv_pairs_df(B_vv_a, nv_a_, B_vv_b, nv_b_, n_aux_, T_ab_pairs, W_ab_pairs);
             double sum_ab = 0.0;
             for (int k = 0; k < n_pairs_ab; ++k) {
                 sum_ab += (T_ab_pairs[k].cwiseProduct(W_ab_pairs[k])).sum();
@@ -886,155 +812,168 @@ MP3Result UMP3::compute() {
     }
 
     // =========================================================================
-    // 2 & 3. TAHAP LADDER (oooo) & RING (ovov & oovv) DENGAN SHARED HALF-BRA
+    // 2 & 3. TAHAP LADDER (oooo) & RING (ovov & oovv)
     // =========================================================================
-    Eigen::Tensor<double, 4> half_oo_a, half_oo_b, half_ov_a;
     if (config_.eri_method == "exact") {
-        half_oo_a = ERITransformer::transform_half_bra(*eri_ao_ptr, Cao, Cao, nbf_, no_a_, no_a_);
-        half_ov_a = ERITransformer::transform_half_bra(*eri_ao_ptr, Cao, Cav, nbf_, no_a_, nv_a_);
+        auto half_oo_a = ERITransformer::transform_half_bra(*eri_ao_ptr, Cao, Cao, nbf_, no_a_, no_a_);
+        auto half_ov_a = ERITransformer::transform_half_bra(*eri_ao_ptr, Cao, Cav, nbf_, no_a_, nv_a_);
+        Eigen::Tensor<double, 4> half_oo_b;
         if (no_b_ > 0 && nv_b_ > 0) {
             half_oo_b = ERITransformer::transform_half_bra(*eri_ao_ptr, Cbo, Cbo, nbf_, no_b_, no_b_);
         }
-    }
 
-    // --- 2. LADDER (oooo) ---
-    {
-        Eigen::Tensor<double, 4> Vaa(no_a_, no_a_, no_a_, no_a_);
-        if (config_.eri_method == "exact") {
-            if (no_a_ > 1) {
-                Vaa = ERITransformer::transform_finish_ket(half_oo_a, Cao, Cao, nbf_, no_a_, no_a_, no_a_, no_a_);
-                TBLIS_VIEW_4D(t_Vaa, Vaa, no_a_, no_a_, no_a_, no_a_); Waa.setZero();
-                tblis::mult< double >(1.0, t_Taa, "mnab", t_Vaa, "minj", 1.0, t_Waa, "ijab");
-                tblis::mult< double >(-1.0, t_Taa, "mnab", t_Vaa, "mjni", 1.0, t_Waa, "ijab");
-                e3_aa += 0.125 * tensor_dot(t2_aa_, Waa);
-            }
-        } else {
-            if (no_a_ > 1 && make_V_from_B_inplace(B_oo_a, B_oo_a, Vaa)) {
-                TBLIS_VIEW_4D(t_Vaa, Vaa, no_a_, no_a_, no_a_, no_a_); Waa.setZero();
-                tblis::mult< double >(1.0, t_Taa, "mnab", t_Vaa, "minj", 1.0, t_Waa, "ijab");
-                tblis::mult< double >(-1.0, t_Taa, "mnab", t_Vaa, "mjni", 1.0, t_Waa, "ijab");
-                e3_aa += 0.125 * tensor_dot(t2_aa_, Waa);
-            }
+        // --- 2. LADDER (oooo) EXACT ---
+        if (no_a_ > 1) {
+            auto Vaa = ERITransformer::transform_finish_ket(half_oo_a, Cao, Cao, nbf_, no_a_, no_a_, no_a_, no_a_);
+            TBLIS_VIEW_4D(t_Vaa, Vaa, no_a_, no_a_, no_a_, no_a_);
+            Waa.setZero();
+            tblis::mult<double>( 1.0, t_Taa, "mnab", t_Vaa, "minj", 1.0, t_Waa, "ijab");
+            tblis::mult<double>(-1.0, t_Taa, "mnab", t_Vaa, "mjni", 1.0, t_Waa, "ijab");
+            e3_aa += 0.125 * tensor_dot(t2_aa_, Waa);
         }
 
         if (no_b_ > 0 && nv_b_ > 0) {
-            Eigen::Tensor<double, 4> Vbb(no_b_, no_b_, no_b_, no_b_);
-            if (config_.eri_method == "exact") {
-                if (no_b_ > 1) {
-                    Vbb = ERITransformer::transform_finish_ket(half_oo_b, Cbo, Cbo, nbf_, no_b_, no_b_, no_b_, no_b_);
-                    TBLIS_VIEW_4D(t_Vbb, Vbb, no_b_, no_b_, no_b_, no_b_); Wbb.setZero();
-                    tblis::mult< double >(1.0, t_Tbb, "mnab", t_Vbb, "minj", 1.0, t_Wbb, "ijab");
-                    tblis::mult< double >(-1.0, t_Tbb, "mnab", t_Vbb, "mjni", 1.0, t_Wbb, "ijab");
-                    e3_bb += 0.125 * tensor_dot(t2_bb_, Wbb);
-                }
-            } else {
-                if (no_b_ > 1 && make_V_from_B_inplace(B_oo_b, B_oo_b, Vbb)) {
-                    TBLIS_VIEW_4D(t_Vbb, Vbb, no_b_, no_b_, no_b_, no_b_); Wbb.setZero();
-                    tblis::mult< double >(1.0, t_Tbb, "mnab", t_Vbb, "minj", 1.0, t_Wbb, "ijab");
-                    tblis::mult< double >(-1.0, t_Tbb, "mnab", t_Vbb, "mjni", 1.0, t_Wbb, "ijab");
-                    e3_bb += 0.125 * tensor_dot(t2_bb_, Wbb);
-                }
+            if (no_b_ > 1) {
+                auto Vbb = ERITransformer::transform_finish_ket(half_oo_b, Cbo, Cbo, nbf_, no_b_, no_b_, no_b_, no_b_);
+                TBLIS_VIEW_4D(t_Vbb, Vbb, no_b_, no_b_, no_b_, no_b_);
+                Wbb.setZero();
+                tblis::mult<double>( 1.0, t_Tbb, "mnab", t_Vbb, "minj", 1.0, t_Wbb, "ijab");
+                tblis::mult<double>(-1.0, t_Tbb, "mnab", t_Vbb, "mjni", 1.0, t_Wbb, "ijab");
+                e3_bb += 0.125 * tensor_dot(t2_bb_, Wbb);
             }
 
-            Eigen::Tensor<double, 4> Vab(no_a_, no_a_, no_b_, no_b_);
-            if (config_.eri_method == "exact") {
-                Vab = ERITransformer::transform_finish_ket(half_oo_a, Cbo, Cbo, nbf_, no_a_, no_a_, no_b_, no_b_);
-                TBLIS_VIEW_4D(t_Vab, Vab, no_a_, no_a_, no_b_, no_b_); Wab.setZero();
-                tblis::mult< double >(1.0, t_Tab, "mnab", t_Vab, "minj", 1.0, t_Wab, "ijab");
-                e3_ab += 1.0 * tensor_dot(t2_ab_, Wab);
-            } else {
-                if (make_V_from_B_inplace(B_oo_a, B_oo_b, Vab)) {
-                    TBLIS_VIEW_4D(t_Vab, Vab, no_a_, no_a_, no_b_, no_b_); Wab.setZero();
-                    tblis::mult< double >(1.0, t_Tab, "mnab", t_Vab, "minj", 1.0, t_Wab, "ijab");
-                    e3_ab += 1.0 * tensor_dot(t2_ab_, Wab);
-                }
-            }
-        }
-    }
-
-    // --- 3. RING (ovov & oovv) ---
-    {
-        Eigen::Tensor<double, 4> ovov_aa(no_a_, nv_a_, no_a_, nv_a_); 
-        Eigen::Tensor<double, 4> oovv_aa(no_a_, no_a_, nv_a_, nv_a_); 
-        bool calc_aa = true;
-
-        if (config_.eri_method == "exact") {
-            ovov_aa = ERITransformer::transform_finish_ket(half_ov_a, Cao, Cav, nbf_, no_a_, nv_a_, no_a_, nv_a_);
-            oovv_aa = ERITransformer::transform_finish_ket(half_oo_a, Cav, Cav, nbf_, no_a_, no_a_, nv_a_, nv_a_);
-        } else {
-            calc_aa = make_V_from_B_inplace(B_ov_a, B_ov_a, ovov_aa);
-            calc_aa &= make_V_from_B_inplace(B_oo_a, B_vv_a, oovv_aa);
+            auto Vab = ERITransformer::transform_finish_ket(half_oo_a, Cbo, Cbo, nbf_, no_a_, no_a_, no_b_, no_b_);
+            TBLIS_VIEW_4D(t_Vab, Vab, no_a_, no_a_, no_b_, no_b_);
+            Wab.setZero();
+            tblis::mult<double>(1.0, t_Tab, "mnab", t_Vab, "minj", 1.0, t_Wab, "ijab");
+            e3_ab += 1.0 * tensor_dot(t2_ab_, Wab);
         }
 
+        // --- 3. RING (ovov & oovv) EXACT ---
+        auto ovov_aa = ERITransformer::transform_finish_ket(half_ov_a, Cao, Cav, nbf_, no_a_, nv_a_, no_a_, nv_a_);
+        auto oovv_aa = ERITransformer::transform_finish_ket(half_oo_a, Cav, Cav, nbf_, no_a_, no_a_, nv_a_, nv_a_);
         TBLIS_VIEW_4D(t_ovov_aa, ovov_aa, no_a_, nv_a_, no_a_, nv_a_);
         TBLIS_VIEW_4D(t_oovv_aa, oovv_aa, no_a_, no_a_, nv_a_, nv_a_);
 
         Waa.setZero();
-        if (calc_aa && no_a_ > 1) {
-            tblis::mult< double >(1.0, t_ovov_aa, "iakc", t_Taa, "kjcb", 1.0, t_Waa, "ijab");
-            tblis::mult< double >(-1.0, t_oovv_aa, "ikca", t_Taa, "kjcb", 1.0, t_Waa, "ijab");
+        if (no_a_ > 1) {
+            tblis::mult<double>( 1.0, t_ovov_aa, "iakc", t_Taa, "kjcb", 1.0, t_Waa, "ijab");
+            tblis::mult<double>(-1.0, t_oovv_aa, "ikca", t_Taa, "kjcb", 1.0, t_Waa, "ijab");
         }
 
         if (no_b_ > 0 && nv_b_ > 0) {
-            Eigen::Tensor<double, 4> ovov_bb(no_b_, nv_b_, no_b_, nv_b_); 
-            Eigen::Tensor<double, 4> oovv_bb(no_b_, no_b_, nv_b_, nv_b_); 
-            Eigen::Tensor<double, 4> ovov_ab(no_a_, nv_a_, no_b_, nv_b_); 
-            Eigen::Tensor<double, 4> oovv_ab_ex(no_a_, no_a_, nv_b_, nv_b_); 
-            Eigen::Tensor<double, 4> oovv_ba_ex(no_b_, no_b_, nv_a_, nv_a_); 
-            
-            bool calc_bb = true, calc_ab = true;
+            auto ovov_bb    = ERITransformer::transform_custom(*eri_ao_ptr, Cbo, Cbv, Cbo, Cbv, nbf_, no_b_, nv_b_, no_b_, nv_b_);
+            auto oovv_bb    = ERITransformer::transform_finish_ket(half_oo_b, Cbv, Cbv, nbf_, no_b_, no_b_, nv_b_, nv_b_);
+            auto ovov_ab    = ERITransformer::transform_finish_ket(half_ov_a, Cbo, Cbv, nbf_, no_a_, nv_a_, no_b_, nv_b_);
+            auto oovv_ab_ex = ERITransformer::transform_finish_ket(half_oo_a, Cbv, Cbv, nbf_, no_a_, no_a_, nv_b_, nv_b_);
+            auto oovv_ba_ex = ERITransformer::transform_finish_ket(half_oo_b, Cav, Cav, nbf_, no_b_, no_b_, nv_a_, nv_a_);
+            half_oo_a.resize(0, 0, 0, 0);
+            half_oo_b.resize(0, 0, 0, 0);
+            half_ov_a.resize(0, 0, 0, 0);
 
-            if (config_.eri_method == "exact") {
-                ovov_bb    = ERITransformer::transform_custom(*eri_ao_ptr, Cbo, Cbv, Cbo, Cbv, nbf_, no_b_, nv_b_, no_b_, nv_b_);
-                oovv_bb    = ERITransformer::transform_finish_ket(half_oo_b, Cbv, Cbv, nbf_, no_b_, no_b_, nv_b_, nv_b_);
-                ovov_ab    = ERITransformer::transform_finish_ket(half_ov_a, Cbo, Cbv, nbf_, no_a_, nv_a_, no_b_, nv_b_);
-                oovv_ab_ex = ERITransformer::transform_finish_ket(half_oo_a, Cbv, Cbv, nbf_, no_a_, no_a_, nv_b_, nv_b_);
-                oovv_ba_ex = ERITransformer::transform_finish_ket(half_oo_b, Cav, Cav, nbf_, no_b_, no_b_, nv_a_, nv_a_);
-                half_oo_a.resize(0, 0, 0, 0);
-                half_oo_b.resize(0, 0, 0, 0);
-                half_ov_a.resize(0, 0, 0, 0);
-            } else {
-                calc_bb = make_V_from_B_inplace(B_ov_b, B_ov_b, ovov_bb);
-                calc_bb &= make_V_from_B_inplace(B_oo_b, B_vv_b, oovv_bb);
-                calc_ab = make_V_from_B_inplace(B_ov_a, B_ov_b, ovov_ab);
-                calc_ab &= make_V_from_B_inplace(B_oo_a, B_vv_b, oovv_ab_ex);
-                calc_ab &= make_V_from_B_inplace(B_oo_b, B_vv_a, oovv_ba_ex);
-            }
-            
             TBLIS_VIEW_4D(t_ovov_bb, ovov_bb, no_b_, nv_b_, no_b_, nv_b_);
             TBLIS_VIEW_4D(t_oovv_bb, oovv_bb, no_b_, no_b_, nv_b_, nv_b_);
             TBLIS_VIEW_4D(t_ovov_ab, ovov_ab, no_a_, nv_a_, no_b_, nv_b_);
             TBLIS_VIEW_4D(t_oovv_ab_ex, oovv_ab_ex, no_a_, no_a_, nv_b_, nv_b_);
             TBLIS_VIEW_4D(t_oovv_ba_ex, oovv_ba_ex, no_b_, no_b_, nv_a_, nv_a_);
 
-            if (calc_ab && no_a_ > 1) tblis::mult< double >(1.0, t_ovov_ab, "iakc", t_Tab, "jkbc", 1.0, t_Waa, "ijab");
+            if (no_a_ > 1) tblis::mult<double>(1.0, t_ovov_ab, "iakc", t_Tab, "jkbc", 1.0, t_Waa, "ijab");
             e3_aa += 1.0 * tensor_dot(t2_aa_, Waa);
 
             Wbb.setZero();
             if (no_b_ > 1) {
-                if (calc_bb) {
-                    tblis::mult< double >(1.0, t_ovov_bb, "iakc", t_Tbb, "kjcb", 1.0, t_Wbb, "ijab");
-                    tblis::mult< double >(-1.0, t_oovv_bb, "ikca", t_Tbb, "kjcb", 1.0, t_Wbb, "ijab");
-                }
-                if (calc_ab) tblis::mult< double >(1.0, t_ovov_ab, "kcia", t_Tab, "kjcb", 1.0, t_Wbb, "ijab"); 
+                tblis::mult<double>( 1.0, t_ovov_bb, "iakc", t_Tbb, "kjcb", 1.0, t_Wbb, "ijab");
+                tblis::mult<double>(-1.0, t_oovv_bb, "ikca", t_Tbb, "kjcb", 1.0, t_Wbb, "ijab");
+                tblis::mult<double>( 1.0, t_ovov_ab, "kcia", t_Tab, "kjcb", 1.0, t_Wbb, "ijab");
                 e3_bb += 1.0 * tensor_dot(t2_bb_, Wbb);
             }
 
             Wab.setZero();
-            if (calc_aa) {
-                tblis::mult< double >(1.0,  t_ovov_aa, "iakc", t_Tab, "kjcb", 1.0, t_Wab, "ijab");
-                tblis::mult< double >(-1.0, t_oovv_aa, "ikca", t_Tab, "kjcb", 1.0, t_Wab, "ijab");
+            tblis::mult<double>( 1.0, t_ovov_aa,    "iakc", t_Tab,          "kjcb", 1.0, t_Wab, "ijab");
+            tblis::mult<double>(-1.0, t_oovv_aa,    "ikca", t_Tab,          "kjcb", 1.0, t_Wab, "ijab");
+            tblis::mult<double>( 1.0, t_Tab,        "ikac", t_ovov_bb,    "kcjb", 1.0, t_Wab, "ijab");
+            tblis::mult<double>(-1.0, t_Tab,        "ikac", t_oovv_bb,    "kjcb", 1.0, t_Wab, "ijab");
+            if (no_a_ > 1) tblis::mult<double>(1.0, t_Taa,     "ikac", t_ovov_ab, "kcjb", 1.0, t_Wab, "ijab");
+            if (no_b_ > 1) tblis::mult<double>(1.0, t_ovov_ab, "iakc", t_Tbb,     "kjcb", 1.0, t_Wab, "ijab");
+            tblis::mult<double>(-1.0, t_oovv_ab_ex, "ikbc", t_Tab,          "kjac", 1.0, t_Wab, "ijab");
+            tblis::mult<double>(-1.0, t_Tab,        "ikcb", t_oovv_ba_ex, "jkac", 1.0, t_Wab, "ijab");
+            e3_ab += 1.0 * tensor_dot(t2_ab_, Wab);
+        } else {
+            e3_aa += 1.0 * tensor_dot(t2_aa_, Waa);
+        }
+    } else {
+        // --- 2. LADDER (oooo) DF/CHOLESKY (ZERO-COPY) ---
+        if (no_a_ > 1) {
+            Eigen::MatrixXd M_oooo_aa = parallel_gemm_abt_mp3(B_oo_a, B_oo_a);
+            auto t_Vaa = make_mat_view_4d_mp3(M_oooo_aa, no_a_, no_a_, no_a_, no_a_);
+            Waa.setZero();
+            tblis::mult<double>( 1.0, t_Taa, "mnab", t_Vaa, "minj", 1.0, t_Waa, "ijab");
+            tblis::mult<double>(-1.0, t_Taa, "mnab", t_Vaa, "mjni", 1.0, t_Waa, "ijab");
+            e3_aa += 0.125 * tensor_dot(t2_aa_, Waa);
+        }
+
+        if (no_b_ > 0 && nv_b_ > 0) {
+            if (no_b_ > 1) {
+                Eigen::MatrixXd M_oooo_bb = parallel_gemm_abt_mp3(B_oo_b, B_oo_b);
+                auto t_Vbb = make_mat_view_4d_mp3(M_oooo_bb, no_b_, no_b_, no_b_, no_b_);
+                Wbb.setZero();
+                tblis::mult<double>( 1.0, t_Tbb, "mnab", t_Vbb, "minj", 1.0, t_Wbb, "ijab");
+                tblis::mult<double>(-1.0, t_Tbb, "mnab", t_Vbb, "mjni", 1.0, t_Wbb, "ijab");
+                e3_bb += 0.125 * tensor_dot(t2_bb_, Wbb);
             }
-            if (calc_bb) {
-                tblis::mult< double >(1.0,  t_Tab, "ikac", t_ovov_bb, "kcjb", 1.0, t_Wab, "ijab");
-                tblis::mult< double >(-1.0, t_Tab, "ikac", t_oovv_bb, "kjcb", 1.0, t_Wab, "ijab");
+
+            Eigen::MatrixXd M_oooo_ab = parallel_gemm_abt_mp3(B_oo_a, B_oo_b);
+            auto t_Vab = make_mat_view_4d_mp3(M_oooo_ab, no_a_, no_a_, no_b_, no_b_);
+            Wab.setZero();
+            tblis::mult<double>(1.0, t_Tab, "mnab", t_Vab, "minj", 1.0, t_Wab, "ijab");
+            e3_ab += 1.0 * tensor_dot(t2_ab_, Wab);
+        }
+
+        // --- 3. RING (ovov & oovv) DF/CHOLESKY (ZERO-COPY) ---
+        Eigen::MatrixXd M_ovov_aa = parallel_gemm_abt_mp3(B_ov_a, B_ov_a);
+        Eigen::MatrixXd M_oovv_aa = parallel_gemm_abt_mp3(B_oo_a, B_vv_a);
+        auto t_ovov_aa = make_mat_view_4d_mp3(M_ovov_aa, no_a_, nv_a_, no_a_, nv_a_);
+        auto t_oovv_aa = make_mat_view_4d_mp3(M_oovv_aa, no_a_, no_a_, nv_a_, nv_a_);
+
+        Waa.setZero();
+        if (no_a_ > 1) {
+            tblis::mult<double>( 1.0, t_ovov_aa, "iakc", t_Taa, "kjcb", 1.0, t_Waa, "ijab");
+            tblis::mult<double>(-1.0, t_oovv_aa, "ikca", t_Taa, "kjcb", 1.0, t_Waa, "ijab");
+        }
+
+        if (no_b_ > 0 && nv_b_ > 0) {
+            Eigen::MatrixXd M_ovov_bb    = parallel_gemm_abt_mp3(B_ov_b, B_ov_b);
+            Eigen::MatrixXd M_oovv_bb    = parallel_gemm_abt_mp3(B_oo_b, B_vv_b);
+            Eigen::MatrixXd M_ovov_ab    = parallel_gemm_abt_mp3(B_ov_a, B_ov_b);
+            Eigen::MatrixXd M_oovv_ab_ex = parallel_gemm_abt_mp3(B_oo_a, B_vv_b);
+            Eigen::MatrixXd M_oovv_ba_ex = parallel_gemm_abt_mp3(B_oo_b, B_vv_a);
+
+            auto t_ovov_bb    = make_mat_view_4d_mp3(M_ovov_bb,    no_b_, nv_b_, no_b_, nv_b_);
+            auto t_oovv_bb    = make_mat_view_4d_mp3(M_oovv_bb,    no_b_, no_b_, nv_b_, nv_b_);
+            auto t_ovov_ab    = make_mat_view_4d_mp3(M_ovov_ab,    no_a_, nv_a_, no_b_, nv_b_);
+            auto t_oovv_ab_ex = make_mat_view_4d_mp3(M_oovv_ab_ex, no_a_, no_a_, nv_b_, nv_b_);
+            auto t_oovv_ba_ex = make_mat_view_4d_mp3(M_oovv_ba_ex, no_b_, no_b_, nv_a_, nv_a_);
+
+            if (no_a_ > 1) tblis::mult<double>(1.0, t_ovov_ab, "iakc", t_Tab, "jkbc", 1.0, t_Waa, "ijab");
+            e3_aa += 1.0 * tensor_dot(t2_aa_, Waa);
+
+            Wbb.setZero();
+            if (no_b_ > 1) {
+                tblis::mult<double>( 1.0, t_ovov_bb, "iakc", t_Tbb, "kjcb", 1.0, t_Wbb, "ijab");
+                tblis::mult<double>(-1.0, t_oovv_bb, "ikca", t_Tbb, "kjcb", 1.0, t_Wbb, "ijab");
+                tblis::mult<double>( 1.0, t_ovov_ab, "kcia", t_Tab, "kjcb", 1.0, t_Wbb, "ijab");
+                e3_bb += 1.0 * tensor_dot(t2_bb_, Wbb);
             }
-            if (calc_ab) {
-                if (no_a_ > 1) tblis::mult< double >(1.0,  t_Taa, "ikac", t_ovov_ab, "kcjb", 1.0, t_Wab, "ijab");
-                if (no_b_ > 1) tblis::mult< double >(1.0,  t_ovov_ab, "iakc", t_Tbb, "kjcb", 1.0, t_Wab, "ijab");
-                tblis::mult< double >(-1.0, t_oovv_ab_ex, "ikbc", t_Tab, "kjac", 1.0, t_Wab, "ijab");
-                tblis::mult< double >(-1.0, t_Tab, "ikcb", t_oovv_ba_ex, "jkac", 1.0, t_Wab, "ijab"); 
-            }
+
+            Wab.setZero();
+            tblis::mult<double>( 1.0, t_ovov_aa,    "iakc", t_Tab,          "kjcb", 1.0, t_Wab, "ijab");
+            tblis::mult<double>(-1.0, t_oovv_aa,    "ikca", t_Tab,          "kjcb", 1.0, t_Wab, "ijab");
+            tblis::mult<double>( 1.0, t_Tab,        "ikac", t_ovov_bb,    "kcjb", 1.0, t_Wab, "ijab");
+            tblis::mult<double>(-1.0, t_Tab,        "ikac", t_oovv_bb,    "kjcb", 1.0, t_Wab, "ijab");
+            if (no_a_ > 1) tblis::mult<double>(1.0, t_Taa,     "ikac", t_ovov_ab, "kcjb", 1.0, t_Wab, "ijab");
+            if (no_b_ > 1) tblis::mult<double>(1.0, t_ovov_ab, "iakc", t_Tbb,     "kjcb", 1.0, t_Wab, "ijab");
+            tblis::mult<double>(-1.0, t_oovv_ab_ex, "ikbc", t_Tab,          "kjac", 1.0, t_Wab, "ijab");
+            tblis::mult<double>(-1.0, t_Tab,        "ikcb", t_oovv_ba_ex, "jkac", 1.0, t_Wab, "ijab");
             e3_ab += 1.0 * tensor_dot(t2_ab_, Wab);
         } else {
             e3_aa += 1.0 * tensor_dot(t2_aa_, Waa);
@@ -1535,28 +1474,6 @@ void OMP3::compute_mp3_correction() {
     // =========================================================================
     int n_aux = scf_.L_mat.cols();
 
-    // Helper: Parallel Tiled DGEMM (bebas dari throttling OPENBLAS/MKL_NUM_THREADS=1)
-    auto parallel_gemm_abt = [](const Eigen::MatrixXd& A, const Eigen::MatrixXd& B) {
-        Eigen::MatrixXd C(A.rows(), B.rows());
-        const int m = A.rows();
-        constexpr int tile = 64;
-        #pragma omp parallel for schedule(dynamic)
-        for (int i = 0; i < m; i += tile) {
-            int rows = std::min(tile, m - i);
-            C.middleRows(i, rows).noalias() = A.middleRows(i, rows) * B.transpose();
-        }
-        return C;
-    };
-
-    // Helper: Zero-Copy 4D TBLIS View langsung di atas memori Eigen::MatrixXd (tanpa alokasi Tensor 4D)
-    auto make_mat_view_4d = [](Eigen::MatrixXd& M, int d1, int d2, int d3, int d4) {
-        return varray_view<double>(
-            {(len_type)d1, (len_type)d2, (len_type)d3, (len_type)d4},
-            M.data(),
-            {(stride_type)d2, 1, (stride_type)(d1 * d2 * d4), (stride_type)(d1 * d2)}
-        );
-    };
-
     const Eigen::MatrixXd& B_ij_a = B_oo_P_alpha_;
     const Eigen::MatrixXd& B_ab_a = B_vv_P_alpha_;
 
@@ -1567,13 +1484,13 @@ void OMP3::compute_mp3_correction() {
         TBLIS_VIEW_4D(t_T, T2_aa_ijab, na_, na_, va_, va_);
         TBLIS_VIEW_4D(t_W, W, na_, na_, va_, va_);
       
-        Eigen::MatrixXd M_oooo = parallel_gemm_abt(B_ij_a, B_ij_a);
-        Eigen::MatrixXd M_ovov = parallel_gemm_abt(B_ia_P_alpha_, B_ia_P_alpha_);
-        Eigen::MatrixXd M_oovv = parallel_gemm_abt(B_ij_a, B_ab_a);
+        Eigen::MatrixXd M_oooo = parallel_gemm_abt_mp3(B_ij_a, B_ij_a);
+        Eigen::MatrixXd M_ovov = parallel_gemm_abt_mp3(B_ia_P_alpha_, B_ia_P_alpha_);
+        Eigen::MatrixXd M_oovv = parallel_gemm_abt_mp3(B_ij_a, B_ab_a);
         
-        auto t_Voooo = make_mat_view_4d(M_oooo, na_, na_, na_, na_);
-        auto t_Vovov = make_mat_view_4d(M_ovov, na_, va_, na_, va_);
-        auto t_Voovv = make_mat_view_4d(M_oovv, na_, na_, va_, va_);
+        auto t_Voooo = make_mat_view_4d_mp3(M_oooo, na_, na_, na_, na_);
+        auto t_Vovov = make_mat_view_4d_mp3(M_ovov, na_, va_, na_, va_);
+        auto t_Voovv = make_mat_view_4d_mp3(M_oovv, na_, na_, va_, va_);
 
         tblis::mult< double >(1.0,  t_T, "mnab", t_Voooo, "minj", 1.0, t_W, "ijab");
         tblis::mult< double >(2.0,  t_Vovov, "iakc", t_T, "kjcb", 1.0, t_W, "ijab");
@@ -1600,25 +1517,7 @@ void OMP3::compute_mp3_correction() {
             }
         }
 
-        #pragma omp parallel
-        {
-            std::vector<Eigen::MatrixXd> W_loc(n_pairs_sym, Eigen::MatrixXd::Zero(va_, va_));
-            Eigen::MatrixXd X_tmp(va_, va_);
-
-            #pragma omp for schedule(static) nowait
-            for (int P = 0; P < n_aux; ++P) {
-                Eigen::Map<const Eigen::MatrixXd> B_P(B_ab_a.col(P).data(), va_, va_);
-                for (int k = 0; k < n_pairs_sym; ++k) {
-                    X_tmp.noalias() = T_pairs[k] * B_P;
-                    W_loc[k].noalias() += B_P.transpose() * X_tmp;
-                }
-            }
-
-            #pragma omp critical
-            {
-                for (int k = 0; k < n_pairs_sym; ++k) W_pairs[k] += W_loc[k];
-            }
-        }
+        contract_vvvv_pairs_df(B_ab_a, va_, B_ab_a, va_, n_aux, T_pairs, W_pairs);
 
         p_idx = 0;
         for (int i = 0; i < na_; ++i) {
@@ -1673,12 +1572,12 @@ void OMP3::compute_mp3_correction() {
         t2_ab_dense = &dummy_ab;
     }
 
-    Eigen::MatrixXd M_oooo_aa = parallel_gemm_abt(B_ij_a, B_ij_a);
-    Eigen::MatrixXd M_ovov_aa = parallel_gemm_abt(B_ia_P_alpha_, B_ia_P_alpha_);
-    Eigen::MatrixXd M_oovv_aa = parallel_gemm_abt(B_ij_a, B_ab_a);
+    Eigen::MatrixXd M_oooo_aa = parallel_gemm_abt_mp3(B_ij_a, B_ij_a);
+    Eigen::MatrixXd M_ovov_aa = parallel_gemm_abt_mp3(B_ia_P_alpha_, B_ia_P_alpha_);
+    Eigen::MatrixXd M_oovv_aa = parallel_gemm_abt_mp3(B_ij_a, B_ab_a);
     Eigen::MatrixXd M_ovov_ab;
     if (!is_restricted && nb_ > 0 && vb_ > 0) {
-        M_ovov_ab = parallel_gemm_abt(B_ia_P_alpha_, B_ia_P_beta_);
+        M_ovov_ab = parallel_gemm_abt_mp3(B_ia_P_alpha_, B_ia_P_beta_);
     }
 
     {
@@ -1689,9 +1588,9 @@ void OMP3::compute_mp3_correction() {
         TBLIS_VIEW_4D(t_Waa_ladder, Waa_ladder_, na_, na_, va_, va_);
         TBLIS_VIEW_4D(t_Waa_ring, Waa_ring_, na_, na_, va_, va_);
         
-        auto t_Voooo = make_mat_view_4d(M_oooo_aa, na_, na_, na_, na_);
-        auto t_Vovov = make_mat_view_4d(M_ovov_aa, na_, va_, na_, va_);
-        auto t_Voovv = make_mat_view_4d(M_oovv_aa, na_, na_, va_, va_);
+        auto t_Voooo = make_mat_view_4d_mp3(M_oooo_aa, na_, na_, na_, na_);
+        auto t_Vovov = make_mat_view_4d_mp3(M_ovov_aa, na_, va_, na_, va_);
+        auto t_Voovv = make_mat_view_4d_mp3(M_oovv_aa, na_, na_, va_, va_);
 
         tblis::mult< double >(0.5,  t_Taa, "mnab", t_Voooo, "minj", 1.0, t_Waa_ladder, "ijab");
         tblis::mult< double >(-0.5, t_Taa, "mnab", t_Voooo, "mjni", 1.0, t_Waa_ladder, "ijab");
@@ -1700,7 +1599,7 @@ void OMP3::compute_mp3_correction() {
         tblis::mult< double >(-1.0, t_Voovv, "ikac", t_Taa, "kjcb", 1.0, t_Waa_ring, "ijab");
 
         if (!is_restricted && nb_ > 0 && vb_ > 0) {
-            auto t_Vovov_ab = make_mat_view_4d(M_ovov_ab, na_, va_, nb_, vb_);
+            auto t_Vovov_ab = make_mat_view_4d_mp3(M_ovov_ab, na_, va_, nb_, vb_);
             TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
             tblis::mult< double >(1.0, t_Vovov_ab, "iakc", t_Tab, "jkbc", 1.0, t_Waa_ring, "ijab");
         }
@@ -1720,15 +1619,7 @@ void OMP3::compute_mp3_correction() {
                 }
             }
 
-            #pragma omp parallel for schedule(static)
-            for (int k = 0; k < n_pairs_aa; ++k) {
-                Eigen::MatrixXd X_tmp(va_, va_);
-                for (int P = 0; P < n_aux; ++P) {
-                    Eigen::Map<const Eigen::MatrixXd> B_P(B_ab_a.col(P).data(), va_, va_);
-                    X_tmp.noalias() = T_aa_pairs[k] * B_P;
-                    W_aa_pairs[k].noalias() += B_P.transpose() * X_tmp;
-                }
-            }
+            contract_vvvv_pairs_df(B_ab_a, va_, B_ab_a, va_, n_aux, T_aa_pairs, W_aa_pairs);
 
             p_idx = 0;
             for (int i = 0; i < na_; ++i) {
@@ -1772,9 +1663,9 @@ void OMP3::compute_mp3_correction() {
         TBLIS_VIEW_4D(t_Tbb, (*t2_bb_dense_ptr), nb_, nb_, vb_, vb_);
         TBLIS_VIEW_4D(t_Tab, (*t2_ab_dense), na_, nb_, va_, vb_);
 
-        Eigen::MatrixXd M_oooo_bb = parallel_gemm_abt(B_ij_b, B_ij_b);
-        Eigen::MatrixXd M_ovov_bb = parallel_gemm_abt(B_ia_P_beta_, B_ia_P_beta_);
-        Eigen::MatrixXd M_oovv_bb = parallel_gemm_abt(B_ij_b, B_ab_b);
+        Eigen::MatrixXd M_oooo_bb = parallel_gemm_abt_mp3(B_ij_b, B_ij_b);
+        Eigen::MatrixXd M_ovov_bb = parallel_gemm_abt_mp3(B_ia_P_beta_, B_ia_P_beta_);
+        Eigen::MatrixXd M_oovv_bb = parallel_gemm_abt_mp3(B_ij_b, B_ab_b);
 
         {
             Eigen::Tensor< double, 4 > Wbb_ladder(nb_, nb_, vb_, vb_); Wbb_ladder.setZero();
@@ -1782,10 +1673,10 @@ void OMP3::compute_mp3_correction() {
             
             TBLIS_VIEW_4D(t_Wbb_ladder, Wbb_ladder, nb_, nb_, vb_, vb_);
             TBLIS_VIEW_4D(t_Wbb_ring, Wbb_ring, nb_, nb_, vb_, vb_);
-            auto t_Voooo_bb = make_mat_view_4d(M_oooo_bb, nb_, nb_, nb_, nb_);
-            auto t_Vovov_bb = make_mat_view_4d(M_ovov_bb, nb_, vb_, nb_, vb_);
-            auto t_Voovv_bb = make_mat_view_4d(M_oovv_bb, nb_, nb_, vb_, vb_);
-            auto t_Vovov_ab = make_mat_view_4d(M_ovov_ab, na_, va_, nb_, vb_);
+            auto t_Voooo_bb = make_mat_view_4d_mp3(M_oooo_bb, nb_, nb_, nb_, nb_);
+            auto t_Vovov_bb = make_mat_view_4d_mp3(M_ovov_bb, nb_, vb_, nb_, vb_);
+            auto t_Voovv_bb = make_mat_view_4d_mp3(M_oovv_bb, nb_, nb_, vb_, vb_);
+            auto t_Vovov_ab = make_mat_view_4d_mp3(M_ovov_ab, na_, va_, nb_, vb_);
 
             if (nb_ > 1) {
                 tblis::mult< double >(0.5,  t_Tbb, "mnab", t_Voooo_bb, "minj", 1.0, t_Wbb_ladder, "ijab");
@@ -1812,15 +1703,7 @@ void OMP3::compute_mp3_correction() {
                     }
                 }
 
-                #pragma omp parallel for schedule(static)
-                for (int k = 0; k < n_pairs_bb; ++k) {
-                    Eigen::MatrixXd X_tmp(vb_, vb_);
-                    for (int P = 0; P < n_aux; ++P) {
-                        Eigen::Map<const Eigen::MatrixXd> B_P(B_ab_b.col(P).data(), vb_, vb_);
-                        X_tmp.noalias() = T_bb_pairs[k] * B_P;
-                        W_bb_pairs[k].noalias() += B_P.transpose() * X_tmp;
-                    }
-                }
+                contract_vvvv_pairs_df(B_ab_b, vb_, B_ab_b, vb_, n_aux, T_bb_pairs, W_bb_pairs);
 
                 p_idx = 0;
                 for (int i = 0; i < nb_; ++i) {
@@ -1860,30 +1743,30 @@ void OMP3::compute_mp3_correction() {
             TBLIS_VIEW_4D(t_Wab_ladder, Wab_ladder, na_, nb_, va_, vb_);
             TBLIS_VIEW_4D(t_Wab_ring, Wab_ring, na_, nb_, va_, vb_);
 
-            Eigen::MatrixXd M_oooo_ab = parallel_gemm_abt(B_ij_a, B_ij_b);
-            auto t_Voooo_ab = make_mat_view_4d(M_oooo_ab, na_, na_, nb_, nb_);
+            Eigen::MatrixXd M_oooo_ab = parallel_gemm_abt_mp3(B_ij_a, B_ij_b);
+            auto t_Voooo_ab = make_mat_view_4d_mp3(M_oooo_ab, na_, na_, nb_, nb_);
             tblis::mult< double >(1.0, t_Tab, "mnab", t_Voooo_ab, "minj", 1.0, t_Wab_ladder, "ijab");
 
-            auto t_Vovov_aa = make_mat_view_4d(M_ovov_aa, na_, va_, na_, va_);
-            auto t_Voovv_aa = make_mat_view_4d(M_oovv_aa, na_, na_, va_, va_);
+            auto t_Vovov_aa = make_mat_view_4d_mp3(M_ovov_aa, na_, va_, na_, va_);
+            auto t_Voovv_aa = make_mat_view_4d_mp3(M_oovv_aa, na_, na_, va_, va_);
             tblis::mult< double >(1.0,  t_Vovov_aa, "iakc", t_Tab, "kjcb", 1.0, t_Wab_ring, "ijab");
             tblis::mult< double >(-1.0, t_Voovv_aa, "ikac", t_Tab, "kjcb", 1.0, t_Wab_ring, "ijab");
 
-            auto t_Vovov_bb = make_mat_view_4d(M_ovov_bb, nb_, vb_, nb_, vb_);
-            auto t_Voovv_bb = make_mat_view_4d(M_oovv_bb, nb_, nb_, vb_, vb_);
+            auto t_Vovov_bb = make_mat_view_4d_mp3(M_ovov_bb, nb_, vb_, nb_, vb_);
+            auto t_Voovv_bb = make_mat_view_4d_mp3(M_oovv_bb, nb_, nb_, vb_, vb_);
             tblis::mult< double >(1.0,  t_Tab, "ikac", t_Vovov_bb, "kcjb", 1.0, t_Wab_ring, "ijab"); 
             tblis::mult< double >(-1.0, t_Tab, "ikac", t_Voovv_bb, "kjcb", 1.0, t_Wab_ring, "ijab");
 
-            auto t_Vovov_ab = make_mat_view_4d(M_ovov_ab, na_, va_, nb_, vb_);
+            auto t_Vovov_ab = make_mat_view_4d_mp3(M_ovov_ab, na_, va_, nb_, vb_);
             tblis::mult< double >(1.0,  t_Taa, "ikac", t_Vovov_ab, "kcjb", 1.0, t_Wab_ring, "ijab");
             if (nb_ > 1) {
                 tblis::mult< double >(1.0,  t_Vovov_ab, "iakc", t_Tbb, "kjcb", 1.0, t_Wab_ring, "ijab");
             }
 
-            Eigen::MatrixXd M_oovv_ab_ex = parallel_gemm_abt(B_ij_a, B_ab_b);
-            Eigen::MatrixXd M_oovv_ba_ex = parallel_gemm_abt(B_ij_b, B_ab_a);
-            auto t_Voovv_ab_ex = make_mat_view_4d(M_oovv_ab_ex, na_, na_, vb_, vb_);
-            auto t_Voovv_ba_ex = make_mat_view_4d(M_oovv_ba_ex, nb_, nb_, va_, va_);
+            Eigen::MatrixXd M_oovv_ab_ex = parallel_gemm_abt_mp3(B_ij_a, B_ab_b);
+            Eigen::MatrixXd M_oovv_ba_ex = parallel_gemm_abt_mp3(B_ij_b, B_ab_a);
+            auto t_Voovv_ab_ex = make_mat_view_4d_mp3(M_oovv_ab_ex, na_, na_, vb_, vb_);
+            auto t_Voovv_ba_ex = make_mat_view_4d_mp3(M_oovv_ba_ex, nb_, nb_, va_, va_);
 
             tblis::mult< double >(-1.0, t_Voovv_ab_ex, "ikbc", t_Tab, "kjac", 1.0, t_Wab_ring, "ijab");
             tblis::mult< double >(-1.0, t_Tab, "ikcb", t_Voovv_ba_ex, "jkac", 1.0, t_Wab_ring, "ijab");
@@ -1902,16 +1785,7 @@ void OMP3::compute_mp3_correction() {
                 }
             }
 
-            #pragma omp parallel for schedule(static)
-            for (int k = 0; k < n_pairs_ab; ++k) {
-                Eigen::MatrixXd X_tmp(va_, vb_);
-                for (int P = 0; P < n_aux; ++P) {
-                    Eigen::Map<const Eigen::MatrixXd> B_Pa(B_ab_a.col(P).data(), va_, va_);
-                    Eigen::Map<const Eigen::MatrixXd> B_Pb(B_ab_b.col(P).data(), vb_, vb_);
-                    X_tmp.noalias() = T_ab_pairs[k] * B_Pb;
-                    W_ab_pairs[k].noalias() += B_Pa.transpose() * X_tmp;
-                }
-            }
+            contract_vvvv_pairs_df(B_ab_a, va_, B_ab_b, vb_, n_aux, T_ab_pairs, W_ab_pairs);
 
             for (int i = 0; i < na_; ++i) {
                 for (int j = 0; j < nb_; ++j) {
@@ -2110,26 +1984,6 @@ void OMP3::build_generalized_fock() {
     TBLIS_VIEW_4D(t_Teff_aa, Teff_aa, na_, na_, va_, va_);
     TBLIS_VIEW_2D(t_Zmat_a, Z_mat_a.data(), va_, na_);
 
-    auto parallel_gemm_abt = [](const Eigen::MatrixXd& A, const Eigen::MatrixXd& B) {
-        Eigen::MatrixXd C(A.rows(), B.rows());
-        const int m = A.rows();
-        constexpr int tile = 64;
-        #pragma omp parallel for schedule(dynamic)
-        for (int i = 0; i < m; i += tile) {
-            int rows = std::min(tile, m - i);
-            C.middleRows(i, rows).noalias() = A.middleRows(i, rows) * B.transpose();
-        }
-        return C;
-    };
-
-    auto make_mat_view_4d = [](Eigen::MatrixXd& M, int d1, int d2, int d3, int d4) {
-        return varray_view<double>(
-            {(len_type)d1, (len_type)d2, (len_type)d3, (len_type)d4},
-            M.data(),
-            {(stride_type)d2, 1, (stride_type)(d1 * d2 * d4), (stride_type)(d1 * d2)}
-        );
-    };
-
     Eigen::Tensor<double, 4> V_ovvv_aa, V_ooov_aa, half_ov_a, half_oo_a;
     Eigen::MatrixXd M_ovvv_aa, M_ooov_aa;
     const Eigen::MatrixXd& B_ij_a = B_oo_P_alpha_;
@@ -2146,16 +2000,16 @@ void OMP3::build_generalized_fock() {
             half_oo_a.resize(0, 0, 0, 0);
         }
     } else {
-        M_ovvv_aa = parallel_gemm_abt(B_ia_P_alpha_, B_ab_a);
-        M_ooov_aa = parallel_gemm_abt(B_ij_a, B_ia_P_alpha_);
+        M_ovvv_aa = parallel_gemm_abt_mp3(B_ia_P_alpha_, B_ab_a);
+        M_ooov_aa = parallel_gemm_abt_mp3(B_ij_a, B_ia_P_alpha_);
     }
 
     varray_view<double> t_Vovvv_aa = (config_.eri_method == "exact")
         ? varray_view<double>({(len_type)na_, (len_type)va_, (len_type)va_, (len_type)va_}, V_ovvv_aa.data(), {1, (stride_type)na_, (stride_type)(na_*va_), (stride_type)(na_*va_*va_)})
-        : make_mat_view_4d(M_ovvv_aa, na_, va_, va_, va_);
+        : make_mat_view_4d_mp3(M_ovvv_aa, na_, va_, va_, va_);
     varray_view<double> t_Vooov_aa = (config_.eri_method == "exact")
         ? varray_view<double>({(len_type)na_, (len_type)na_, (len_type)na_, (len_type)va_}, V_ooov_aa.data(), {1, (stride_type)na_, (stride_type)(na_*na_), (stride_type)(na_*na_*na_)})
-        : make_mat_view_4d(M_ooov_aa, na_, na_, na_, va_);
+        : make_mat_view_4d_mp3(M_ooov_aa, na_, na_, na_, va_);
 
     tblis::mult< double >(1.0, t_Vovvv_aa, "kcab", t_Teff_aa, "ikbc", 0.0, t_Zmat_a, "ai"); 
     tblis::mult< double >(-1.0, t_Vooov_aa, "jikc", t_Teff_aa, "jkac", 1.0, t_Zmat_a, "ai");
@@ -2303,33 +2157,33 @@ void OMP3::build_generalized_fock() {
             const Eigen::MatrixXd& B_ij_b = B_oo_P_beta_;
             const Eigen::MatrixXd& B_ab_b = B_vv_P_beta_;
             
-            M_ovvv_bb    = parallel_gemm_abt(B_ia_P_beta_, B_ab_b);
-            M_ooov_bb    = parallel_gemm_abt(B_ij_b, B_ia_P_beta_);
-            M_ovvv_ab    = parallel_gemm_abt(B_ia_P_alpha_, B_ab_b);
-            M_ovvv_ba    = parallel_gemm_abt(B_ia_P_beta_, B_ab_a);
-            M_ooov_aa_bb = parallel_gemm_abt(B_ij_a, B_ia_P_beta_);
-            M_ooov_bb_aa = parallel_gemm_abt(B_ij_b, B_ia_P_alpha_);
+            M_ovvv_bb    = parallel_gemm_abt_mp3(B_ia_P_beta_, B_ab_b);
+            M_ooov_bb    = parallel_gemm_abt_mp3(B_ij_b, B_ia_P_beta_);
+            M_ovvv_ab    = parallel_gemm_abt_mp3(B_ia_P_alpha_, B_ab_b);
+            M_ovvv_ba    = parallel_gemm_abt_mp3(B_ia_P_beta_, B_ab_a);
+            M_ooov_aa_bb = parallel_gemm_abt_mp3(B_ij_a, B_ia_P_beta_);
+            M_ooov_bb_aa = parallel_gemm_abt_mp3(B_ij_b, B_ia_P_alpha_);
         }
 
         bool is_ex = (config_.eri_method == "exact");
         varray_view<double> t_Vovvv_bb = is_ex
             ? varray_view<double>({(len_type)nb_, (len_type)vb_, (len_type)vb_, (len_type)vb_}, V_ovvv_bb.data(), {1, (stride_type)nb_, (stride_type)(nb_*vb_), (stride_type)(nb_*vb_*vb_)})
-            : make_mat_view_4d(M_ovvv_bb, nb_, vb_, vb_, vb_);
+            : make_mat_view_4d_mp3(M_ovvv_bb, nb_, vb_, vb_, vb_);
         varray_view<double> t_Vooov_bb = is_ex
             ? varray_view<double>({(len_type)nb_, (len_type)nb_, (len_type)nb_, (len_type)vb_}, V_ooov_bb.data(), {1, (stride_type)nb_, (stride_type)(nb_*nb_), (stride_type)(nb_*nb_*nb_)})
-            : make_mat_view_4d(M_ooov_bb, nb_, nb_, nb_, vb_);
+            : make_mat_view_4d_mp3(M_ooov_bb, nb_, nb_, nb_, vb_);
         varray_view<double> t_Vovvv_ab = is_ex
             ? varray_view<double>({(len_type)na_, (len_type)va_, (len_type)vb_, (len_type)vb_}, V_ovvv_ab.data(), {1, (stride_type)na_, (stride_type)(na_*va_), (stride_type)(na_*va_*vb_)})
-            : make_mat_view_4d(M_ovvv_ab, na_, va_, vb_, vb_);
+            : make_mat_view_4d_mp3(M_ovvv_ab, na_, va_, vb_, vb_);
         varray_view<double> t_Vovvv_ba = is_ex
             ? varray_view<double>({(len_type)nb_, (len_type)vb_, (len_type)va_, (len_type)va_}, V_ovvv_ba.data(), {1, (stride_type)nb_, (stride_type)(nb_*vb_), (stride_type)(nb_*vb_*va_)})
-            : make_mat_view_4d(M_ovvv_ba, nb_, vb_, va_, va_);
+            : make_mat_view_4d_mp3(M_ovvv_ba, nb_, vb_, va_, va_);
         varray_view<double> t_Vooov_aa_bb = is_ex
             ? varray_view<double>({(len_type)na_, (len_type)na_, (len_type)nb_, (len_type)vb_}, V_ooov_aa_bb.data(), {1, (stride_type)na_, (stride_type)(na_*na_), (stride_type)(na_*na_*nb_)})
-            : make_mat_view_4d(M_ooov_aa_bb, na_, na_, nb_, vb_);
+            : make_mat_view_4d_mp3(M_ooov_aa_bb, na_, na_, nb_, vb_);
         varray_view<double> t_Vooov_bb_aa = is_ex
             ? varray_view<double>({(len_type)nb_, (len_type)nb_, (len_type)na_, (len_type)va_}, V_ooov_bb_aa.data(), {1, (stride_type)nb_, (stride_type)(nb_*nb_), (stride_type)(nb_*nb_*na_)})
-            : make_mat_view_4d(M_ooov_bb_aa, nb_, nb_, na_, va_);
+            : make_mat_view_4d_mp3(M_ooov_bb_aa, nb_, nb_, na_, va_);
 
         // Kontribusi Teff_ab ke Z_mat_a
         tblis::mult< double >(1.0,  t_Vovvv_ba,    "kcab", t_Teff_ab, "ikbc", 1.0, t_Zmat_a, "ai");

@@ -28,6 +28,8 @@ int cint1e_nuc_sph(double *buf, int *shls, int *atm, int natm, int *bas, int nba
 void CINTdel_optimizer(CINTOpt **opt);
 int cint2c2e_sph(double *buf, int *shls, int *atm, int natm, int *bas, int nbas, double *env, CINTOpt *opt);
 int cint3c2e_sph(double *buf, int *shls, int *atm, int natm, int *bas, int nbas, double *env, CINTOpt *opt);
+void cint2c2e_sph_optimizer(CINTOpt **opt, int *atm, int natm, int *bas, int nbas, double *env);
+void cint3c2e_sph_optimizer(CINTOpt **opt, int *atm, int natm, int *bas, int nbas, double *env);
 }
 #include <iostream>
 #include <cmath>
@@ -40,22 +42,55 @@ int cint3c2e_sph(double *buf, int *shls, int *atm, int natm, int *bas, int nbas,
 namespace mshqc {
 
 IntegralEngine::IntegralEngine(const Molecule& mol, const BasisSet& basis)
-    : mol_(mol), basis_(basis), nbasis_(basis.n_basis_functions()), opt_(nullptr) {
-    
-    convert_basis_to_libcint(); 
+    : mol_(mol), basis_(basis), nbasis_(basis.n_basis_functions()),
+      opt_(nullptr), opt_2c2e_(nullptr), opt_3c2e_(nullptr) {
+
+    convert_basis_to_libcint();
     CINTOpt* tmp_opt = nullptr;
+    CINTOpt* tmp_opt_2c = nullptr;
+    CINTOpt* tmp_opt_3c = nullptr;
+
     cint2e_sph_optimizer(&tmp_opt, atm_.data(), mol_.n_atoms(), bas_.data(), basis_.n_shells(), env_.data());
-    opt_ = static_cast<void*>(tmp_opt); 
-    
+    cint2c2e_sph_optimizer(&tmp_opt_2c, atm_.data(), mol_.n_atoms(), bas_.data(), basis_.n_shells(), env_.data());
+    cint3c2e_sph_optimizer(&tmp_opt_3c, atm_.data(), mol_.n_atoms(), bas_.data(), basis_.n_shells(), env_.data());
+
+    opt_      = static_cast<void*>(tmp_opt);
+    opt_2c2e_ = static_cast<void*>(tmp_opt_2c);
+    opt_3c2e_ = static_cast<void*>(tmp_opt_3c);
+
     cache_valid = false;
 }
 
 IntegralEngine::~IntegralEngine() {
-    if (opt_ != nullptr) {
-        CINTOpt* tmp_opt = static_cast<CINTOpt*>(opt_);
-        CINTdel_optimizer(&tmp_opt);
-        opt_ = nullptr;
-    }
+    auto free_opt = [](void*& p) {
+        if (p != nullptr) {
+            CINTOpt* tmp = static_cast<CINTOpt*>(p);
+            CINTdel_optimizer(&tmp);
+            p = nullptr;
+        }
+    };
+    free_opt(opt_);
+    free_opt(opt_2c2e_);
+    free_opt(opt_3c2e_);
+}
+
+// --- Gunakan opt_2c2e_ dan opt_3c2e_ di pemanggilan libcint ---
+int IntegralEngine::compute_2c2e_block_raw(int sh_P, int sh_Q, double* buf_out) const {
+    int shls[2] = {sh_P, sh_Q};
+    return cint2c2e_sph(buf_out, shls,
+                        const_cast<int*>(atm_.data()), mol_.n_atoms(),
+                        const_cast<int*>(bas_.data()), basis_.n_shells(),
+                        const_cast<double*>(env_.data()),
+                        static_cast<CINTOpt*>(opt_2c2e_));
+}
+
+int IntegralEngine::compute_3c2e_block_raw(int sh_i, int sh_j, int sh_P, double* buf_out) const {
+    int shls[3] = {sh_i, sh_j, sh_P};
+    return cint3c2e_sph(buf_out, shls,
+                        const_cast<int*>(atm_.data()), mol_.n_atoms(),
+                        const_cast<int*>(bas_.data()), basis_.n_shells(),
+                        const_cast<double*>(env_.data()),
+                        static_cast<CINTOpt*>(opt_3c2e_));
 }
 
 int IntegralEngine::find_atom_index(const std::array<double, 3>& center) {
@@ -400,21 +435,9 @@ std::vector<double> IntegralEngine::compute_3c2e_block(int sh_i, int sh_j, int s
     return t_buffer;
 }
 
-int IntegralEngine::compute_2c2e_block_raw(int sh_P, int sh_Q, double* buf_out) const {
-    int shls[2] = {sh_P, sh_Q};
-    return cint2c2e_sph(buf_out, shls,
-                        const_cast<int*>(atm_.data()), mol_.n_atoms(),
-                        const_cast<int*>(bas_.data()), basis_.n_shells(),
-                        const_cast<double*>(env_.data()), nullptr);
-}
 
-int IntegralEngine::compute_3c2e_block_raw(int sh_i, int sh_j, int sh_P, double* buf_out) const {
-    int shls[3] = {sh_i, sh_j, sh_P};
-    return cint3c2e_sph(buf_out, shls,
-                        const_cast<int*>(atm_.data()), mol_.n_atoms(),
-                        const_cast<int*>(bas_.data()), basis_.n_shells(),
-                        const_cast<double*>(env_.data()), nullptr);
-}
+
+
 
 
 // STUBS

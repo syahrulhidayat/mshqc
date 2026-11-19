@@ -817,31 +817,51 @@ VibThermoResult HPCGeometryOptimizer::compute_frequencies(
   double e0 = evaluate_single_point_cpp(mol, cfg);
   Eigen::MatrixXd hess = Eigen::MatrixXd::Zero(ndof, ndof);
   const double h = 2.0e-3;
+  const double inv_h2 = 1.0 / (h * h);
+  const int n_indep = 3 * std::max(0, natoms - 1);
 
-  GeomOptConfig grad_cfg = cfg;
-  grad_cfg.project_trans_rot = false;
-  grad_cfg.verbose = false;
+  std::vector<double> ep_1d(n_indep, 0.0);
+  std::vector<double> em_1d(n_indep, 0.0);
 
-  // Eksploitasi Invarian Translasi pada Kolom Hessian:
-  // Cukup diferensiasikan (N - 1) atom pertama, kolom atom terakhir ditentukan dari -sum_{a=0}^{N-2} H(:, a)
-  for (int a = 0; a < natoms - 1; ++a) {
-    for (int xyz = 0; xyz < 3; ++xyz) {
-      int k = 3 * a + xyz;
-      Eigen::VectorXd xp = x0;
-      Eigen::VectorXd xm = x0;
-      xp(k) += h;
-      xm(k) -= h;
-      auto [ep, gp] = compute_nuclear_gradient_cpp(make_displaced_molecule(mol, xp), grad_cfg);
-      auto [em, gm] = compute_nuclear_gradient_cpp(make_displaced_molecule(mol, xm), grad_cfg);
-      hess.col(k) = (gp - gm) / (2.0 * h);
+  // 1. Evaluasi 1D (+h, -h) untuk elemen diagonal H_{kk}
+  for (int k = 0; k < n_indep; ++k) {
+    Eigen::VectorXd xp = x0, xm = x0;
+    xp(k) += h;
+    xm(k) -= h;
+    ep_1d[k] = evaluate_single_point_cpp(make_displaced_molecule(mol, xp), cfg);
+    em_1d[k] = evaluate_single_point_cpp(make_displaced_molecule(mol, xm), cfg);
+    hess(k, k) = (ep_1d[k] - 2.0 * e0 + em_1d[k]) * inv_h2;
+  }
+
+  // 2. Evaluasi 2D simetris (+h,+h) dan (-h,-h) untuk elemen non-diagonal H_{kl} (k < l)
+  for (int k = 0; k < n_indep; ++k) {
+    for (int l = k + 1; l < n_indep; ++l) {
+      Eigen::VectorXd xpp = x0, xmm = x0;
+      xpp(k) += h; xpp(l) += h;
+      xmm(k) -= h; xmm(l) -= h;
+      const double epp = evaluate_single_point_cpp(make_displaced_molecule(mol, xpp), cfg);
+      const double emm = evaluate_single_point_cpp(make_displaced_molecule(mol, xmm), cfg);
+      const double h_kl = 0.5 * (epp + emm - ep_1d[k] - em_1d[k] - ep_1d[l] - em_1d[l] + 2.0 * e0) * inv_h2;
+      hess(k, l) = h_kl;
+      hess(l, k) = h_kl;
     }
   }
+
+  // 3. Rekonstruksi baris & kolom atom terakhir dari invarian translasi eksak (Hukum III Newton)
   for (int xyz = 0; xyz < 3; ++xyz) {
-    Eigen::VectorXd col_sum = Eigen::VectorXd::Zero(ndof);
-    for (int a = 0; a < natoms - 1; ++a) {
-      col_sum += hess.col(3 * a + xyz);
+    for (int k = 0; k < n_indep; ++k) {
+      double s = 0.0;
+      for (int a = 0; a < natoms - 1; ++a) s += hess(k, 3 * a + xyz);
+      hess(k, n_indep + xyz) = -s;
+      hess(n_indep + xyz, k) = -s;
     }
-    hess.col(3 * (natoms - 1) + xyz) = -col_sum;
+  }
+  for (int x1 = 0; x1 < 3; ++x1) {
+    for (int x2 = 0; x2 < 3; ++x2) {
+      double s = 0.0;
+      for (int a = 0; a < natoms - 1; ++a) s += hess(n_indep + x1, 3 * a + x2);
+      hess(n_indep + x1, n_indep + x2) = -s;
+    }
   }
   hess = 0.5 * (hess + hess.transpose());
 

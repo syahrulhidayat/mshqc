@@ -29,6 +29,7 @@ class IntegralEngine {
 public:
     IntegralEngine(const Molecule& mol, const BasisSet& basis);
     ~IntegralEngine(); 
+    
 
     
     IntegralEngine(const IntegralEngine&) = delete;
@@ -81,6 +82,9 @@ private:
     std::vector<double> env_;
 
     void* opt_ = nullptr;
+    void* opt_2c2e_ = nullptr;
+    void* opt_3c2e_ = nullptr;
+    
   
     
     void convert_basis_to_libcint();
