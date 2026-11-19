@@ -328,6 +328,7 @@ NB_MODULE(_mshqc, m) {
                                      double energy_thresh,
                                      double orb_grad_thresh,
                                      double fd_step_bohr,
+                                     bool use_analytic_gradient,
                                      bool verbose) {
             mshqc::gradient::GeomOptConfig cfg;
             cfg.method = method;
@@ -343,6 +344,7 @@ NB_MODULE(_mshqc, m) {
             cfg.energy_thresh = energy_thresh;
             cfg.orb_grad_thresh = orb_grad_thresh;
             cfg.fd_step_bohr = fd_step_bohr;
+            cfg.use_analytic_gradient = use_analytic_gradient;
             cfg.verbose = verbose;
             nb::gil_scoped_release release;
             return mshqc::gradient::HPCGeometryOptimizer::optimize_molecule(mol, cfg);
@@ -360,6 +362,7 @@ NB_MODULE(_mshqc, m) {
            nb::arg("energy_thresh") = 1.0e-12,
            nb::arg("orb_grad_thresh") = 1.0e-10,
            nb::arg("fd_step_bohr") = 5.0e-4,
+           nb::arg("use_analytic_gradient") = true,
            nb::arg("verbose") = true,
            "Optimize molecular geometry in C++20 and update coordinates in-place")
         .def("frequencies", [](const Molecule& mol,
@@ -389,23 +392,31 @@ NB_MODULE(_mshqc, m) {
         .def("gradient", [](const Molecule& mol,
                             const std::string& method,
                             const std::string& eri_mode,
+                            const std::string& eri_method,
                             const std::string& basis,
+                            const std::string& aux_basis,
                             const std::string& reference,
-                            double fd_step_bohr) {
+                            double fd_step_bohr,
+                            bool use_analytic_gradient) {
             mshqc::gradient::GeomOptConfig cfg;
             cfg.method = method;
-            cfg.eri_method = eri_mode;
+            cfg.eri_method = !eri_method.empty() ? eri_method : eri_mode;
             cfg.basis_name = basis;
+            cfg.aux_basis_name = aux_basis;
             cfg.reference = reference;
             cfg.fd_step_bohr = fd_step_bohr;
+            cfg.use_analytic_gradient = use_analytic_gradient;
             cfg.verbose = false;
             nb::gil_scoped_release release;
             return mshqc::gradient::HPCGeometryOptimizer::compute_nuclear_gradient_cpp(mol, cfg);
         }, nb::arg("method") = "omp2",
            nb::arg("eri_mode") = "df",
+           nb::arg("eri_method") = "",
            nb::arg("basis") = "cc-pVDZ",
+           nb::arg("aux_basis") = "",
            nb::arg("reference") = "auto",
            nb::arg("fd_step_bohr") = 5.0e-4,
+           nb::arg("use_analytic_gradient") = true,
            "Compute nuclear gradient vector dE/dR (Ha/Bohr)")
         .def("scan_pes", [](const Molecule& mol,
                             int atom_i,
@@ -950,4 +961,27 @@ NB_MODULE(_mshqc, m) {
         .def_ro("r_angstrom", &mshqc::gradient::PESScanPoint::r_angstrom)
         .def_ro("r_bohr", &mshqc::gradient::PESScanPoint::r_bohr)
         .def_ro("energy_ha", &mshqc::gradient::PESScanPoint::energy_ha);
+        
+    nb::class_<mshqc::gradient::HPCGeometryOptimizer>(m, "HPCGeometryOptimizer")
+        .def_static("optimize_molecule",
+                    &mshqc::gradient::HPCGeometryOptimizer::optimize_molecule,
+                    nb::arg("mol"), nb::arg("config") = mshqc::gradient::GeomOptConfig(),
+                    nb::call_guard<nb::gil_scoped_release>())
+        .def_static("compute_nuclear_gradient_cpp",
+                    &mshqc::gradient::HPCGeometryOptimizer::compute_nuclear_gradient_cpp,
+                    nb::arg("mol"), nb::arg("config") = mshqc::gradient::GeomOptConfig(),
+                    nb::call_guard<nb::gil_scoped_release>())
+        .def_static("compute_frequencies",
+                    &mshqc::gradient::HPCGeometryOptimizer::compute_frequencies,
+                    nb::arg("mol"),
+                    nb::arg("config") = mshqc::gradient::GeomOptConfig(),
+                    nb::arg("temperature_k") = 298.15,
+                    nb::arg("pressure_atm") = 1.0,
+                    nb::call_guard<nb::gil_scoped_release>())
+        .def_static("scan_bond_pes",
+                    &mshqc::gradient::HPCGeometryOptimizer::scan_bond_pes,
+                    nb::arg("mol"), nb::arg("atom_i"), nb::arg("atom_j"),
+                    nb::arg("distances_angstrom"),
+                    nb::arg("config") = mshqc::gradient::GeomOptConfig(),
+                    nb::call_guard<nb::gil_scoped_release>());
 }

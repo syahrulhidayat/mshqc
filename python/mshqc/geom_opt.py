@@ -588,3 +588,8 @@ class UniversalGeomOptimizer:
             grad_rms_history=grad_rms_hist,
             trajectory_bohr=traj_hist,
         )
+
+try:
+    from ._mshqc import HPCGeometryOptimizer, GeomOptConfig, VibThermoResult, PESScanPoint
+except ImportError:
+    HPCGeometryOptimizer = None  # type: ignore

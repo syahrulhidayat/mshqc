@@ -169,8 +169,8 @@ __all__ = [
     "CholeskyERI", "CholeskyDecompositionResult",
     "PointGroup", "SymmetryOperation", "SymOpType", "PetiteList", "UniqueShellPair", "BasisSymmetrizer",
     "DIIS", "SCFConfig", "SCFResult", "RHF", "UHF", "ROHF",
-    "MP2Config", "MP2Result", "RMP2", "UMP2", "OMP2",
-    "MP3Result", "RMP3", "UMP3", "OMP3",
+    "MP2Config", "MP2Result", "RMP2", "UMP2", "ROMP2", "OMP2",
+    "MP3Result", "RMP3", "UMP3", "ROMP3", "OMP3",
     "bohr_to_angstrom", "angstrom_to_bohr", "hartree_to_ev", "hartree_to_kcal",
     "MSHQCCalculator", "MSHQCSession", "build_molecule", "run",
     "quick_calculation", "benchmark_basis_sets", "compare_methods",
@@ -198,7 +198,7 @@ def _resolve_mshqc_basis_dir() -> None:
 _resolve_mshqc_basis_dir()
 
 # === MSHQC NATIVE C++20 GEOMETRY OPTIMIZATION EXPORTS ===
-for _sym in ("GeomOptConfig", "GeomOptResult", "VibThermoResult", "PESScanPoint"):
+for _sym in ("GeomOptConfig", "GeomOptResult", "VibThermoResult", "PESScanPoint", "HPCGeometryOptimizer"):
     if _sym in globals() and _sym not in __all__:
         __all__.append(_sym)
 from .geom_opt import UniversalGeomOptimizer, GeomOptResult, project_translation_rotation
@@ -242,6 +242,7 @@ def _psi4_compatible_optimize_geometry(
     fd_step_bohr: float = 5.0e-4,
     disp_size: float = 0.0,
     project_trans_rot: bool = True,
+    use_analytic_gradient: bool = True,
     verbose: bool = False,
     xyz_traj_file: str = "",
 ):
@@ -280,6 +281,7 @@ def _psi4_compatible_optimize_geometry(
         energy_thresh=energy_thresh,
         orb_grad_thresh=orb_grad_thresh,
         fd_step_bohr=fd_step_bohr,
+        use_analytic_gradient=use_analytic_gradient,
         verbose=verbose,
     )
 
