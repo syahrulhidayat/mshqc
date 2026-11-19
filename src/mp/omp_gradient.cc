@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "mshqc/mp2/mp2.h"
+#include "mshqc/integrals/packed_ao_utils.h"
 #include "mshqc/gradient/optimizer.h"
 #include <omp.h>
 #include <tblis/tblis.h>
@@ -561,10 +562,9 @@ OMP2GradientData OMP2::build_df_gradient_data() {
     Eigen::MatrixXd F_conn_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
     Eigen::MatrixXd F_conn_b = has_beta ? Eigen::MatrixXd::Zero(nbf_, nbf_) : Eigen::MatrixXd();
 
-    Eigen::Map<const Eigen::VectorXd> P_ref_flat(P_ref_tot.data(), nbf_ * nbf_);
-    Eigen::Map<const Eigen::VectorXd> P_corr_flat(P_corr_tot.data(), nbf_ * nbf_);
-    Eigen::VectorXd c_ref  = scf_.L_mat.transpose() * P_ref_flat;
-    Eigen::VectorXd c_corr = scf_.L_mat.transpose() * P_corr_flat;
+    // [INJECTED_PRIORITAS_2D_PACKED_AO]
+    Eigen::VectorXd c_ref  = integrals::contract_ao_factor_with_sym(scf_.L_mat, P_ref_tot, nbf_);
+    Eigen::VectorXd c_corr = integrals::contract_ao_factor_with_sym(scf_.L_mat, P_corr_tot, nbf_);
 
     OMP2GradientData out;
     out.P_eff_ao = P_ref_tot + P_corr_tot;
@@ -600,7 +600,8 @@ OMP2GradientData OMP2::build_df_gradient_data() {
 
             // Connected 2-RDM (alpha): 0.5 untuk RHF (X_a = 1*E_corr), 0.25 untuk UHF (X_a+X_b = 2*E_corr)
             Conn_ao.noalias() = Ca_v * X_ai_a * Ca_o.transpose();
-            G_P.noalias() += (is_restricted ? 0.5 : 0.25) * (Conn_ao + Conn_ao.transpose());
+            // [FIXED_2E_SCALE_FACTORS]
+            G_P.noalias() += (is_restricted ? 2.0 : 1.0) * (Conn_ao + Conn_ao.transpose());
 
             if (has_beta) {
                 Eigen::Map<const Eigen::MatrixXd> Boo_b(B_oo_P_beta_.col(P).data(), nb_, nb_);
@@ -619,7 +620,7 @@ OMP2GradientData OMP2::build_df_gradient_data() {
                 G_P.noalias() -= (M_tmp + M_corr_b + M_corr_b.transpose());
 
                 Conn_ao.noalias() = Cb_v * X_bi_b * Cb_o.transpose();
-                G_P.noalias() += 0.25 * (Conn_ao + Conn_ao.transpose());
+                G_P.noalias() += 1.0 * (Conn_ao + Conn_ao.transpose());
             }
 
             out.Gamma_3c.col(P) = Eigen::Map<const Eigen::VectorXd>(G_P.data(), nbf_ * nbf_);
@@ -636,24 +637,17 @@ OMP2GradientData OMP2::build_df_gradient_data() {
     F_conn_a   = 0.5 * (F_conn_a   + F_conn_a.transpose());
 
     if (is_restricted) {
-        out.W_eff_ao = scf_.C_alpha * (2.0 * F_1e_sep_a + F_conn_a) * scf_.C_alpha.transpose();
+        out.W_eff_ao = 2.0 * (scf_.C_alpha * (F_1e_sep_a + F_conn_a) * scf_.C_alpha.transpose());
     } else {
-        out.W_eff_ao = scf_.C_alpha * (F_1e_sep_a + 0.5 * F_conn_a) * scf_.C_alpha.transpose();
+        out.W_eff_ao = scf_.C_alpha * (F_1e_sep_a + F_conn_a) * scf_.C_alpha.transpose();
         if (has_beta) {
             F_1e_sep_b = 0.5 * (F_1e_sep_b + F_1e_sep_b.transpose());
             F_conn_b   = 0.5 * (F_conn_b   + F_conn_b.transpose());
-            out.W_eff_ao.noalias() += scf_.C_beta * (F_1e_sep_b + 0.5 * F_conn_b) * scf_.C_beta.transpose();
+            out.W_eff_ao.noalias() += scf_.C_beta * (F_1e_sep_b + F_conn_b) * scf_.C_beta.transpose();
         }
     }
 
-    out.gamma_2c.resize(n_aux, n_aux);
-    constexpr int tile_g = 64;
-    #pragma omp parallel for schedule(dynamic)
-    for (int r = 0; r < n_aux; r += tile_g) {
-        int rows = std::min(tile_g, n_aux - r);
-        out.gamma_2c.middleRows(r, rows).noalias() = out.Gamma_3c.middleCols(r, rows).transpose() * scf_.L_mat;
-    }
-    out.gamma_2c = 0.5 * (out.gamma_2c + out.gamma_2c.transpose());
+    out.gamma_2c = integrals::compute_gamma2c_from_full_and_L(out.Gamma_3c, scf_.L_mat, nbf_);
 
     return out;
 }

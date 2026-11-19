@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "mshqc/mp2/mp2.h"
+#include "mshqc/integrals/packed_ao_utils.h"
 #include "mshqc/integrals/eri_transformer.h" 
 #include <omp.h>
 #include <tblis/tblis.h>
@@ -261,11 +262,9 @@ void OMP2::build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_
         Eigen::MatrixXd P_tot = P_a + P_b;
         int n_chol = scf_.L_mat.cols();
 
-        Eigen::Map<const Eigen::MatrixXd> L_flat_J(scf_.L_mat.data(), nbf_ * nbf_, n_chol);
-        Eigen::Map<const Eigen::VectorXd> P_tot_flat(P_tot.data(), nbf_ * nbf_);
-        Eigen::VectorXd X_J = L_flat_J.transpose() * P_tot_flat; 
-        Eigen::VectorXd J_flat = L_flat_J * X_J;                 
-        Eigen::Map<Eigen::MatrixXd> J_mat(J_flat.data(), nbf_, nbf_);
+        // [INJECTED_PRIORITAS_2D_PACKED_AO]
+        const bool is_packed = integrals::is_packed_ao_matrix(scf_.L_mat, nbf_);
+        Eigen::MatrixXd J_mat = integrals::compute_coulomb_from_ao_factor(scf_.L_mat, P_tot, nbf_);
 
         bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
         bool is_idempotent_pa = (&P_a == &scf_.P_alpha);
@@ -294,10 +293,14 @@ void OMP2::build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_
             int tid = omp_get_thread_num();
             Eigen::MatrixXd& Ka_priv = Ka_tls[tid];
             Eigen::MatrixXd Tab_buf(nbf_, is_idempotent_pa ? Cab_o.cols() : (has_beta_unres ? 2 * nbf_ : nbf_));
+            Eigen::MatrixXd L_K_buf;
+            if (is_packed) L_K_buf.resize(nbf_, nbf_);
 
             #pragma omp for schedule(static) nowait
             for (int K = 0; K < n_chol; ++K) {
-                Eigen::Map<const Eigen::MatrixXd> L_K(scf_.L_mat.col(K).data(), nbf_, nbf_);
+                const double* col_k = scf_.L_mat.col(K).data();
+                if (is_packed) integrals::unpack_ao_column(col_k, nbf_, true, L_K_buf);
+                Eigen::Map<const Eigen::MatrixXd> L_K(is_packed ? L_K_buf.data() : col_k, nbf_, nbf_);
 
                 if (is_idempotent_pa) {
                     Tab_buf.noalias() = L_K * Cab_o;

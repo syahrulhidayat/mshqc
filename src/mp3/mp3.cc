@@ -20,6 +20,8 @@
 #include "mshqc/mp3/mp3.h"
 #include "mshqc/mp3/omp3.h"
 #include "mshqc/integrals/eri_transformer.h"
+#include "mshqc/integrals/packed_ao_utils.h"
+// [INJECTED_PRIORITAS_2D_PACKED_AO]
 #include "mshqc/gradient/optimizer.h"
 #include <unsupported/Eigen/MatrixFunctions>
 #include <iostream>
@@ -391,21 +393,7 @@ MP3Result RMP3::compute() {
         B_ov = mp2_.B_ia_P_alpha; 
         
         auto build_B_fast = [&](const Eigen::MatrixXd& C1, const Eigen::MatrixXd& C2) {
-            int d1 = C1.cols(); int d2 = C2.cols();
-            Eigen::MatrixXd B = Eigen::MatrixXd::Zero(d1 * d2, n_aux_);
-            Eigen::Map<const Eigen::MatrixXd> L_flat(scf_.L_mat.data(), nbf_, nbf_ * n_aux_);
-            Eigen::MatrixXd temp1 = C1.transpose() * L_flat;
-            #pragma omp parallel for schedule(static)
-            for (int P = 0; P < n_aux_; ++P) {
-                Eigen::Map<const Eigen::MatrixXd> tmp_P(temp1.data() + P * d1 * nbf_, d1, nbf_);
-                Eigen::MatrixXd L_pq = tmp_P * C2;
-                for (int x = 0; x < d1; ++x) {
-                    for (int y = 0; y < d2; ++y) {
-                        B(x * d2 + y, P) = L_pq(x, y);
-                    }
-                }
-            }
-            return B;
+            return integrals::transform_3c_ao_to_mo_block(scf_.L_mat, C1, C2, nbf_);
         };
 
         B_oo = build_B_fast(Co, Co);
@@ -607,21 +595,7 @@ MP3Result UMP3::compute() {
         if (no_b_ > 0 && nv_b_ > 0) B_ov_b = mp2_.B_ia_P_beta;
 
         auto build_B_fast = [&](const Eigen::MatrixXd& C1, const Eigen::MatrixXd& C2) {
-            int d1 = C1.cols(); int d2 = C2.cols();
-            Eigen::MatrixXd B = Eigen::MatrixXd::Zero(d1 * d2, n_aux_);
-            Eigen::Map<const Eigen::MatrixXd> L_flat(scf_.L_mat.data(), nbf_, nbf_ * n_aux_);
-            Eigen::MatrixXd temp1 = C1.transpose() * L_flat;
-            #pragma omp parallel for schedule(static)
-            for (int P = 0; P < n_aux_; ++P) {
-                Eigen::Map<const Eigen::MatrixXd> tmp_P(temp1.data() + P * d1 * nbf_, d1, nbf_);
-                Eigen::MatrixXd L_pq = tmp_P * C2;
-                for (int x = 0; x < d1; ++x) {
-                    for (int y = 0; y < d2; ++y) {
-                        B(x * d2 + y, P) = L_pq(x, y);
-                    }
-                }
-            }
-            return B;
+            return integrals::transform_3c_ao_to_mo_block(scf_.L_mat, C1, C2, nbf_);
         };
 
         B_oo_a = build_B_fast(Cao, Cao);

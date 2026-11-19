@@ -191,148 +191,155 @@ jobs:
       # =========================================================================
       # BAGIAN 1: UNIT TESTS mshqc (geom_env)
       # =========================================================================
-      - name: "[01/15] Run Automated Pytest Validation Suite (test_mshqc.py)"
+      - name: "[01/16] Run Automated Pytest Validation Suite (test_mshqc.py)"
         shell: bash -el {0}
         run: |
           set -o pipefail
           micromamba activate geom_env
           python -m pytest tests/test_mshqc.py -v -s 2>&1 | tee 01_pytest_mshqc_log.txt
 
-      - name: "[02/15] Run Universal Geometry Optimizer Unit Test (test_universal_geom_opt.py)"
+      - name: "[02/16] Run Universal Geometry Optimizer Unit Test (test_universal_geom_opt.py)"
         shell: bash -el {0}
         run: |
           set -o pipefail
           micromamba activate geom_env
           python -u tests/test_universal_geom_opt.py 2>&1 | tee 02_test_universal_geom_opt_log.txt
 
-      # =========================================================================
-      # BAGIAN 2: CORE BENCHMARK SUITE (mshqc vs Psi4 Terpisah)
-      # =========================================================================
-      - name: "[03/15] Run mshqc Core Benchmark (test_mshqc2.py)"
+      - name: "[03/16] Run Analytic 2e Gradient Verification (verify_analytic_grad_2e.py)"
         shell: bash -el {0}
         run: |
           set -o pipefail
           micromamba activate geom_env
-          python -u tests/test_mshqc2.py 2>&1 | tee 03_mshqc_out.txt
-          cp 03_mshqc_out.txt mshqc_out.txt
+          python -u tests/verify_analytic_grad_2e.py 2>&1 | tee 03_verify_analytic_grad_2e_log.txt
 
-      - name: "[04/15] Run Psi4 Core Benchmark (benc.py)"
+      # =========================================================================
+      # BAGIAN 2: CORE BENCHMARK SUITE (mshqc vs Psi4 Terpisah)
+      # =========================================================================
+      - name: "[04/16] Run mshqc Core Benchmark (test_mshqc2.py)"
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate geom_env
+          python -u tests/test_mshqc2.py 2>&1 | tee 04_mshqc_out.txt
+          cp 04_mshqc_out.txt mshqc_out.txt
+
+      - name: "[05/16] Run Psi4 Core Benchmark (benc.py)"
         shell: bash -el {0}
         run: |
           set -o pipefail
           micromamba activate psi4_env
-          python -u tests/benc.py 2>&1 | tee 04_psi4_out.txt
-          cp 04_psi4_out.txt psi4_out.txt
+          python -u tests/benc.py 2>&1 | tee 05_psi4_out.txt
+          cp 05_psi4_out.txt psi4_out.txt
 
-      - name: "[05/15] Compare Head-to-Head mshqc vs Psi4 (compare_mshqc_psi4.py)"
+      - name: "[06/16] Compare Head-to-Head mshqc vs Psi4 (compare_mshqc_psi4.py)"
         shell: bash -el {0}
         run: |
           set -o pipefail
           micromamba activate geom_env
-          python -u tests/compare_mshqc_psi4.py mshqc_out.txt psi4_out.txt 2>&1 | tee 05_compare_mshqc_psi4_log.txt
+          python -u tests/compare_mshqc_psi4.py mshqc_out.txt psi4_out.txt 2>&1 | tee 06_compare_mshqc_psi4_log.txt
 
       # =========================================================================
       # BAGIAN 3: BAB 4 BENCHMARK SUITE (mshqc vs Psi4 Terpisah)
       # =========================================================================
-      - name: "[06/15] Run mshqc Bab 4 Benchmark (run_mshqc_bab4.py)"
+      - name: "[07/16] Run mshqc Bab 4 Benchmark (run_mshqc_bab4.py)"
         shell: bash -el {0}
         run: |
           set -o pipefail
           micromamba activate geom_env
           python -u tests/run_mshqc_bab4.py 2>&1 | tee mshqc_bab4_stdout.txt
           if [ -f mshqc_bab4_test.txt ]; then
-            cp mshqc_bab4_test.txt 06_mshqc_bab4_running_log.txt
+            cp mshqc_bab4_test.txt 07_mshqc_bab4_running_log.txt
           else
-            cp mshqc_bab4_stdout.txt 06_mshqc_bab4_running_log.txt
+            cp mshqc_bab4_stdout.txt 07_mshqc_bab4_running_log.txt
           fi
 
-      - name: "[07/15] Run Psi4 Bab 4 Reference Benchmark (run_psi4_bab4.py)"
+      - name: "[08/16] Run Psi4 Bab 4 Reference Benchmark (run_psi4_bab4.py)"
         shell: bash -el {0}
         run: |
           set -o pipefail
           micromamba activate psi4_env
           python -u tests/run_psi4_bab4.py 2>&1 | tee psi4_bab4_stdout.txt
           if [ -f psi4_bab4_test.txt ]; then
-            cp psi4_bab4_test.txt 07_psi4_bab4_running_log.txt
+            cp psi4_bab4_test.txt 08_psi4_bab4_running_log.txt
           else
-            cp psi4_bab4_stdout.txt 07_psi4_bab4_running_log.txt
+            cp psi4_bab4_stdout.txt 08_psi4_bab4_running_log.txt
           fi
 
-      - name: "[08/15] Compare Bab 4 Results (compare_bab4.py)"
+      - name: "[09/16] Compare Bab 4 Results (compare_bab4.py)"
         shell: bash -el {0}
         run: |
           set -o pipefail
           micromamba activate geom_env
           python -u tests/compare_bab4.py 2>&1 | tee compare_bab4_stdout.txt
           if [ -f test_bab4_benchmark.txt ]; then
-            cp test_bab4_benchmark.txt 08_compare_bab4_log.txt
+            cp test_bab4_benchmark.txt 09_compare_bab4_log.txt
           else
-            cp compare_bab4_stdout.txt 08_compare_bab4_log.txt
+            cp compare_bab4_stdout.txt 09_compare_bab4_log.txt
           fi
 
       # =========================================================================
       # BAGIAN 4: UNIVERSAL BENCHMARK SUITE (mshqc vs Psi4 Terpisah)
       # =========================================================================
-      - name: "[09/15] Run mshqc Universal Suite (run_mshqc_universal.py)"
+      - name: "[10/16] Run mshqc Universal Suite (run_mshqc_universal.py)"
         shell: bash -el {0}
         run: |
           set -o pipefail
           micromamba activate geom_env
-          python -u tests/run_mshqc_universal.py 2>&1 | tee 09_mshqc_universal_running_log.txt
+          python -u tests/run_mshqc_universal.py 2>&1 | tee 10_mshqc_universal_running_log.txt
 
-      - name: "[10/15] Run Psi4 Universal Reference Suite (run_psi4_universal.py)"
+      - name: "[11/16] Run Psi4 Universal Reference Suite (run_psi4_universal.py)"
         shell: bash -el {0}
         run: |
           set -o pipefail
           micromamba activate psi4_env
-          python -u tests/run_psi4_universal.py 2>&1 | tee 10_psi4_universal_running_log.txt
+          python -u tests/run_psi4_universal.py 2>&1 | tee 11_psi4_universal_running_log.txt
 
-      - name: "[11/15] Compare Universal Benchmark Tables (compare_universal.py)"
+      - name: "[12/16] Compare Universal Benchmark Tables (compare_universal.py)"
         shell: bash -el {0}
         run: |
           set -o pipefail
           micromamba activate geom_env
           if [ -f "mshqc_universal_raw.json" ] && [ -f "psi4_universal_raw.json" ]; then
-            python -u tests/compare_universal.py mshqc_universal_raw.json psi4_universal_raw.json 2>&1 | tee 11_compare_universal_log.txt
+            python -u tests/compare_universal.py mshqc_universal_raw.json psi4_universal_raw.json 2>&1 | tee 12_compare_universal_log.txt
           else
-            python -u tests/compare_universal.py 2>&1 | tee 11_compare_universal_log.txt
+            python -u tests/compare_universal.py 2>&1 | tee 12_compare_universal_log.txt
           fi
 
       # =========================================================================
       # BAGIAN 5: GEOMETRY & VIBRATIONAL SUITE (mshqc vs Psi4 Terpisah)
       # =========================================================================
-      - name: "[12/15] Run mshqc Multi-System Geometry Suite (run_mshqc_geom.py)"
+      - name: "[13/16] Run mshqc Multi-System Geometry Suite (run_mshqc_geom.py)"
         shell: bash -el {0}
         run: |
           set -o pipefail
           micromamba activate geom_env
-          python -u tests/run_mshqc_geom.py 2>&1 | tee 12_mshqc_geom_running_log.txt
+          python -u tests/run_mshqc_geom.py 2>&1 | tee 13_mshqc_geom_running_log.txt
 
-      - name: "[13/15] Run Psi4 Multi-System Geometry Reference Suite (run_psi4_geom.py)"
+      - name: "[14/16] Run Psi4 Multi-System Geometry Reference Suite (run_psi4_geom.py)"
         shell: bash -el {0}
         run: |
           set -o pipefail
           micromamba activate psi4_env
-          python -u tests/run_psi4_geom.py 2>&1 | tee 13_psi4_geom_running_log.txt
+          python -u tests/run_psi4_geom.py 2>&1 | tee 14_psi4_geom_running_log.txt
           test -s psi4_geom_raw.json
 
-      - name: "[14/15] Compare Head-to-Head Geometry & Vibrational Tables (compare_geom.py)"
+      - name: "[15/16] Compare Head-to-Head Geometry & Vibrational Tables (compare_geom.py)"
         shell: bash -el {0}
         run: |
           set -o pipefail
           micromamba activate geom_env
           python -u tests/compare_geom.py mshqc_geom_raw.json psi4_geom_raw.json 2>&1 | tee compare_geom_stdout.txt
           if [ -f test_geom_validation.txt ]; then
-            cp test_geom_validation.txt 14_compare_geom_log.txt
+            cp test_geom_validation.txt 15_compare_geom_log.txt
           else
-            cp compare_geom_stdout.txt 14_compare_geom_log.txt
+            cp compare_geom_stdout.txt 15_compare_geom_log.txt
           fi
-          grep -q "Total Matched Geometry Runs: 24" 14_compare_geom_log.txt
+          grep -q "Total Matched Geometry Runs: 24" 15_compare_geom_log.txt
 
       # =========================================================================
       # BAGIAN 6: HYBRID BENCHMARK (.OH RADICAL) VIA ISOLATED SUBPROCESS BRIDGE
       # =========================================================================
-      - name: "[15/15] Run .OH Radical Geometry & Frequency Benchmark (benchmark_geom_omp2_psi4.py)"
+      - name: "[16/16] Run .OH Radical Geometry & Frequency Benchmark (benchmark_geom_omp2_psi4.py)"
         shell: bash -el {0}
         run: |
           set -o pipefail
@@ -410,9 +417,9 @@ jobs:
           (purelib / "psi4.py").write_text(bridge_code, encoding="utf-8")
           EOF
 
-          python -u tests/benchmark_geom_omp2_psi4.py 2>&1 | tee 15_benchmark_geom_oh_psi4_log.txt
-          if grep -q "N/A" 15_benchmark_geom_oh_psi4_log.txt; then
-            echo "ERROR: Ditemukan nilai N/A pada hasil Psi4 di 15_benchmark_geom_oh_psi4_log.txt!"
+          python -u tests/benchmark_geom_omp2_psi4.py 2>&1 | tee 16_benchmark_geom_oh_psi4_log.txt
+          if grep -q "N/A" 16_benchmark_geom_oh_psi4_log.txt; then
+            echo "ERROR: Ditemukan nilai N/A pada hasil Psi4 di 16_benchmark_geom_oh_psi4_log.txt!"
             exit 1
           fi
 
@@ -427,19 +434,20 @@ jobs:
           path: |
             01_pytest_mshqc_log.txt
             02_test_universal_geom_opt_log.txt
-            03_mshqc_out.txt
-            04_psi4_out.txt
-            05_compare_mshqc_psi4_log.txt
-            06_mshqc_bab4_running_log.txt
-            07_psi4_bab4_running_log.txt
-            08_compare_bab4_log.txt
-            09_mshqc_universal_running_log.txt
-            10_psi4_universal_running_log.txt
-            11_compare_universal_log.txt
-            12_mshqc_geom_running_log.txt
-            13_psi4_geom_running_log.txt
-            14_compare_geom_log.txt
-            15_benchmark_geom_oh_psi4_log.txt
+            03_verify_analytic_grad_2e_log.txt
+            04_mshqc_out.txt
+            05_psi4_out.txt
+            06_compare_mshqc_psi4_log.txt
+            07_mshqc_bab4_running_log.txt
+            08_psi4_bab4_running_log.txt
+            09_compare_bab4_log.txt
+            10_mshqc_universal_running_log.txt
+            11_psi4_universal_running_log.txt
+            12_compare_universal_log.txt
+            13_mshqc_geom_running_log.txt
+            14_psi4_geom_running_log.txt
+            15_compare_geom_log.txt
+            16_benchmark_geom_oh_psi4_log.txt
             mshqc_geom_raw.json
             psi4_geom_raw.json
             comparison_summary.md

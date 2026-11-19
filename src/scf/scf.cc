@@ -24,6 +24,7 @@
 #include "mshqc/scf/sad.h"
 #include "mshqc/symmetry/salc_builder.h"
 #include "mshqc/integrals/df_eri.h"
+#include "mshqc/integrals/packed_ao_utils.h"
 #include <iostream>
 #include <iomanip>
 #include <cmath>
@@ -82,17 +83,22 @@ Eigen::MatrixXd factorize_psd_density(const Eigen::MatrixXd& P, double tol = 1e-
 
 // Kontraksi Exchange berkecepatan tinggi berbasis Batch Level-3 BLAS (DGEMM)
 // untuk 1 kanal spin (RHF atau UHF saat P_alpha == P_beta).
+// [INJECTED_PRIORITAS_2D_PACKED_AO]
 void compute_exchange_cholesky_single(
     const double* L_ptr,
     int nbasis,
     int k_size,
     const Eigen::MatrixXd& C_occ,
-    Eigen::MatrixXd& K_acc)
+    Eigen::MatrixXd& K_acc,
+    bool is_packed = false)
 {
     const int n_occ = C_occ.cols();
     if (n_occ <= 0 || k_size <= 0) return;
 
     constexpr int BATCH_P = 32;
+    const size_t col_stride = is_packed
+        ? static_cast<size_t>(integrals::ao_tri_size(nbasis))
+        : static_cast<size_t>(nbasis) * nbasis;
     const int max_threads = omp_get_max_threads();
     std::vector<Eigen::MatrixXd> K_tls(max_threads, Eigen::MatrixXd::Zero(nbasis, nbasis));
 
@@ -100,13 +106,20 @@ void compute_exchange_cholesky_single(
     {
         const int tid = omp_get_thread_num();
         Eigen::MatrixXd T_batch(nbasis, n_occ * BATCH_P);
+        Eigen::MatrixXd L_buf;
+        if (is_packed) L_buf.resize(nbasis, nbasis);
         int count_in_batch = 0;
 
         #pragma omp for schedule(static) nowait
         for (int P = 0; P < k_size; ++P) {
-            Eigen::Map<const Eigen::MatrixXd> L_P(
-                L_ptr + static_cast<size_t>(P) * nbasis * nbasis, nbasis, nbasis);
-            T_batch.middleCols(count_in_batch * n_occ, n_occ).noalias() = L_P * C_occ;
+            const double* col_p = L_ptr + static_cast<size_t>(P) * col_stride;
+            if (is_packed) {
+                integrals::unpack_ao_column(col_p, nbasis, true, L_buf);
+                T_batch.middleCols(count_in_batch * n_occ, n_occ).noalias() = L_buf * C_occ;
+            } else {
+                Eigen::Map<const Eigen::MatrixXd> L_P(col_p, nbasis, nbasis);
+                T_batch.middleCols(count_in_batch * n_occ, n_occ).noalias() = L_P * C_occ;
+            }
             count_in_batch++;
 
             if (count_in_batch == BATCH_P) {
@@ -134,13 +147,14 @@ void compute_exchange_cholesky_dual(
     const Eigen::MatrixXd& Ca_occ,
     const Eigen::MatrixXd& Cb_occ,
     Eigen::MatrixXd& Ka_acc,
-    Eigen::MatrixXd& Kb_acc)
+    Eigen::MatrixXd& Kb_acc,
+    bool is_packed = false)
 {
     const int na = Ca_occ.cols();
     const int nb = Cb_occ.cols();
     if ((na + nb) <= 0 || k_size <= 0) return;
     if (nb <= 0) {
-        compute_exchange_cholesky_single(L_ptr, nbasis, k_size, Ca_occ, Ka_acc);
+        compute_exchange_cholesky_single(L_ptr, nbasis, k_size, Ca_occ, Ka_acc, is_packed);
         return;
     }
 
@@ -149,6 +163,9 @@ void compute_exchange_cholesky_dual(
     Cab_occ.rightCols(nb) = Cb_occ;
 
     constexpr int BATCH_P = 32;
+    const size_t col_stride = is_packed
+        ? static_cast<size_t>(integrals::ao_tri_size(nbasis))
+        : static_cast<size_t>(nbasis) * nbasis;
     const int max_threads = omp_get_max_threads();
     std::vector<Eigen::MatrixXd> Ka_tls(max_threads, Eigen::MatrixXd::Zero(nbasis, nbasis));
     std::vector<Eigen::MatrixXd> Kb_tls(max_threads, Eigen::MatrixXd::Zero(nbasis, nbasis));
@@ -159,13 +176,20 @@ void compute_exchange_cholesky_dual(
         Eigen::MatrixXd Tab_loc(nbasis, na + nb);
         Eigen::MatrixXd Ta_batch(nbasis, na * BATCH_P);
         Eigen::MatrixXd Tb_batch(nbasis, nb * BATCH_P);
+        Eigen::MatrixXd L_buf;
+        if (is_packed) L_buf.resize(nbasis, nbasis);
         int count_in_batch = 0;
 
         #pragma omp for schedule(static) nowait
         for (int P = 0; P < k_size; ++P) {
-            Eigen::Map<const Eigen::MatrixXd> L_P(
-                L_ptr + static_cast<size_t>(P) * nbasis * nbasis, nbasis, nbasis);
-            Tab_loc.noalias() = L_P * Cab_occ;
+            const double* col_p = L_ptr + static_cast<size_t>(P) * col_stride;
+            if (is_packed) {
+                integrals::unpack_ao_column(col_p, nbasis, true, L_buf);
+                Tab_loc.noalias() = L_buf * Cab_occ;
+            } else {
+                Eigen::Map<const Eigen::MatrixXd> L_P(col_p, nbasis, nbasis);
+                Tab_loc.noalias() = L_P * Cab_occ;
+            }
             Ta_batch.middleCols(count_in_batch * na, na) = Tab_loc.leftCols(na);
             Tb_batch.middleCols(count_in_batch * nb, nb) = Tab_loc.rightCols(nb);
             count_in_batch++;
@@ -849,10 +873,9 @@ void RHF::build_fock_matrix() {
         int chunk_size = is_ooc ? 128 : n_chol;
         Eigen::Map<const Eigen::VectorXd> P_flat(P_alpha_.data(), nbasis_ * nbasis_);
 
+        const bool is_packed = (!is_ooc) && integrals::is_packed_ao_matrix(L_mat_, nbasis_);
         if (!is_ooc) {
-            Eigen::VectorXd X_J = L_mat_.transpose() * P_flat;
-            Eigen::VectorXd J_flat = L_mat_ * X_J;
-            J_mat = Eigen::Map<Eigen::MatrixXd>(J_flat.data(), nbasis_, nbasis_);
+            J_mat = integrals::compute_coulomb_from_ao_factor(L_mat_, P_alpha_, nbasis_);
         }
 
         for (int K_start = 0; K_start < n_chol; K_start += chunk_size) {
@@ -870,7 +893,7 @@ void RHF::build_fock_matrix() {
             }
 
             const double* L_ptr = is_ooc ? L_chunk.data() : L_mat_.col(K_start).data();
-            compute_exchange_cholesky_single(L_ptr, nbasis_, k_size, Ca_factor, K_acc);
+            compute_exchange_cholesky_single(L_ptr, nbasis_, k_size, Ca_factor, K_acc, is_packed);
         }
 
         G_accum_ = 2.0 * J_mat - K_acc;
@@ -983,17 +1006,15 @@ void UHF::build_fock_matrix() {
         Eigen::MatrixXd Kb_acc = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
 
         int n_chol = L_mat_.cols();
-        Eigen::Map<const Eigen::VectorXd> P_tot_flat(P_tot.data(), nbasis_ * nbasis_);
-        Eigen::VectorXd X_J = L_mat_.transpose() * P_tot_flat;
-        Eigen::VectorXd J_flat = L_mat_ * X_J;
-        J_mat = Eigen::Map<Eigen::MatrixXd>(J_flat.data(), nbasis_, nbasis_);
+        const bool is_packed = integrals::is_packed_ao_matrix(L_mat_, nbasis_);
+        J_mat = integrals::compute_coulomb_from_ao_factor(L_mat_, P_tot, nbasis_);
 
         const double* L_ptr = L_mat_.data();
         if (sym_spin && !use_mo_alg) {
-            compute_exchange_cholesky_single(L_ptr, nbasis_, n_chol, Ca_fac, Ka_acc);
+            compute_exchange_cholesky_single(L_ptr, nbasis_, n_chol, Ca_fac, Ka_acc, is_packed);
             Kb_acc = Ka_acc;
         } else {
-            compute_exchange_cholesky_dual(L_ptr, nbasis_, n_chol, Ca_fac, Cb_fac, Ka_acc, Kb_acc);
+            compute_exchange_cholesky_dual(L_ptr, nbasis_, n_chol, Ca_fac, Cb_fac, Ka_acc, Kb_acc, is_packed);
         }
 
         G_accum_a_ = 0.5 * ((J_mat - Ka_acc) + (J_mat - Ka_acc).transpose());
@@ -1265,10 +1286,9 @@ void ROHF::build_fock_matrix() {
 
         Eigen::Map<const Eigen::VectorXd> P_tot_flat(P_tot.data(), nbasis_ * nbasis_);
 
+        const bool is_packed = (!is_ooc) && integrals::is_packed_ao_matrix(L_mat_, nbasis_);
         if (!is_ooc) {
-            Eigen::VectorXd X_J = L_mat_.transpose() * P_tot_flat;
-            Eigen::VectorXd J_flat = L_mat_ * X_J;
-            J_mat = Eigen::Map<Eigen::MatrixXd>(J_flat.data(), nbasis_, nbasis_);
+            J_mat = integrals::compute_coulomb_from_ao_factor(L_mat_, P_tot, nbasis_);
         }
 
         for (int K_start = 0; K_start < n_chol; K_start += chunk_size) {
@@ -1286,7 +1306,7 @@ void ROHF::build_fock_matrix() {
             }
 
             const double* L_ptr = is_ooc ? L_chunk.data() : L_mat_.col(K_start).data();
-            compute_exchange_cholesky_dual(L_ptr, nbasis_, k_size, Ca_factor, Cb_factor, Ka_acc, Kb_acc);
+            compute_exchange_cholesky_dual(L_ptr, nbasis_, k_size, Ca_factor, Cb_factor, Ka_acc, Kb_acc, is_packed);
         }
 
         G_accum_a_ = 0.5 * ((J_mat - Ka_acc) + (J_mat - Ka_acc).transpose());

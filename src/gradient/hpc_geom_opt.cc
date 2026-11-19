@@ -15,6 +15,8 @@
 #include "mshqc/gradient/hpc_geom_opt.h"
 #include "mshqc/gradient/optimizer.h"
 #include "mshqc/ints/integrals.h"
+#include "mshqc/integrals/packed_ao_utils.h"
+// [INJECTED_PRIORITAS_2D_PACKED_AO]
 #include "mshqc/scf/scf.h"
 #include "mshqc/mp2/mp2.h"
 #include "mshqc/mp3/mp3.h"
@@ -459,19 +461,23 @@ GradCurvatureResult compute_analytic_df_gradient_internal(
       W_eff_ao.noalias() += Cb_o * scf_res.orbital_energies_beta.head(nb).asDiagonal() * Cb_o.transpose();
     }
 
-    Eigen::Map<const Eigen::VectorXd> P_flat(P_eff_ao.data(), nbf * nbf);
-    Eigen::VectorXd c_vec = scf_res.L_mat.transpose() * P_flat;
+    const bool is_packed = integrals::is_packed_ao_matrix(scf_res.L_mat, nbf);
+    Eigen::VectorXd c_vec = integrals::contract_ao_factor_with_sym(scf_res.L_mat, P_eff_ao, nbf);
     Gamma_3c.resize(static_cast<Eigen::Index>(nbf) * nbf, n_aux);
 
     const Eigen::MatrixXd Cb_o = (!is_rhf && nb > 0) ? scf_res.C_beta.leftCols(nb) : Eigen::MatrixXd();
     #pragma omp parallel
     {
-      Eigen::MatrixXd G_P(nbf, nbf), T_a(nbf, na), T_b;
+      Eigen::MatrixXd G_P(nbf, nbf), T_a(nbf, na), T_b, B_P_buf;
       if (!is_rhf && nb > 0) T_b.resize(nbf, nb);
+      if (is_packed) B_P_buf.resize(nbf, nbf);
 
       #pragma omp for schedule(static) nowait
       for (int P = 0; P < n_aux; ++P) {
-        Eigen::Map<const Eigen::MatrixXd> B_P(scf_res.L_mat.col(P).data(), nbf, nbf);
+        const double* col_p = scf_res.L_mat.col(P).data();
+        if (is_packed) integrals::unpack_ao_column(col_p, nbf, true, B_P_buf);
+        Eigen::Map<const Eigen::MatrixXd> B_P(is_packed ? B_P_buf.data() : col_p, nbf, nbf);
+
         G_P.noalias() = P_eff_ao * c_vec(P);
         T_a.noalias() = B_P * Ca_o;
         Eigen::MatrixXd Boo_a = Ca_o.transpose() * T_a;
@@ -485,14 +491,7 @@ GradCurvatureResult compute_analytic_df_gradient_internal(
       }
     }
 
-    gamma_2c.resize(n_aux, n_aux);
-    constexpr int tile_g = 64;
-    #pragma omp parallel for schedule(dynamic)
-    for (int r = 0; r < n_aux; r += tile_g) {
-      int rows = std::min(tile_g, n_aux - r);
-      gamma_2c.middleRows(r, rows).noalias() = Gamma_3c.middleCols(r, rows).transpose() * scf_res.L_mat;
-    }
-    gamma_2c = 0.5 * (gamma_2c + gamma_2c.transpose());
+    gamma_2c = integrals::compute_gamma2c_from_full_and_L(Gamma_3c, scf_res.L_mat, nbf);
   }
 
   BasisSet aux_basis(aux_name, mol);

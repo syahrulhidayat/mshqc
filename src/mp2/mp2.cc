@@ -22,6 +22,7 @@
 #include "mshqc/mp2/mp2.h"
 #include "mshqc/integrals/eri_transformer.h"
 #include "mshqc/integrals/df_eri.h"
+#include "mshqc/integrals/packed_ao_utils.h"
 #include "mshqc/integrals/cholesky_eri.h"
 #include "mshqc/gradient/optimizer.h"
 #include <unsupported/Eigen/MatrixFunctions>
@@ -74,7 +75,8 @@ BaseMP2::BaseMP2(const Molecule& mol, const BasisSet& basis,
     }
 
     // Auto-build L_mat jika scf_ belum memiliki faktor 3-indeks yang sesuai
-    if (config_.use_df && scf_.L_mat.rows() != nbf_ * nbf_) {
+    // [INJECTED_PRIORITAS_2D_PACKED_AO]
+    if (config_.use_df && !integrals::has_valid_ao_factor(scf_.L_mat, nbf_)) {
         std::string aux_name = config_.aux_basis_name.empty() ? (basis_.name() + "-RI") : config_.aux_basis_name;
         BasisSet aux_basis(aux_name, mol_);
         BasisSet combined = basis_;
@@ -83,7 +85,7 @@ BaseMP2::BaseMP2(const Molecule& mol, const BasisSet& basis,
         integrals::DensityFittingERI df_eng(basis_, aux_basis, df_ints, config_.df_threshold);
         df_eng.compute(false);
         scf_.L_mat = df_eng.get_B_mat();
-    } else if (config_.eri_method == "cholesky" && !config_.use_df && scf_.L_mat.rows() != nbf_ * nbf_) {
+    } else if (config_.eri_method == "cholesky" && !config_.use_df && !integrals::has_valid_ao_factor(scf_.L_mat, nbf_)) {
         integrals::CholeskyERI chol_eng(basis_, integrals_);
         chol_eng.set_threshold(config_.cholesky_threshold);
         chol_eng.compute();
@@ -99,6 +101,7 @@ void BaseMP2::transform_3center_mo() {
     const int n_aux = static_cast<int>(scf_.L_mat.cols());
     const bool is_restricted = (nocc_a_ == nocc_b_ && nvir_a_ == nvir_b_ && scf_.n_occ_alpha == scf_.n_occ_beta);
     const bool has_beta = (!is_restricted && nocc_b_ > 0 && nvir_b_ > 0);
+    const bool packed = integrals::is_packed_ao_matrix(scf_.L_mat, nbf_);
 
     B_ia_P_alpha_.resize(static_cast<Eigen::Index>(nocc_a_) * nvir_a_, n_aux);
     if (has_beta) B_ia_P_beta_.resize(static_cast<Eigen::Index>(nocc_b_) * nvir_b_, n_aux);
@@ -111,15 +114,37 @@ void BaseMP2::transform_3center_mo() {
         Cb_vir = scf_.C_beta.rightCols(nvir_b_);
     }
 
-    constexpr int chunk_size = 128;
+    constexpr int chunk_size = 32;
     #pragma omp parallel for schedule(dynamic)
     for (int P_start = 0; P_start < n_aux; P_start += chunk_size) {
         const int P_size = std::min(chunk_size, n_aux - P_start);
-        Eigen::Map<const Eigen::MatrixXd> L_res(scf_.L_mat.col(P_start).data(), nbf_, nbf_ * P_size);
+        Eigen::MatrixXd L_sq_buf;
+        const double* L_sq_ptr = nullptr;
 
+        if (packed) {
+            L_sq_buf.resize(static_cast<Eigen::Index>(nbf_) * nbf_, P_size);
+            for (int p = 0; p < P_size; ++p) {
+                const double* s = scf_.L_mat.col(P_start + p).data();
+                double* d = L_sq_buf.col(p).data();
+                for (int i = 0; i < nbf_; ++i) {
+                    const int base = i * (i + 1) / 2;
+                    for (int j = 0; j < i; ++j) {
+                        const double v = s[base + j];
+                        d[i + j * nbf_] = v;
+                        d[j + i * nbf_] = v;
+                    }
+                    d[i + i * nbf_] = s[base + i];
+                }
+            }
+            L_sq_ptr = L_sq_buf.data();
+        } else {
+            L_sq_ptr = scf_.L_mat.col(P_start).data();
+        }
+
+        Eigen::Map<const Eigen::MatrixXd> L_res(L_sq_ptr, nbf_, nbf_ * P_size);
         Eigen::MatrixXd X_a = Ca_vir.transpose() * L_res;
         for (int p = 0; p < P_size; ++p) {
-            Eigen::Map<const Eigen::MatrixXd> X_P(X_a.data() + p * nvir_a_ * nbf_, nvir_a_, nbf_);
+            Eigen::Map<const Eigen::MatrixXd> X_P(X_a.data() + static_cast<size_t>(p) * nvir_a_ * nbf_, nvir_a_, nbf_);
             Eigen::MatrixXd B_mo = X_P * Ca_occ;
             B_ia_P_alpha_.col(P_start + p) = Eigen::Map<const Eigen::VectorXd>(B_mo.data(), nvir_a_ * nocc_a_);
         }
@@ -127,7 +152,7 @@ void BaseMP2::transform_3center_mo() {
         if (has_beta) {
             Eigen::MatrixXd X_b = Cb_vir.transpose() * L_res;
             for (int p = 0; p < P_size; ++p) {
-                Eigen::Map<const Eigen::MatrixXd> X_Pb(X_b.data() + p * nvir_b_ * nbf_, nvir_b_, nbf_);
+                Eigen::Map<const Eigen::MatrixXd> X_Pb(X_b.data() + static_cast<size_t>(p) * nvir_b_ * nbf_, nvir_b_, nbf_);
                 Eigen::MatrixXd B_mo_b = X_Pb * Cb_occ;
                 B_ia_P_beta_.col(P_start + p) = Eigen::Map<const Eigen::VectorXd>(B_mo_b.data(), nvir_b_ * nocc_b_);
             }
@@ -414,10 +439,10 @@ MP2Result UMP2::compute() {
     auto start_time = std::chrono::high_resolution_clock::now();
 
     // Pemurnian Fock & kanonikalisasi orbital pasca-UHF untuk menghilangkan residu DIIS
-    if (config_.eri_method != "exact" && scf_.L_mat.rows() == nbf_ * nbf_) {
+    if (config_.eri_method != "exact" && integrals::has_valid_ao_factor(scf_.L_mat, nbf_)) {
         const Eigen::MatrixXd H_core = integrals_->compute_core_hamiltonian();
         const int n_aux = scf_.L_mat.cols();
-        Eigen::Map<const Eigen::MatrixXd> L_flat_J(scf_.L_mat.data(), nbf_ * nbf_, n_aux);
+        const bool is_packed_u = integrals::is_packed_ao_matrix(scf_.L_mat, nbf_);
 
         auto build_uhf_df_fock = [&](const Eigen::MatrixXd& Ca, const Eigen::MatrixXd& Cb,
                                      Eigen::MatrixXd& Fa, Eigen::MatrixXd& Fb) {
@@ -428,10 +453,7 @@ MP2Result UMP2::compute() {
                 Pb.noalias() = Cb.leftCols(nocc_b_) * Cb.leftCols(nocc_b_).transpose();
             }
             Eigen::MatrixXd P_tot = Pa + Pb;
-            Eigen::Map<const Eigen::VectorXd> P_flat(P_tot.data(), nbf_ * nbf_);
-            Eigen::VectorXd X_J = L_flat_J.transpose() * P_flat;
-            Eigen::VectorXd J_flat = L_flat_J * X_J;
-            Eigen::Map<Eigen::MatrixXd> J_mat(J_flat.data(), nbf_, nbf_);
+            Eigen::MatrixXd J_mat = integrals::compute_coulomb_from_ao_factor(scf_.L_mat, P_tot, nbf_);
 
             Eigen::MatrixXd Ka = Eigen::MatrixXd::Zero(nbf_, nbf_);
             Eigen::MatrixXd Kb = Eigen::MatrixXd::Zero(nbf_, nbf_);
@@ -450,12 +472,16 @@ MP2Result UMP2::compute() {
             {
                 const int tid = omp_get_thread_num();
                 Eigen::MatrixXd Ta_batch(nbf_, nocc_a_ * BATCH_P);
+                Eigen::MatrixXd L_P_buf;
+                if (is_packed_u) L_P_buf.resize(nbf_, nbf_);
                 Eigen::MatrixXd Tb_batch(nbf_, (nocc_b_ > 0 ? nocc_b_ * BATCH_P : 0));
                 int cnt = 0;
 
                 #pragma omp for schedule(static) nowait
                 for (int P = 0; P < n_aux; ++P) {
-                    Eigen::Map<const Eigen::MatrixXd> L_P(scf_.L_mat.col(P).data(), nbf_, nbf_);
+                    const double* col_p = scf_.L_mat.col(P).data();
+                    if (is_packed_u) integrals::unpack_ao_column(col_p, nbf_, true, L_P_buf);
+                    Eigen::Map<const Eigen::MatrixXd> L_P(is_packed_u ? L_P_buf.data() : col_p, nbf_, nbf_);
                     Ta_batch.middleCols(cnt * nocc_a_, nocc_a_).noalias() = L_P * Ca_o;
                     if (nocc_b_ > 0) {
                         Tb_batch.middleCols(cnt * nocc_b_, nocc_b_).noalias() = L_P * Cb_o;
@@ -891,14 +917,15 @@ void OMP2::pseudocanonicalize() {
 }
 
 void OMP2::transform_3center_mo_cholesky() {
-    int n_chol = scf_.L_mat.cols();
+    const int n_chol = static_cast<int>(scf_.L_mat.cols());
+    const bool packed = integrals::is_packed_ao_matrix(scf_.L_mat, nbf_);
     B_ia_P_alpha_ = Eigen::MatrixXd::Zero(na_ * va_, n_chol);
     B_oo_P_alpha_ = Eigen::MatrixXd::Zero(na_ * na_, n_chol);
     B_vv_P_alpha_ = Eigen::MatrixXd::Zero(va_ * va_, n_chol);
-    
+
     bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
     bool has_beta = (!is_restricted && nb_ > 0 && vb_ > 0);
-    
+
     if (has_beta) {
         B_ia_P_beta_ = Eigen::MatrixXd::Zero(nb_ * vb_, n_chol);
         B_oo_P_beta_ = Eigen::MatrixXd::Zero(nb_ * nb_, n_chol);
@@ -913,32 +940,48 @@ void OMP2::transform_3center_mo_cholesky() {
         Cb_vir = scf_.C_beta.rightCols(vb_);
     }
 
-    int chunk_size = 128; 
-
+    constexpr int chunk_size = 32;
     #pragma omp parallel for schedule(dynamic)
     for (int P_start = 0; P_start < n_chol; P_start += chunk_size) {
-        int P_end = std::min(n_chol, P_start + chunk_size);
-        int P_size = P_end - P_start;
+        const int P_size = std::min(chunk_size, n_chol - P_start);
+        Eigen::MatrixXd L_sq_buf;
+        const double* L_sq_ptr = nullptr;
 
-        // Gunakan sintaks deklarasi Tipe lengkap
-        Eigen::Map< const Eigen::MatrixXd > L_chunk(scf_.L_mat.col(P_start).data(), nbf_ * nbf_, P_size);
-        Eigen::Map< const Eigen::MatrixXd > L_reshaped(L_chunk.data(), nbf_, nbf_ * P_size);
+        if (packed) {
+            L_sq_buf.resize(static_cast<Eigen::Index>(nbf_) * nbf_, P_size);
+            for (int p = 0; p < P_size; ++p) {
+                const double* s = scf_.L_mat.col(P_start + p).data();
+                double* d = L_sq_buf.col(p).data();
+                for (int i = 0; i < nbf_; ++i) {
+                    const int base = i * (i + 1) / 2;
+                    for (int j = 0; j < i; ++j) {
+                        const double v = s[base + j];
+                        d[i + j * nbf_] = v;
+                        d[j + i * nbf_] = v;
+                    }
+                    d[i + i * nbf_] = s[base + i];
+                }
+            }
+            L_sq_ptr = L_sq_buf.data();
+        } else {
+            L_sq_ptr = scf_.L_mat.col(P_start).data();
+        }
 
+        Eigen::Map<const Eigen::MatrixXd> L_reshaped(L_sq_ptr, nbf_, nbf_ * P_size);
         Eigen::MatrixXd X_a_occ = Ca_occ.transpose() * L_reshaped;
         Eigen::MatrixXd X_a_vir = Ca_vir.transpose() * L_reshaped;
 
         for (int p = 0; p < P_size; ++p) {
-            Eigen::Map< Eigen::MatrixXd > X_P_occ(X_a_occ.data() + p * na_ * nbf_, na_, nbf_);
-            Eigen::Map< Eigen::MatrixXd > X_P_vir(X_a_vir.data() + p * va_ * nbf_, va_, nbf_);
-            
-            // Simpan perkalian matriks ke dalam sementara baru dipetakan ke .col()
+            Eigen::Map<Eigen::MatrixXd> X_P_occ(X_a_occ.data() + static_cast<size_t>(p) * na_ * nbf_, na_, nbf_);
+            Eigen::Map<Eigen::MatrixXd> X_P_vir(X_a_vir.data() + static_cast<size_t>(p) * va_ * nbf_, va_, nbf_);
+
             Eigen::MatrixXd B_oo_tmp = X_P_occ * Ca_occ;
             Eigen::MatrixXd B_ia_tmp = X_P_vir * Ca_occ;
             Eigen::MatrixXd B_vv_tmp = X_P_vir * Ca_vir;
-            
-            B_oo_P_alpha_.col(P_start + p) = Eigen::Map< Eigen::VectorXd >(B_oo_tmp.data(), na_ * na_);
-            B_ia_P_alpha_.col(P_start + p) = Eigen::Map< Eigen::VectorXd >(B_ia_tmp.data(), va_ * na_);
-            B_vv_P_alpha_.col(P_start + p) = Eigen::Map< Eigen::VectorXd >(B_vv_tmp.data(), va_ * va_);
+
+            B_oo_P_alpha_.col(P_start + p) = Eigen::Map<Eigen::VectorXd>(B_oo_tmp.data(), na_ * na_);
+            B_ia_P_alpha_.col(P_start + p) = Eigen::Map<Eigen::VectorXd>(B_ia_tmp.data(), va_ * na_);
+            B_vv_P_alpha_.col(P_start + p) = Eigen::Map<Eigen::VectorXd>(B_vv_tmp.data(), va_ * va_);
         }
 
         if (has_beta) {
@@ -946,21 +989,19 @@ void OMP2::transform_3center_mo_cholesky() {
             Eigen::MatrixXd X_b_vir = Cb_vir.transpose() * L_reshaped;
 
             for (int p = 0; p < P_size; ++p) {
-                Eigen::Map< Eigen::MatrixXd > X_P_occ_b(X_b_occ.data() + p * nb_ * nbf_, nb_, nbf_);
-                Eigen::Map< Eigen::MatrixXd > X_P_vir_b(X_b_vir.data() + p * vb_ * nbf_, vb_, nbf_);
-                
+                Eigen::Map<Eigen::MatrixXd> X_P_occ_b(X_b_occ.data() + static_cast<size_t>(p) * nb_ * nbf_, nb_, nbf_);
+                Eigen::Map<Eigen::MatrixXd> X_P_vir_b(X_b_vir.data() + static_cast<size_t>(p) * vb_ * nbf_, vb_, nbf_);
+
                 Eigen::MatrixXd B_oo_tmp_b = X_P_occ_b * Cb_occ;
                 Eigen::MatrixXd B_ia_tmp_b = X_P_vir_b * Cb_occ;
                 Eigen::MatrixXd B_vv_tmp_b = X_P_vir_b * Cb_vir;
-                
-                B_oo_P_beta_.col(P_start + p) = Eigen::Map< Eigen::VectorXd >(B_oo_tmp_b.data(), nb_ * nb_);
-                B_ia_P_beta_.col(P_start + p) = Eigen::Map< Eigen::VectorXd >(B_ia_tmp_b.data(), vb_ * nb_);
-                B_vv_P_beta_.col(P_start + p) = Eigen::Map< Eigen::VectorXd >(B_vv_tmp_b.data(), vb_ * vb_);
+
+                B_oo_P_beta_.col(P_start + p) = Eigen::Map<Eigen::VectorXd>(B_oo_tmp_b.data(), nb_ * nb_);
+                B_ia_P_beta_.col(P_start + p) = Eigen::Map<Eigen::VectorXd>(B_ia_tmp_b.data(), vb_ * nb_);
+                B_vv_P_beta_.col(P_start + p) = Eigen::Map<Eigen::VectorXd>(B_vv_tmp_b.data(), vb_ * vb_);
             }
         }
     }
-    
-
 }
 
 double OMP2::execute_micro_iterations() {

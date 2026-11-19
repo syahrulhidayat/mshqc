@@ -18,6 +18,7 @@
  */
 
 #include "mshqc/integrals/df_eri.h"
+#include "mshqc/integrals/packed_ao_utils.h"
 #include "mshqc/utils/hdf5_io.h"
 #include <algorithm>
 #include <cmath>
@@ -99,43 +100,38 @@ CholeskyResult compute_pivoted_cholesky(Eigen::MatrixXd& J, double tol = 1e-10) 
     return {L, p, rank};
 }
 
+// [INJECTED_PRIORITAS_2D_PACKED_AO]
 void DensityFittingERI::compute(bool save_hdf5) {
-    std::cout << "  Starting Density Fitting (RI) Decomposition...\n";
+    std::cout << "  Starting Density Fitting (RI) Decomposition (Packed Triangular AO)...\n";
     std::cout << "  Primary Basis: " << n_primary_ << " BF\n";
     std::cout << "  Auxiliary Basis: " << n_aux_ << " BF\n";
 
-    int n_shells_prim = primary_basis_->n_shells();
-    int n_shells_aux  = aux_basis_->n_shells();
+    const int n_shells_prim = primary_basis_->n_shells();
+    const int n_shells_aux  = aux_basis_->n_shells();
 
-    // 1. Setup offset arrays untuk auxiliary basis
     std::vector<int> aux_starts(n_shells_aux), aux_sizes(n_shells_aux);
-    int offset_a = 0;
+    int offset_a = 0, max_dim_a = 1;
     for (int i = 0; i < n_shells_aux; ++i) {
         aux_starts[i] = offset_a;
         aux_sizes[i] = aux_basis_->shell(i).n_functions();
+        max_dim_a = std::max(max_dim_a, aux_sizes[i]);
         offset_a += aux_sizes[i];
     }
 
-    // Setup offset arrays untuk primary basis
     std::vector<int> prim_starts(n_shells_prim), prim_sizes(n_shells_prim);
-    int offset_p = 0;
+    int offset_p = 0, max_dim_p = 1;
     for (int i = 0; i < n_shells_prim; ++i) {
         prim_starts[i] = offset_p;
         prim_sizes[i] = primary_basis_->shell(i).n_functions();
+        max_dim_p = std::max(max_dim_p, prim_sizes[i]);
         offset_p += prim_sizes[i];
     }
-
-  
-    int max_dim_p = 1, max_dim_a = 1;
-    for (int sz : prim_sizes) max_dim_p = std::max(max_dim_p, sz);
-    for (int sz : aux_sizes)  max_dim_a = std::max(max_dim_a, sz);
 
     const size_t buf_2c_sz = std::max<size_t>(64, static_cast<size_t>(max_dim_a) * max_dim_a);
     const size_t buf_3c_sz = std::max<size_t>(64, static_cast<size_t>(max_dim_p) * max_dim_p * max_dim_a);
     const size_t buf_4c_sz = std::max<size_t>(64, static_cast<size_t>(max_dim_p) * max_dim_p * max_dim_p * max_dim_p);
 
-    // 2. Matriks Metrik 2-Pusat J_metric + batas Schwarz auxiliary Q_aux(R)
-    std::cout << "  Evaluating 2-Center Metric Matrix...\n";
+    // 1. Matriks Metrik 2-Pusat J_metric
     Eigen::MatrixXd J_metric = Eigen::MatrixXd::Zero(n_aux_, n_aux_);
     #pragma omp parallel
     {
@@ -176,7 +172,6 @@ void DensityFittingERI::compute(bool save_hdf5) {
         aux_schwarz[R] = std::sqrt(max_diag);
     }
 
-    // Batas Schwarz shell-pair primer Q_prim(i, j) = sqrt(max |(ij|ij)|)
     std::vector<double> prim_schwarz(static_cast<size_t>(n_shells_prim) * n_shells_prim, 0.0);
     #pragma omp parallel
     {
@@ -201,7 +196,7 @@ void DensityFittingERI::compute(bool save_hdf5) {
         }
     }
 
-    // 3. Dekomposisi Eigen J^{-1/2} dengan OpenMP Tiled GEMM
+    // 2. Dekomposisi Eigen J^(-1/2)
     Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(J_metric);
     const Eigen::VectorXd& evals = es.eigenvalues();
     const Eigen::MatrixXd& evecs = es.eigenvectors();
@@ -235,9 +230,9 @@ void DensityFittingERI::compute(bool save_hdf5) {
         J_inv_sqrt.middleRows(r, rows).noalias() = U_scaled.middleRows(r, rows) * U_kept.transpose();
     }
 
-    // 4. Evaluasi Integral 3-Pusat dengan Schwarz Screening (tol = 1e-14)
-    int n_pairs = n_primary_ * n_primary_;
-    Eigen::MatrixXd V_raw = Eigen::MatrixXd::Zero(n_pairs, n_aux_);
+    // 3. Evaluasi Integral 3-Pusat dalam Penyimpanan Segitiga Terkemas (n_tri x n_aux)
+    const int n_tri = ao_tri_size(n_primary_);
+    Eigen::MatrixXd V_raw = Eigen::MatrixXd::Zero(n_tri, n_aux_);
     const double screen_tol = 1e-14;
 
     #pragma omp parallel
@@ -245,38 +240,35 @@ void DensityFittingERI::compute(bool save_hdf5) {
         std::vector<double> buffer(buf_3c_sz);
         #pragma omp for schedule(dynamic, 1) nowait
         for (int i = 0; i < n_shells_prim; ++i) {
-            int bf_i_start = prim_starts[i];
-            int dim_i = prim_sizes[i];
+            const int bf_i_start = prim_starts[i];
+            const int dim_i = prim_sizes[i];
 
             for (int j = 0; j <= i; ++j) {
-                double q_ij = prim_schwarz[i * n_shells_prim + j];
+                const double q_ij = prim_schwarz[i * n_shells_prim + j];
                 if (q_ij < screen_tol) continue;
 
-                int bf_j_start = prim_starts[j];
-                int dim_j = prim_sizes[j];
+                const int bf_j_start = prim_starts[j];
+                const int dim_j = prim_sizes[j];
 
                 for (int R = 0; R < n_shells_aux; ++R) {
                     if (q_ij * aux_schwarz[R] < screen_tol) continue;
 
-                    int abs_R = n_shells_prim + R;
-                    int dim_R = aux_sizes[R];
-                    int aux_start = aux_starts[R];
+                    const int abs_R = n_shells_prim + R;
+                    const int dim_R = aux_sizes[R];
+                    const int aux_start = aux_starts[R];
 
                     if (!integrals_->compute_3c2e_block_raw(i, j, abs_R, buffer.data())) continue;
 
                     for (int r = 0; r < dim_R; ++r) {
-                        int P = aux_start + r;
+                        const int P = aux_start + r;
+                        double* v_col = V_raw.col(P).data();
                         for (int p_j = 0; p_j < dim_j; ++p_j) {
-                            int base_r1 = bf_j_start + p_j;
-                            int base_r2 = (bf_j_start + p_j) * n_primary_;
-                            int buffer_offset = dim_i * (p_j + dim_j * r);
-
+                            const int gj = bf_j_start + p_j;
+                            const int buffer_offset = dim_i * (p_j + dim_j * r);
                             for (int p_i = 0; p_i < dim_i; ++p_i) {
-                                double val = buffer[p_i + buffer_offset];
-                                int r1 = (bf_i_start + p_i) * n_primary_ + base_r1;
-                                int r2 = base_r2 + (bf_i_start + p_i);
-                                V_raw(r1, P) = val;
-                                if (r1 != r2) V_raw(r2, P) = val;
+                                const int gi = bf_i_start + p_i;
+                                if (gi < gj) continue;
+                                v_col[gi * (gi + 1) / 2 + gj] = buffer[p_i + buffer_offset];
                             }
                         }
                     }
@@ -285,15 +277,14 @@ void DensityFittingERI::compute(bool save_hdf5) {
         }
     }
 
-    // 5. Kontraksi OpenMP-Tiled BLAS-3 DGEMM: B = (mn|P) * J^{-1/2}_{PQ}
-    B_mat_.resize(n_pairs, n_aux_);
+    // 4. Kontraksi OpenMP-Tiled BLAS-3 DGEMM pada n_tri baris (2x lebih hemat RAM & FLOPs)
+    B_mat_.resize(n_tri, n_aux_);
     constexpr int tile_b = 256;
     #pragma omp parallel for schedule(dynamic)
-    for (int r = 0; r < n_pairs; r += tile_b) {
-        int rows = std::min(tile_b, n_pairs - r);
+    for (int r = 0; r < n_tri; r += tile_b) {
+        int rows = std::min(tile_b, n_tri - r);
         B_mat_.middleRows(r, rows).noalias() = V_raw.middleRows(r, rows) * J_inv_sqrt;
     }
-    // === AKHIR BAGIAN BARU ===
 
     if (save_hdf5) {
         utils::HDF5TensorIO io("df_tensor.h5", utils::HDF5TensorIO::Mode::WRITE_TRUNCATE);
@@ -301,9 +292,12 @@ void DensityFittingERI::compute(bool save_hdf5) {
         std::array<long, 4> chunks = {1, (long)n_primary_, (long)n_primary_, 1};
         io.create_dataset_4d("df_tensor", dims, chunks);
 
+        Eigen::MatrixXd slice_sq(n_primary_, n_primary_);
+        const bool packed = is_packed_ao_matrix(B_mat_, n_primary_);
         for (int P = 0; P < n_aux_; ++P) {
+            unpack_ao_column(B_mat_.col(P).data(), n_primary_, packed, slice_sq);
             std::array<long, 4> offset = {P, 0, 0, 0};
-            io.write_slice_4d("df_tensor", offset, chunks, B_mat_.col(P).data());
+            io.write_slice_4d("df_tensor", offset, chunks, slice_sq.data());
         }
     }
 

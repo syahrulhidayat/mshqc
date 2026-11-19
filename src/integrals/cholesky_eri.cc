@@ -22,6 +22,7 @@
  */
 
 #include "mshqc/integrals/cholesky_eri.h"
+#include "mshqc/integrals/packed_ao_utils.h"
 #include "mshqc/utils/hdf5_io.h"
 #include <iostream>
 #include <iomanip>
@@ -452,21 +453,9 @@ void CholeskyERI::decompose_direct() {
     n_vectors_ = iter;
     decomposed_ = true;
 
-    // 6. Unpack segitiga atas (n_tri x M) -> L_mat_ (n_basis^2 x M) untuk kompatibilitas hilir
-    L_mat_.resize(static_cast<Eigen::Index>(n_basis_) * n_basis_, n_vectors_);
-    #pragma omp parallel for schedule(static)
-    for (int k = 0; k < n_vectors_; ++k) {
-        const double* src = L_tri.col(k).data();
-        double* dst = L_mat_.col(k).data();
-        for (int p = 0; p < n_basis_; ++p) {
-            const int base = p * (p + 1) / 2;
-            for (int q = 0; q <= p; ++q) {
-                const double val = src[base + q];
-                dst[p * n_basis_ + q] = val;
-                dst[q * n_basis_ + p] = val;
-            }
-        }
-    }
+    // [INJECTED_PRIORITAS_2D_PACKED_AO]
+    L_tri.conservativeResize(Eigen::NoChange, n_vectors_);
+    L_mat_ = std::move(L_tri);
 }
 
 
@@ -485,9 +474,10 @@ double CholeskyERI::compression_ratio() const {
 
 double CholeskyERI::reconstruct(int i, int j, int k, int l) const {
     if (!decomposed_) return 0.0;
-    int ij = i * n_basis_ + j;
-    int kl = k * n_basis_ + l;
-    return L_mat_.row(ij).dot(L_mat_.row(kl)); 
+    const bool packed = is_packed_ao_matrix(L_mat_, n_basis_);
+    int ij = packed ? ao_tri_index(i, j) : (i * n_basis_ + j);
+    int kl = packed ? ao_tri_index(k, l) : (k * n_basis_ + l);
+    return L_mat_.row(ij).dot(L_mat_.row(kl));
 }
 
 size_t CholeskyERI::storage_bytes() const {
@@ -502,11 +492,13 @@ void CholeskyERI::save_to_hdf5(const std::string& filename, const std::string& d
     
     io.create_dataset_4d(dataset_name, {n_vec, n_basis_, n_basis_, 1}, {1, n_basis_, n_basis_, 1});
 
+    const bool packed = is_packed_ao_matrix(L_mat_, n_basis_);
+    Eigen::MatrixXd slice_sq(n_basis_, n_basis_);
     for (long k = 0; k < n_vec; ++k) {
         std::array<long, 4> offset = {k, 0, 0, 0};
         std::array<long, 4> slice_dims = {1, n_basis_, n_basis_, 1};
-        
-        io.write_slice_4d(dataset_name, offset, slice_dims, L_mat_.col(k).data());
+        unpack_ao_column(L_mat_.col(k).data(), n_basis_, packed, slice_sq);
+        io.write_slice_4d(dataset_name, offset, slice_dims, slice_sq.data());
     }
 }
 
