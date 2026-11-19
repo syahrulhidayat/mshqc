@@ -242,143 +242,151 @@ double OMP2::compute_mp2_energy() {
         return e_ss_ + e_os_;
     }
 }
+
 void OMP2::compute_t2_and_energy_cholesky() {
-    double E_ss_aa = 0.0, E_ss_bb = 0.0, E_os = 0.0;
-    int nf = n_frozen_;
-    bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
-    
-    auto parallel_gemm_abt = [](const Eigen::MatrixXd& A, const Eigen::MatrixXd& B) {
-        Eigen::MatrixXd C(A.rows(), B.rows());
-        const int m = A.rows();
-        constexpr int tile = 64;
-        #pragma omp parallel for schedule(dynamic)
-        for (int i = 0; i < m; i += tile) {
-            int rows = std::min(tile, m - i);
-            C.middleRows(i, rows).noalias() = A.middleRows(i, rows) * B.transpose();
-        }
-        return C;
-    };
+  double E_ss_aa = 0.0, E_ss_bb = 0.0, E_os = 0.0;
+  const int nf = std::clamp(n_frozen_, 0, na_);
+  const bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
 
-    t2_aa_.allocate_block(0, 0, 0, 0, na_, va_, na_, va_);
-    auto* t_aa_blk = t2_aa_.get_block(0, 0, 0, 0);
+  t2_aa_.allocate_block(0, 0, 0, 0, na_, va_, na_, va_);
+  auto* t_aa_blk = t2_aa_.get_block(0, 0, 0, 0);
 
-    if (t_aa_blk) {
-        t_aa_blk->setZero();
-        Eigen::MatrixXd G_aa = parallel_gemm_abt(B_ia_P_alpha_, B_ia_P_alpha_);
-        
-        const double* eps_a = scf_.orbital_energies_alpha.data();
-        
-        #pragma omp parallel for reduction(+:E_ss_aa) schedule(static)
-        for (int i = nf; i < na_; ++i) {
-            for (int j = nf; j < na_; ++j) {
-                double e_ij = eps_a[i] + eps_a[j];
-                for (int a = 0; a < va_; ++a) {
-                    double den_a = e_ij - eps_a[na_ + a];
-                    int idx_ia = i * va_ + a;
-                    
-                    for (int b = 0; b < va_; ++b) {
-                        double den = den_a - eps_a[na_ + b];
-                        int idx_jb = j * va_ + b;
-                        int idx_ib = i * va_ + b;
-                        int idx_ja = j * va_ + a;
+  if (t_aa_blk) {
+    t_aa_blk->setZero();
+    const double* eps_a = scf_.orbital_energies_alpha.data();
 
-                        double val_dir = G_aa(idx_ia, idx_jb);
-                        double val_ex  = G_aa(idx_ib, idx_ja); 
-
-                        double reg_den = (std::abs(den) > 1e-12) ? (1.0 / den) : 0.0;
-                        double t_val = 0.0;
-
-                        if (is_restricted) {
-                            t_val = val_dir * reg_den;
-                            E_ss_aa += t_val * (2.0 * val_dir - val_ex); 
-                        } else {
-                            t_val = (val_dir - val_ex) * reg_den;
-                            E_ss_aa += t_val * (val_dir - val_ex); 
-                        }
-                        (*t_aa_blk)(i, a, j, b) = t_val;
-                    }
-                }
-            }
-        }
-    }
-    
-    if (!is_restricted && nb_ > 0 && vb_ > 0) {
-        t2_bb_.allocate_block(0, 0, 0, 0, nb_, nb_, vb_, vb_);
-        auto* t_bb_blk = t2_bb_.get_block(0, 0, 0, 0);
-        if (t_bb_blk) t_bb_blk->setZero();
-
-        t2_ab_.allocate_block(0, 0, 0, 0, na_, nb_, va_, vb_);
-        auto* t_ab_blk = t2_ab_.get_block(0, 0, 0, 0);
-        if (t_ab_blk) t_ab_blk->setZero();
-
-        const double* eps_b = scf_.orbital_energies_beta.data();
-
-        if (t_bb_blk) {
-            Eigen::MatrixXd G_bb = parallel_gemm_abt(B_ia_P_beta_, B_ia_P_beta_);
-            
-            #pragma omp parallel for reduction(+:E_ss_bb) schedule(static)
-            for (int i = nf; i < nb_; ++i) {
-                for (int j = nf; j < nb_; ++j) {
-                    double e_ij = eps_b[i] + eps_b[j];
-                    for (int a = 0; a < vb_; ++a) {
-                        double den_a = e_ij - eps_b[nb_ + a];
-                        int idx_ia = i * vb_ + a;
-                        
-                        for (int b = 0; b < vb_; ++b) {
-                            double den = den_a - eps_b[nb_ + b];
-                            int idx_jb = j * vb_ + b;
-                            int idx_ib = i * vb_ + b;
-                            int idx_ja = j * vb_ + a;
-
-                            double val_dir = G_bb(idx_ia, idx_jb);
-                            double val_ex  = G_bb(idx_ib, idx_ja);
-                            
-                            double reg_den = (std::abs(den) > 1e-12) ? (1.0 / den) : 0.0;
-                            double t_val = (val_dir - val_ex) * reg_den;
-                            
-                            E_ss_bb += t_val * (val_dir - val_ex);
-                            (*t_bb_blk)(i, j, a, b) = t_val; 
-                        }
-                    }
-                }
-            }
-        }
-
-        if (t_ab_blk) {
-            Eigen::MatrixXd G_ab = parallel_gemm_abt(B_ia_P_alpha_, B_ia_P_beta_);
-            const double* eps_a = scf_.orbital_energies_alpha.data();
-            
-            #pragma omp parallel for reduction(+:E_os) schedule(static)
-            for (int i = nf; i < na_; ++i) {
-                for (int j = nf; j < nb_; ++j) {
-                    double e_ij = eps_a[i] + eps_b[j];
-                    for (int a = 0; a < va_; ++a) {
-                        double den_a = e_ij - eps_a[na_ + a];
-                        int idx_ia = i * va_ + a;
-                        
-                        for (int b = 0; b < vb_; ++b) {
-                            double den = den_a - eps_b[nb_ + b];
-                            int idx_jb = j * vb_ + b;
-
-                            double val_dir = G_ab(idx_ia, idx_jb);
-                            double reg_den = (std::abs(den) > 1e-12) ? (1.0 / den) : 0.0;
-                            double t_val = val_dir * reg_den;
-                            
-                            E_os += t_val * val_dir; 
-                            (*t_ab_blk)(i, j, a, b) = t_val;
-                        }
-                    }
-                }
-            }
-        }
+    std::vector<std::pair<int, int>> pairs_aa;
+    for (int i = nf; i < na_; ++i) {
+      const int j_start = is_restricted ? i : (i + 1);
+      for (int j = j_start; j < na_; ++j) pairs_aa.emplace_back(i, j);
     }
 
-    if (is_restricted) {
-        e_ss_ = 0.0;
-        e_os_ = E_ss_aa;
-    } else {
-        e_ss_ = 0.25 * E_ss_aa + 0.25 * E_ss_bb;
-        e_os_ = E_os;
+    #pragma omp parallel reduction(+:E_ss_aa)
+    {
+      Eigen::MatrixXd G_ij(va_, va_);
+      #pragma omp for schedule(dynamic, 1) nowait
+      for (size_t p = 0; p < pairs_aa.size(); ++p) {
+        const int i = pairs_aa[p].first;
+        const int j = pairs_aa[p].second;
+        const double e_ij = eps_a[i] + eps_a[j];
+
+        G_ij.noalias() = B_ia_P_alpha_.middleRows(i * va_, va_)
+                       * B_ia_P_alpha_.middleRows(j * va_, va_).transpose();
+
+        if (is_restricted) {
+          const double w = (i == j) ? 1.0 : 2.0;
+          for (int a = 0; a < va_; ++a) {
+            const double den_a = e_ij - eps_a[na_ + a];
+            for (int b = 0; b < va_; ++b) {
+              const double den = den_a - eps_a[na_ + b];
+              if (std::abs(den) <= 1e-12) continue;
+              const double val_dir = G_ij(a, b);
+              const double val_ex = G_ij(b, a);
+              const double t_val = val_dir / den;
+              E_ss_aa += w * t_val * (2.0 * val_dir - val_ex);
+              (*t_aa_blk)(i, a, j, b) = t_val;
+              if (i != j) (*t_aa_blk)(j, b, i, a) = t_val;
+            }
+          }
+        } else {
+          for (int a = 0; a < va_; ++a) {
+            const double den_a = e_ij - eps_a[na_ + a];
+            for (int b = 0; b < va_; ++b) {
+              const double den = den_a - eps_a[na_ + b];
+              if (std::abs(den) <= 1e-12) continue;
+              const double diff = G_ij(a, b) - G_ij(b, a);
+              const double t_val = diff / den;
+              E_ss_aa += 2.0 * t_val * diff;
+              (*t_aa_blk)(i, a, j, b) = t_val;
+              (*t_aa_blk)(j, a, i, b) = -t_val;
+            }
+          }
+        }
+      }
     }
+  }
+
+  if (!is_restricted && nb_ > 0 && vb_ > 0) {
+    const int nf_b = std::clamp(n_frozen_, 0, nb_);
+    t2_bb_.allocate_block(0, 0, 0, 0, nb_, nb_, vb_, vb_);
+    auto* t_bb_blk = t2_bb_.get_block(0, 0, 0, 0);
+    if (t_bb_blk) t_bb_blk->setZero();
+
+    t2_ab_.allocate_block(0, 0, 0, 0, na_, nb_, va_, vb_);
+    auto* t_ab_blk = t2_ab_.get_block(0, 0, 0, 0);
+    if (t_ab_blk) t_ab_blk->setZero();
+
+    const double* eps_b = scf_.orbital_energies_beta.data();
+
+    if (t_bb_blk) {
+      std::vector<std::pair<int, int>> pairs_bb;
+      for (int i = nf_b; i < nb_; ++i) {
+        for (int j = i + 1; j < nb_; ++j) pairs_bb.emplace_back(i, j);
+      }
+      #pragma omp parallel reduction(+:E_ss_bb)
+      {
+        Eigen::MatrixXd G_ij(vb_, vb_);
+        #pragma omp for schedule(dynamic, 1) nowait
+        for (size_t p = 0; p < pairs_bb.size(); ++p) {
+          const int i = pairs_bb[p].first;
+          const int j = pairs_bb[p].second;
+          const double e_ij = eps_b[i] + eps_b[j];
+          G_ij.noalias() = B_ia_P_beta_.middleRows(i * vb_, vb_)
+                         * B_ia_P_beta_.middleRows(j * vb_, vb_).transpose();
+          for (int a = 0; a < vb_; ++a) {
+            const double den_a = e_ij - eps_b[nb_ + a];
+            for (int b = 0; b < vb_; ++b) {
+              const double den = den_a - eps_b[nb_ + b];
+              if (std::abs(den) <= 1e-12) continue;
+              const double diff = G_ij(a, b) - G_ij(b, a);
+              const double t_val = diff / den;
+              E_ss_bb += 2.0 * t_val * diff;
+              (*t_bb_blk)(i, j, a, b) = t_val;
+              (*t_bb_blk)(j, i, a, b) = -t_val;
+            }
+          }
+        }
+      }
+    }
+
+    if (t_ab_blk) {
+      const double* eps_a = scf_.orbital_energies_alpha.data();
+      std::vector<std::pair<int, int>> pairs_ab;
+      for (int i = nf; i < na_; ++i) {
+        for (int j = nf_b; j < nb_; ++j) pairs_ab.emplace_back(i, j);
+      }
+      #pragma omp parallel reduction(+:E_os)
+      {
+        Eigen::MatrixXd G_ij(va_, vb_);
+        #pragma omp for schedule(dynamic, 1) nowait
+        for (size_t p = 0; p < pairs_ab.size(); ++p) {
+          const int i = pairs_ab[p].first;
+          const int j = pairs_ab[p].second;
+          const double e_ij = eps_a[i] + eps_b[j];
+          G_ij.noalias() = B_ia_P_alpha_.middleRows(i * va_, va_)
+                         * B_ia_P_beta_.middleRows(j * vb_, vb_).transpose();
+          for (int a = 0; a < va_; ++a) {
+            const double den_a = e_ij - eps_a[na_ + a];
+            for (int b = 0; b < vb_; ++b) {
+              const double den = den_a - eps_b[nb_ + b];
+              if (std::abs(den) <= 1e-12) continue;
+              const double val_dir = G_ij(a, b);
+              const double t_val = val_dir / den;
+              E_os += t_val * val_dir;
+              (*t_ab_blk)(i, j, a, b) = t_val;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  if (is_restricted) {
+    e_ss_ = 0.0;
+    e_os_ = E_ss_aa;
+  } else {
+    e_ss_ = 0.25 * E_ss_aa + 0.25 * E_ss_bb;
+    e_os_ = E_os;
+  }
 }
 }

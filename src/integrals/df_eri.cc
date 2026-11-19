@@ -19,6 +19,7 @@
 
 #include "mshqc/integrals/df_eri.h"
 #include "mshqc/integrals/packed_ao_utils.h"
+#include "mshqc/integrals/df_metric_utils.h"
 #include "mshqc/utils/hdf5_io.h"
 #include <algorithm>
 #include <cmath>
@@ -196,41 +197,11 @@ void DensityFittingERI::compute(bool save_hdf5) {
         }
     }
 
-    // 2. Dekomposisi Eigen J^(-1/2)
-    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(J_metric);
-    const Eigen::VectorXd& evals = es.eigenvalues();
-    const Eigen::MatrixXd& evecs = es.eigenvectors();
 
-    double max_eval = (evals.size() > 0) ? std::max(1.0, evals.maxCoeff()) : 1.0;
-    double rel_cond = (cutoff_ > 0.0 && cutoff_ <= 1e-10) ? cutoff_ : 1e-12;
-    double eig_tol = std::max(1e-14, rel_cond * max_eval);
+  DFMetricFactor df_metric = DFMetricFactor::compute(J_metric, cutoff_);
+  J_metric.resize(0, 0);
 
-    int n_aux_rank = 0;
-    for (int i = 0; i < n_aux_; ++i) {
-        if (evals(i) >= eig_tol) n_aux_rank++;
-    }
-
-    Eigen::MatrixXd U_kept(n_aux_, n_aux_rank);
-    Eigen::VectorXd inv_sqrt_evals(n_aux_rank);
-    int col_idx = 0;
-    for (int i = 0; i < n_aux_; ++i) {
-        if (evals(i) >= eig_tol) {
-            U_kept.col(col_idx) = evecs.col(i);
-            inv_sqrt_evals(col_idx) = 1.0 / std::sqrt(evals(i));
-            col_idx++;
-        }
-    }
-
-    Eigen::MatrixXd U_scaled = U_kept * inv_sqrt_evals.asDiagonal();
-    Eigen::MatrixXd J_inv_sqrt(n_aux_, n_aux_);
-    constexpr int tile_j = 64;
-    #pragma omp parallel for schedule(dynamic)
-    for (int r = 0; r < n_aux_; r += tile_j) {
-        int rows = std::min(tile_j, n_aux_ - r);
-        J_inv_sqrt.middleRows(r, rows).noalias() = U_scaled.middleRows(r, rows) * U_kept.transpose();
-    }
-
-    // 3. Evaluasi Integral 3-Pusat dalam Penyimpanan Segitiga Terkemas (n_tri x n_aux)
+  // 3. Evaluasi Integral 3-Pusat dalam Penyimpanan Segitiga Terkemas (n_tri x n_aux)
     const int n_tri = ao_tri_size(n_primary_);
     Eigen::MatrixXd V_raw = Eigen::MatrixXd::Zero(n_tri, n_aux_);
     const double screen_tol = 1e-14;
@@ -277,16 +248,11 @@ void DensityFittingERI::compute(bool save_hdf5) {
         }
     }
 
-    // 4. Kontraksi OpenMP-Tiled BLAS-3 DGEMM pada n_tri baris (2x lebih hemat RAM & FLOPs)
-    B_mat_.resize(n_tri, n_aux_);
-    constexpr int tile_b = 256;
-    #pragma omp parallel for schedule(dynamic)
-    for (int r = 0; r < n_tri; r += tile_b) {
-        int rows = std::min(tile_b, n_tri - r);
-        B_mat_.middleRows(r, rows).noalias() = V_raw.middleRows(r, rows) * J_inv_sqrt;
-    }
+  
+  df_metric.apply_V_to_B_inplace(V_raw);
+  B_mat_ = std::move(V_raw);
 
-    if (save_hdf5) {
+  if (save_hdf5) {
         utils::HDF5TensorIO io("df_tensor.h5", utils::HDF5TensorIO::Mode::WRITE_TRUNCATE);
         std::array<long, 4> dims = {(long)n_aux_, (long)n_primary_, (long)n_primary_, 1};
         std::array<long, 4> chunks = {1, (long)n_primary_, (long)n_primary_, 1};

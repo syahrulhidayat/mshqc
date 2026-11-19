@@ -25,6 +25,7 @@
 #include "mshqc/symmetry/salc_builder.h"
 #include "mshqc/integrals/df_eri.h"
 #include "mshqc/integrals/packed_ao_utils.h"
+#include "mshqc/utils/blas_thread_guard.h"
 #include <iostream>
 #include <iomanip>
 #include <cmath>
@@ -230,7 +231,7 @@ Eigen::MatrixXd orthonormalize_mo_guess(const Eigen::MatrixXd& C_in, const Eigen
     return C_in * (U * inv_sqrt.asDiagonal() * U.transpose());
 }
 
-// Menghitung matriks screening maksimum per blok shell P_max(M, N) untuk In-Core SCF
+
 Eigen::MatrixXd compute_shell_pmax(
     int nshells,
     const std::vector<int>& shell_starts,
@@ -295,7 +296,7 @@ BaseSCF::BaseSCF(const Molecule& mol, const BasisSet& basis,
         df_engine->compute(use_disk);
 
         if (!use_disk) {
-            this->L_mat_ = std::move(df_engine->get_B_mat());
+            this->L_mat_ = std::move(df_engine->get_B_mat_mutable());
         } else {
             this->L_mat_.resize(0, df_engine->get_B_mat().cols());
         }
@@ -316,7 +317,8 @@ void BaseSCF::init_integrals() {
         X_ = salc_data.first;
         salc_irreps_ = salc_data.second;
     } else {
-        Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(S_);
+        mshqc::utils::ScopedBlasThreads blas_s_mt(nbasis_, 96);
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(S_);
         X_ = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
         for (int i = 0; i < nbasis_; i++) {
             if (es.eigenvalues()(i) >= 1e-6) {
@@ -464,6 +466,7 @@ Eigen::VectorXd BaseSCF::smear_electrons(const Eigen::VectorXd& eps, int target_
 }
 
 void BaseSCF::solve_fock(const Eigen::MatrixXd& F, Eigen::MatrixXd& C, Eigen::VectorXd& eps) {
+  mshqc::utils::ScopedBlasThreads blas_fock_mt(nbasis_, 96);
     Eigen::MatrixXd Fp = X_.transpose() * F * X_;
     if (symmetrizer_ && !salc_irreps_.empty()) {
         Eigen::MatrixXd C_salc = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
@@ -545,7 +548,8 @@ SCFResult BaseSCF::compute() {
         double err_rms = 0.0;
 
         if (iter_scf_ > 1) {
-            Eigen::MatrixXd FPS_a = F_alpha_ * P_alpha_ * S_;
+            mshqc::utils::ScopedBlasThreads blas_diis_mt(nbasis_, 96);
+      Eigen::MatrixXd FPS_a = F_alpha_ * P_alpha_ * S_;
             Eigen::MatrixXd err_a = X_.transpose() * (FPS_a - FPS_a.transpose()) * X_;
             diis_a.add_iteration(F_alpha_, err_a);
             F_eff_a = diis_a.extrapolate();
@@ -599,7 +603,7 @@ SCFResult BaseSCF::compute() {
     }
 
     // Verifikasi keadaan dasar UHF khusus radikal poliatomik (mol_.n_atoms() > 2, misal NH2 2A1 -> 2B1)
-    if (is_uhf && mol_.n_atoms() > 2 && n_beta_ > 0) {
+    if (is_uhf && !config_.has_initial_guess && mol_.n_atoms() > 2 && n_beta_ > 0) {
         double best_energy = energy_;
         bool best_conv = converged;
         int best_iter = iter_scf_;

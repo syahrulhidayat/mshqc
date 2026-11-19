@@ -16,7 +16,7 @@
 #include "mshqc/gradient/optimizer.h"
 #include "mshqc/ints/integrals.h"
 #include "mshqc/integrals/packed_ao_utils.h"
-// [INJECTED_PRIORITAS_2D_PACKED_AO]
+#include "mshqc/integrals/df_metric_utils.h"
 #include "mshqc/scf/scf.h"
 #include "mshqc/mp2/mp2.h"
 #include "mshqc/mp3/mp3.h"
@@ -66,14 +66,27 @@ struct ScopedCoutSilencer {
 
 double get_exact_isotopic_mass(int Z) {
   static const std::map<int, double> m = {
-    {1, 1.007825032},  {2, 4.002603254},  {3, 7.016003437},  {4, 9.01218307},
-    {5, 11.00930536},  {6, 12.00000000},  {7, 14.003074004}, {8, 15.994914619},
+    {1, 1.007825032}, {2, 4.002603254}, {3, 7.016003437}, {4, 9.01218307},
+    {5, 11.00930536}, {6, 12.00000000}, {7, 14.003074004}, {8, 15.994914619},
     {9, 18.998403163}, {10, 19.99244018}, {11, 22.98976928}, {12, 23.98504170},
-    {13, 26.98153853}, {14, 27.976926535},{15, 30.973761998},{16, 31.972071174},
-    {17, 34.96885268}, {18, 39.96238312}, {35, 78.918338},   {53, 126.904472}
+    {13, 26.98153853}, {14, 27.976926535}, {15, 30.973761998}, {16, 31.972071174},
+    {17, 34.96885268}, {18, 39.96238312}, {19, 38.96370649}, {20, 39.96259086},
+    {21, 44.95590828}, {22, 47.94794198}, {23, 50.94395704}, {24, 51.94050623},
+    {25, 54.93804391}, {26, 55.93493633}, {27, 58.93319429}, {28, 57.93534241},
+    {29, 62.92959772}, {30, 63.92914201}, {31, 68.9255735}, {32, 73.92117776},
+    {33, 74.92159457}, {34, 79.9165218}, {35, 78.9183376}, {36, 83.91149773},
+    {37, 84.91178974}, {38, 87.9056125}, {39, 88.9058403}, {40, 89.9046977},
+    {41, 92.9063730}, {42, 97.9054048}, {43, 97.9072124}, {44, 101.9043441},
+    {45, 102.9054980}, {46, 105.9034804}, {47, 106.9050916}, {48, 113.9033650},
+    {49, 114.9038788}, {50, 119.9022016}, {51, 120.9038120}, {52, 129.9062227},
+    {53, 126.9044719}, {54, 131.9041551}, {55, 132.9054519}, {56, 137.9052470},
+    {72, 179.9465570}, {73, 180.9479958}, {74, 183.9509309}, {75, 186.9557501},
+    {76, 191.9614770}, {77, 192.9629216}, {78, 194.9647917}, {79, 196.9665687},
+    {80, 201.9706434}, {81, 204.9744278}, {82, 207.9766525}, {83, 208.9803991},
+    {86, 222.0175782}
   };
   auto it = m.find(Z);
-  return (it != m.end()) ? it->second : static_cast<double>(2 * Z);
+  return (it != m.end()) ? it->second : static_cast<double>(2.4 * Z);
 }
 
 std::string to_lower_copy(std::string s) {
@@ -298,14 +311,14 @@ Eigen::MatrixXd compute_nuclear_repulsion_gradient(const Molecule& mol) {
   return g;
 }
 
-Eigen::MatrixXd compute_df_metric_inv_sqrt(
+integrals::DFMetricFactor compute_df_metric_factor(
     const BasisSet& primary_basis,
     const BasisSet& aux_basis,
     const std::shared_ptr<IntegralEngine>& df_ints,
     double cutoff) {
 
   const int n_shells_prim = primary_basis.n_shells();
-  const int n_shells_aux  = aux_basis.n_shells();
+  const int n_shells_aux = aux_basis.n_shells();
   const int n_aux = aux_basis.n_basis_functions();
 
   std::vector<int> aux_starts(n_shells_aux), aux_sizes(n_shells_aux);
@@ -330,7 +343,7 @@ Eigen::MatrixXd compute_df_metric_inv_sqrt(
         if (!df_ints->compute_2c2e_block_raw(abs_R, abs_S, buf.data())) continue;
         for (int s = 0; s < dim_S; ++s) {
           for (int r = 0; r < dim_R; ++r) {
-            double val = buf[r + dim_R * s];
+            const double val = buf[r + dim_R * s];
             J_metric(st_R + r, st_S + s) = val;
             if (st_R + r != st_S + s) J_metric(st_S + s, st_R + r) = val;
           }
@@ -338,35 +351,7 @@ Eigen::MatrixXd compute_df_metric_inv_sqrt(
       }
     }
   }
-
-  Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(J_metric);
-  const Eigen::VectorXd& evals = es.eigenvalues();
-  const Eigen::MatrixXd& evecs = es.eigenvectors();
-  double max_eval = (evals.size() > 0) ? std::max(1.0, evals.maxCoeff()) : 1.0;
-  double rel_cond = (cutoff > 0.0 && cutoff <= 1e-10) ? cutoff : 1e-12;
-  double eig_tol = std::max(1e-14, rel_cond * max_eval);
-
-  int rank = 0;
-  for (int i = 0; i < n_aux; ++i) if (evals(i) >= eig_tol) ++rank;
-  Eigen::MatrixXd U_kept(n_aux, rank);
-  Eigen::VectorXd inv_sq(rank);
-  int c = 0;
-  for (int i = 0; i < n_aux; ++i) {
-    if (evals(i) >= eig_tol) {
-      U_kept.col(c) = evecs.col(i);
-      inv_sq(c) = 1.0 / std::sqrt(evals(i));
-      ++c;
-    }
-  }
-  Eigen::MatrixXd U_sc = U_kept * inv_sq.asDiagonal();
-  Eigen::MatrixXd J_inv_sqrt(n_aux, n_aux);
-  constexpr int tile = 64;
-  #pragma omp parallel for schedule(dynamic)
-  for (int r = 0; r < n_aux; r += tile) {
-    int rows = std::min(tile, n_aux - r);
-    J_inv_sqrt.middleRows(r, rows).noalias() = U_sc.middleRows(r, rows) * U_kept.transpose();
-  }
-  return J_inv_sqrt;
+  return integrals::DFMetricFactor::compute(J_metric, cutoff);
 }
 
 bool supports_analytic_df_gradient(const GeomOptConfig& cfg) {
@@ -571,35 +556,16 @@ GradCurvatureResult compute_analytic_df_gradient_internal(
   BasisSet combined = basis;
   combined.append(aux_basis);
   auto df_ints = std::make_shared<IntegralEngine>(mol, combined);
-  Eigen::MatrixXd J_inv_sqrt = compute_df_metric_inv_sqrt(basis, aux_basis, df_ints, scf_conf.df_threshold);
-
-  Eigen::MatrixXd Gamma_tilde(static_cast<Eigen::Index>(nbf) * nbf, n_aux);
-  constexpr int tile_m = 256;
-  #pragma omp parallel for schedule(dynamic)
-  for (int r = 0; r < nbf * nbf; r += tile_m) {
-    int rows = std::min(tile_m, nbf * nbf - r);
-    Gamma_tilde.middleRows(r, rows).noalias() = Gamma_3c.middleRows(r, rows) * J_inv_sqrt;
-  }
-
-  Eigen::MatrixXd tmp_g(n_aux, n_aux), gamma_tilde(n_aux, n_aux);
-  constexpr int tile_a = 64;
-  #pragma omp parallel for schedule(dynamic)
-  for (int r = 0; r < n_aux; r += tile_a) {
-    int rows = std::min(tile_a, n_aux - r);
-    tmp_g.middleRows(r, rows).noalias() = J_inv_sqrt.middleRows(r, rows) * gamma_2c;
-  }
-  #pragma omp parallel for schedule(dynamic)
-  for (int r = 0; r < n_aux; r += tile_a) {
-    int rows = std::min(tile_a, n_aux - r);
-    gamma_tilde.middleRows(r, rows).noalias() = tmp_g.middleRows(r, rows) * J_inv_sqrt;
-  }
+  integrals::DFMetricFactor df_metric = compute_df_metric_factor(basis, aux_basis, df_ints, scf_conf.df_threshold);
+  df_metric.apply_Gamma_to_tilde_inplace(Gamma_3c);
+  Eigen::MatrixXd gamma_tilde = df_metric.apply_gamma2c_to_tilde(gamma_2c);
 
   Eigen::MatrixXd g_tot = compute_nuclear_repulsion_gradient(mol)
       + integrals->compute_1e_gradient(P_eff_ao, W_eff_ao)
       + df_ints->compute_df_2e_gradient(
           basis.n_shells(), aux_basis.n_shells(),
           nbf, aux_basis.n_basis_functions(),
-          Gamma_tilde, gamma_tilde);
+          Gamma_3c, gamma_tilde);
 
   Eigen::VectorXd x0(ndof);
   std::vector<double> masses(natoms);

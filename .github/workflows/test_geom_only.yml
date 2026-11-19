@@ -211,6 +211,12 @@ jobs:
           set -o pipefail
           micromamba activate geom_env
           python -u tests/verify_analytic_grad_2e.py 2>&1 | tee 03_verify_analytic_grad_2e_log.txt
+      - name: "[03b/16] Run Audit & Computational Scaling Verification (verify_audit_and_scaling.py)"
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate geom_env
+          python -u tests/verify_audit_and_scaling.py 2>&1 | tee 03b_verify_audit_and_scaling_log.txt
 
       # =========================================================================
       # BAGIAN 2: CORE BENCHMARK SUITE (mshqc vs Psi4 Terpisah)
@@ -435,6 +441,7 @@ jobs:
             01_pytest_mshqc_log.txt
             02_test_universal_geom_opt_log.txt
             03_verify_analytic_grad_2e_log.txt
+            03b_verify_audit_and_scaling_log.txt
             04_mshqc_out.txt
             05_psi4_out.txt
             06_compare_mshqc_psi4_log.txt

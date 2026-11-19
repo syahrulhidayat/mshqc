@@ -4,6 +4,7 @@
 #pragma once
 
 #include <Eigen/Dense>
+#include "mshqc/utils/blas_thread_guard.h"
 #include <algorithm>
 #include <vector>
 #include <omp.h>
@@ -82,6 +83,7 @@ inline Eigen::VectorXd contract_ao_factor_with_sym(
     const Eigen::MatrixXd& M,
     int nbf)
 {
+  mshqc::utils::ScopedBlasThreads blas_mt(nbf, 96);
     if (is_packed_ao_matrix(L, nbf)) {
         Eigen::VectorXd m_tri = pack_sym_weighted(M);
         return L.transpose() * m_tri;
@@ -96,6 +98,7 @@ inline Eigen::MatrixXd compute_coulomb_from_ao_factor(
     const Eigen::MatrixXd& P_tot,
     int nbf)
 {
+  mshqc::utils::ScopedBlasThreads blas_mt(nbf, 96);
     if (is_packed_ao_matrix(L, nbf)) {
         Eigen::VectorXd p_tri = pack_sym_weighted(P_tot);
         Eigen::VectorXd x_j = L.transpose() * p_tri;

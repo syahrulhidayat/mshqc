@@ -41,6 +41,21 @@ namespace mshqc {
 
 
 
+inline int compute_standard_frozen_core(const Molecule& mol) {
+  int nf = 0;
+  for (size_t i = 0; i < mol.n_atoms(); ++i) {
+    const int Z = mol.atom(i).atomic_number;
+    if (Z <= 2) nf += 0;
+    else if (Z <= 10) nf += 1;
+    else if (Z <= 18) nf += 5;
+    else if (Z <= 36) nf += 9;
+    else if (Z <= 54) nf += 18;
+    else if (Z <= 71) nf += 27;
+    else nf += 34;
+  }
+  return nf;
+}
+
 struct MP2Config {
     std::string scf_type = "incore";     
     std::string eri_method = "exact";    
@@ -60,6 +75,9 @@ struct MP2Config {
     // [INJECTED_FINAL_OPT_OMP_GUESS]
     double level_shift = 1e-12;
     double memory_limit_gb = 4.0;
+  // [INJECTED_HPC_V2_FROZEN_CORE]
+  int n_frozen = 0;
+  bool freeze_core = false;
     bool has_initial_guess = false;
     Eigen::MatrixXd init_C_alpha;
     Eigen::MatrixXd init_C_beta;        

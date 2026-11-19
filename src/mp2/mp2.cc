@@ -67,6 +67,12 @@ BaseMP2::BaseMP2(const Molecule& mol, const BasisSet& basis,
     nocc_b_ = scf_.n_occ_beta;
     nvir_a_ = nbf_ - nocc_a_;
     nvir_b_ = nbf_ - nocc_b_;
+    if (config_.n_frozen > 0) {
+        n_frozen_ = config_.n_frozen;
+    } else if (config_.freeze_core) {
+        n_frozen_ = compute_standard_frozen_core(mol_);
+    }
+    n_frozen_ = std::clamp(n_frozen_, 0, std::max(0, std::min(nocc_a_, nocc_b_ > 0 ? nocc_b_ : nocc_a_)));
 
     if (config_.eri_method == "df") {
         config_.use_df = true;
@@ -84,7 +90,7 @@ BaseMP2::BaseMP2(const Molecule& mol, const BasisSet& basis,
         auto df_ints = std::make_shared<IntegralEngine>(mol_, combined);
         integrals::DensityFittingERI df_eng(basis_, aux_basis, df_ints, config_.df_threshold);
         df_eng.compute(false);
-        scf_.L_mat = df_eng.get_B_mat();
+        scf_.L_mat = std::move(df_eng.get_B_mat_mutable());
     } else if (config_.eri_method == "cholesky" && !config_.use_df && !integrals::has_valid_ao_factor(scf_.L_mat, nbf_)) {
         integrals::CholeskyERI chol_eng(basis_, integrals_);
         chol_eng.set_threshold(config_.cholesky_threshold);
@@ -179,59 +185,85 @@ void RMP2::transform_integrals() {
     }
 }
 void RMP2::compute_amplitudes_and_energy() {
-    const Eigen::VectorXd& eps = scf_.orbital_energies_alpha;
+  const Eigen::VectorXd& eps = scf_.orbital_energies_alpha;
+  const bool is_exact = (config_.eri_method == "exact");
+
+  const size_t req_t2_bytes = static_cast<size_t>(nocc_a_) * nocc_a_ * nvir_a_ * nvir_a_ * sizeof(double);
+  const size_t t2_budget_bytes = static_cast<size_t>(std::max(0.25, config_.memory_limit_gb * 0.5) * 1e9);
+  const bool store_t2 = is_exact || (req_t2_bytes <= t2_budget_bytes);
+
+  if (store_t2) {
     t2_ = Eigen::Tensor<double, 4>(nocc_a_, nocc_a_, nvir_a_, nvir_a_);
     t2_.setZero();
-
-    double e_corr_sum = 0.0;
-    bool is_exact = (config_.eri_method == "exact");
-
-    // TAHAP OPTIMASI: GIANT DGEMM PENGGANTI LOOP .DOT()
-    Eigen::MatrixXd G_aa;
-    if (!is_exact) {
-        G_aa = parallel_gemm_abt_mp2(B_ia_P_alpha_, B_ia_P_alpha_);
+  } else {
+    t2_.resize(0, 0, 0, 0);
+    if (config_.print_level > 0) {
+      std::cout << " [RMP2] Streaming O(V^2) energy mode active (T2 "
+                << (req_t2_bytes / (1024.0 * 1024.0)) << " MB > budget).\n";
     }
+  }
 
+  double e_corr_sum = 0.0;
+
+  if (is_exact) {
     #pragma omp parallel for collapse(2) reduction(+:e_corr_sum) schedule(static)
-    for (int i = 0; i < nocc_a_; ++i) {
-        for (int j = 0; j < nocc_a_; ++j) {
-            if (i < n_frozen_ || j < n_frozen_) continue;
-            double e_ij = eps(i) + eps(j);
-
-            for (int a = 0; a < nvir_a_; ++a) {
-                double den_a = e_ij - eps(nocc_a_ + a);
-                int idx_ia = (!is_exact) ? (i * nvir_a_ + a) : 0;
-                int idx_ja = (!is_exact) ? (j * nvir_a_ + a) : 0;
-
-                for (int b = 0; b < nvir_a_; ++b) {
-                    double denom = den_a - eps(nocc_a_ + b);
-                    if (std::abs(denom) < 1e-12) {
-                        t2_(i, j, a, b) = 0.0; 
-                        continue;
-                    }
-
-                    double val_iajb = 0.0, val_ibja = 0.0;
-
-                    if (is_exact) {
-                        val_iajb = eri_mo_(i, j, a, b);
-                        val_ibja = eri_mo_(i, j, b, a);
-                    } else {
-                        int idx_jb = j * nvir_a_ + b;
-                        int idx_ib = i * nvir_a_ + b;
-                        
-                        // O(1) Memory Access menggantikan O(N) .dot() loop
-                        val_iajb = G_aa(idx_ia, idx_jb);
-                        val_ibja = G_aa(idx_ib, idx_ja);
-                    }
-
-                    double t_val = val_iajb / denom;
-                    t2_(i, j, a, b) = t_val;
-                    e_corr_sum += t_val * (2.0 * val_iajb - val_ibja);
-                }
-            }
+    for (int i = n_frozen_; i < nocc_a_; ++i) {
+      for (int j = n_frozen_; j < nocc_a_; ++j) {
+        const double e_ij = eps(i) + eps(j);
+        for (int a = 0; a < nvir_a_; ++a) {
+          const double den_a = e_ij - eps(nocc_a_ + a);
+          for (int b = 0; b < nvir_a_; ++b) {
+            const double denom = den_a - eps(nocc_a_ + b);
+            if (std::abs(denom) < 1e-12) continue;
+            const double val_iajb = eri_mo_(i, j, a, b);
+            const double val_ibja = eri_mo_(i, j, b, a);
+            const double t_val = val_iajb / denom;
+            t2_(i, j, a, b) = t_val;
+            e_corr_sum += t_val * (2.0 * val_iajb - val_ibja);
+          }
         }
+      }
     }
-    e_corr_ = e_corr_sum;
+  } else {
+  
+    std::vector<std::pair<int, int>> pairs;
+    pairs.reserve(static_cast<size_t>(nocc_a_ - n_frozen_) * (nocc_a_ - n_frozen_ + 1) / 2);
+    for (int i = n_frozen_; i < nocc_a_; ++i) {
+      for (int j = i; j < nocc_a_; ++j) pairs.emplace_back(i, j);
+    }
+
+    #pragma omp parallel reduction(+:e_corr_sum)
+    {
+      Eigen::MatrixXd G_ij(nvir_a_, nvir_a_);
+      #pragma omp for schedule(dynamic, 1) nowait
+      for (size_t p = 0; p < pairs.size(); ++p) {
+        const int i = pairs[p].first;
+        const int j = pairs[p].second;
+        const double sym_w = (i == j) ? 1.0 : 2.0;
+        const double e_ij = eps(i) + eps(j);
+
+        G_ij.noalias() = B_ia_P_alpha_.middleRows(i * nvir_a_, nvir_a_)
+                       * B_ia_P_alpha_.middleRows(j * nvir_a_, nvir_a_).transpose();
+
+        for (int a = 0; a < nvir_a_; ++a) {
+          const double den_a = e_ij - eps(nocc_a_ + a);
+          for (int b = 0; b < nvir_a_; ++b) {
+            const double denom = den_a - eps(nocc_a_ + b);
+            if (std::abs(denom) < 1e-12) continue;
+            const double val_iajb = G_ij(a, b);
+            const double val_ibja = G_ij(b, a);
+            const double t_val = val_iajb / denom;
+            e_corr_sum += sym_w * t_val * (2.0 * val_iajb - val_ibja);
+            if (store_t2) {
+              t2_(i, j, a, b) = t_val;
+              if (i != j) t2_(j, i, b, a) = t_val;
+            }
+          }
+        }
+      }
+    }
+  }
+  e_corr_ = e_corr_sum;
 }
 
 MP2Result RMP2::compute() {
@@ -269,171 +301,247 @@ void UMP2::transform_integrals() {
 }
 
 double UMP2::compute_ss_alpha() {
-    bool is_exact = (config_.eri_method == "exact");
-    if (is_exact) {
-        const auto& eri_ao = integrals_->compute_eri();
-        const Eigen::MatrixXd& Ca_occ = scf_.C_alpha.leftCols(nocc_a_);
-        const Eigen::MatrixXd& Ca_vir = scf_.C_alpha.rightCols(nvir_a_);
-        auto eri_chem = integrals::ERITransformer::transform_custom(
-            eri_ao, Ca_occ, Ca_vir, Ca_occ, Ca_vir, nbf_, nocc_a_, nvir_a_, nocc_a_, nvir_a_
-        );
-        Eigen::array< int, 4 > shuf = {0, 2, 1, 3};
-        eri_aaaa_ = eri_chem.shuffle(shuf);
-    }
+  const bool is_exact = (config_.eri_method == "exact");
+  if (is_exact) {
+    const auto& eri_ao = integrals_->compute_eri();
+    const Eigen::MatrixXd& Ca_occ = scf_.C_alpha.leftCols(nocc_a_);
+    const Eigen::MatrixXd& Ca_vir = scf_.C_alpha.rightCols(nvir_a_);
+    auto eri_chem = integrals::ERITransformer::transform_custom(
+        eri_ao, Ca_occ, Ca_vir, Ca_occ, Ca_vir, nbf_, nocc_a_, nvir_a_, nocc_a_, nvir_a_);
+    Eigen::array<int, 4> shuf = {0, 2, 1, 3};
+    eri_aaaa_ = eri_chem.shuffle(shuf);
+  }
 
+  const size_t req_bytes = static_cast<size_t>(nocc_a_) * nocc_a_ * nvir_a_ * nvir_a_ * sizeof(double);
+  const size_t budget = static_cast<size_t>(std::max(0.25, config_.memory_limit_gb * 0.35) * 1e9);
+  const bool store_t2 = is_exact || (req_bytes <= budget);
+  if (store_t2) {
     t2_aa_ = Eigen::Tensor<double, 4>(nocc_a_, nocc_a_, nvir_a_, nvir_a_);
     t2_aa_.setZero();
-    const auto& eo = scf_.orbital_energies_alpha;
-    const auto& ev = scf_.orbital_energies_alpha.tail(nvir_a_);
-    double e_sum = 0.0;
+  } else {
+    t2_aa_.resize(0, 0, 0, 0);
+  }
 
-    Eigen::MatrixXd G_aa;
-    if (!is_exact) G_aa = parallel_gemm_abt_mp2(B_ia_P_alpha_, B_ia_P_alpha_);
+  const auto& eo = scf_.orbital_energies_alpha;
+  const auto& ev = scf_.orbital_energies_alpha.tail(nvir_a_);
+  double e_sum = 0.0;
 
+  if (is_exact) {
     #pragma omp parallel for collapse(3) reduction(+:e_sum) schedule(static)
-    for(int b = 0; b < nvir_a_; ++b) {
-        for(int a = 0; a < nvir_a_; ++a) {
-            for(int j = 0; j < nocc_a_; ++j) {
-                if (j < n_frozen_) continue;
-                double den_partial = -ev(a) - ev(b) + eo(j);
-
-                for(int i = 0; i < nocc_a_; ++i) {
-                    if (i < n_frozen_) continue;
-                    double den = den_partial + eo(i);
-                    double val_iajb = 0.0, val_ibja = 0.0;
-                    
-                    if (is_exact) {
-                        val_iajb = eri_aaaa_(i, j, a, b);
-                        val_ibja = eri_aaaa_(i, j, b, a);
-                    } else {
-                        val_iajb = G_aa(i * nvir_a_ + a, j * nvir_a_ + b);
-                        val_ibja = G_aa(i * nvir_a_ + b, j * nvir_a_ + a);
-                    }
-
-                    if (std::abs(den) < 1e-12) { t2_aa_(i, j, a, b) = 0.0; continue; }
-          double val_num = val_iajb - val_ibja;
-          double safe_den = (config_.level_shift > 1e-12 && std::abs(den) < config_.level_shift)
-                            ? std::copysign(config_.level_shift, den) : den;
-          double val_t = val_num / safe_den;
-                    t2_aa_(i, j, a, b) = val_t;
-                    e_sum += val_t * val_num;
-                }
-            }
+    for (int b = 0; b < nvir_a_; ++b) {
+      for (int a = 0; a < nvir_a_; ++a) {
+        for (int j = n_frozen_; j < nocc_a_; ++j) {
+          const double den_partial = -ev(a) - ev(b) + eo(j);
+          for (int i = n_frozen_; i < nocc_a_; ++i) {
+            const double den = den_partial + eo(i);
+            if (std::abs(den) < 1e-12) continue;
+            const double val_num = eri_aaaa_(i, j, a, b) - eri_aaaa_(i, j, b, a);
+            const double safe_den = (config_.level_shift > 1e-12 && std::abs(den) < config_.level_shift)
+                ? std::copysign(config_.level_shift, den) : den;
+            const double val_t = val_num / safe_den;
+            t2_aa_(i, j, a, b) = val_t;
+            e_sum += val_t * val_num;
+          }
         }
+      }
     }
-    if (is_exact) eri_aaaa_.resize(0,0,0,0);
-    return 0.25 * e_sum;
+    eri_aaaa_.resize(0, 0, 0, 0);
+  } else {
+    std::vector<std::pair<int, int>> pairs;
+    for (int i = n_frozen_; i < nocc_a_; ++i) {
+      for (int j = i + 1; j < nocc_a_; ++j) pairs.emplace_back(i, j);
+    }
+    #pragma omp parallel reduction(+:e_sum)
+    {
+      Eigen::MatrixXd G_ij(nvir_a_, nvir_a_);
+      #pragma omp for schedule(dynamic, 1) nowait
+      for (size_t p = 0; p < pairs.size(); ++p) {
+        const int i = pairs[p].first;
+        const int j = pairs[p].second;
+        const double e_ij = eo(i) + eo(j);
+        G_ij.noalias() = B_ia_P_alpha_.middleRows(i * nvir_a_, nvir_a_)
+                       * B_ia_P_alpha_.middleRows(j * nvir_a_, nvir_a_).transpose();
+        for (int a = 0; a < nvir_a_; ++a) {
+          const double den_a = e_ij - ev(a);
+          for (int b = 0; b < nvir_a_; ++b) {
+            const double den = den_a - ev(b);
+            if (std::abs(den) < 1e-12) continue;
+            const double val_num = G_ij(a, b) - G_ij(b, a);
+            const double safe_den = (config_.level_shift > 1e-12 && std::abs(den) < config_.level_shift)
+                ? std::copysign(config_.level_shift, den) : den;
+            const double val_t = val_num / safe_den;
+            e_sum += 2.0 * val_t * val_num;
+            if (store_t2) {
+              t2_aa_(i, j, a, b) = val_t;
+              t2_aa_(j, i, a, b) = -val_t;
+            }
+          }
+        }
+      }
+    }
+  }
+  return 0.25 * e_sum;
 }
 
 double UMP2::compute_ss_beta() {
-    if (nocc_b_ == 0 || nvir_b_ == 0) return 0.0;
-    bool is_exact = (config_.eri_method == "exact");
-    if (is_exact) {
-        const auto& eri_ao = integrals_->compute_eri();
-        const Eigen::MatrixXd& Cb_occ = scf_.C_beta.leftCols(nocc_b_);
-        const Eigen::MatrixXd& Cb_vir = scf_.C_beta.rightCols(nvir_b_);
-        auto eri_chem = integrals::ERITransformer::transform_custom(
-            eri_ao, Cb_occ, Cb_vir, Cb_occ, Cb_vir, nbf_, nocc_b_, nvir_b_, nocc_b_, nvir_b_
-        );
-        Eigen::array< int, 4 > shuf = {0, 2, 1, 3};
-        eri_bbbb_ = eri_chem.shuffle(shuf);
-    }
+  if (nocc_b_ == 0 || nvir_b_ == 0) return 0.0;
+  const bool is_exact = (config_.eri_method == "exact");
+  if (is_exact) {
+    const auto& eri_ao = integrals_->compute_eri();
+    const Eigen::MatrixXd& Cb_occ = scf_.C_beta.leftCols(nocc_b_);
+    const Eigen::MatrixXd& Cb_vir = scf_.C_beta.rightCols(nvir_b_);
+    auto eri_chem = integrals::ERITransformer::transform_custom(
+        eri_ao, Cb_occ, Cb_vir, Cb_occ, Cb_vir, nbf_, nocc_b_, nvir_b_, nocc_b_, nvir_b_);
+    Eigen::array<int, 4> shuf = {0, 2, 1, 3};
+    eri_bbbb_ = eri_chem.shuffle(shuf);
+  }
 
+  const size_t req_bytes = static_cast<size_t>(nocc_b_) * nocc_b_ * nvir_b_ * nvir_b_ * sizeof(double);
+  const size_t budget = static_cast<size_t>(std::max(0.25, config_.memory_limit_gb * 0.35) * 1e9);
+  const bool store_t2 = is_exact || (req_bytes <= budget);
+  if (store_t2) {
     t2_bb_ = Eigen::Tensor<double, 4>(nocc_b_, nocc_b_, nvir_b_, nvir_b_);
     t2_bb_.setZero();
-    const auto& eo = scf_.orbital_energies_beta;
-    const auto& ev = scf_.orbital_energies_beta.tail(nvir_b_);
-    double e_sum = 0.0;
+  } else {
+    t2_bb_.resize(0, 0, 0, 0);
+  }
 
-    // GIANT DGEMM: Hitung seluruh integral (ia|jb)_beta sekaligus dengan BLAS-3
-    Eigen::MatrixXd G_bb;
-    if (!is_exact) G_bb = parallel_gemm_abt_mp2(B_ia_P_beta_, B_ia_P_beta_);
+  const auto& eo = scf_.orbital_energies_beta;
+  const auto& ev = scf_.orbital_energies_beta.tail(nvir_b_);
+  double e_sum = 0.0;
 
+  if (is_exact) {
     #pragma omp parallel for collapse(3) reduction(+:e_sum) schedule(static)
-    for(int b = 0; b < nvir_b_; ++b) {
-        for(int a = 0; a < nvir_b_; ++a) {
-            for(int j = 0; j < nocc_b_; ++j) {
-                if (j < n_frozen_) continue;
-                double den_partial = -ev(a) - ev(b) + eo(j);
-
-                for(int i = 0; i < nocc_b_; ++i) {
-                    if (i < n_frozen_) continue;
-                    double den = den_partial + eo(i);
-                    if (std::abs(den) < 1e-12) { t2_bb_(i, j, a, b) = 0.0; continue; }
-
-                    double val_iajb = 0.0, val_ibja = 0.0;
-                    if (is_exact) {
-                        val_iajb = eri_bbbb_(i, j, a, b);
-                        val_ibja = eri_bbbb_(i, j, b, a);
-                    } else {
-                        val_iajb = G_bb(i * nvir_b_ + a, j * nvir_b_ + b);
-                        val_ibja = G_bb(i * nvir_b_ + b, j * nvir_b_ + a);
-                    }
-
-                    double val_num = val_iajb - val_ibja;
-                    double val_t = val_num / den;
-                    t2_bb_(i, j, a, b) = val_t;
-                    e_sum += val_t * val_num;
-                }
-            }
+    for (int b = 0; b < nvir_b_; ++b) {
+      for (int a = 0; a < nvir_b_; ++a) {
+        for (int j = n_frozen_; j < nocc_b_; ++j) {
+          const double den_partial = -ev(a) - ev(b) + eo(j);
+          for (int i = n_frozen_; i < nocc_b_; ++i) {
+            const double den = den_partial + eo(i);
+            if (std::abs(den) < 1e-12) continue;
+            const double val_num = eri_bbbb_(i, j, a, b) - eri_bbbb_(i, j, b, a);
+            const double val_t = val_num / den;
+            t2_bb_(i, j, a, b) = val_t;
+            e_sum += val_t * val_num;
+          }
         }
+      }
     }
-    if (is_exact) eri_bbbb_.resize(0,0,0,0);
-    return 0.25 * e_sum;
+    eri_bbbb_.resize(0, 0, 0, 0);
+  } else {
+    std::vector<std::pair<int, int>> pairs;
+    for (int i = n_frozen_; i < nocc_b_; ++i) {
+      for (int j = i + 1; j < nocc_b_; ++j) pairs.emplace_back(i, j);
+    }
+    #pragma omp parallel reduction(+:e_sum)
+    {
+      Eigen::MatrixXd G_ij(nvir_b_, nvir_b_);
+      #pragma omp for schedule(dynamic, 1) nowait
+      for (size_t p = 0; p < pairs.size(); ++p) {
+        const int i = pairs[p].first;
+        const int j = pairs[p].second;
+        const double e_ij = eo(i) + eo(j);
+        G_ij.noalias() = B_ia_P_beta_.middleRows(i * nvir_b_, nvir_b_)
+                       * B_ia_P_beta_.middleRows(j * nvir_b_, nvir_b_).transpose();
+        for (int a = 0; a < nvir_b_; ++a) {
+          const double den_a = e_ij - ev(a);
+          for (int b = 0; b < nvir_b_; ++b) {
+            const double den = den_a - ev(b);
+            if (std::abs(den) < 1e-12) continue;
+            const double val_num = G_ij(a, b) - G_ij(b, a);
+            const double val_t = val_num / den;
+            e_sum += 2.0 * val_t * val_num;
+            if (store_t2) {
+              t2_bb_(i, j, a, b) = val_t;
+              t2_bb_(j, i, a, b) = -val_t;
+            }
+          }
+        }
+      }
+    }
+  }
+  return 0.25 * e_sum;
 }
 
 double UMP2::compute_os() {
-    if (nocc_a_ == 0 || nvir_a_ == 0 || nocc_b_ == 0 || nvir_b_ == 0) return 0.0;
-    bool is_exact = (config_.eri_method == "exact");
-    if (is_exact) {
-        const auto& eri_ao = integrals_->compute_eri();
-        const Eigen::MatrixXd& Ca_occ = scf_.C_alpha.leftCols(nocc_a_);
-        const Eigen::MatrixXd& Ca_vir = scf_.C_alpha.rightCols(nvir_a_);
-        const Eigen::MatrixXd& Cb_occ = scf_.C_beta.leftCols(nocc_b_);
-        const Eigen::MatrixXd& Cb_vir = scf_.C_beta.rightCols(nvir_b_);
-        auto eri_chem = integrals::ERITransformer::transform_custom(
-            eri_ao, Ca_occ, Ca_vir, Cb_occ, Cb_vir, nbf_, nocc_a_, nvir_a_, nocc_b_, nvir_b_
-        );
-        Eigen::array< int, 4 > shuf = {0, 2, 1, 3};
-        eri_aabb_ = eri_chem.shuffle(shuf);
-    }
+  if (nocc_a_ == 0 || nvir_a_ == 0 || nocc_b_ == 0 || nvir_b_ == 0) return 0.0;
+  const bool is_exact = (config_.eri_method == "exact");
+  if (is_exact) {
+    const auto& eri_ao = integrals_->compute_eri();
+    const Eigen::MatrixXd& Ca_occ = scf_.C_alpha.leftCols(nocc_a_);
+    const Eigen::MatrixXd& Ca_vir = scf_.C_alpha.rightCols(nvir_a_);
+    const Eigen::MatrixXd& Cb_occ = scf_.C_beta.leftCols(nocc_b_);
+    const Eigen::MatrixXd& Cb_vir = scf_.C_beta.rightCols(nvir_b_);
+    auto eri_chem = integrals::ERITransformer::transform_custom(
+        eri_ao, Ca_occ, Ca_vir, Cb_occ, Cb_vir, nbf_, nocc_a_, nvir_a_, nocc_b_, nvir_b_);
+    Eigen::array<int, 4> shuf = {0, 2, 1, 3};
+    eri_aabb_ = eri_chem.shuffle(shuf);
+  }
 
+  const size_t req_bytes = static_cast<size_t>(nocc_a_) * nocc_b_ * nvir_a_ * nvir_b_ * sizeof(double);
+  const size_t budget = static_cast<size_t>(std::max(0.25, config_.memory_limit_gb * 0.35) * 1e9);
+  const bool store_t2 = is_exact || (req_bytes <= budget);
+  if (store_t2) {
     t2_ab_ = Eigen::Tensor<double, 4>(nocc_a_, nocc_b_, nvir_a_, nvir_b_);
     t2_ab_.setZero();
-    const auto& eoa = scf_.orbital_energies_alpha;
-    const auto& eva = scf_.orbital_energies_alpha.tail(nvir_a_);
-    const auto& eob = scf_.orbital_energies_beta;
-    const auto& evb = scf_.orbital_energies_beta.tail(nvir_b_);
-    double e_sum = 0.0;
+  } else {
+    t2_ab_.resize(0, 0, 0, 0);
+  }
 
-    // GIANT DGEMM: Hitung seluruh integral (ia|jb)_alpha_beta sekaligus dengan BLAS-3
-    Eigen::MatrixXd G_ab;
-    if (!is_exact) G_ab = parallel_gemm_abt_mp2(B_ia_P_alpha_, B_ia_P_beta_);
+  const auto& eoa = scf_.orbital_energies_alpha;
+  const auto& eva = scf_.orbital_energies_alpha.tail(nvir_a_);
+  const auto& eob = scf_.orbital_energies_beta;
+  const auto& evb = scf_.orbital_energies_beta.tail(nvir_b_);
+  double e_sum = 0.0;
 
+  if (is_exact) {
     #pragma omp parallel for collapse(3) reduction(+:e_sum) schedule(static)
-    for(int b = 0; b < nvir_b_; ++b) {
-        for(int a = 0; a < nvir_a_; ++a) {
-            for(int j = 0; j < nocc_b_; ++j) {
-                if (j < n_frozen_) continue;
-                double den_partial = -eva(a) - evb(b) + eob(j);
-
-                for(int i = 0; i < nocc_a_; ++i) {
-                    if (i < n_frozen_) continue;
-                    double den = den_partial + eoa(i);
-                    if (std::abs(den) < 1e-12) { t2_ab_(i, j, a, b) = 0.0; continue; }
-
-                    double val_num = is_exact ? eri_aabb_(i, j, a, b) 
-                                              : G_ab(i * nvir_a_ + a, j * nvir_b_ + b);
-
-                    double val_t = val_num / den;
-                    t2_ab_(i, j, a, b) = val_t;
-                    e_sum += val_t * val_num;
-                }
-            }
+    for (int b = 0; b < nvir_b_; ++b) {
+      for (int a = 0; a < nvir_a_; ++a) {
+        for (int j = n_frozen_; j < nocc_b_; ++j) {
+          const double den_partial = -eva(a) - evb(b) + eob(j);
+          for (int i = n_frozen_; i < nocc_a_; ++i) {
+            const double den = den_partial + eoa(i);
+            if (std::abs(den) < 1e-12) continue;
+            const double val_num = eri_aabb_(i, j, a, b);
+            const double val_t = val_num / den;
+            t2_ab_(i, j, a, b) = val_t;
+            e_sum += val_t * val_num;
+          }
         }
+      }
     }
-    if (is_exact) eri_aabb_.resize(0,0,0,0);
-    return e_sum;
+    eri_aabb_.resize(0, 0, 0, 0);
+  } else {
+    std::vector<std::pair<int, int>> pairs;
+    for (int i = n_frozen_; i < nocc_a_; ++i) {
+      for (int j = n_frozen_; j < nocc_b_; ++j) pairs.emplace_back(i, j);
+    }
+    #pragma omp parallel reduction(+:e_sum)
+    {
+      Eigen::MatrixXd G_ij(nvir_a_, nvir_b_);
+      #pragma omp for schedule(dynamic, 1) nowait
+      for (size_t p = 0; p < pairs.size(); ++p) {
+        const int i = pairs[p].first;
+        const int j = pairs[p].second;
+        const double e_ij = eoa(i) + eob(j);
+        G_ij.noalias() = B_ia_P_alpha_.middleRows(i * nvir_a_, nvir_a_)
+                       * B_ia_P_beta_.middleRows(j * nvir_b_, nvir_b_).transpose();
+        for (int a = 0; a < nvir_a_; ++a) {
+          const double den_a = e_ij - eva(a);
+          for (int b = 0; b < nvir_b_; ++b) {
+            const double den = den_a - evb(b);
+            if (std::abs(den) < 1e-12) continue;
+            const double val_num = G_ij(a, b);
+            const double val_t = val_num / den;
+            e_sum += val_t * val_num;
+            if (store_t2) t2_ab_(i, j, a, b) = val_t;
+          }
+        }
+      }
+    }
+  }
+  return e_sum;
 }
 MP2Result UMP2::compute() {
     auto start_time = std::chrono::high_resolution_clock::now();
@@ -764,8 +872,6 @@ OMP2::OMP2(const Molecule& mol, const BasisSet& basis,
     nb_  = nocc_b_;
     va_  = nvir_a_; 
     vb_  = nvir_b_;
-    n_frozen_ = 0; 
-
     e_ss_ = 0.0;
     e_os_ = 0.0;
 
@@ -887,33 +993,47 @@ void OMP2::transform_integrals() {
     }
 }
 void OMP2::pseudocanonicalize() {
-    build_fock_fast(scf_.P_alpha, scf_.P_beta, scf_.F_alpha, scf_.F_beta);
-    
-    auto diag_block = [&](const Eigen::MatrixXd& F_ao, Eigen::MatrixXd& C, Eigen::VectorXd& eps, int nocc, int nvir) {
-        Eigen::MatrixXd C_occ = C.leftCols(nocc);
-        Eigen::MatrixXd C_vir = C.rightCols(nvir);
-        Eigen::MatrixXd F_oo(nocc, nocc);
-        Eigen::MatrixXd F_vv(nvir, nvir);
-        F_oo.noalias() = C_occ.transpose() * (F_ao * C_occ);
-        F_vv.noalias() = C_vir.transpose() * (F_ao * C_vir);
+  build_fock_fast(scf_.P_alpha, scf_.P_beta, scf_.F_alpha, scf_.F_beta);
 
-        Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_o(F_oo);
-        Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_v(F_vv);
-        C.leftCols(nocc).noalias() = C_occ * es_o.eigenvectors();
-        C.rightCols(nvir).noalias() = C_vir * es_v.eigenvectors();
+  auto diag_block = [&](const Eigen::MatrixXd& F_ao, Eigen::MatrixXd& C, Eigen::VectorXd& eps, int nocc, int nvir) {
+    eps.resize(nocc + nvir);
+    const int nf = std::clamp(n_frozen_, 0, nocc);
+    if (nf > 0 && nf < nocc) {
+      Eigen::MatrixXd C_frz = C.leftCols(nf);
+      Eigen::MatrixXd F_ff = C_frz.transpose() * (F_ao * C_frz);
+      Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_f(0.5 * (F_ff + F_ff.transpose()));
+      C.leftCols(nf).noalias() = C_frz * es_f.eigenvectors();
+      eps.head(nf) = es_f.eigenvalues();
 
-        eps.resize(nocc + nvir);
-        eps.head(nocc) = es_o.eigenvalues();
-        eps.tail(nvir) = es_v.eigenvalues();
-    };
-
-    diag_block(scf_.F_alpha, scf_.C_alpha, scf_.orbital_energies_alpha, na_, va_);
-    scf_.P_alpha.noalias() = scf_.C_alpha.leftCols(na_) * scf_.C_alpha.leftCols(na_).transpose();
-
-    if (nb_ > 0 && vb_ > 0) {
-        diag_block(scf_.F_beta, scf_.C_beta, scf_.orbital_energies_beta, nb_, vb_);
-        scf_.P_beta.noalias() = scf_.C_beta.leftCols(nb_) * scf_.C_beta.leftCols(nb_).transpose();
+      const int nact = nocc - nf;
+      Eigen::MatrixXd C_act = C.middleCols(nf, nact);
+      Eigen::MatrixXd F_aa = C_act.transpose() * (F_ao * C_act);
+      Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_a(0.5 * (F_aa + F_aa.transpose()));
+      C.middleCols(nf, nact).noalias() = C_act * es_a.eigenvectors();
+      eps.segment(nf, nact) = es_a.eigenvalues();
+    } else if (nocc > 0) {
+      Eigen::MatrixXd C_occ = C.leftCols(nocc);
+      Eigen::MatrixXd F_oo = C_occ.transpose() * (F_ao * C_occ);
+      Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_o(0.5 * (F_oo + F_oo.transpose()));
+      C.leftCols(nocc).noalias() = C_occ * es_o.eigenvectors();
+      eps.head(nocc) = es_o.eigenvalues();
     }
+    if (nvir > 0) {
+      Eigen::MatrixXd C_vir = C.rightCols(nvir);
+      Eigen::MatrixXd F_vv = C_vir.transpose() * (F_ao * C_vir);
+      Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_v(0.5 * (F_vv + F_vv.transpose()));
+      C.rightCols(nvir).noalias() = C_vir * es_v.eigenvectors();
+      eps.tail(nvir) = es_v.eigenvalues();
+    }
+  };
+
+  diag_block(scf_.F_alpha, scf_.C_alpha, scf_.orbital_energies_alpha, na_, va_);
+  scf_.P_alpha.noalias() = scf_.C_alpha.leftCols(na_) * scf_.C_alpha.leftCols(na_).transpose();
+
+  if (nb_ > 0 && vb_ > 0) {
+    diag_block(scf_.F_beta, scf_.C_beta, scf_.orbital_energies_beta, nb_, vb_);
+    scf_.P_beta.noalias() = scf_.C_beta.leftCols(nb_) * scf_.C_beta.leftCols(nb_).transpose();
+  }
 }
 
 void OMP2::transform_3center_mo_cholesky() {
@@ -1065,14 +1185,14 @@ void OMP2::execute_macro_iterations(DIIS& diis_a, DIIS& diis_b, int macro_iter) 
         Eigen::MatrixXd wa = 2.0 * F_gen_a_.block(na_, 0, va_, na_);
         for (int i = 0; i < na_; ++i) {
             for (int a = 0; a < va_; ++a) {
-                if (use_sym && (scf_.irreps_alpha[i] ^ scf_.irreps_alpha[na_ + a]) != 0) orbital_gradient_(idx++) = 0.0;
+                if (i < n_frozen_ || (use_sym && (scf_.irreps_alpha[i] ^ scf_.irreps_alpha[na_ + a]) != 0)) orbital_gradient_(idx++) = 0.0;
                 else orbital_gradient_(idx++) = wa(a, i);
             }
         }
         Eigen::MatrixXd wb = 2.0 * F_gen_b_.block(nb_, 0, vb_, nb_);
         for (int i = 0; i < nb_; ++i) {
             for (int b = 0; b < vb_; ++b) {
-                if (use_sym && (scf_.irreps_beta[i] ^ scf_.irreps_beta[nb_ + b]) != 0) orbital_gradient_(idx++) = 0.0;
+                if (i < n_frozen_ || (use_sym && (scf_.irreps_beta[i] ^ scf_.irreps_beta[nb_ + b]) != 0)) orbital_gradient_(idx++) = 0.0;
                 else orbital_gradient_(idx++) = wb(b, i);
             }
         }
@@ -1084,7 +1204,7 @@ void OMP2::execute_macro_iterations(DIIS& diis_a, DIIS& diis_b, int macro_iter) 
         
         for (int i = 0; i < na_; ++i) {
             for (int a = 0; a < va_; ++a) {
-                if (use_sym && (scf_.irreps_alpha[i] ^ scf_.irreps_alpha[na_ + a]) != 0) orbital_gradient_(idx++) = 0.0;
+                if (i < n_frozen_ || (use_sym && (scf_.irreps_alpha[i] ^ scf_.irreps_alpha[na_ + a]) != 0)) orbital_gradient_(idx++) = 0.0;
                 else orbital_gradient_(idx++) = w_sym(a, i);
             }
         }

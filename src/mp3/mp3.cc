@@ -343,8 +343,9 @@ BaseMP3::BaseMP3(const SCFResult& scf, const MP2Result& mp2, const MP2Config& co
     nbf_ = scf_.C_alpha.rows();
     no_a_ = scf_.n_occ_alpha; no_b_ = scf_.n_occ_beta;
     nv_a_ = nbf_ - no_a_;     nv_b_ = nbf_ - no_b_;
-    n_aux_ = scf_.L_mat.cols(); 
-
+    n_aux_ = scf_.L_mat.cols();
+    
+    if (config_.n_frozen > 0) n_frozen_ = config_.n_frozen; 
     if (mp2_.C_alpha.rows() == nbf_) scf_.C_alpha = mp2_.C_alpha;
     if (mp2_.C_beta.rows() == nbf_)  scf_.C_beta  = mp2_.C_beta;
     if (mp2_.orbital_energies_alpha.size() == nbf_) scf_.orbital_energies_alpha = mp2_.orbital_energies_alpha;

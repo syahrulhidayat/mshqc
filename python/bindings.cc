@@ -207,7 +207,11 @@ namespace mshqc_auto_tune {
             {"Co",27},{"Ni",28},{"Cu",29},{"Zn",30},{"Ga",31},{"Ge",32},{"As",33},{"Se",34},
             {"Br",35},{"Kr",36},{"Rb",37},{"Sr",38},{"Y",39},{"Zr",40},{"Nb",41},{"Mo",42},
             {"Tc",43},{"Ru",44},{"Rh",45},{"Pd",46},{"Ag",47},{"Cd",48},{"In",49},{"Sn",50},
-            {"Sb",51},{"Te",52},{"I",53},{"Xe",54}
+            {"Sb",51},{"Te",52},{"I",53},{"Xe",54},
+            {"Cs",55},{"Ba",56},{"La",57},{"Ce",58},{"Pr",59},{"Nd",60},{"Pm",61},{"Sm",62},{"Eu",63},{"Gd",64},
+            {"Tb",65},{"Dy",66},{"Ho",67},{"Er",68},{"Tm",69},{"Yb",70},{"Lu",71},
+            {"Hf",72},{"Ta",73},{"W",74},{"Re",75},{"Os",76},{"Ir",77},{"Pt",78},{"Au",79},{"Hg",80},
+            {"Tl",81},{"Pb",82},{"Bi",83},{"Po",84},{"At",85},{"Rn",86}
         };
         if (sym.empty()) throw std::invalid_argument("Empty atom symbol");
         std::string key = sym;
@@ -752,7 +756,10 @@ NB_MODULE(_mshqc, m) {
         .def_rw("energy_threshold", &MP2Config::energy_threshold)
         .def_rw("gradient_threshold", &MP2Config::gradient_threshold)
         .def_rw("print_level", &MP2Config::print_level)
-        .def_rw("opt_method", &MP2Config::opt_method);
+        .def_rw("opt_method", &MP2Config::opt_method)
+        .def_rw("n_frozen", &MP2Config::n_frozen)
+        .def_rw("freeze_core", &MP2Config::freeze_core)
+        .def_rw("memory_limit_gb", &MP2Config::memory_limit_gb);
 
     nb::class_<MP2Result>(m, "MP2Result")
         .def(nb::init<>())
@@ -900,7 +907,9 @@ NB_MODULE(_mshqc, m) {
     m.def("bohr_to_angstrom", [](double bohr) { return bohr * 0.529177210903; }, "Convert Bohr to Angstrom");
     m.def("angstrom_to_bohr", [](double angstrom) { return angstrom / 0.529177210903; }, "Convert Angstrom to Bohr");
     m.def("hartree_to_ev", [](double hartree) { return hartree * 27.211386245988; }, "Convert Hartree to eV");
-    m.def("hartree_to_kcal", [](double hartree) { return hartree * 627.5094740631; }, "Convert Hartree to kcal/mol");
+    m.def("standard_frozen_core", &mshqc::compute_standard_frozen_core, nb::arg("mol"),
+        "Compute standard noble-gas frozen core orbital count (Psi4 convention)");
+  m.def("hartree_to_kcal", [](double hartree) { return hartree * 627.5094740631; }, "Convert Hartree to kcal/mol");
     
     nb::class_<mshqc::gradient::GeomOptConfig>(m, "GeomOptConfig")
         .def(nb::init<>())
