@@ -839,7 +839,9 @@ NB_MODULE(_mshqc, m) {
             new (t) RMP3(scf_guess, mp2_res, norm_conf, integrals);
         }, nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
            nb::arg("config") = MP2Config(), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
-        .def("compute", &RMP3::compute, nb::call_guard<nb::gil_scoped_release>());
+        // [INJECTED_FINAL_OPT_BINDINGS]
+        .def("compute", &RMP3::compute, nb::call_guard<nb::gil_scoped_release>())
+        .def("set_frozen_core", &mshqc::BaseMP3::set_frozen_core, nb::arg("n_frozen"));
 
     nb::class_<UMP3>(m, "UMP3")
         .def(nb::init<const SCFResult&, const MP2Result&, const MP2Config&, std::shared_ptr<IntegralEngine>>(),
@@ -853,7 +855,8 @@ NB_MODULE(_mshqc, m) {
             new (t) UMP3(scf_guess, mp2_res, norm_conf, integrals);
         }, nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
            nb::arg("config") = MP2Config(), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
-        .def("compute", &UMP3::compute, nb::call_guard<nb::gil_scoped_release>());
+        .def("compute", &UMP3::compute, nb::call_guard<nb::gil_scoped_release>())
+        .def("set_frozen_core", &mshqc::BaseMP3::set_frozen_core, nb::arg("n_frozen"));
         
     nb::class_<ROMP3, UMP3>(m, "ROMP3")
         .def(nb::init<const SCFResult&, const MP2Result&, const MP2Config&, std::shared_ptr<IntegralEngine>>(),
@@ -867,7 +870,8 @@ NB_MODULE(_mshqc, m) {
             new (t) ROMP3(scf_guess, mp2_res, norm_conf, integrals);
         }, nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
            nb::arg("config") = MP2Config(), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
-        .def("compute", &ROMP3::compute, nb::call_guard<nb::gil_scoped_release>());
+        .def("compute", &ROMP3::compute, nb::call_guard<nb::gil_scoped_release>())
+        .def("set_frozen_core", &mshqc::BaseMP3::set_frozen_core, nb::arg("n_frozen"));
 
     nb::class_<OMP3>(m, "OMP3")
         .def("__init__", [](OMP3 *t, const Molecule& mol, const BasisSet& basis,
@@ -877,7 +881,8 @@ NB_MODULE(_mshqc, m) {
                          mshqc_auto_tune::normalize_mp2_config(config, basis, scf_guess), pg, pl);
         }, nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
            nb::arg("config") = MP2Config(), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
-        .def("compute", &OMP3::compute_omp3, nb::call_guard<nb::gil_scoped_release>(), "Run Orbital-Optimized MP3");
+        .def("compute", &OMP3::compute_omp3, nb::call_guard<nb::gil_scoped_release>(), "Run Orbital-Optimized MP3")
+        .def("set_frozen_core", &mshqc::BaseMP2::set_frozen_core, nb::arg("n_frozen"));
 
     m.def("bohr_to_angstrom", [](double bohr) { return bohr * 0.529177210903; }, "Convert Bohr to Angstrom");
     m.def("angstrom_to_bohr", [](double angstrom) { return angstrom / 0.529177210903; }, "Convert Angstrom to Bohr");

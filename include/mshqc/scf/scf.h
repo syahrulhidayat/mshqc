@@ -58,8 +58,12 @@ struct SCFConfig {
     std::string eri_method = "exact";
     double df_threshold = 1e-10;
     double cholesky_threshold = 1e-9;
+    // [INJECTED_FINAL_OPT_SCF_GUESS]
     bool use_df = false;
     std::string aux_basis_name = "cc-pVDZ-JKFIT";
+    bool has_initial_guess = false;
+    Eigen::MatrixXd init_C_alpha;
+    Eigen::MatrixXd init_C_beta;
 };
 
 struct SCFResult {

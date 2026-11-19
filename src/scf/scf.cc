@@ -214,6 +214,22 @@ void compute_exchange_cholesky_dual(
     }
 }
 
+// [INJECTED_FINAL_OPT_SCF_GUESS]
+// Ortonormalisasi simetris Lowdin C_orth = C_in * (C_in^T * S * C_in)^(-1/2)
+// agar orbital terkonvergensi dari geometri tetangga x0 langsung valid pada metrik S(x0 +- h)
+Eigen::MatrixXd orthonormalize_mo_guess(const Eigen::MatrixXd& C_in, const Eigen::MatrixXd& S) {
+    const int n = static_cast<int>(S.rows());
+    if (C_in.rows() != n || C_in.cols() != n || n == 0) return Eigen::MatrixXd();
+    Eigen::MatrixXd M = C_in.transpose() * S * C_in;
+    Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(0.5 * (M + M.transpose()));
+    if (es.info() != Eigen::Success) return Eigen::MatrixXd();
+    const Eigen::VectorXd& evals = es.eigenvalues();
+    if (evals.minCoeff() < 1e-10) return Eigen::MatrixXd();
+    Eigen::VectorXd inv_sqrt = evals.array().rsqrt();
+    Eigen::MatrixXd U = es.eigenvectors();
+    return C_in * (U * inv_sqrt.asDiagonal() * U.transpose());
+}
+
 // Menghitung matriks screening maksimum per blok shell P_max(M, N) untuk In-Core SCF
 Eigen::MatrixXd compute_shell_pmax(
     int nshells,
@@ -318,6 +334,7 @@ void BaseSCF::init_integrals() {
             init_integrals_cholesky();
         } else {
             schwarz_ = precompute_shell_schwarz();
+            if (pl_ && pl_->get_unique_quartets().empty()) pl_->build(schwarz_, 1e-12);
             if (config_.scf_type == "incore") init_integrals_incore();
         }
     }
@@ -795,7 +812,7 @@ SCFResult BaseSCF::compute() {
         irreps_b = is_uhf ? symmetrizer_->assign_mo_irreps(C_beta_) : irreps_a;
     }
 
-    if (config_.use_df && L_mat_.rows() == 0 && L_mat_.cols() > 0) {
+    if (config_.use_df && config_.scf_type != "ooc" && L_mat_.rows() == 0 && L_mat_.cols() > 0) {
         if (config_.print_level > 0) std::cout << "\n  [SCF] Reloading df_tensor.h5 to packed RAM (50% footprint)...\n";
         const int n_aux = static_cast<int>(L_mat_.cols());
         const int n_tri = integrals::ao_tri_size(nbasis_);
@@ -850,6 +867,17 @@ RHF::RHF(const Molecule& mol, const BasisSet& basis, std::shared_ptr<IntegralEng
 }
 
 void RHF::initial_guess() {
+    if (config_.has_initial_guess && config_.init_C_alpha.rows() == nbasis_) {
+        Eigen::MatrixXd C_orth = orthonormalize_mo_guess(config_.init_C_alpha, S_);
+        if (C_orth.rows() == nbasis_) {
+            C_alpha_ = std::move(C_orth);
+            C_beta_ = C_alpha_;
+            occ_numbers_alpha_.resize(0);
+            update_densities();
+            energy_ = 0.0;
+            return;
+        }
+    }
     if (config_.print_level > 0) std::cout << "  [RHF] Generating Initial Guess (SAD)...\n";
     Eigen::MatrixXd P_sad = SADGuess::build(mol_, basis_);
     P_alpha_ = 0.5 * P_sad;
@@ -1224,6 +1252,20 @@ UHF::UHF(const Molecule& mol, const BasisSet& basis, std::shared_ptr<IntegralEng
 }
 
 void UHF::initial_guess() {
+    if (config_.has_initial_guess && config_.init_C_alpha.rows() == nbasis_) {
+        Eigen::MatrixXd Ca_orth = orthonormalize_mo_guess(config_.init_C_alpha, S_);
+        const Eigen::MatrixXd& Cb_src = (config_.init_C_beta.rows() == nbasis_) ? config_.init_C_beta : config_.init_C_alpha;
+        Eigen::MatrixXd Cb_orth = orthonormalize_mo_guess(Cb_src, S_);
+        if (Ca_orth.rows() == nbasis_ && Cb_orth.rows() == nbasis_) {
+            C_alpha_ = std::move(Ca_orth);
+            C_beta_ = std::move(Cb_orth);
+            occ_numbers_alpha_.resize(0);
+            occ_numbers_beta_.resize(0);
+            update_densities();
+            energy_ = 0.0;
+            return;
+        }
+    }
     if (config_.print_level > 0) std::cout << "  [UHF] Generating Initial Guess (SAD)...\n";
     Eigen::MatrixXd P_sad = SADGuess::build(mol_, basis_);
     P_alpha_ = 0.5 * P_sad;
@@ -1274,6 +1316,18 @@ ROHF::ROHF(const Molecule& mol, const BasisSet& basis, std::shared_ptr<IntegralE
 }
 
 void ROHF::initial_guess() {
+    if (config_.has_initial_guess && config_.init_C_alpha.rows() == nbasis_) {
+        Eigen::MatrixXd C_orth = orthonormalize_mo_guess(config_.init_C_alpha, S_);
+        if (C_orth.rows() == nbasis_) {
+            C_alpha_ = std::move(C_orth);
+            C_beta_ = C_alpha_;
+            occ_numbers_alpha_.resize(0);
+            occ_numbers_beta_.resize(0);
+            update_densities();
+            energy_ = 0.0;
+            return;
+        }
+    }
     if (config_.print_level > 0) std::cout << "  [ROHF] Generating Initial Guess (SAD)...\n";
     Eigen::MatrixXd P_sad = SADGuess::build(mol_, basis_);
     double n_tot = static_cast<double>(n_alpha_ + n_beta_);
@@ -1547,7 +1601,7 @@ SCFResult ROHF::compute() {
         if (dE < config_.energy_threshold && dP < config_.density_threshold) { converged = true; break; }
     }
 
-    if (config_.use_df && L_mat_.rows() == 0 && L_mat_.cols() > 0) {
+    if (config_.use_df && config_.scf_type != "ooc" && L_mat_.rows() == 0 && L_mat_.cols() > 0) {
         if (config_.print_level > 0) std::cout << "\n  [SCF] Reloading df_tensor.h5 to packed RAM (50% footprint)...\n";
         const int n_aux = static_cast<int>(L_mat_.cols());
         const int n_tri = integrals::ao_tri_size(nbasis_);

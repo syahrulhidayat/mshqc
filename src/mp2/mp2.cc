@@ -1090,7 +1090,28 @@ void OMP2::execute_macro_iterations(DIIS& diis_a, DIIS& diis_b, int macro_iter) 
         }
     }
 }
+// [INJECTED_FINAL_OPT_OMP_GUESS]
 MP2Result OMP2::compute() {
+    auto orth_omp_guess = [&](const Eigen::MatrixXd& C_in) -> Eigen::MatrixXd {
+        if (C_in.rows() != nbf_ || C_in.cols() != nbf_ || nbf_ == 0) return Eigen::MatrixXd();
+        Eigen::MatrixXd M = C_in.transpose() * S_ * C_in;
+        Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es(0.5 * (M + M.transpose()));
+        if (es.info() != Eigen::Success || es.eigenvalues().minCoeff() < 1e-10) return Eigen::MatrixXd();
+        Eigen::VectorXd inv_sq = es.eigenvalues().array().rsqrt();
+        return C_in * (es.eigenvectors() * inv_sq.asDiagonal() * es.eigenvectors().transpose());
+    };
+    if (config_.has_initial_guess && config_.init_C_alpha.rows() == nbf_) {
+        Eigen::MatrixXd Ca_g = orth_omp_guess(config_.init_C_alpha);
+        if (Ca_g.rows() == nbf_) {
+            scf_.C_alpha = std::move(Ca_g);
+            if (config_.init_C_beta.rows() == nbf_) {
+                Eigen::MatrixXd Cb_g = orth_omp_guess(config_.init_C_beta);
+                scf_.C_beta = (Cb_g.rows() == nbf_) ? std::move(Cb_g) : scf_.C_alpha;
+            } else {
+                scf_.C_beta = scf_.C_alpha;
+            }
+        }
+    }
     C_a_current_ = scf_.C_alpha;
     C_b_current_ = scf_.C_beta;
 

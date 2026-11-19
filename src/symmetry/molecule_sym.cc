@@ -78,8 +78,9 @@ void BasisSymmetrizer::build_map_and_matrices() {
     const auto& ops = pg_.get_operations();
     int n_ops = static_cast<int>(ops.size());
 
+    // [INJECTED_FINAL_OPT_NO_DENSE_RAO]
     shell_map_.assign(n_ops, std::vector<int>(nshells, -1));
-    R_ao_.assign(n_ops, Eigen::MatrixXd::Zero(nbasis, nbasis));
+    R_ao_.clear();
     ao_perm_.assign(n_ops, std::vector<int>(nbasis, -1));
     ao_phase_.assign(n_ops, std::vector<double>(nbasis, 0.0));
 

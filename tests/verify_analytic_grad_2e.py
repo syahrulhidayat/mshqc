@@ -6,7 +6,11 @@ terhadap Central Finite-Difference (fd_step = 5e-4 Bohr) dan invarian translasi.
 import numpy as np
 import mshqc
 
-
+HPCGeometryOptimizer = (
+    getattr(mshqc, "HPCGeometryOptimizer", None)
+    or getattr(getattr(mshqc, "_mshqc", None), "HPCGeometryOptimizer", None)
+    or getattr(getattr(mshqc, "geom_opt", None), "HPCGeometryOptimizer")
+)
 def check_system(name: str, mol: mshqc.Molecule, method: str, basis: str = "cc-pVDZ") -> None:
     cfg_ana = mshqc.GeomOptConfig()
     cfg_ana.method = method

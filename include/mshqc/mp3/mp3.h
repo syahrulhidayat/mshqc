@@ -49,8 +49,10 @@ protected:
     MP2Config config_; 
     std::shared_ptr<IntegralEngine> ints_;
 
+    // [INJECTED_FINAL_OPT_MP3_FROZEN]
     int nbf_, no_a_, no_b_, nv_a_, nv_b_;
     int n_aux_;
+    int n_frozen_ = 0;
     
     
 
@@ -61,6 +63,7 @@ public:
     virtual ~BaseMP3() = default;
     
     virtual MP3Result compute() = 0;
+    void set_frozen_core(int n_frozen) { n_frozen_ = std::max(0, n_frozen); }
     
     
 

@@ -523,7 +523,7 @@ MP3Result RMP3::compute() {
         for (int j = 0; j < no_a_; ++j) {
             for (int a = 0; a < nv_a_; ++a) {
                 for (int b = 0; b < nv_a_; ++b) {
-                    e_mp3 += W(i, j, a, b) * (2.0 * t2_aa_(i, j, a, b) - t2_aa_(i, j, b, a));
+                    e_mp3 += W(i, j, a, b) * (2.0 * t2_use(i, j, a, b) - t2_use(i, j, b, a));
                 }
             }
         }
@@ -549,8 +549,59 @@ MP3Result UMP3::compute() {
     auto t_start = std::chrono::high_resolution_clock::now();
     if(omp_get_thread_num() == 0) std::cout << "\n=== UMP3 (Unified Native TBLIS - Cholesky) ===\n";
 
-    const auto& Cao = scf_.C_alpha.leftCols(no_a_); const auto& Cav = scf_.C_alpha.rightCols(nv_a_);
-    const auto& Cbo = scf_.C_beta.leftCols(no_b_);  const auto& Cbv = scf_.C_beta.rightCols(nv_b_);
+    const int f_a = std::clamp(n_frozen_, 0, no_a_);
+    const int f_b = std::clamp(n_frozen_, 0, no_b_);
+    const int no_a_saved = no_a_;
+    const int no_b_saved = no_b_;
+    Eigen::Tensor<double, 4> t2_aa_saved, t2_bb_saved, t2_ab_saved;
+    Eigen::MatrixXd Bov_a_saved, Bov_b_saved;
+
+    if (f_a > 0 || f_b > 0) {
+        const int na_act = no_a_ - f_a;
+        const int nb_act = no_b_ - f_b;
+        t2_aa_saved = std::move(t2_aa_);
+        t2_aa_ = Eigen::Tensor<double, 4>(na_act, na_act, nv_a_, nv_a_);
+        #pragma omp parallel for collapse(4) schedule(static)
+        for (int i = 0; i < na_act; ++i)
+            for (int j = 0; j < na_act; ++j)
+                for (int a = 0; a < nv_a_; ++a)
+                    for (int b = 0; b < nv_a_; ++b)
+                        t2_aa_(i, j, a, b) = t2_aa_saved(f_a + i, f_a + j, a, b);
+
+        if (t2_bb_.size() > 0 && nb_act > 0) {
+            t2_bb_saved = std::move(t2_bb_);
+            t2_bb_ = Eigen::Tensor<double, 4>(nb_act, nb_act, nv_b_, nv_b_);
+            #pragma omp parallel for collapse(4) schedule(static)
+            for (int i = 0; i < nb_act; ++i)
+                for (int j = 0; j < nb_act; ++j)
+                    for (int a = 0; a < nv_b_; ++a)
+                        for (int b = 0; b < nv_b_; ++b)
+                            t2_bb_(i, j, a, b) = t2_bb_saved(f_b + i, f_b + j, a, b);
+        }
+        if (t2_ab_.size() > 0 && na_act > 0 && nb_act > 0) {
+            t2_ab_saved = std::move(t2_ab_);
+            t2_ab_ = Eigen::Tensor<double, 4>(na_act, nb_act, nv_a_, nv_b_);
+            #pragma omp parallel for collapse(4) schedule(static)
+            for (int i = 0; i < na_act; ++i)
+                for (int j = 0; j < nb_act; ++j)
+                    for (int a = 0; a < nv_a_; ++a)
+                        for (int b = 0; b < nv_b_; ++b)
+                            t2_ab_(i, j, a, b) = t2_ab_saved(f_a + i, f_b + j, a, b);
+        }
+        if (config_.eri_method != "exact") {
+            Bov_a_saved = std::move(mp2_.B_ia_P_alpha);
+            mp2_.B_ia_P_alpha = Bov_a_saved.bottomRows(static_cast<Eigen::Index>(na_act) * nv_a_);
+            if (Bov_b_saved.rows() == 0 && mp2_.B_ia_P_beta.rows() > 0 && nb_act > 0) {
+                Bov_b_saved = std::move(mp2_.B_ia_P_beta);
+                mp2_.B_ia_P_beta = Bov_b_saved.bottomRows(static_cast<Eigen::Index>(nb_act) * nv_b_);
+            }
+        }
+        no_a_ = na_act;
+        no_b_ = nb_act;
+    }
+
+    const Eigen::MatrixXd Cao = scf_.C_alpha.middleCols(f_a, no_a_); const auto& Cav = scf_.C_alpha.rightCols(nv_a_);
+    const Eigen::MatrixXd Cbo = scf_.C_beta.middleCols(f_b, no_b_);  const auto& Cbv = scf_.C_beta.rightCols(nv_b_);
     double e3_aa = 0.0, e3_bb = 0.0, e3_ab = 0.0;
 
     Eigen::Tensor< double, 4 > dummy_bb, dummy_ab;
@@ -952,6 +1003,16 @@ MP3Result UMP3::compute() {
         } else {
             e3_aa += 1.0 * tensor_dot(t2_aa_, Waa);
         }
+    }
+
+    if (f_a > 0 || f_b > 0) {
+        no_a_ = no_a_saved;
+        no_b_ = no_b_saved;
+        t2_aa_ = std::move(t2_aa_saved);
+        if (t2_bb_saved.size() > 0) t2_bb_ = std::move(t2_bb_saved);
+        if (t2_ab_saved.size() > 0) t2_ab_ = std::move(t2_ab_saved);
+        if (Bov_a_saved.rows() > 0) mp2_.B_ia_P_alpha = std::move(Bov_a_saved);
+        if (Bov_b_saved.rows() > 0) mp2_.B_ia_P_beta = std::move(Bov_b_saved);
     }
 
     MP3Result res;

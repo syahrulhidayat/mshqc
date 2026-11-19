@@ -46,7 +46,9 @@ class PetiteList {
 public:
     PetiteList(const BasisSet& basis, const PointGroup& pg);
     
+    // [INJECTED_FINAL_OPT_PETITE_SCHWARZ]
     void build();
+    void build(const Eigen::MatrixXd& schwarz, double cutoff = 1e-12);
     
     
 

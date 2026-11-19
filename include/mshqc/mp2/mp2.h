@@ -57,8 +57,12 @@ struct MP2Config {
     double gradient_threshold = -1.0;    
     int print_level = 1;
     bool exact_2rdm = true;              
+    // [INJECTED_FINAL_OPT_OMP_GUESS]
     double level_shift = 1e-12;
-    double memory_limit_gb = 4.0;        
+    double memory_limit_gb = 4.0;
+    bool has_initial_guess = false;
+    Eigen::MatrixXd init_C_alpha;
+    Eigen::MatrixXd init_C_beta;        
 };
 
 struct MP2Result {

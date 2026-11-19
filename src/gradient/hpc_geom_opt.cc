@@ -362,7 +362,8 @@ bool supports_analytic_df_gradient(const GeomOptConfig& cfg) {
     method = method.substr(3);
   }
   if (eri != "df") return false;
-  return (method == "scf" || method == "hf" || method == "rhf" || method == "uhf" || method == "omp2");
+  // [INJECTED_FINAL_OPT_GEOM_GUESS_AND_ROHF]
+    return (method == "scf" || method == "hf" || method == "rhf" || method == "uhf" || method == "rohf" || method == "omp2");
 }
 
 GradCurvatureResult compute_analytic_df_gradient_internal(

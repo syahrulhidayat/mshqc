@@ -414,10 +414,9 @@ std::vector<double> IntegralEngine::compute_2c2e_block(int sh_P, int sh_Q) {
     if (t_buffer.size() < sz) t_buffer.resize(sz);
     
     int shls[2] = {sh_P, sh_Q};
-    CINTOpt* tmp_opt = static_cast<CINTOpt*>(opt_); // Memakai optimizer Libcint
-    
-    // Panggil Libcint 2-center 2-electron (TANPA OPTIMIZER)
-    int has_val = cint2c2e_sph(t_buffer.data(), shls, atm_.data(), mol_.n_atoms(), bas_.data(), basis_.n_shells(), env_.data(), nullptr);
+    // [INJECTED_FINAL_OPT_CINTOPT_VECTORS]
+    CINTOpt* tmp_opt = static_cast<CINTOpt*>(opt_2c2e_);
+    int has_val = cint2c2e_sph(t_buffer.data(), shls, atm_.data(), mol_.n_atoms(), bas_.data(), basis_.n_shells(), env_.data(), tmp_opt);
     
     if (!has_val) {
         std::fill(t_buffer.begin(), t_buffer.begin() + sz, 0.0);
@@ -436,8 +435,8 @@ std::vector<double> IntegralEngine::compute_3c2e_block(int sh_i, int sh_j, int s
     
     if (t_buffer.size() < sz) t_buffer.resize(sz);
     int shls[3] = {sh_i, sh_j, sh_P};
-    CINTOpt* tmp_opt = static_cast<CINTOpt*>(opt_);
-    int has_val = cint3c2e_sph(t_buffer.data(), shls, atm_.data(), mol_.n_atoms(), bas_.data(), basis_.n_shells(), env_.data(), nullptr);
+    CINTOpt* tmp_opt = static_cast<CINTOpt*>(opt_3c2e_);
+    int has_val = cint3c2e_sph(t_buffer.data(), shls, atm_.data(), mol_.n_atoms(), bas_.data(), basis_.n_shells(), env_.data(), tmp_opt);
     
     if (!has_val) {
         std::fill(t_buffer.begin(), t_buffer.begin() + sz, 0.0);

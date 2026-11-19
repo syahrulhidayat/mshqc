@@ -465,10 +465,11 @@ void CholeskyERI::reset() {
     decomposed_ = false;
 }
 
+// [INJECTED_FINAL_OPT_CHOL_HDF5_PACKED]
 double CholeskyERI::compression_ratio() const {
     if (n_basis_ == 0) return 0.0;
     double full_size = std::pow(n_basis_, 4);
-    double chol_size = std::max(1.0, (double)n_vectors_ * n_basis_ * n_basis_);
+    double chol_size = std::max(1.0, static_cast<double>(L_mat_.size()));
     return full_size / chol_size;
 }
 

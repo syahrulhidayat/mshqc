@@ -61,7 +61,13 @@ int PetiteList::find_shell_at(const Eigen::Vector3d& pos, int original_shell_idx
     return -1;
 }
 
+// [INJECTED_FINAL_OPT_PETITE_SCHWARZ]
 void PetiteList::build() {
+    build(Eigen::MatrixXd(), 1e-12);
+}
+
+void PetiteList::build(const Eigen::MatrixXd& schwarz, double cutoff) {
+    const bool use_schwarz = (schwarz.rows() == basis_.n_shells() && schwarz.cols() == basis_.n_shells());
     unique_pairs_.clear();
     unique_quartets_.clear();
     int nshells = basis_.n_shells();
@@ -118,9 +124,12 @@ void PetiteList::build() {
         #pragma omp for schedule(dynamic, 1) nowait
         for (int M = 0; M < nshells; ++M) {
             for (int N = 0; N <= M; ++N) {
+                const double q_mn = use_schwarz ? schwarz(M, N) : 1.0;
+                if (use_schwarz && q_mn < cutoff) continue;
                 for (int P = 0; P <= M; ++P) {
                     int Q_max = (M == P) ? N : P;
                     for (int Q = 0; Q <= Q_max; ++Q) {
+                        if (use_schwarz && q_mn * schwarz(P, Q) < cutoff) continue;
                         bool is_canonical = true;
                         int stabilizer_count = 0;
 
