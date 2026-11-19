@@ -903,6 +903,7 @@ NB_MODULE(_mshqc, m) {
         .def_rw("trust_radius_max", &mshqc::gradient::GeomOptConfig::trust_radius_max)
         .def_rw("trust_radius_min", &mshqc::gradient::GeomOptConfig::trust_radius_min)
         .def_rw("fd_step_bohr", &mshqc::gradient::GeomOptConfig::fd_step_bohr)
+        .def_rw("use_analytic_gradient", &mshqc::gradient::GeomOptConfig::use_analytic_gradient)
         .def_rw("project_trans_rot", &mshqc::gradient::GeomOptConfig::project_trans_rot)
         .def_rw("verbose", &mshqc::gradient::GeomOptConfig::verbose)
         .def_rw("xyz_traj_file", &mshqc::gradient::GeomOptConfig::xyz_traj_file);

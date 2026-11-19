@@ -225,6 +225,12 @@ void PointGroup::detect() {
             if (sig_xy) { m << 1,0,0, 0,1,0, 0,0,-1; operations_.push_back({SymOpType::Reflection, 1, m, "s(xy)"}); }
             if (sig_yz) { m << -1,0,0, 0,1,0, 0,0,1; operations_.push_back({SymOpType::Reflection, 1, m, "s(yz)"}); }
         }
+        else if (c2x) { // [INJECTED_PRIORITAS_3]
+            Eigen::Matrix3d m;
+            m << 1,0,0, 0,-1,0, 0,0,-1; operations_.push_back({SymOpType::Rotation, 2, m, "C2(x)"});
+            if (sig_xy) { m << 1,0,0, 0,1,0, 0,0,-1; operations_.push_back({SymOpType::Reflection, 1, m, "s(xy)"}); }
+            if (sig_xz) { m << 1,0,0, 0,-1,0, 0,0,1; operations_.push_back({SymOpType::Reflection, 1, m, "s(xz)"}); }
+        }
         return;
     }
 

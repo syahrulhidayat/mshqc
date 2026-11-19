@@ -331,13 +331,20 @@ void BaseSCF::init_integrals() {
     }
 }
 
+// [INJECTED_PRIORITAS_3]
 Eigen::MatrixXd BaseSCF::precompute_shell_schwarz() {
     int nshells = basis_.n_shells();
     Eigen::MatrixXd Q = Eigen::MatrixXd::Zero(nshells, nshells);
 
+    int max_dim = 1;
+    for (int s = 0; s < nshells; ++s) max_dim = std::max(max_dim, shell_sizes_[s]);
+    const size_t buf_sz = std::max<size_t>(
+        64, static_cast<size_t>(max_dim) * max_dim * max_dim * max_dim
+    );
+
     #pragma omp parallel
     {
-        std::vector<double> buf(10000);
+        std::vector<double> buf(buf_sz);
         #pragma omp for schedule(dynamic, 1) nowait
         for (int M = 0; M < nshells; ++M) {
             for (int N = 0; N <= M; ++N) {
@@ -788,12 +795,29 @@ SCFResult BaseSCF::compute() {
         irreps_b = is_uhf ? symmetrizer_->assign_mo_irreps(C_beta_) : irreps_a;
     }
 
-    if (config_.use_df && L_mat_.rows() == 0) {
-        if (config_.print_level > 0) std::cout << "\n  [SCF] Reloading df_tensor.h5 to RAM for MP2 compatibility...\n";
-        int n_aux = L_mat_.cols();
-        L_mat_.resize(nbasis_ * nbasis_, n_aux);
+    if (config_.use_df && L_mat_.rows() == 0 && L_mat_.cols() > 0) {
+        if (config_.print_level > 0) std::cout << "\n  [SCF] Reloading df_tensor.h5 to packed RAM (50% footprint)...\n";
+        const int n_aux = static_cast<int>(L_mat_.cols());
+        const int n_tri = integrals::ao_tri_size(nbasis_);
+        L_mat_.resize(n_tri, n_aux);
         utils::HDF5TensorIO io("df_tensor.h5", utils::HDF5TensorIO::Mode::READ_ONLY);
-        io.read_slice_4d("df_tensor", {0, 0, 0, 0}, {(long)n_aux, (long)nbasis_, (long)nbasis_, 1}, L_mat_.data());
+        constexpr int kChunk = 64;
+        for (int K0 = 0; K0 < n_aux; K0 += kChunk) {
+            const int k_sz = std::min(kChunk, n_aux - K0);
+            Eigen::MatrixXd sq_chunk(static_cast<Eigen::Index>(nbasis_) * nbasis_, k_sz);
+            io.read_slice_4d("df_tensor", {K0, 0, 0, 0}, {k_sz, (long)nbasis_, (long)nbasis_, 1}, sq_chunk.data());
+            #pragma omp parallel for schedule(static)
+            for (int c = 0; c < k_sz; ++c) {
+                const double* s_col = sq_chunk.col(c).data();
+                double* d_col = L_mat_.col(K0 + c).data();
+                for (int r = 0; r < nbasis_; ++r) {
+                    const int base = r * (r + 1) / 2;
+                    for (int q = 0; q <= r; ++q) {
+                        d_col[base + q] = s_col[r + q * nbasis_];
+                    }
+                }
+            }
+        }
     }
 
     SCFResult r;
@@ -1006,15 +1030,40 @@ void UHF::build_fock_matrix() {
         Eigen::MatrixXd Kb_acc = Eigen::MatrixXd::Zero(nbasis_, nbasis_);
 
         int n_chol = L_mat_.cols();
-        const bool is_packed = integrals::is_packed_ao_matrix(L_mat_, nbasis_);
-        J_mat = integrals::compute_coulomb_from_ao_factor(L_mat_, P_tot, nbasis_);
+        bool is_ooc = (L_mat_.rows() == 0 && n_chol > 0);
+        const bool is_packed = (!is_ooc) && integrals::is_packed_ao_matrix(L_mat_, nbasis_);
 
-        const double* L_ptr = L_mat_.data();
-        if (sym_spin && !use_mo_alg) {
-            compute_exchange_cholesky_single(L_ptr, nbasis_, n_chol, Ca_fac, Ka_acc, is_packed);
-            Kb_acc = Ka_acc;
-        } else {
-            compute_exchange_cholesky_dual(L_ptr, nbasis_, n_chol, Ca_fac, Cb_fac, Ka_acc, Kb_acc, is_packed);
+        std::unique_ptr<utils::HDF5TensorIO> io = nullptr;
+        if (is_ooc) io = std::make_unique<utils::HDF5TensorIO>("df_tensor.h5", utils::HDF5TensorIO::Mode::READ_ONLY);
+
+        int chunk_size = is_ooc ? 128 : n_chol;
+        Eigen::Map<const Eigen::VectorXd> P_tot_flat(P_tot.data(), nbasis_ * nbasis_);
+
+        if (!is_ooc) {
+            J_mat = integrals::compute_coulomb_from_ao_factor(L_mat_, P_tot, nbasis_);
+        }
+
+        for (int K_start = 0; K_start < n_chol; K_start += chunk_size) {
+            int K_end = std::min(n_chol, K_start + chunk_size);
+            int k_size = K_end - K_start;
+
+            Eigen::MatrixXd L_chunk;
+            if (is_ooc) {
+                L_chunk.resize(static_cast<Eigen::Index>(nbasis_) * nbasis_, k_size);
+                io->read_slice_4d("df_tensor", {K_start, 0, 0, 0}, {k_size, (long)nbasis_, (long)nbasis_, 1}, L_chunk.data());
+
+                Eigen::VectorXd X_J_chunk = L_chunk.transpose() * P_tot_flat;
+                Eigen::VectorXd J_flat_chunk = L_chunk * X_J_chunk;
+                J_mat.noalias() += Eigen::Map<Eigen::MatrixXd>(J_flat_chunk.data(), nbasis_, nbasis_);
+            }
+
+            const double* L_ptr = is_ooc ? L_chunk.data() : L_mat_.col(K_start).data();
+            if (sym_spin && !use_mo_alg) {
+                compute_exchange_cholesky_single(L_ptr, nbasis_, k_size, Ca_fac, Ka_acc, is_packed);
+                Kb_acc = Ka_acc;
+            } else {
+                compute_exchange_cholesky_dual(L_ptr, nbasis_, k_size, Ca_fac, Cb_fac, Ka_acc, Kb_acc, is_packed);
+            }
         }
 
         G_accum_a_ = 0.5 * ((J_mat - Ka_acc) + (J_mat - Ka_acc).transpose());
@@ -1498,12 +1547,29 @@ SCFResult ROHF::compute() {
         if (dE < config_.energy_threshold && dP < config_.density_threshold) { converged = true; break; }
     }
 
-    if (config_.use_df && L_mat_.rows() == 0) {
-        if (config_.print_level > 0) std::cout << "\n  [SCF] Reloading df_tensor.h5 to RAM for MP2 compatibility...\n";
-        int n_aux = L_mat_.cols();
-        L_mat_.resize(nbasis_ * nbasis_, n_aux);
+    if (config_.use_df && L_mat_.rows() == 0 && L_mat_.cols() > 0) {
+        if (config_.print_level > 0) std::cout << "\n  [SCF] Reloading df_tensor.h5 to packed RAM (50% footprint)...\n";
+        const int n_aux = static_cast<int>(L_mat_.cols());
+        const int n_tri = integrals::ao_tri_size(nbasis_);
+        L_mat_.resize(n_tri, n_aux);
         utils::HDF5TensorIO io("df_tensor.h5", utils::HDF5TensorIO::Mode::READ_ONLY);
-        io.read_slice_4d("df_tensor", {0, 0, 0, 0}, {(long)n_aux, (long)nbasis_, (long)nbasis_, 1}, L_mat_.data());
+        constexpr int kChunk = 64;
+        for (int K0 = 0; K0 < n_aux; K0 += kChunk) {
+            const int k_sz = std::min(kChunk, n_aux - K0);
+            Eigen::MatrixXd sq_chunk(static_cast<Eigen::Index>(nbasis_) * nbasis_, k_sz);
+            io.read_slice_4d("df_tensor", {K0, 0, 0, 0}, {k_sz, (long)nbasis_, (long)nbasis_, 1}, sq_chunk.data());
+            #pragma omp parallel for schedule(static)
+            for (int c = 0; c < k_sz; ++c) {
+                const double* s_col = sq_chunk.col(c).data();
+                double* d_col = L_mat_.col(K0 + c).data();
+                for (int r = 0; r < nbasis_; ++r) {
+                    const int base = r * (r + 1) / 2;
+                    for (int q = 0; q <= r; ++q) {
+                        d_col[base + q] = s_col[r + q * nbasis_];
+                    }
+                }
+            }
+        }
     }
 
     SCFResult r;

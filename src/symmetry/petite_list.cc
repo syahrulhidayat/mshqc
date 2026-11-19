@@ -22,6 +22,9 @@
 #include <cmath>
 #include <limits>
 #include <algorithm>
+#ifdef _OPENMP
+#include <omp.h>
+#endif
 #ifdef I
 #undef I
 #endif
@@ -106,51 +109,60 @@ void PetiteList::build() {
     }
 
     // ========================================================================
-    // ALGORITMA 4D (Untuk RHF Direct SCF)
+    // ALGORITMA 4D (OpenMP Parallel untuk Direct/InCore SCF)
     // ========================================================================
-    for (int M = 0; M < nshells; ++M) {
-        for (int N = 0; N <= M; ++N) {
-            for (int P = 0; P <= M; ++P) {
-                int Q_max = (M == P) ? N : P;
-                for (int Q = 0; Q <= Q_max; ++Q) {
-                    
-                    bool is_canonical = true;
-                    int stabilizer_count = 0;
+    // [INJECTED_PRIORITAS_3]
+    #pragma omp parallel
+    {
+        decltype(unique_quartets_) local_q;
+        #pragma omp for schedule(dynamic, 1) nowait
+        for (int M = 0; M < nshells; ++M) {
+            for (int N = 0; N <= M; ++N) {
+                for (int P = 0; P <= M; ++P) {
+                    int Q_max = (M == P) ? N : P;
+                    for (int Q = 0; Q <= Q_max; ++Q) {
+                        bool is_canonical = true;
+                        int stabilizer_count = 0;
 
-                    for (size_t k = 0; k < ops.size(); ++k) {
-                        int m_new = shell_map[k][M];
-                        int n_new = shell_map[k][N];
-                        int p_new = shell_map[k][P];
-                        int q_new = shell_map[k][Q];
+                        for (size_t k = 0; k < ops.size(); ++k) {
+                            int m_new = shell_map[k][M];
+                            int n_new = shell_map[k][N];
+                            int p_new = shell_map[k][P];
+                            int q_new = shell_map[k][Q];
 
-                        if (m_new < n_new) std::swap(m_new, n_new);
-                        if (p_new < q_new) std::swap(p_new, q_new);
-                        if (m_new < p_new || (m_new == p_new && n_new < q_new)) {
-                            std::swap(m_new, p_new);
-                            std::swap(n_new, q_new);
-                        }
+                            if (m_new < n_new) std::swap(m_new, n_new);
+                            if (p_new < q_new) std::swap(p_new, q_new);
+                            if (m_new < p_new || (m_new == p_new && n_new < q_new)) {
+                                std::swap(m_new, p_new);
+                                std::swap(n_new, q_new);
+                            }
 
-                        if (m_new > M) { is_canonical = false; break; }
-                        else if (m_new == M) {
-                            if (n_new > N) { is_canonical = false; break; }
-                            else if (n_new == N) {
-                                if (p_new > P) { is_canonical = false; break; }
-                                else if (p_new == P) {
-                                    if (q_new > Q) { is_canonical = false; break; }
-                                    else if (q_new == Q) {
-                                        stabilizer_count++;
+                            if (m_new > M) { is_canonical = false; break; }
+                            else if (m_new == M) {
+                                if (n_new > N) { is_canonical = false; break; }
+                                else if (n_new == N) {
+                                    if (p_new > P) { is_canonical = false; break; }
+                                    else if (p_new == P) {
+                                        if (q_new > Q) { is_canonical = false; break; }
+                                        else if (q_new == Q) {
+                                            stabilizer_count++;
+                                        }
                                     }
                                 }
                             }
                         }
-                    }
 
-                    if (is_canonical) {
-                        double weight = group_order / (double)stabilizer_count;
-                        unique_quartets_.push_back({M, N, P, Q, weight});
+                        if (is_canonical) {
+                            double weight = group_order / (double)stabilizer_count;
+                            local_q.push_back({M, N, P, Q, weight});
+                        }
                     }
                 }
             }
+        }
+        #pragma omp critical
+        {
+            unique_quartets_.insert(unique_quartets_.end(), local_q.begin(), local_q.end());
         }
     }
 }

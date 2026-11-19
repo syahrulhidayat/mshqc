@@ -60,9 +60,11 @@ std::pair<Eigen::MatrixXd, std::vector<int>> SalcBuilder::build_salc(const Eigen
         sorted_irreps[i] = sort_data[i].first;
     }
     
+    // [INJECTED_PRIORITAS_3]
+    Eigen::MatrixXd SX = S * X_salc;
     for (int i = 0; i < nbf; ++i) {
-        double norm = std::sqrt(X_salc.col(i).transpose() * S * X_salc.col(i));
-        X_salc.col(i) /= norm;
+        double norm_sq = X_salc.col(i).dot(SX.col(i));
+        if (norm_sq > 1e-14) X_salc.col(i) /= std::sqrt(norm_sq);
     }
 
     return {X_salc, sorted_irreps};
