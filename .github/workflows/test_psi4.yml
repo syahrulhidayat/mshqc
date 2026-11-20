@@ -1,0 +1,96 @@
+name: Psi4 Only - Heavy Atoms & Large Molecules Reference
+
+on:
+  push:
+    branches:
+      - build-pypi
+      - test-geom
+      - test
+      - main
+    paths:
+      - "tests/run_psi4_heavy_large.py"
+      - ".github/workflows/test-psi4-heavy-large.yml"
+  workflow_dispatch:
+
+env:
+  OMP_NUM_THREADS: "4"
+  OMP_WAIT_POLICY: "PASSIVE"
+  MKL_NUM_THREADS: "1"
+  OPENBLAS_NUM_THREADS: "1"
+  PYTHONUNBUFFERED: "1"
+  PYTHONIOENCODING: "utf-8"
+
+jobs:
+  psi4_heavy_large_only:
+    name: "Psi4 Reference Heavy & Large (${{ matrix.os }})"
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up Micromamba & Psi4 Environment (psi4_env)
+        uses: mamba-org/setup-micromamba@v2
+        with:
+          init-shell: bash
+          environment-name: psi4_env
+          cache-environment: true
+          create-args: >-
+            -c conda-forge
+            python=3.11
+            psi4
+            numpy
+            scipy
+            pip
+
+      - name: Patch LibXC Compatibility in Psi4 (if needed)
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          if ! python -c "import psi4" >/dev/null 2>&1; then
+            echo "Mendeteksi ketidakcocokan fungsional LibXC pada Psi4, menerapkan patch proc_table.py..."
+            python - << 'EOF'
+          import pathlib, re, sys
+          for p in pathlib.Path(sys.prefix).rglob("psi4/driver/procrouting/proc_table.py"):
+              txt = p.read_text(encoding="utf-8")
+              pattern = r"for key in functionals:\s+ssuper = build_superfunctional_from_dictionary\(functionals\[key\], 1, 1, True\)\[0\]"
+              replacement = (
+                  "for key in list(functionals.keys()):\n"
+                  "    try:\n"
+                  "        ssuper = build_superfunctional_from_dictionary(functionals[key], 1, 1, True)[0]\n"
+                  "    except Exception:\n"
+                  "        functionals.pop(key, None)\n"
+                  "        continue"
+              )
+              new_txt, count = re.subn(pattern, replacement, txt)
+              if count > 0:
+                  p.write_text(new_txt, encoding="utf-8")
+                  print(f"Berhasil melakukan patch proc_table.py pada: {p}")
+          EOF
+          fi
+          python -c "import psi4; print('Psi4 berhasil dimuat, versi:', psi4.__version__)"
+
+      - name: Run Psi4 Heavy & Large Reference Suite (run_psi4_heavy_large.py)
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          export PSI_SCRATCH="$RUNNER_TEMP/psi4_scratch"
+          mkdir -p "$PSI_SCRATCH"
+          python -u tests/run_psi4_heavy_large.py 2>&1 | tee psi4_heavy_large_running_log.txt
+          test -s psi4_heavy_large_raw.json
+          rm -rf "$PSI_SCRATCH"
+
+      - name: Upload Psi4 Logs & Raw JSON
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: psi4-only-heavy-large-${{ matrix.os }}
+          if-no-files-found: ignore
+          path: |
+            psi4_heavy_large_running_log.txt
+            psi4_heavy_large_raw.json

@@ -1,12 +1,8 @@
 name: Heavy Atoms & Large Molecules Benchmark (mshqc vs Psi4)
 
 on:
-  push:
-    branches:
-      - build-pypi
-      - test-geom
-      - test
-      - main
+  
+    
   workflow_dispatch:
 
 env:
