@@ -2,7 +2,7 @@
 """
 tests/run_psi4_heavy_large.py
 -----------------------------
-Benchmark Referensi Psi4 (read_scf_3index=False untuk kompatibilitas MemDFJK -> dfocc):
+Benchmark Referensi Psi4 (DF-RHF / DF-OMP2 / DF-OMP3):
 - Atom berat hingga Z=36 (Ar, HBr, Kr) all-electron & freeze_core=True
 - Molekul menengah-besar (C6H6 cc-pVDZ 114 BF, C10H8 cc-pVDZ 188 BF, C6H6 cc-pVTZ 264 BF)
 Menghasilkan: psi4_heavy_large_raw.json
@@ -72,6 +72,27 @@ CASES = [
 ]
 
 
+def set_case_options(basis_name: str, aux: str, fc: bool) -> None:
+    psi4.core.clean_options()
+    psi4.set_options({
+        "basis": basis_name,
+        "df_basis_scf": aux,
+        "df_basis_mp2": aux,
+        "df_basis_cc": aux,
+        "reference": "rhf",
+        "scf_type": "df",
+        "mp2_type": "df",
+        "mp_type": "df",
+        "cc_type": "df",
+        "freeze_core": "true" if fc else "false",
+        "e_convergence": 1e-9,
+        "d_convergence": 1e-9,
+        "r_convergence": 1e-6,
+        "rms_mograd_convergence": 1e-5,
+        "max_mograd_convergence": 1e-4,
+    })
+
+
 def main():
     psi4.set_num_threads(N_THREADS)
     psi4.set_memory("6 GB")
@@ -85,52 +106,43 @@ def main():
     for label, atoms, q, mult, basis_name, fc, do_omp3 in CASES:
         aux = f"{basis_name}-RI"
         psi4.core.clean()
-        psi4.core.clean_options()
+        set_case_options(basis_name, aux, fc)
 
         g_lines = [f"{q} {mult}", "units angstrom", "symmetry c1"] + [
             f"{s} {x} {y} {z}" for s, x, y, z in atoms
         ]
         p4_mol = psi4.geometry("\n".join(g_lines))
-        psi4.set_options({
-            "basis": basis_name,
-            "df_basis_scf": aux,
-            "df_basis_mp2": aux,
-            "df_basis_cc": aux,
-            "reference": "rhf",
-            "scf_type": "df",
-            "mp2_type": "df",
-            "mp_type": "df",
-            "cc_type": "df",
-            "df_ints_io": "save",          
-            "freeze_core": "true" if fc else "false",
-            "e_convergence": 1e-9,
-            "d_convergence": 1e-9,
-            "r_convergence": 1e-6,
-            "rms_mograd_convergence": 1e-5,
-            "max_mograd_convergence": 1e-4,
-            "read_scf_3index": True,      
-        })
 
+        # 1. Standalone RHF SCF timing & metadata
         t0 = time.perf_counter()
         e_scf, p4_scf = psi4.energy("scf", molecule=p4_mol, return_wfn=True)
         t_scf = time.perf_counter() - t0
         e_scf = float(e_scf)
         nbf = int(p4_scf.basisset().nbf())
         nf = int(p4_scf.nfrzc())
+        del p4_scf
 
+        # 2. OMP2 (biarkan run_dfocc menjalankan SCF post_scf=True sendiri)
+        psi4.core.clean()
+        set_case_options(basis_name, aux, fc)
         t0 = time.perf_counter()
-        e_omp2 = float(psi4.energy("omp2", ref_wfn=p4_scf, molecule=p4_mol))
-        t_omp2 = time.perf_counter() - t0
+        e_omp2 = float(psi4.energy("omp2", molecule=p4_mol))
+        t_omp2_total = time.perf_counter() - t0
+        t_omp2 = max(0.0, t_omp2_total - t_scf)
 
+        # 3. OMP3 (opsional)
         t_omp3 = None
+        t_omp3_total = None
         e_omp3 = None
         if do_omp3:
             psi4.core.clean()
-            _, p4_scf2 = psi4.energy("scf", molecule=p4_mol, return_wfn=True)
+            set_case_options(basis_name, aux, fc)
             t0 = time.perf_counter()
-            e_omp3 = float(psi4.energy("omp3", ref_wfn=p4_scf2, molecule=p4_mol))
-            t_omp3 = time.perf_counter() - t0
+            e_omp3 = float(psi4.energy("omp3", molecule=p4_mol))
+            t_omp3_total = time.perf_counter() - t0
+            t_omp3 = max(0.0, t_omp3_total - t_scf)
 
+        psi4.core.clean()
         rss = peak_rss_mb()
         omp3_str = f"{t_omp3:>8.3f}" if do_omp3 else "    skip"
         print(
@@ -148,7 +160,9 @@ def main():
             "n_frozen": nf,
             "t_scf": t_scf,
             "t_omp2": t_omp2,
+            "t_omp2_total": t_omp2_total,
             "t_omp3": t_omp3,
+            "t_omp3_total": t_omp3_total,
             "e_scf": e_scf,
             "e_omp2": e_omp2,
             "e_omp3": e_omp3,
@@ -159,8 +173,6 @@ def main():
         "engine": "psi4",
         "version": str(psi4.__version__),
         "n_threads": N_THREADS,
-        "df_ints_io": "save",
-        "read_scf_3index": True,
         "cases": results,
     }
     with open("psi4_heavy_large_raw.json", "w", encoding="utf-8") as f:
