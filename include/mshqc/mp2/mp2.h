@@ -51,7 +51,8 @@ inline int compute_standard_frozen_core(const Molecule& mol) {
     else if (Z <= 36) nf += 9;
     else if (Z <= 54) nf += 18;
     else if (Z <= 71) nf += 27;
-    else nf += 34;
+    else if (Z <= 86) nf += 34;
+    else nf += 43; /* [INJECTED_HPC_V5_ACTINIDE_FC] */
   }
   return nf;
 }

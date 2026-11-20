@@ -18,6 +18,8 @@
  */
 
 #include <tblis/tblis.h>
+#include <stdexcept>
+#include <cstdlib>
 #include "mshqc/symmetry/salc_builder.h"
 #include "mshqc/mp2/mp2.h"
 #include "mshqc/integrals/eri_transformer.h"
@@ -89,8 +91,25 @@ BaseMP2::BaseMP2(const Molecule& mol, const BasisSet& basis,
         combined.append(aux_basis);
         auto df_ints = std::make_shared<IntegralEngine>(mol_, combined);
         integrals::DensityFittingERI df_eng(basis_, aux_basis, df_ints, config_.df_threshold);
-        df_eng.compute(false);
-        scf_.L_mat = std::move(df_eng.get_B_mat_mutable());
+        // [INJECTED_HPC_V5_MP2_GUARDS]
+    double mem_lim_gb = std::max(0.5, config_.memory_limit_gb);
+    if (const char* env_mem = std::getenv("MSHQC_MEMORY_GB")) {
+      const double v = std::atof(env_mem);
+      if (v > mem_lim_gb) mem_lim_gb = v;
+    }
+    const double est_df_gb =
+        static_cast<double>(integrals::ao_tri_size(nbf_)) *
+        static_cast<double>(aux_basis.n_basis_functions()) *
+        static_cast<double>(sizeof(double)) / 1.0e9;
+    if (est_df_gb > mem_lim_gb * 0.75) {
+      throw std::runtime_error(
+          "DF-MP2/OMP2 requires " + std::to_string(est_df_gb) +
+          " GB RAM for packed 3-center integrals, exceeding budget (" +
+          std::to_string(mem_lim_gb * 0.75) +
+          " GB). Increase memory_limit_gb / MSHQC_MEMORY_GB.");
+    }
+    df_eng.compute(false);
+    scf_.L_mat = std::move(df_eng.get_B_mat_mutable());
     } else if (config_.eri_method == "cholesky" && !config_.use_df && !integrals::has_valid_ao_factor(scf_.L_mat, nbf_)) {
         integrals::CholeskyERI chol_eng(basis_, integrals_);
         chol_eng.set_threshold(config_.cholesky_threshold);
@@ -586,7 +605,11 @@ MP2Result UMP2::compute() {
                 Cb_o = Cb.leftCols(nocc_b_);
             }
 
-            constexpr int BATCH_P = 32;
+            const int max_o_u = std::max(1, nocc_a_ + nocc_b_);
+      const int BATCH_P = std::clamp(
+          static_cast<int>((8ULL * 1024ULL * 1024ULL) /
+                           std::max<size_t>(1, static_cast<size_t>(nbf_) * max_o_u * sizeof(double))),
+          1, 32);
             const int max_threads = omp_get_max_threads();
             std::vector<Eigen::MatrixXd> Ka_tls(max_threads, Eigen::MatrixXd::Zero(nbf_, nbf_));
             std::vector<Eigen::MatrixXd> Kb_tls(nocc_b_ > 0 ? max_threads : 0, Eigen::MatrixXd::Zero(nbf_, nbf_));

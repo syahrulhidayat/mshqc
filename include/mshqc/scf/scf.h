@@ -64,6 +64,9 @@ struct SCFConfig {
     bool has_initial_guess = false;
     Eigen::MatrixXd init_C_alpha;
     Eigen::MatrixXd init_C_beta;
+  // [INJECTED_HPC_V5_SCF_CONFIG]
+  double memory_limit_gb = 4.0;
+  double level_shift = 0.0;
 };
 
 struct SCFResult {

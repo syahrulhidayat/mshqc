@@ -115,50 +115,53 @@ void compute_exchange_cholesky_single(
     Eigen::MatrixXd& K_acc,
     bool is_packed = false)
 {
-    const int n_occ = C_occ.cols();
-    if (n_occ <= 0 || k_size <= 0) return;
+  const int n_occ = static_cast<int>(C_occ.cols());
+  if (n_occ <= 0 || k_size <= 0) return;
 
-    constexpr int BATCH_P = 32;
-    const size_t col_stride = is_packed
-        ? static_cast<size_t>(integrals::ao_tri_size(nbasis))
-        : static_cast<size_t>(nbasis) * nbasis;
-    const int max_threads = omp_get_max_threads();
-    std::vector<Eigen::MatrixXd> K_tls(max_threads, Eigen::MatrixXd::Zero(nbasis, nbasis));
+  const int batch_p = std::clamp(
+      static_cast<int>((8ULL * 1024ULL * 1024ULL) /
+                       std::max<size_t>(1, static_cast<size_t>(nbasis) * n_occ * sizeof(double))),
+      1, 32);
+  const size_t col_stride = is_packed
+      ? static_cast<size_t>(integrals::ao_tri_size(nbasis))
+      : static_cast<size_t>(nbasis) * nbasis;
+  const int max_threads = omp_get_max_threads();
+  std::vector<Eigen::MatrixXd> K_tls(max_threads, Eigen::MatrixXd::Zero(nbasis, nbasis));
 
-    #pragma omp parallel
-    {
-        const int tid = omp_get_thread_num();
-        Eigen::MatrixXd T_batch(nbasis, n_occ * BATCH_P);
-        Eigen::MatrixXd L_buf;
-        if (is_packed) L_buf.resize(nbasis, nbasis);
-        int count_in_batch = 0;
+  #pragma omp parallel
+  {
+    const int tid = omp_get_thread_num();
+    Eigen::MatrixXd T_batch(nbasis, n_occ * batch_p);
+    Eigen::MatrixXd L_buf;
+    if (is_packed) L_buf.resize(nbasis, nbasis);
+    int count_in_batch = 0;
 
-        #pragma omp for schedule(static) nowait
-        for (int P = 0; P < k_size; ++P) {
-            const double* col_p = L_ptr + static_cast<size_t>(P) * col_stride;
-            if (is_packed) {
-                integrals::unpack_ao_column(col_p, nbasis, true, L_buf);
-                T_batch.middleCols(count_in_batch * n_occ, n_occ).noalias() = L_buf * C_occ;
-            } else {
-                Eigen::Map<const Eigen::MatrixXd> L_P(col_p, nbasis, nbasis);
-                T_batch.middleCols(count_in_batch * n_occ, n_occ).noalias() = L_P * C_occ;
-            }
-            count_in_batch++;
+    #pragma omp for schedule(static) nowait
+    for (int P = 0; P < k_size; ++P) {
+      const double* col_p = L_ptr + static_cast<size_t>(P) * col_stride;
+      if (is_packed) {
+        integrals::unpack_ao_column(col_p, nbasis, true, L_buf);
+        T_batch.middleCols(count_in_batch * n_occ, n_occ).noalias() = L_buf * C_occ;
+      } else {
+        Eigen::Map<const Eigen::MatrixXd> L_P(col_p, nbasis, nbasis);
+        T_batch.middleCols(count_in_batch * n_occ, n_occ).noalias() = L_P * C_occ;
+      }
+      count_in_batch++;
 
-            if (count_in_batch == BATCH_P) {
-                K_tls[tid].noalias() += T_batch * T_batch.transpose();
-                count_in_batch = 0;
-            }
-        }
-        if (count_in_batch > 0) {
-            auto T_rem = T_batch.leftCols(count_in_batch * n_occ);
-            K_tls[tid].noalias() += T_rem * T_rem.transpose();
-        }
+      if (count_in_batch == batch_p) {
+        K_tls[tid].noalias() += T_batch * T_batch.transpose();
+        count_in_batch = 0;
+      }
     }
-
-    for (int t = 0; t < max_threads; ++t) {
-        K_acc.noalias() += K_tls[t];
+    if (count_in_batch > 0) {
+      auto T_rem = T_batch.leftCols(count_in_batch * n_occ);
+      K_tls[tid].noalias() += T_rem * T_rem.transpose();
     }
+  }
+
+  for (int t = 0; t < max_threads; ++t) {
+    K_acc.noalias() += K_tls[t];
+  }
 }
 
 // Kontraksi Exchange berkecepatan tinggi berbasis Batch Level-3 BLAS (DGEMM)
@@ -173,71 +176,74 @@ void compute_exchange_cholesky_dual(
     Eigen::MatrixXd& Kb_acc,
     bool is_packed = false)
 {
-    const int na = Ca_occ.cols();
-    const int nb = Cb_occ.cols();
-    if ((na + nb) <= 0 || k_size <= 0) return;
-    if (nb <= 0) {
-        compute_exchange_cholesky_single(L_ptr, nbasis, k_size, Ca_occ, Ka_acc, is_packed);
-        return;
+  const int na = static_cast<int>(Ca_occ.cols());
+  const int nb = static_cast<int>(Cb_occ.cols());
+  if ((na + nb) <= 0 || k_size <= 0) return;
+  if (nb <= 0) {
+    compute_exchange_cholesky_single(L_ptr, nbasis, k_size, Ca_occ, Ka_acc, is_packed);
+    return;
+  }
+
+  Eigen::MatrixXd Cab_occ(nbasis, na + nb);
+  Cab_occ.leftCols(na) = Ca_occ;
+  Cab_occ.rightCols(nb) = Cb_occ;
+
+  const int batch_p = std::clamp(
+      static_cast<int>((8ULL * 1024ULL * 1024ULL) /
+                       std::max<size_t>(1, static_cast<size_t>(nbasis) * (na + nb) * sizeof(double))),
+      1, 32);
+  const size_t col_stride = is_packed
+      ? static_cast<size_t>(integrals::ao_tri_size(nbasis))
+      : static_cast<size_t>(nbasis) * nbasis;
+  const int max_threads = omp_get_max_threads();
+  std::vector<Eigen::MatrixXd> Ka_tls(max_threads, Eigen::MatrixXd::Zero(nbasis, nbasis));
+  std::vector<Eigen::MatrixXd> Kb_tls(max_threads, Eigen::MatrixXd::Zero(nbasis, nbasis));
+
+  #pragma omp parallel
+  {
+    const int tid = omp_get_thread_num();
+    Eigen::MatrixXd Tab_loc(nbasis, na + nb);
+    Eigen::MatrixXd Ta_batch(nbasis, na * batch_p);
+    Eigen::MatrixXd Tb_batch(nbasis, nb * batch_p);
+    Eigen::MatrixXd L_buf;
+    if (is_packed) L_buf.resize(nbasis, nbasis);
+    int count_in_batch = 0;
+
+    #pragma omp for schedule(static) nowait
+    for (int P = 0; P < k_size; ++P) {
+      const double* col_p = L_ptr + static_cast<size_t>(P) * col_stride;
+      if (is_packed) {
+        integrals::unpack_ao_column(col_p, nbasis, true, L_buf);
+        Tab_loc.noalias() = L_buf * Cab_occ;
+      } else {
+        Eigen::Map<const Eigen::MatrixXd> L_P(col_p, nbasis, nbasis);
+        Tab_loc.noalias() = L_P * Cab_occ;
+      }
+      Ta_batch.middleCols(count_in_batch * na, na) = Tab_loc.leftCols(na);
+      Tb_batch.middleCols(count_in_batch * nb, nb) = Tab_loc.rightCols(nb);
+      count_in_batch++;
+
+      if (count_in_batch == batch_p) {
+        Ka_tls[tid].noalias() += Ta_batch * Ta_batch.transpose();
+        Kb_tls[tid].noalias() += Tb_batch * Tb_batch.transpose();
+        count_in_batch = 0;
+      }
     }
-
-    Eigen::MatrixXd Cab_occ(nbasis, na + nb);
-    Cab_occ.leftCols(na)  = Ca_occ;
-    Cab_occ.rightCols(nb) = Cb_occ;
-
-    constexpr int BATCH_P = 32;
-    const size_t col_stride = is_packed
-        ? static_cast<size_t>(integrals::ao_tri_size(nbasis))
-        : static_cast<size_t>(nbasis) * nbasis;
-    const int max_threads = omp_get_max_threads();
-    std::vector<Eigen::MatrixXd> Ka_tls(max_threads, Eigen::MatrixXd::Zero(nbasis, nbasis));
-    std::vector<Eigen::MatrixXd> Kb_tls(max_threads, Eigen::MatrixXd::Zero(nbasis, nbasis));
-
-    #pragma omp parallel
-    {
-        const int tid = omp_get_thread_num();
-        Eigen::MatrixXd Tab_loc(nbasis, na + nb);
-        Eigen::MatrixXd Ta_batch(nbasis, na * BATCH_P);
-        Eigen::MatrixXd Tb_batch(nbasis, nb * BATCH_P);
-        Eigen::MatrixXd L_buf;
-        if (is_packed) L_buf.resize(nbasis, nbasis);
-        int count_in_batch = 0;
-
-        #pragma omp for schedule(static) nowait
-        for (int P = 0; P < k_size; ++P) {
-            const double* col_p = L_ptr + static_cast<size_t>(P) * col_stride;
-            if (is_packed) {
-                integrals::unpack_ao_column(col_p, nbasis, true, L_buf);
-                Tab_loc.noalias() = L_buf * Cab_occ;
-            } else {
-                Eigen::Map<const Eigen::MatrixXd> L_P(col_p, nbasis, nbasis);
-                Tab_loc.noalias() = L_P * Cab_occ;
-            }
-            Ta_batch.middleCols(count_in_batch * na, na) = Tab_loc.leftCols(na);
-            Tb_batch.middleCols(count_in_batch * nb, nb) = Tab_loc.rightCols(nb);
-            count_in_batch++;
-
-            if (count_in_batch == BATCH_P) {
-                Ka_tls[tid].noalias() += Ta_batch * Ta_batch.transpose();
-                Kb_tls[tid].noalias() += Tb_batch * Tb_batch.transpose();
-                count_in_batch = 0;
-            }
-        }
-        if (count_in_batch > 0) {
-            auto Ta_rem = Ta_batch.leftCols(count_in_batch * na);
-            auto Tb_rem = Tb_batch.leftCols(count_in_batch * nb);
-            Ka_tls[tid].noalias() += Ta_rem * Ta_rem.transpose();
-            Kb_tls[tid].noalias() += Tb_rem * Tb_rem.transpose();
-        }
+    if (count_in_batch > 0) {
+      auto Ta_rem = Ta_batch.leftCols(count_in_batch * na);
+      auto Tb_rem = Tb_batch.leftCols(count_in_batch * nb);
+      Ka_tls[tid].noalias() += Ta_rem * Ta_rem.transpose();
+      Kb_tls[tid].noalias() += Tb_rem * Tb_rem.transpose();
     }
+  }
 
-    for (int t = 0; t < max_threads; ++t) {
-        Ka_acc.noalias() += Ka_tls[t];
-        Kb_acc.noalias() += Kb_tls[t];
-    }
+  for (int t = 0; t < max_threads; ++t) {
+    Ka_acc.noalias() += Ka_tls[t];
+    Kb_acc.noalias() += Kb_tls[t];
+  }
 }
 
-// [INJECTED_FINAL_OPT_SCF_GUESS]
+
 // Ortonormalisasi simetris Lowdin C_orth = C_in * (C_in^T * S * C_in)^(-1/2)
 // agar orbital terkonvergensi dari geometri tetangga x0 langsung valid pada metrik S(x0 +- h)
 Eigen::MatrixXd orthonormalize_mo_guess(const Eigen::MatrixXd& C_in, const Eigen::MatrixXd& S) {
@@ -325,6 +331,8 @@ BaseSCF::BaseSCF(const Molecule& mol, const BasisSet& basis,
       std::cout << "  [SCF-HPC] Packed DF tensor (" << std::fixed << std::setprecision(2)
                 << est_df_packed_gb << " GB) > budget; switching to HDF5 OOC mode.\n";
     }
+
+    if (use_disk) config_.scf_type = "ooc";
     df_engine->compute(use_disk);
 
         if (!use_disk) {

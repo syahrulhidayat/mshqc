@@ -22,6 +22,9 @@
 // Wajib dibungkus extern "C" karena libcint murni ditulis dalam C
 extern "C" {
 #include <cint.h>
+#include <string>
+#include <stdexcept>
+#include <cstdlib>
 int cint1e_ovlp_sph(double *buf, int *shls, int *atm, int natm, int *bas, int nbas, double *env, CINTOpt *opt);
 int cint1e_kin_sph(double *buf, int *shls, int *atm, int natm, int *bas, int nbas, double *env, CINTOpt *opt);
 int cint1e_nuc_sph(double *buf, int *shls, int *atm, int natm, int *bas, int nbas, double *env, CINTOpt *opt);
@@ -270,7 +273,25 @@ Eigen::MatrixXd IntegralEngine::compute_core_hamiltonian() {
 const Eigen::Tensor<double, 4>& IntegralEngine::compute_eri() {
     if (cache_valid) return cached_eri;
 
-    cached_eri.resize(nbasis_, nbasis_, nbasis_, nbasis_);
+    // [INJECTED_HPC_V5_ERI_OOM_GUARD]
+  {
+    double mem_lim_gb = 8.0;
+    if (const char* env_mem = std::getenv("MSHQC_MEMORY_GB")) {
+      const double v = std::atof(env_mem);
+      if (v >= 0.5) mem_lim_gb = v;
+    }
+    const double est_gb =
+        static_cast<double>(nbasis_) * nbasis_ * nbasis_ * nbasis_ *
+        static_cast<double>(sizeof(double)) / 1.0e9;
+    if (est_gb > mem_lim_gb * 0.85) {
+      throw std::runtime_error(
+          "Exact 4-center ERI tensor requires " + std::to_string(est_gb) +
+          " GB RAM (nbasis=" + std::to_string(nbasis_) +
+          "), exceeding budget (" + std::to_string(mem_lim_gb * 0.85) +
+          " GB). Use eri_method='df' or 'cholesky', or set MSHQC_MEMORY_GB.");
+    }
+  }
+  cached_eri.resize(nbasis_, nbasis_, nbasis_, nbasis_);
     cached_eri.setZero();
     auto shell2bf = basis_.shell_to_basis_function_map();
     int nbas = basis_.n_shells();

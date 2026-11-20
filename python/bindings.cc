@@ -211,7 +211,11 @@ namespace mshqc_auto_tune {
             {"Cs",55},{"Ba",56},{"La",57},{"Ce",58},{"Pr",59},{"Nd",60},{"Pm",61},{"Sm",62},{"Eu",63},{"Gd",64},
             {"Tb",65},{"Dy",66},{"Ho",67},{"Er",68},{"Tm",69},{"Yb",70},{"Lu",71},
             {"Hf",72},{"Ta",73},{"W",74},{"Re",75},{"Os",76},{"Ir",77},{"Pt",78},{"Au",79},{"Hg",80},
-            {"Tl",81},{"Pb",82},{"Bi",83},{"Po",84},{"At",85},{"Rn",86}
+            {"Tl",81},{"Pb",82},{"Bi",83},{"Po",84},{"At",85},{"Rn",86},
+            {"Fr",87},{"Ra",88},{"Ac",89},{"Th",90},{"Pa",91},{"U",92},{"Np",93},{"Pu",94},
+            {"Am",95},{"Cm",96},{"Bk",97},{"Cf",98},{"Es",99},{"Fm",100},{"Md",101},{"No",102},
+            {"Lr",103},{"Rf",104},{"Db",105},{"Sg",106},{"Bh",107},{"Hs",108},{"Mt",109},{"Ds",110},
+            {"Rg",111},{"Cn",112},{"Nh",113},{"Fl",114},{"Mc",115},{"Lv",116},{"Ts",117},{"Og",118}
         };
         if (sym.empty()) throw std::invalid_argument("Empty atom symbol");
         std::string key = sym;
@@ -615,7 +619,10 @@ NB_MODULE(_mshqc, m) {
         .def_rw("diis_max_vectors", &SCFConfig::diis_max_vectors)
         .def_rw("print_level", &SCFConfig::print_level)
         .def_rw("use_df", &SCFConfig::use_df)
-        .def_rw("aux_basis_name", &SCFConfig::aux_basis_name);
+        .def_rw("aux_basis_name", &SCFConfig::aux_basis_name)
+        // [INJECTED_HPC_V5_BINDINGS]
+        .def_rw("memory_limit_gb", &SCFConfig::memory_limit_gb)
+        .def_rw("level_shift", &SCFConfig::level_shift);
 
     nb::class_<SCFResult>(m, "SCFResult")
         .def(nb::init<>())
@@ -938,7 +945,10 @@ NB_MODULE(_mshqc, m) {
         .def_rw("use_analytic_gradient", &mshqc::gradient::GeomOptConfig::use_analytic_gradient)
         .def_rw("project_trans_rot", &mshqc::gradient::GeomOptConfig::project_trans_rot)
         .def_rw("verbose", &mshqc::gradient::GeomOptConfig::verbose)
-        .def_rw("xyz_traj_file", &mshqc::gradient::GeomOptConfig::xyz_traj_file);
+        .def_rw("xyz_traj_file", &mshqc::gradient::GeomOptConfig::xyz_traj_file)
+        .def_rw("freeze_core", &mshqc::gradient::GeomOptConfig::freeze_core)
+        .def_rw("n_frozen", &mshqc::gradient::GeomOptConfig::n_frozen)
+        .def_rw("memory_limit_gb", &mshqc::gradient::GeomOptConfig::memory_limit_gb);
 
     nb::class_<mshqc::gradient::GeomOptResult>(m, "GeomOptResult")
         .def_ro("converged", &mshqc::gradient::GeomOptResult::converged)

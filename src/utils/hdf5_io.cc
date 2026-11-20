@@ -53,7 +53,7 @@ void HDF5TensorIO::create_dataset_4d(const std::string& dataset_name,
     H5::DataSpace dataspace(4, h_dims.data());
     H5::DSetCreatPropList plist;
     plist.setChunk(4, h_chunks.data());
-    plist.setDeflate(6); // Kompresi ZLIB level 6
+    
 
     file_->createDataSet(dataset_name, H5::PredType::NATIVE_DOUBLE, dataspace, plist);
 }

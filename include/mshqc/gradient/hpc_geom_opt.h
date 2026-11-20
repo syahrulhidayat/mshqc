@@ -41,6 +41,10 @@ struct GeomOptConfig {
   bool project_trans_rot = true;
   bool verbose = true;
   std::string xyz_traj_file = "mshqc_opt_traj.xyz";
+  // [INJECTED_HPC_V5_GEOM_CONFIG]
+  bool freeze_core = false;
+  int n_frozen = 0;
+  double memory_limit_gb = 4.0;
 };
 
 struct GeomOptResult {

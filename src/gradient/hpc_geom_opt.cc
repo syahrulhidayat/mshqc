@@ -381,7 +381,9 @@ bool supports_analytic_df_gradient(const GeomOptConfig& cfg) {
   }
   if (eri != "df") return false;
   // [INJECTED_FINAL_OPT_GEOM_GUESS_AND_ROHF]
-    return (method == "scf" || method == "hf" || method == "rhf" || method == "uhf" || method == "rohf" || method == "omp2");
+    // [INJECTED_HPC_V5_GEOM_FC_MEM]
+  if (method == "omp2" && (cfg.freeze_core || cfg.n_frozen > 0)) return false;
+  return (method == "scf" || method == "hf" || method == "rhf" || method == "uhf" || method == "rohf" || method == "omp2");
 }
 
 GradCurvatureResult compute_analytic_df_gradient_internal(
@@ -432,6 +434,7 @@ GradCurvatureResult compute_analytic_df_gradient_internal(
   scf_conf.df_threshold = std::min(1.0e-12, scf_conf.energy_threshold);
   scf_conf.print_level = 0;
   scf_conf.max_iterations = 200;
+  scf_conf.memory_limit_gb = cfg.memory_limit_gb;
 
   if (guess_in && guess_in->has_scf && guess_in->scf_C_alpha.rows() == nbf) {
     scf_conf.has_initial_guess = true;
@@ -474,6 +477,9 @@ GradCurvatureResult compute_analytic_df_gradient_internal(
     mp2_conf.opt_method = cfg.opt_method;
     mp2_conf.print_level = 0;
     mp2_conf.max_iterations = 100;
+  mp2_conf.freeze_core = cfg.freeze_core;
+  mp2_conf.n_frozen = cfg.n_frozen;
+  mp2_conf.memory_limit_gb = cfg.memory_limit_gb;
 
     if (guess_in && guess_in->has_omp && guess_in->omp_C_alpha.rows() == nbf) {
       mp2_conf.has_initial_guess = true;
@@ -743,6 +749,7 @@ double evaluate_single_point_with_guess(
   scf_conf.df_threshold = std::min(1.0e-12, scf_conf.energy_threshold);
   scf_conf.print_level = 0;
   scf_conf.max_iterations = 200;
+  scf_conf.memory_limit_gb = cfg.memory_limit_gb;
 
   if (guess_in && guess_in->has_scf && guess_in->scf_C_alpha.rows() == nbf) {
     scf_conf.has_initial_guess = true;
@@ -786,6 +793,9 @@ double evaluate_single_point_with_guess(
   mp2_conf.opt_method = cfg.opt_method;
   mp2_conf.print_level = 0;
   mp2_conf.max_iterations = 100;
+  mp2_conf.freeze_core = cfg.freeze_core;
+  mp2_conf.n_frozen = cfg.n_frozen;
+  mp2_conf.memory_limit_gb = cfg.memory_limit_gb;
 
   if (guess_in && guess_in->has_omp && guess_in->omp_C_alpha.rows() == nbf) {
     mp2_conf.has_initial_guess = true;
