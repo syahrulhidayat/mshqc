@@ -5,7 +5,7 @@ on:
     branches:
       - build-pypi
       - test-geom
-      - test
+      - test2
       - main
   workflow_dispatch:
 
@@ -20,19 +20,19 @@ env:
   PYTHONIOENCODING: "utf-8"
 
 jobs:
-  # ===========================================================================
-  # JALUR PARALEL 1: BUILD mshqc & RUN run_mshqc_heavy_large.py
-  # ===========================================================================
-  mshqc_heavy_large:
-    name: "[Parallel 1/2] Build & Run mshqc Heavy/Large (${{ matrix.os }})"
+  heavy_large_benchmark:
+    name: "Heavy & Large Benchmark mshqc vs Psi4 (${{ matrix.os }})"
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 240
+    timeout-minutes: 360
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
 
     steps:
+      # =======================================================================
+      # TAHAP 1: SETUP & RUN mshqc (geom_env)
+      # =======================================================================
       - name: Checkout Source Code
         uses: actions/checkout@v4
 
@@ -173,51 +173,15 @@ jobs:
           python -u tests/run_mshqc_heavy_large.py 2>&1 | tee mshqc_heavy_large_running_log.txt
           test -s mshqc_heavy_large_raw.json
 
-      - name: Upload Partial mshqc Outputs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: part-mshqc-heavy-large-${{ matrix.os }}
-          retention-days: 1
-          if-no-files-found: ignore
-          path: |
-            mshqc_heavy_large_running_log.txt
-            mshqc_heavy_large_raw.json
-
-  # ===========================================================================
-  # JALUR PARALEL 2: SETUP psi4_env & RUN run_psi4_heavy_large.py
-  # ===========================================================================
-  psi4_heavy_large:
-    name: "[Parallel 2/2] Run Psi4 Heavy/Large (${{ matrix.os }})"
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 240
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-
-    steps:
-      - name: Checkout Source Code
-        uses: actions/checkout@v4
-
-      - name: Set up Clean Psi4 Environment (psi4_env)
-        uses: mamba-org/setup-micromamba@v2
-        with:
-          init-shell: bash
-          environment-name: psi4_env
-          create-args: >-
-            -c conda-forge
-            python=3.11
-            psi4
-            numpy
-            scipy
-            pip
-
-      - name: Patch LibXC Table & Verify Psi4
+      # =======================================================================
+      # TAHAP 2: SETUP & RUN Psi4 (psi4_env)
+      # =======================================================================
+      - name: Set up Clean Psi4 Environment (psi4_env) & Patch LibXC
         shell: bash -el {0}
         run: |
           set -o pipefail
           eval "$("$MAMBA_EXE" shell hook --shell bash)"
+          micromamba create -y -n psi4_env -c conda-forge python=3.11 psi4 numpy scipy pip
           micromamba activate psi4_env
           if ! python -c "import psi4" >/dev/null 2>&1; then
             echo "Mendeteksi ketidakcocokan fungsional LibXC pada Psi4, menerapkan patch proc_table.py..."
@@ -251,54 +215,18 @@ jobs:
           python -u tests/run_psi4_heavy_large.py 2>&1 | tee psi4_heavy_large_running_log.txt
           test -s psi4_heavy_large_raw.json
 
-      - name: Upload Partial Psi4 Outputs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: part-psi4-heavy-large-${{ matrix.os }}
-          retention-days: 1
-          if-no-files-found: ignore
-          path: |
-            psi4_heavy_large_running_log.txt
-            psi4_heavy_large_raw.json
-
-  # ===========================================================================
-  # TAHAP AKHIR: COMPARE HEAD-TO-HEAD & GABUNGKAN SEMUA ARTIFACT
-  # ===========================================================================
-  compare_heavy_large:
-    name: "[Compare] Heavy & Large mshqc vs Psi4 (${{ matrix.os }})"
-    needs: [mshqc_heavy_large, psi4_heavy_large]
-    if: always()
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-
-    steps:
-      - name: Checkout Source Code
-        uses: actions/checkout@v4
-
-      - name: Download mshqc Heavy & Large Outputs
-        uses: actions/download-artifact@v4
-        continue-on-error: true
-        with:
-          name: part-mshqc-heavy-large-${{ matrix.os }}
-
-      - name: Download Psi4 Heavy & Large Outputs
-        uses: actions/download-artifact@v4
-        continue-on-error: true
-        with:
-          name: part-psi4-heavy-large-${{ matrix.os }}
-
+      # =======================================================================
+      # TAHAP 3: COMPARE HEAD-TO-HEAD & UPLOAD ARTIFACT
+      # =======================================================================
       - name: Compare Heavy & Large Molecule Tables (compare_heavy_large.py)
         shell: bash -el {0}
         run: |
           set -o pipefail
+          eval "$("$MAMBA_EXE" shell hook --shell bash)"
+          micromamba activate geom_env
           test -s mshqc_heavy_large_raw.json
           test -s psi4_heavy_large_raw.json
-          python3 -u tests/compare_heavy_large.py mshqc_heavy_large_raw.json psi4_heavy_large_raw.json 2>&1 | tee compare_heavy_large_log.txt
+          python -u tests/compare_heavy_large.py mshqc_heavy_large_raw.json psi4_heavy_large_raw.json 2>&1 | tee compare_heavy_large_log.txt
           grep -q "Total Matched Heavy/Large Runs: 8" compare_heavy_large_log.txt
 
       - name: Upload Combined Heavy & Large Logs & JSONs
