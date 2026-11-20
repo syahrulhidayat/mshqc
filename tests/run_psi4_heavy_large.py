@@ -101,6 +101,7 @@ def main():
             "mp2_type": "df",
             "mp_type": "df",
             "cc_type": "df",
+            "df_ints_io": "save",
             "freeze_core": "true" if fc else "false",
             "e_convergence": 1e-9,
             "d_convergence": 1e-9,

@@ -1,6 +1,12 @@
 name: Compile Locally and Run Full Test & Benchmark Suite (mshqc vs Psi4)
 
-on:
+on: 
+  push:
+    branches:
+          - build-pypi
+          - test-geom
+          - test
+          - main
   workflow_dispatch:
 
 jobs:

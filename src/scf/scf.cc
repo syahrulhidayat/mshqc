@@ -323,8 +323,7 @@ BaseSCF::BaseSCF(const Molecule& mol, const BasisSet& basis,
                     (mem_lim_gb > 0.0 && est_df_packed_gb > mem_lim_gb * 0.55);
     if (use_disk && config_.print_level > 0) {
       std::cout << "  [SCF-HPC] Packed DF tensor (" << std::fixed << std::setprecision(2)
-                << est_df_packed_gb << " GB) > budget; switching to HDF5 OOC mode.
-";
+                << est_df_packed_gb << " GB) > budget; switching to HDF5 OOC mode.\n";
     }
     df_engine->compute(use_disk);
 
@@ -473,8 +472,7 @@ void BaseSCF::init_integrals_incore() {
     if (config_.print_level > 0) {
       std::cout << "  [SCF-HPC] Exact InCore ERI (" << std::fixed << std::setprecision(2)
                 << est_incore_gb << " GB) > budget (" << (mem_lim_gb * 0.70)
-                << " GB); auto-fallback to Direct SCF.
-";
+                << " GB); auto-fallback to Direct SCF.\n";
     }
     incore_quartets_.clear();
     incore_quartets_.shrink_to_fit();
