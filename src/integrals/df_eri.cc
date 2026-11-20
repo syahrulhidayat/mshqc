@@ -253,7 +253,9 @@ void DensityFittingERI::compute(bool save_hdf5) {
   B_mat_ = std::move(V_raw);
 
   if (save_hdf5) {
-        utils::HDF5TensorIO io("df_tensor.h5", utils::HDF5TensorIO::Mode::WRITE_TRUNCATE);
+     
+        const std::string out_h5 = hdf5_path_.empty() ? std::string("df_tensor.h5") : hdf5_path_;
+        utils::HDF5TensorIO io(out_h5, utils::HDF5TensorIO::Mode::WRITE_TRUNCATE);
         std::array<long, 4> dims = {(long)n_aux_, (long)n_primary_, (long)n_primary_, 1};
         std::array<long, 4> chunks = {1, (long)n_primary_, (long)n_primary_, 1};
         io.create_dataset_4d("df_tensor", dims, chunks);

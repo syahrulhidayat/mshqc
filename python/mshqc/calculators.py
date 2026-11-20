@@ -90,7 +90,8 @@ class MSHQCCalculator:
                  freeze_core: bool = False,
                  n_frozen: int = 0,
                  memory_limit_gb: float = 4.0,
-                 use_symmetry: bool = True):
+                 use_symmetry: bool = True,
+                 level_shift: float = 0.0):  # [INJECTED_PROD_V6_LEVEL_SHIFT]
 
         raw_mol = build_molecule(molecule, charge=charge, multiplicity=multiplicity, units=units)
         self.eri_method = eri_method.lower()
@@ -114,6 +115,7 @@ class MSHQCCalculator:
             mshqc.standard_frozen_core(self.molecule) if freeze_core else 0
         )
         self.memory_limit_gb = memory_limit_gb
+        self.level_shift = level_shift
 
         if basis_dir is None:
             basis_dir = os.environ.get("MSHQC_BASIS_PATH", "data/basis")
@@ -152,6 +154,7 @@ class MSHQCCalculator:
         if hasattr(conf, 'freeze_core'): conf.freeze_core = self.freeze_core
         if hasattr(conf, 'n_frozen'): conf.n_frozen = self.n_frozen
         if hasattr(conf, 'memory_limit_gb'): conf.memory_limit_gb = self.memory_limit_gb
+        if hasattr(conf, 'level_shift'): conf.level_shift = self.level_shift
         if self.eri_method == "df":
             conf.use_df = True
             conf.aux_basis_name = self.aux_basis_name
@@ -265,7 +268,9 @@ def run(molecule: Union[mshqc.Molecule, str, List[Tuple]],
         freeze_core: bool = False,
         n_frozen: int = 0,
         memory_limit_gb: float = 4.0,
-        use_symmetry: bool = True) -> Union[Any, Dict[str, Any]]:
+        use_symmetry: bool = True,
+        scf_type: str = "incore",
+        level_shift: float = 0.0) -> Union[Any, Dict[str, Any]]:
     """
     Fungsi satu baris (one-liner) untuk menjalankan satu atau beberapa metode sekaligus.
     Contoh:
@@ -277,7 +282,7 @@ def run(molecule: Union[mshqc.Molecule, str, List[Tuple]],
         molecule=molecule, basis_name=basis, eri_method=eri_method,
         aux_basis_name=aux_basis, charge=charge, multiplicity=multiplicity,
         units=units, reference=reference, threshold=threshold, print_level=print_level,
-        freeze_core=freeze_core, n_frozen=n_frozen, memory_limit_gb=memory_limit_gb, use_symmetry=use_symmetry
+        freeze_core=freeze_core, n_frozen=n_frozen, memory_limit_gb=memory_limit_gb, use_symmetry=use_symmetry, scf_type=scf_type, level_shift=level_shift
     )
 
     methods = [method] if isinstance(method, str) else list(method)

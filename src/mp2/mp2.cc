@@ -24,6 +24,7 @@
 #include "mshqc/mp2/mp2.h"
 #include "mshqc/integrals/eri_transformer.h"
 #include "mshqc/integrals/df_eri.h"
+#include "mshqc/utils/hdf5_io.h"
 #include "mshqc/integrals/packed_ao_utils.h"
 #include "mshqc/integrals/cholesky_eri.h"
 #include "mshqc/gradient/optimizer.h"
@@ -82,9 +83,9 @@ BaseMP2::BaseMP2(const Molecule& mol, const BasisSet& basis,
         config_.eri_method = "exact"; 
     }
 
-    // Auto-build L_mat jika scf_ belum memiliki faktor 3-indeks yang sesuai
-    // [INJECTED_PRIORITAS_2D_PACKED_AO]
-    if (config_.use_df && !integrals::has_valid_ao_factor(scf_.L_mat, nbf_)) {
+      
+    const bool has_ooc_df = (scf_.L_mat.rows() == 0 && scf_.L_mat.cols() > 0 && !scf_.df_ooc_file.empty());
+    if (config_.use_df && !integrals::has_valid_ao_factor(scf_.L_mat, nbf_) && !has_ooc_df) {
         std::string aux_name = config_.aux_basis_name.empty() ? (basis_.name() + "-RI") : config_.aux_basis_name;
         BasisSet aux_basis(aux_name, mol_);
         BasisSet combined = basis_;
@@ -141,8 +142,46 @@ void BaseMP2::transform_3center_mo() {
   }
 
   // Adaptive chunk_size: <= 8 MB scratch per thread agar aman pada molekul 500+ BF
+  const bool is_ooc = (scf_.L_mat.rows() == 0 && n_aux > 0 && !scf_.df_ooc_file.empty());
   const size_t bytes_per_p = std::max<size_t>(1, static_cast<size_t>(nbf_) * nbf_ * sizeof(double));
   const int chunk_size = std::clamp(static_cast<int>((8ULL * 1024ULL * 1024ULL) / bytes_per_p), 1, 32);
+
+  if (is_ooc) {
+    utils::HDF5TensorIO io(scf_.df_ooc_file, utils::HDF5TensorIO::Mode::READ_ONLY);
+    const int ooc_chunk = std::clamp(
+        static_cast<int>((64ULL * 1024ULL * 1024ULL) / bytes_per_p), 1, 128);
+    for (int P_start = 0; P_start < n_aux; P_start += ooc_chunk) {
+      const int P_size = std::min(ooc_chunk, n_aux - P_start);
+      Eigen::MatrixXd L_sq_chunk(static_cast<Eigen::Index>(nbf_) * nbf_, P_size);
+      io.read_slice_4d("df_tensor", {P_start, 0, 0, 0},
+                       {P_size, static_cast<long>(nbf_), static_cast<long>(nbf_), 1},
+                       L_sq_chunk.data());
+      #pragma omp parallel
+      {
+        Eigen::MatrixXd X_a_loc(nvir_a_, nbf_), B_mo_a(nvir_a_, nocc_a_);
+        Eigen::MatrixXd X_b_loc, B_mo_b;
+        if (has_beta) {
+          X_b_loc.resize(nvir_b_, nbf_);
+          B_mo_b.resize(nvir_b_, nocc_b_);
+        }
+        #pragma omp for schedule(static) nowait
+        for (int p = 0; p < P_size; ++p) {
+          Eigen::Map<const Eigen::MatrixXd> L_P(L_sq_chunk.col(p).data(), nbf_, nbf_);
+          X_a_loc.noalias() = Ca_vir.transpose() * L_P;
+          B_mo_a.noalias() = X_a_loc * Ca_occ;
+          B_ia_P_alpha_.col(P_start + p) =
+              Eigen::Map<const Eigen::VectorXd>(B_mo_a.data(), static_cast<Eigen::Index>(nvir_a_) * nocc_a_);
+          if (has_beta) {
+            X_b_loc.noalias() = Cb_vir.transpose() * L_P;
+            B_mo_b.noalias() = X_b_loc * Cb_occ;
+            B_ia_P_beta_.col(P_start + p) =
+                Eigen::Map<const Eigen::VectorXd>(B_mo_b.data(), static_cast<Eigen::Index>(nvir_b_) * nocc_b_);
+          }
+        }
+      }
+    }
+    return;
+  }
 
   #pragma omp parallel
   {
@@ -921,8 +960,13 @@ OMP2::OMP2(const Molecule& mol, const BasisSet& basis,
         grad_thresh_ = std::sqrt(config_.energy_threshold); 
     }
 
-    symmetrizer_ = nullptr;
-    init_fast_integrals();
+    if (config_.use_df && !integrals::has_valid_ao_factor(scf_.L_mat, nbf_)) {
+    throw std::runtime_error(
+        "OMP2/OMP3 requires in-core packed DF factors in RAM, but SCF ran in OOC disk mode. "
+        "Increase memory_limit_gb / MSHQC_MEMORY_GB or use DF-MP2 streaming.");
+  }
+  symmetrizer_ = nullptr;
+  init_fast_integrals();
 }
 
 

@@ -32,6 +32,13 @@
 #include <cmath>
 #include <algorithm>
 #include <chrono>
+#include <atomic>
+#include <filesystem>
+#if defined(_WIN32)
+#include <process.h>
+#else
+#include <unistd.h>
+#endif
 #include <omp.h>
 #include "mshqc/utils/hdf5_io.h"
 #include <memory>
@@ -43,6 +50,29 @@
 namespace mshqc {
 
 namespace {
+// [INJECTED_PROD_V6_OOC_SCRATCH]
+inline std::string make_unique_ooc_df_path() {
+  static std::atomic<unsigned long long> seq{0};
+  const unsigned long long id = seq.fetch_add(1, std::memory_order_relaxed);
+#if defined(_WIN32)
+  const long pid = static_cast<long>(_getpid());
+#else
+  const long pid = static_cast<long>(getpid());
+#endif
+  std::string dir;
+  for (const char* env_k : {"MSHQC_SCRATCH", "TMPDIR", "TEMP", "TMP"}) {
+    if (const char* val = std::getenv(env_k)) {
+      if (val[0] != '\0' && std::string(val).find("/dev/shm") == std::string::npos) {
+        dir = val;
+        break;
+      }
+    }
+  }
+  std::filesystem::path p = dir.empty() ? std::filesystem::path(".") : std::filesystem::path(dir);
+  p /= ("mshqc_df_ooc_" + std::to_string(pid) + "_" + std::to_string(id) + ".h5");
+  return p.string();
+}
+
 // [INJECTED_HPC_V4_SCF]
 template <typename Cfg>
 inline double get_scf_memory_limit_gb(const Cfg& cfg) {
@@ -332,7 +362,12 @@ BaseSCF::BaseSCF(const Molecule& mol, const BasisSet& basis,
                 << est_df_packed_gb << " GB) > budget; switching to HDF5 OOC mode.\n";
     }
 
-    if (use_disk) config_.scf_type = "ooc";
+        if (use_disk) {
+      config_.scf_type = "ooc";
+      df_ooc_file_ = make_unique_ooc_df_path();
+      df_ooc_handle_ = std::make_shared<ScopedScratchFile>(df_ooc_file_);
+      df_engine->set_hdf5_path(df_ooc_file_);
+    }
     df_engine->compute(use_disk);
 
         if (!use_disk) {
@@ -398,7 +433,7 @@ void BaseSCF::init_integrals() {
     auto t_end = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> elapsed = t_end - t_start;
     if (config_.print_level > 0) {
-        std::string mode_str = (config_.scf_type == "incore") ? "In-Core" : "Direct";
+        std::string mode_str = (config_.scf_type == "ooc") ? "OOC-HDF5" : ((config_.scf_type == "incore") ? "In-Core" : "Direct");
         std::cout << "  [SCF] Initialization Done. Mode: " << mode_str << " ("
                   << std::fixed << std::setprecision(3) << elapsed.count() << "s)\n";
     }
@@ -909,7 +944,7 @@ SCFResult BaseSCF::compute() {
         const int n_aux = static_cast<int>(L_mat_.cols());
         const int n_tri = integrals::ao_tri_size(nbasis_);
         L_mat_.resize(n_tri, n_aux);
-        utils::HDF5TensorIO io("df_tensor.h5", utils::HDF5TensorIO::Mode::READ_ONLY);
+        utils::HDF5TensorIO io((df_ooc_file_.empty() ? std::string("df_tensor.h5") : df_ooc_file_), utils::HDF5TensorIO::Mode::READ_ONLY);
         constexpr int kChunk = 64;
         for (int K0 = 0; K0 < n_aux; K0 += kChunk) {
             const int k_sz = std::min(kChunk, n_aux - K0);
@@ -946,6 +981,8 @@ SCFResult BaseSCF::compute() {
     r.n_occ_alpha = n_alpha_;
     r.n_occ_beta = n_beta_;
     r.L_mat = L_mat_;
+  r.df_ooc_file = df_ooc_file_;
+  r.df_ooc_handle = df_ooc_handle_;
     print_final(r);
     return r;
 }
@@ -1012,7 +1049,7 @@ void RHF::build_fock_matrix() {
         bool is_ooc = (L_mat_.rows() == 0 && n_chol > 0);
 
         std::unique_ptr<utils::HDF5TensorIO> io = nullptr;
-        if (is_ooc) io = std::make_unique<utils::HDF5TensorIO>("df_tensor.h5", utils::HDF5TensorIO::Mode::READ_ONLY);
+        if (is_ooc) io = std::make_unique<utils::HDF5TensorIO>((df_ooc_file_.empty() ? std::string("df_tensor.h5") : df_ooc_file_), utils::HDF5TensorIO::Mode::READ_ONLY);
 
         int chunk_size = is_ooc ? 128 : n_chol;
         Eigen::Map<const Eigen::VectorXd> P_flat(P_alpha_.data(), nbasis_ * nbasis_);
@@ -1154,7 +1191,7 @@ void UHF::build_fock_matrix() {
         const bool is_packed = (!is_ooc) && integrals::is_packed_ao_matrix(L_mat_, nbasis_);
 
         std::unique_ptr<utils::HDF5TensorIO> io = nullptr;
-        if (is_ooc) io = std::make_unique<utils::HDF5TensorIO>("df_tensor.h5", utils::HDF5TensorIO::Mode::READ_ONLY);
+        if (is_ooc) io = std::make_unique<utils::HDF5TensorIO>((df_ooc_file_.empty() ? std::string("df_tensor.h5") : df_ooc_file_), utils::HDF5TensorIO::Mode::READ_ONLY);
 
         int chunk_size = is_ooc ? 128 : n_chol;
         Eigen::Map<const Eigen::VectorXd> P_tot_flat(P_tot.data(), nbasis_ * nbasis_);
@@ -1476,7 +1513,7 @@ void ROHF::build_fock_matrix() {
         int n_chol = L_mat_.cols();
         bool is_ooc = (L_mat_.rows() == 0 && n_chol > 0);
         std::unique_ptr<utils::HDF5TensorIO> io = nullptr;
-        if (is_ooc) io = std::make_unique<utils::HDF5TensorIO>("df_tensor.h5", utils::HDF5TensorIO::Mode::READ_ONLY);
+        if (is_ooc) io = std::make_unique<utils::HDF5TensorIO>((df_ooc_file_.empty() ? std::string("df_tensor.h5") : df_ooc_file_), utils::HDF5TensorIO::Mode::READ_ONLY);
         int chunk_size = is_ooc ? 128 : n_chol;
 
         Eigen::Map<const Eigen::VectorXd> P_tot_flat(P_tot.data(), nbasis_ * nbasis_);
@@ -1698,7 +1735,7 @@ SCFResult ROHF::compute() {
         const int n_aux = static_cast<int>(L_mat_.cols());
         const int n_tri = integrals::ao_tri_size(nbasis_);
         L_mat_.resize(n_tri, n_aux);
-        utils::HDF5TensorIO io("df_tensor.h5", utils::HDF5TensorIO::Mode::READ_ONLY);
+        utils::HDF5TensorIO io((df_ooc_file_.empty() ? std::string("df_tensor.h5") : df_ooc_file_), utils::HDF5TensorIO::Mode::READ_ONLY);
         constexpr int kChunk = 64;
         for (int K0 = 0; K0 < n_aux; K0 += kChunk) {
             const int k_sz = std::min(kChunk, n_aux - K0);
@@ -1733,6 +1770,8 @@ SCFResult ROHF::compute() {
     r.n_occ_alpha = n_alpha_;
     r.n_occ_beta = n_beta_;
     r.L_mat = L_mat_;
+    r.df_ooc_file = df_ooc_file_;
+    r.df_ooc_handle = df_ooc_handle_;
 
     print_final(r);
     return r;

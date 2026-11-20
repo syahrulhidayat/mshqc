@@ -248,6 +248,7 @@ void OMP2::compute_t2_and_energy_cholesky() {
   const int nf = std::clamp(n_frozen_, 0, na_);
   const bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
 
+  t2_aa_.clear(); t2_bb_.clear(); t2_ab_.clear();
   t2_aa_.allocate_block(0, 0, 0, 0, na_, va_, na_, va_);
   auto* t_aa_blk = t2_aa_.get_block(0, 0, 0, 0);
 

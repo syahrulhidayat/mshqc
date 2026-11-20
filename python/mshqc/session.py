@@ -36,7 +36,13 @@ class MSHQCSession:
                  units: str = "bohr",
                  reference: Optional[str] = None,
                  threshold: float = 1e-9,
-                 print_level: int = 0):
+                 print_level: int = 0,
+                 scf_type: str = "incore",
+                 freeze_core: bool = False,
+                 n_frozen: int = 0,
+                 memory_limit_gb: float = 4.0,
+                 use_symmetry: bool = True,
+                 level_shift: float = 0.0):  
         self.basis_name = basis_name
         self.eri_method = eri_method.lower()
         self.aux_basis_name = aux_basis_name or f"{basis_name}-RI"
@@ -54,6 +60,12 @@ class MSHQCSession:
             reference=reference,
             threshold=threshold,
             print_level=print_level,
+            scf_type=scf_type,
+            freeze_core=freeze_core,
+            n_frozen=n_frozen,
+            memory_limit_gb=memory_limit_gb,
+            use_symmetry=use_symmetry,
+            level_shift=level_shift,
         )
         self.molecule = self.calc.molecule
         self.results: Dict[str, Any] = {}
@@ -83,7 +95,7 @@ class MSHQCSession:
                 self.results[key] = scf_res
                 self.timings[key] = time.perf_counter() - t0
 
-            elif m in ("mp2", "rmp2", "ump2"):
+            elif m in ("mp2", "rmp2", "ump2", "romp2"):
                 if scf_res is None:
                     t_s = time.perf_counter()
                     scf_res = self.calc.run_scf()
@@ -96,7 +108,7 @@ class MSHQCSession:
                 self.results[key] = mp2_res
                 self.timings[key] = time.perf_counter() - t0
 
-            elif m in ("mp3", "rmp3", "ump3"):
+            elif m in ("mp3", "rmp3", "ump3", "romp3"):
                 if scf_res is None:
                     scf_res = self.calc.run_scf()
                 if mp2_res is None:

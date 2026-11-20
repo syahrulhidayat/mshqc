@@ -22,9 +22,6 @@
 // Wajib dibungkus extern "C" karena libcint murni ditulis dalam C
 extern "C" {
 #include <cint.h>
-#include <string>
-#include <stdexcept>
-#include <cstdlib>
 int cint1e_ovlp_sph(double *buf, int *shls, int *atm, int natm, int *bas, int nbas, double *env, CINTOpt *opt);
 int cint1e_kin_sph(double *buf, int *shls, int *atm, int natm, int *bas, int nbas, double *env, CINTOpt *opt);
 int cint1e_nuc_sph(double *buf, int *shls, int *atm, int natm, int *bas, int nbas, double *env, CINTOpt *opt);
@@ -49,6 +46,10 @@ void cint3c2e_sph_optimizer(CINTOpt **opt, int *atm, int natm, int *bas, int nba
 #include <cmath>
 #include <algorithm>
 
+#include <string>
+
+#include <stdexcept>
+#include <cstdlib>
 #ifdef _OPENMP
 #include <omp.h>
 #endif

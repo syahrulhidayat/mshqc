@@ -1344,7 +1344,11 @@ double OMP3::execute_micro_iterations() {
     scf_.P_alpha.noalias() = scf_.C_alpha.leftCols(na_) * scf_.C_alpha.leftCols(na_).transpose();
     scf_.P_beta.noalias()  = scf_.C_beta.leftCols(nb_)  * scf_.C_beta.leftCols(nb_).transpose();
 
-    pseudocanonicalize();
+    // [INJECTED_PROD_V6_MP3_LIFECYCLE]
+  L2_aa_.resize(0, 0, 0, 0);
+  L2_bb_.resize(0, 0, 0, 0);
+  L2_ab_.resize(0, 0, 0, 0);
+  pseudocanonicalize();
 
     C_a_current_ = scf_.C_alpha;
     C_b_current_ = scf_.C_beta;
@@ -1393,18 +1397,17 @@ void OMP3::compute_mp3_correction() {
     
     auto* t2_aa_dense = t2_aa_.get_block(0,0,0,0);
     if(!t2_aa_dense) throw std::runtime_error("OMP3 missing T2 dense block.");
-    Eigen::Tensor< double, 4 > T2_aa_ijab(na_, na_, va_, va_);
-    
+    const bool skip_full_t2_copy = (config_.eri_method != "exact" && n_frozen_ > 0);
+  Eigen::Tensor< double, 4 > T2_aa_ijab;
+  if (!skip_full_t2_copy) {
+    T2_aa_ijab.resize(na_, na_, va_, va_);
     #pragma omp parallel for collapse(4) schedule(static)
-    for(int i = 0; i < na_; ++i) {
-        for(int j = 0; j < na_; ++j) {
-            for(int a = 0; a < va_; ++a) {
-                for(int b = 0; b < va_; ++b) {
-                    T2_aa_ijab(i,j,a,b) = (*t2_aa_dense)(i,a,j,b);
-                }
-            }
-        }
-    }
+    for (int i = 0; i < na_; ++i)
+      for (int j = 0; j < na_; ++j)
+        for (int a = 0; a < va_; ++a)
+          for (int b = 0; b < va_; ++b)
+            T2_aa_ijab(i, j, a, b) = (*t2_aa_dense)(i, a, j, b);
+  }
 
     // =========================================================================
     // IMPLEMENTASI INTEGRAL EKSAK (CACHE AO INTEGRAL)
@@ -1795,9 +1798,12 @@ void OMP3::compute_mp3_correction() {
 
         if (is_restricted) {
         const int na_act = na_ - nf_a;
+      if (na_act <= 0 || va_ <= 0) {
         t2_3rd_aa_ = Eigen::Tensor<double, 4>(na_, na_, va_, va_);
         t2_3rd_aa_.setZero();
-        if (na_act <= 0 || va_ <= 0) { e_mp3_tot_ = 0.0; return; }
+        e_mp3_tot_ = 0.0;
+        return;
+      }
 
         Eigen::Tensor<double, 4> T_act(na_act, na_act, va_, va_);
         #pragma omp parallel for collapse(4) schedule(static)
@@ -1805,7 +1811,7 @@ void OMP3::compute_mp3_correction() {
             for (int j = 0; j < na_act; ++j)
             for (int a = 0; a < va_; ++a)
                 for (int b = 0; b < va_; ++b)
-                T_act(i, j, a, b) = T2_aa_ijab(nf_a + i, nf_a + j, a, b);
+                T_act(i, j, a, b) = (*t2_aa_dense)(nf_a + i, a, nf_a + j, b);
 
         Eigen::Tensor<double, 4> W(na_act, na_act, va_, va_);
         W.setZero();
@@ -1833,8 +1839,10 @@ void OMP3::compute_mp3_correction() {
         tblis::mult<double>(-1.0, t_Vovov, "iakc", t_T, "kjbc", 1.0, t_W, "ijab");
         tblis::mult<double>(-1.0, t_Voovv, "ikbc", t_T, "kjac", 1.0, t_W, "ijab");
         tblis::mult<double>(-1.0, t_T, "ikcb", t_Voovv, "jkac", 1.0, t_W, "ijab");
+      M_oooo.resize(0, 0); M_ovov.resize(0, 0); M_oovv.resize(0, 0);
+      B_ij_act.resize(0, 0); B_ia_act.resize(0, 0);
 
-        const int n_pairs_sym = na_act * (na_act + 1) / 2;
+      const int n_pairs_sym = na_act * (na_act + 1) / 2;
         std::vector<Eigen::MatrixXd> T_pairs(n_pairs_sym, Eigen::MatrixXd(va_, va_));
         std::vector<Eigen::MatrixXd> W_pairs(n_pairs_sym, Eigen::MatrixXd::Zero(va_, va_));
         int p_idx = 0;
@@ -1857,9 +1865,14 @@ void OMP3::compute_mp3_correction() {
             ++p_idx;
             }
 
-        double e3_aa = 0.0;
-        #pragma omp parallel for collapse(4) reduction(+:e3_aa) schedule(static)
-        for (int i = 0; i < na_act; ++i)
+        T_pairs.clear(); T_pairs.shrink_to_fit();
+      W_pairs.clear(); W_pairs.shrink_to_fit();
+      t2_3rd_aa_ = Eigen::Tensor<double, 4>(na_, na_, va_, va_);
+      t2_3rd_aa_.setZero();
+
+      double e3_aa = 0.0;
+      #pragma omp parallel for collapse(4) reduction(+:e3_aa) schedule(static)
+      for (int i = 0; i < na_act; ++i)
             for (int j = 0; j < na_act; ++j)
             for (int a = 0; a < va_; ++a)
                 for (int b = 0; b < va_; ++b) {
@@ -1888,7 +1901,7 @@ void OMP3::compute_mp3_correction() {
             for (int j = 0; j < na_act; ++j)
             for (int a = 0; a < va_; ++a)
                 for (int b = 0; b < va_; ++b)
-                Taa_act(i, j, a, b) = T2_aa_ijab(nf_a + i, nf_a + j, a, b);
+                Taa_act(i, j, a, b) = (*t2_aa_dense)(nf_a + i, a, nf_a + j, b);
 
         const bool has_b_act = (nb_act > 0 && vb_ > 0);
         Eigen::Tensor<double, 4> Tbb_act, Tab_act;
@@ -3437,6 +3450,10 @@ void OMP3::build_generalized_fock() {
       Z_mat_b = Z_mat_a;
     }
   }
+
+  L2_aa_.resize(0, 0, 0, 0);
+  L2_bb_.resize(0, 0, 0, 0);
+  L2_ab_.resize(0, 0, 0, 0);
 
   Eigen::MatrixXd G_full_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
   G_full_a.block(0, 0, na_, na_) = G_oo_alpha_;

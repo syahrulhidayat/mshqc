@@ -29,6 +29,7 @@
 #include <string>
 #include <iostream> 
 #include <cmath>
+#include <cstdio>
 
 #include <Eigen/Dense>
 #include <Eigen/Eigenvalues>
@@ -64,9 +65,18 @@ struct SCFConfig {
     bool has_initial_guess = false;
     Eigen::MatrixXd init_C_alpha;
     Eigen::MatrixXd init_C_beta;
-  // [INJECTED_HPC_V5_SCF_CONFIG]
-  double memory_limit_gb = 4.0;
-  double level_shift = 0.0;
+    double memory_limit_gb = 4.0;
+    double level_shift = 0.0;
+};
+
+struct ScopedScratchFile {
+  std::string path;
+  explicit ScopedScratchFile(std::string p = "") : path(std::move(p)) {}
+  ~ScopedScratchFile() {
+    if (!path.empty()) std::remove(path.c_str());
+  }
+  ScopedScratchFile(const ScopedScratchFile&) = delete;
+  ScopedScratchFile& operator=(const ScopedScratchFile&) = delete;
 };
 
 struct SCFResult {
@@ -84,6 +94,8 @@ struct SCFResult {
     int n_occ_alpha = 0;
     int n_occ_beta = 0;
     Eigen::MatrixXd L_mat;
+    std::string df_ooc_file;
+    std::shared_ptr<ScopedScratchFile> df_ooc_handle;
 };
 
 
@@ -132,7 +144,9 @@ protected:
   
     std::unique_ptr<integrals::CholeskyERI> internal_cholesky_;
     std::vector<Eigen::MatrixXd> L_vecs_; 
-    Eigen::MatrixXd L_mat_;   
+    Eigen::MatrixXd L_mat_;
+    std::string df_ooc_file_;
+    std::shared_ptr<ScopedScratchFile> df_ooc_handle_;   
     std::unique_ptr<FockBuilder> fock_engine_;
 
     void init_integrals();

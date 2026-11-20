@@ -22,6 +22,7 @@
 #include "mshqc/basis.h"
 #include "mshqc/ints/integrals.h"
 #include <Eigen/Dense>
+#include <string>
 
 namespace mshqc {
 namespace integrals {
@@ -37,6 +38,8 @@ public:
     void compute();
 
     void compute(bool save_hdf5 = false);
+    void set_hdf5_path(const std::string& path) { hdf5_path_ = path; }
+    const std::string& get_hdf5_path() const { return hdf5_path_; }
     const Eigen::MatrixXd& get_B_mat() const { return B_mat_; }
     Eigen::MatrixXd& get_B_mat_mutable() { return B_mat_; }
 
@@ -51,6 +54,7 @@ private:
     Eigen::MatrixXd B_mat_; 
     Eigen::MatrixXd compute_J_inv_half();
     double cutoff_;
+    std::string hdf5_path_ = "df_tensor.h5";
 };
 
 } // namespace integrals
