@@ -17,6 +17,7 @@ import ctypes
 import shutil
 import tempfile
 import resource
+from pathlib import Path
 
 CPU_AVAIL = os.cpu_count() or 4
 N_THREADS = int(os.environ.get("OMP_NUM_THREADS", str(min(4, CPU_AVAIL))))
@@ -112,6 +113,74 @@ def restore_scf_wfn(wfn, snap: dict) -> None:
     wfn.Da().copy(snap["Da"])
     wfn.Fa().copy(snap["Fa"])
     wfn.epsilon_a().copy(snap["ea"])
+
+
+def tail_file(path: str, n_lines: int = 35) -> str:
+    p = Path(path)
+    if not p.exists():
+        return "(no psi4 output file)"
+    lines = p.read_text(encoding="utf-8", errors="replace").splitlines()
+    return "\n".join(lines[-n_lines:])
+
+
+def run_dfocc_with_fallback(
+    method: str,
+    label: str,
+    p4_scf,
+    scf_snap: dict,
+    p4_mol,
+    scratch_dir: str,
+):
+    """
+    Menjalankan DF-OMP2 / DF-OMP3 dengan beberapa strategi konvergensi dfocc
+    dan menangkap potongan log iterasi terakhir jika seluruh strategi gagal.
+    """
+    if method == "omp2":
+        strategies = [
+            ("approx_diag+diis", {"hess_type": "approx_diag", "do_diis": True, "mo_step_max": 0.5, "mo_maxiter": 200}),
+            ("approx_diag+damped", {"hess_type": "approx_diag", "do_diis": False, "mo_step_max": 0.1, "mo_maxiter": 250}),
+        ]
+    else:
+        strategies = [
+            ("approx_diag+nodiis", {"hess_type": "approx_diag", "do_diis": False, "mo_step_max": 0.5, "mo_maxiter": 200}),
+            ("approx_diag+damped", {"hess_type": "approx_diag", "do_diis": False, "mo_step_max": 0.1, "mo_maxiter": 250}),
+            ("msd+damped", {"opt_method": "MSD", "hess_type": "approx_diag", "do_diis": False, "mo_step_max": 0.1, "mo_maxiter": 250}),
+            ("approx_diag_hf+diis", {"opt_method": "ORB_RESP", "hess_type": "approx_diag_hf", "do_diis": True, "mo_step_max": 0.2, "mo_maxiter": 200}),
+        ]
+
+    log_path = os.path.join(scratch_dir, f"{method}_debug.out")
+    last_err = None
+    last_tail = ""
+
+    for strat_name, extra_opts in strategies:
+        restore_scf_wfn(p4_scf, scf_snap)
+        psi4.core.clean()
+        psi4.core.set_output_file(log_path, False)
+        try:
+            psi4.set_options(extra_opts)
+            set_blas_threads(1)
+            t0 = time.perf_counter()
+            e_val = float(psi4.energy(method, ref_wfn=p4_scf, molecule=p4_mol))
+            dt = time.perf_counter() - t0
+            psi4.core.flush_outfile()
+            psi4.core.set_output_file("/dev/null", False)
+            psi4.core.clean()
+            return e_val, dt, strat_name, None
+        except Exception as exc:
+            psi4.core.flush_outfile()
+            psi4.core.set_output_file("/dev/null", False)
+            last_err = f"[{strat_name}] {exc}"
+            last_tail = tail_file(log_path, 35)
+            psi4.core.clean()
+
+    print(
+        f"\n[PSI4 DIAG] {label} | {method.upper()} GAGAL pada semua strategi.\n"
+        f"Error terakhir: {last_err}\n"
+        f"--- 35 baris terakhir output Psi4 ---\n{last_tail}\n"
+        f"------------------------------------\n",
+        flush=True,
+    )
+    return None, None, None, last_err
 
 
 BENZENE = [
@@ -214,34 +283,33 @@ def main():
             # Wajib agar dfocc tidak mencari Unit 97 (PSIF_DFSCF_BJ) saat memakai ref_wfn
             psi4.set_options({"scf_type": "pk", "read_scf_3index": False})
 
-            # 2. DF-OMP2 (pakai ulang scf_wfn + do_diis=True)
-            restore_scf_wfn(p4_scf, scf_snap)
-            psi4.set_options({"do_diis": True})
-            set_blas_threads(1)
-            t0 = time.perf_counter()
-            e_omp2 = float(psi4.energy("omp2", ref_wfn=p4_scf, molecule=p4_mol))
-            t_omp2 = time.perf_counter() - t0
-            psi4.core.clean()
+            # 2. DF-OMP2
+            e_omp2, t_omp2, omp2_strat, omp2_err = run_dfocc_with_fallback(
+                "omp2", label, p4_scf, scf_snap, p4_mol, scratch_dir
+            )
 
-            # 3. DF-OMP3 (matikan oo_diis untuk RHF DF-OMP3: bypass bug occ_iterations.cc:346)
+            # 3. DF-OMP3 (opsional)
             t_omp3 = None
             e_omp3 = None
+            omp3_strat = None
+            omp3_err = None
             if do_omp3:
-                restore_scf_wfn(p4_scf, scf_snap)
-                psi4.set_options({"do_diis": False})
-                set_blas_threads(1)
-                t0 = time.perf_counter()
-                e_omp3 = float(psi4.energy("omp3", ref_wfn=p4_scf, molecule=p4_mol))
-                t_omp3 = time.perf_counter() - t0
-                psi4.core.clean()
+                e_omp3, t_omp3, omp3_strat, omp3_err = run_dfocc_with_fallback(
+                    "omp3", label, p4_scf, scf_snap, p4_mol, scratch_dir
+                )
 
             del scf_snap, p4_scf, p4_mol
             gc.collect()
 
             rss = peak_rss_mb()
-            omp3_str = f"{t_omp3:>8.3f}" if do_omp3 else "    skip"
+            omp2_str = f"{t_omp2:>8.3f}" if t_omp2 is not None else "    FAIL"
+            omp3_str = (
+                f"{t_omp3:>8.3f}"
+                if (do_omp3 and t_omp3 is not None)
+                else ("    FAIL" if do_omp3 else "    skip")
+            )
             print(
-                f"| {label:<19} | {nbf:>4d} | {nf:>2d} | {t_scf:>7.3f} | {t_omp2:>8.3f} | {omp3_str} | {rss:>7.1f} |",
+                f"| {label:<19} | {nbf:>4d} | {nf:>2d} | {t_scf:>7.3f} | {omp2_str} | {omp3_str} | {rss:>7.1f} |",
                 flush=True,
             )
 
@@ -259,6 +327,10 @@ def main():
                 "e_scf": e_scf,
                 "e_omp2": e_omp2,
                 "e_omp3": e_omp3,
+                "omp2_strategy": omp2_strat,
+                "omp3_strategy": omp3_strat,
+                "omp2_error": omp2_err,
+                "omp3_error": omp3_err,
                 "peak_mb": rss,
             })
         finally:
