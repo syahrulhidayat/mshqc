@@ -2,7 +2,7 @@
 """
 tests/run_psi4_heavy_large.py
 -----------------------------
-Benchmark Referensi Psi4 (Strict Apple-to-Apple, read_scf_3index=True):
+Benchmark Referensi Psi4 (read_scf_3index=False untuk kompatibilitas MemDFJK -> dfocc):
 - Atom berat hingga Z=36 (Ar, HBr, Kr) all-electron & freeze_core=True
 - Molekul menengah-besar (C6H6 cc-pVDZ 114 BF, C10H8 cc-pVDZ 188 BF, C6H6 cc-pVTZ 264 BF)
 Menghasilkan: psi4_heavy_large_raw.json
@@ -101,14 +101,14 @@ def main():
             "mp2_type": "df",
             "mp_type": "df",
             "cc_type": "df",
-            "df_ints_io": "save",
+            "df_ints_io": "none",
             "freeze_core": "true" if fc else "false",
             "e_convergence": 1e-9,
             "d_convergence": 1e-9,
             "r_convergence": 1e-6,
             "rms_mograd_convergence": 1e-5,
             "max_mograd_convergence": 1e-4,
-            "read_scf_3index": True,
+            "read_scf_3index": False,
         })
 
         t0 = time.perf_counter()
@@ -159,6 +159,7 @@ def main():
         "engine": "psi4",
         "version": str(psi4.__version__),
         "n_threads": N_THREADS,
+        "read_scf_3index": False,
         "cases": results,
     }
     with open("psi4_heavy_large_raw.json", "w", encoding="utf-8") as f:
