@@ -103,67 +103,82 @@ BaseMP2::~BaseMP2() = default;
 MP2Result BaseMP2::compute() {
     return MP2Result();
 }
+
 void BaseMP2::transform_3center_mo() {
-    const int n_aux = static_cast<int>(scf_.L_mat.cols());
-    const bool is_restricted = (nocc_a_ == nocc_b_ && nvir_a_ == nvir_b_ && scf_.n_occ_alpha == scf_.n_occ_beta);
-    const bool has_beta = (!is_restricted && nocc_b_ > 0 && nvir_b_ > 0);
-    const bool packed = integrals::is_packed_ao_matrix(scf_.L_mat, nbf_);
+  const int n_aux = static_cast<int>(scf_.L_mat.cols());
+  const bool is_restricted = (nocc_a_ == nocc_b_ && nvir_a_ == nvir_b_ && scf_.n_occ_alpha == scf_.n_occ_beta);
+  const bool has_beta = (!is_restricted && nocc_b_ > 0 && nvir_b_ > 0);
+  const bool packed = integrals::is_packed_ao_matrix(scf_.L_mat, nbf_);
 
-    B_ia_P_alpha_.resize(static_cast<Eigen::Index>(nocc_a_) * nvir_a_, n_aux);
-    if (has_beta) B_ia_P_beta_.resize(static_cast<Eigen::Index>(nocc_b_) * nvir_b_, n_aux);
+  B_ia_P_alpha_.resize(static_cast<Eigen::Index>(nocc_a_) * nvir_a_, n_aux);
+  if (has_beta) B_ia_P_beta_.resize(static_cast<Eigen::Index>(nocc_b_) * nvir_b_, n_aux);
 
-    const Eigen::MatrixXd& Ca_occ = scf_.C_alpha.leftCols(nocc_a_);
-    const Eigen::MatrixXd& Ca_vir = scf_.C_alpha.rightCols(nvir_a_);
-    Eigen::MatrixXd Cb_occ, Cb_vir;
-    if (has_beta) {
-        Cb_occ = scf_.C_beta.leftCols(nocc_b_);
-        Cb_vir = scf_.C_beta.rightCols(nvir_b_);
-    }
+  const Eigen::MatrixXd Ca_occ = scf_.C_alpha.leftCols(nocc_a_);
+  const Eigen::MatrixXd Ca_vir = scf_.C_alpha.rightCols(nvir_a_);
+  Eigen::MatrixXd Cb_occ, Cb_vir;
+  if (has_beta) {
+    Cb_occ = scf_.C_beta.leftCols(nocc_b_);
+    Cb_vir = scf_.C_beta.rightCols(nvir_b_);
+  }
 
-    constexpr int chunk_size = 32;
-    #pragma omp parallel for schedule(dynamic)
+  // Adaptive chunk_size: <= 8 MB scratch per thread agar aman pada molekul 500+ BF
+  const size_t bytes_per_p = std::max<size_t>(1, static_cast<size_t>(nbf_) * nbf_ * sizeof(double));
+  const int chunk_size = std::clamp(static_cast<int>((8ULL * 1024ULL * 1024ULL) / bytes_per_p), 1, 32);
+
+  #pragma omp parallel
+  {
+    Eigen::MatrixXd L_sq_buf;
+    if (packed) L_sq_buf.resize(static_cast<Eigen::Index>(nbf_) * nbf_, chunk_size);
+    Eigen::MatrixXd B_mo_a(nvir_a_, nocc_a_);
+    Eigen::MatrixXd B_mo_b;
+    if (has_beta) B_mo_b.resize(nvir_b_, nocc_b_);
+
+    #pragma omp for schedule(dynamic, 1) nowait
     for (int P_start = 0; P_start < n_aux; P_start += chunk_size) {
-        const int P_size = std::min(chunk_size, n_aux - P_start);
-        Eigen::MatrixXd L_sq_buf;
-        const double* L_sq_ptr = nullptr;
+      const int P_size = std::min(chunk_size, n_aux - P_start);
+      const double* L_sq_ptr = nullptr;
 
-        if (packed) {
-            L_sq_buf.resize(static_cast<Eigen::Index>(nbf_) * nbf_, P_size);
-            for (int p = 0; p < P_size; ++p) {
-                const double* s = scf_.L_mat.col(P_start + p).data();
-                double* d = L_sq_buf.col(p).data();
-                for (int i = 0; i < nbf_; ++i) {
-                    const int base = i * (i + 1) / 2;
-                    for (int j = 0; j < i; ++j) {
-                        const double v = s[base + j];
-                        d[i + j * nbf_] = v;
-                        d[j + i * nbf_] = v;
-                    }
-                    d[i + i * nbf_] = s[base + i];
-                }
-            }
-            L_sq_ptr = L_sq_buf.data();
-        } else {
-            L_sq_ptr = scf_.L_mat.col(P_start).data();
-        }
-
-        Eigen::Map<const Eigen::MatrixXd> L_res(L_sq_ptr, nbf_, nbf_ * P_size);
-        Eigen::MatrixXd X_a = Ca_vir.transpose() * L_res;
+      if (packed) {
         for (int p = 0; p < P_size; ++p) {
-            Eigen::Map<const Eigen::MatrixXd> X_P(X_a.data() + static_cast<size_t>(p) * nvir_a_ * nbf_, nvir_a_, nbf_);
-            Eigen::MatrixXd B_mo = X_P * Ca_occ;
-            B_ia_P_alpha_.col(P_start + p) = Eigen::Map<const Eigen::VectorXd>(B_mo.data(), nvir_a_ * nocc_a_);
-        }
-
-        if (has_beta) {
-            Eigen::MatrixXd X_b = Cb_vir.transpose() * L_res;
-            for (int p = 0; p < P_size; ++p) {
-                Eigen::Map<const Eigen::MatrixXd> X_Pb(X_b.data() + static_cast<size_t>(p) * nvir_b_ * nbf_, nvir_b_, nbf_);
-                Eigen::MatrixXd B_mo_b = X_Pb * Cb_occ;
-                B_ia_P_beta_.col(P_start + p) = Eigen::Map<const Eigen::VectorXd>(B_mo_b.data(), nvir_b_ * nocc_b_);
+          const double* s = scf_.L_mat.col(P_start + p).data();
+          double* d = L_sq_buf.col(p).data();
+          for (int i = 0; i < nbf_; ++i) {
+            const int base = i * (i + 1) / 2;
+            for (int j = 0; j < i; ++j) {
+              const double v = s[base + j];
+              d[i + j * nbf_] = v;
+              d[j + i * nbf_] = v;
             }
+            d[i + i * nbf_] = s[base + i];
+          }
         }
+        L_sq_ptr = L_sq_buf.data();
+      } else {
+        L_sq_ptr = scf_.L_mat.col(P_start).data();
+      }
+
+      Eigen::Map<const Eigen::MatrixXd> L_res(L_sq_ptr, nbf_, static_cast<Eigen::Index>(nbf_) * P_size);
+      Eigen::MatrixXd X_a = Ca_vir.transpose() * L_res;
+      for (int p = 0; p < P_size; ++p) {
+        Eigen::Map<const Eigen::MatrixXd> X_P(
+            X_a.data() + static_cast<size_t>(p) * nvir_a_ * nbf_, nvir_a_, nbf_);
+        B_mo_a.noalias() = X_P * Ca_occ;
+        B_ia_P_alpha_.col(P_start + p) =
+            Eigen::Map<const Eigen::VectorXd>(B_mo_a.data(), static_cast<Eigen::Index>(nvir_a_) * nocc_a_);
+      }
+
+      if (has_beta) {
+        Eigen::MatrixXd X_b = Cb_vir.transpose() * L_res;
+        for (int p = 0; p < P_size; ++p) {
+          Eigen::Map<const Eigen::MatrixXd> X_Pb(
+              X_b.data() + static_cast<size_t>(p) * nvir_b_ * nbf_, nvir_b_, nbf_);
+          B_mo_b.noalias() = X_Pb * Cb_occ;
+          B_ia_P_beta_.col(P_start + p) =
+              Eigen::Map<const Eigen::VectorXd>(B_mo_b.data(), static_cast<Eigen::Index>(nvir_b_) * nocc_b_);
+        }
+      }
     }
+  }
 }
 
 
@@ -1037,91 +1052,112 @@ void OMP2::pseudocanonicalize() {
 }
 
 void OMP2::transform_3center_mo_cholesky() {
-    const int n_chol = static_cast<int>(scf_.L_mat.cols());
-    const bool packed = integrals::is_packed_ao_matrix(scf_.L_mat, nbf_);
-    B_ia_P_alpha_ = Eigen::MatrixXd::Zero(na_ * va_, n_chol);
-    B_oo_P_alpha_ = Eigen::MatrixXd::Zero(na_ * na_, n_chol);
-    B_vv_P_alpha_ = Eigen::MatrixXd::Zero(va_ * va_, n_chol);
+  const int n_chol = static_cast<int>(scf_.L_mat.cols());
+  const bool packed = integrals::is_packed_ao_matrix(scf_.L_mat, nbf_);
+  const bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
+  const bool has_beta = (!is_restricted && nb_ > 0 && vb_ > 0);
 
-    bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
-    bool has_beta = (!is_restricted && nb_ > 0 && vb_ > 0);
+  // Gunakan resize() tanpa single-thread Zero() memset (first-touch di OpenMP)
+  B_ia_P_alpha_.resize(static_cast<Eigen::Index>(na_) * va_, n_chol);
+  B_oo_P_alpha_.resize(static_cast<Eigen::Index>(na_) * na_, n_chol);
+  B_vv_P_alpha_.resize(static_cast<Eigen::Index>(va_) * va_, n_chol);
 
+  if (has_beta) {
+    B_ia_P_beta_.resize(static_cast<Eigen::Index>(nb_) * vb_, n_chol);
+    B_oo_P_beta_.resize(static_cast<Eigen::Index>(nb_) * nb_, n_chol);
+    B_vv_P_beta_.resize(static_cast<Eigen::Index>(vb_) * vb_, n_chol);
+  }
+
+  const Eigen::MatrixXd Ca_occ = scf_.C_alpha.leftCols(na_);
+  const Eigen::MatrixXd Ca_vir = scf_.C_alpha.rightCols(va_);
+  Eigen::MatrixXd Cb_occ, Cb_vir;
+  if (has_beta) {
+    Cb_occ = scf_.C_beta.leftCols(nb_);
+    Cb_vir = scf_.C_beta.rightCols(vb_);
+  }
+
+  const size_t bytes_per_p = std::max<size_t>(1, static_cast<size_t>(nbf_) * nbf_ * sizeof(double));
+  const int chunk_size = std::clamp(static_cast<int>((8ULL * 1024ULL * 1024ULL) / bytes_per_p), 1, 32);
+
+  #pragma omp parallel
+  {
+    Eigen::MatrixXd L_sq_buf;
+    if (packed) L_sq_buf.resize(static_cast<Eigen::Index>(nbf_) * nbf_, chunk_size);
+
+    Eigen::MatrixXd B_oo_tmp(na_, na_);
+    Eigen::MatrixXd B_ia_tmp(va_, na_);
+    Eigen::MatrixXd B_vv_tmp(va_, va_);
+    Eigen::MatrixXd B_oo_tmp_b, B_ia_tmp_b, B_vv_tmp_b;
     if (has_beta) {
-        B_ia_P_beta_ = Eigen::MatrixXd::Zero(nb_ * vb_, n_chol);
-        B_oo_P_beta_ = Eigen::MatrixXd::Zero(nb_ * nb_, n_chol);
-        B_vv_P_beta_ = Eigen::MatrixXd::Zero(vb_ * vb_, n_chol);
+      B_oo_tmp_b.resize(nb_, nb_);
+      B_ia_tmp_b.resize(vb_, nb_);
+      B_vv_tmp_b.resize(vb_, vb_);
     }
 
-    const Eigen::MatrixXd& Ca_occ = scf_.C_alpha.leftCols(na_);
-    const Eigen::MatrixXd& Ca_vir = scf_.C_alpha.rightCols(va_);
-    Eigen::MatrixXd Cb_occ, Cb_vir;
-    if (has_beta) {
-        Cb_occ = scf_.C_beta.leftCols(nb_);
-        Cb_vir = scf_.C_beta.rightCols(vb_);
-    }
-
-    constexpr int chunk_size = 32;
-    #pragma omp parallel for schedule(dynamic)
+    #pragma omp for schedule(dynamic, 1) nowait
     for (int P_start = 0; P_start < n_chol; P_start += chunk_size) {
-        const int P_size = std::min(chunk_size, n_chol - P_start);
-        Eigen::MatrixXd L_sq_buf;
-        const double* L_sq_ptr = nullptr;
+      const int P_size = std::min(chunk_size, n_chol - P_start);
+      const double* L_sq_ptr = nullptr;
 
-        if (packed) {
-            L_sq_buf.resize(static_cast<Eigen::Index>(nbf_) * nbf_, P_size);
-            for (int p = 0; p < P_size; ++p) {
-                const double* s = scf_.L_mat.col(P_start + p).data();
-                double* d = L_sq_buf.col(p).data();
-                for (int i = 0; i < nbf_; ++i) {
-                    const int base = i * (i + 1) / 2;
-                    for (int j = 0; j < i; ++j) {
-                        const double v = s[base + j];
-                        d[i + j * nbf_] = v;
-                        d[j + i * nbf_] = v;
-                    }
-                    d[i + i * nbf_] = s[base + i];
-                }
+      if (packed) {
+        for (int p = 0; p < P_size; ++p) {
+          const double* s = scf_.L_mat.col(P_start + p).data();
+          double* d = L_sq_buf.col(p).data();
+          for (int i = 0; i < nbf_; ++i) {
+            const int base = i * (i + 1) / 2;
+            for (int j = 0; j < i; ++j) {
+              const double v = s[base + j];
+              d[i + j * nbf_] = v;
+              d[j + i * nbf_] = v;
             }
-            L_sq_ptr = L_sq_buf.data();
-        } else {
-            L_sq_ptr = scf_.L_mat.col(P_start).data();
+            d[i + i * nbf_] = s[base + i];
+          }
         }
+        L_sq_ptr = L_sq_buf.data();
+      } else {
+        L_sq_ptr = scf_.L_mat.col(P_start).data();
+      }
 
-        Eigen::Map<const Eigen::MatrixXd> L_reshaped(L_sq_ptr, nbf_, nbf_ * P_size);
-        Eigen::MatrixXd X_a_occ = Ca_occ.transpose() * L_reshaped;
-        Eigen::MatrixXd X_a_vir = Ca_vir.transpose() * L_reshaped;
+      Eigen::Map<const Eigen::MatrixXd> L_reshaped(L_sq_ptr, nbf_, static_cast<Eigen::Index>(nbf_) * P_size);
+      Eigen::MatrixXd X_a_occ = Ca_occ.transpose() * L_reshaped;
+      Eigen::MatrixXd X_a_vir = Ca_vir.transpose() * L_reshaped;
+
+      for (int p = 0; p < P_size; ++p) {
+        Eigen::Map<const Eigen::MatrixXd> X_P_occ(
+            X_a_occ.data() + static_cast<size_t>(p) * na_ * nbf_, na_, nbf_);
+        Eigen::Map<const Eigen::MatrixXd> X_P_vir(
+            X_a_vir.data() + static_cast<size_t>(p) * va_ * nbf_, va_, nbf_);
+
+        B_oo_tmp.noalias() = X_P_occ * Ca_occ;
+        B_ia_tmp.noalias() = X_P_vir * Ca_occ;
+        B_vv_tmp.noalias() = X_P_vir * Ca_vir;
+
+        B_oo_P_alpha_.col(P_start + p) = Eigen::Map<const Eigen::VectorXd>(B_oo_tmp.data(), static_cast<Eigen::Index>(na_) * na_);
+        B_ia_P_alpha_.col(P_start + p) = Eigen::Map<const Eigen::VectorXd>(B_ia_tmp.data(), static_cast<Eigen::Index>(va_) * na_);
+        B_vv_P_alpha_.col(P_start + p) = Eigen::Map<const Eigen::VectorXd>(B_vv_tmp.data(), static_cast<Eigen::Index>(va_) * va_);
+      }
+
+      if (has_beta) {
+        Eigen::MatrixXd X_b_occ = Cb_occ.transpose() * L_reshaped;
+        Eigen::MatrixXd X_b_vir = Cb_vir.transpose() * L_reshaped;
 
         for (int p = 0; p < P_size; ++p) {
-            Eigen::Map<Eigen::MatrixXd> X_P_occ(X_a_occ.data() + static_cast<size_t>(p) * na_ * nbf_, na_, nbf_);
-            Eigen::Map<Eigen::MatrixXd> X_P_vir(X_a_vir.data() + static_cast<size_t>(p) * va_ * nbf_, va_, nbf_);
+          Eigen::Map<const Eigen::MatrixXd> X_P_occ_b(
+              X_b_occ.data() + static_cast<size_t>(p) * nb_ * nbf_, nb_, nbf_);
+          Eigen::Map<const Eigen::MatrixXd> X_P_vir_b(
+              X_b_vir.data() + static_cast<size_t>(p) * vb_ * nbf_, vb_, nbf_);
 
-            Eigen::MatrixXd B_oo_tmp = X_P_occ * Ca_occ;
-            Eigen::MatrixXd B_ia_tmp = X_P_vir * Ca_occ;
-            Eigen::MatrixXd B_vv_tmp = X_P_vir * Ca_vir;
+          B_oo_tmp_b.noalias() = X_P_occ_b * Cb_occ;
+          B_ia_tmp_b.noalias() = X_P_vir_b * Cb_occ;
+          B_vv_tmp_b.noalias() = X_P_vir_b * Cb_vir;
 
-            B_oo_P_alpha_.col(P_start + p) = Eigen::Map<Eigen::VectorXd>(B_oo_tmp.data(), na_ * na_);
-            B_ia_P_alpha_.col(P_start + p) = Eigen::Map<Eigen::VectorXd>(B_ia_tmp.data(), va_ * na_);
-            B_vv_P_alpha_.col(P_start + p) = Eigen::Map<Eigen::VectorXd>(B_vv_tmp.data(), va_ * va_);
+          B_oo_P_beta_.col(P_start + p) = Eigen::Map<const Eigen::VectorXd>(B_oo_tmp_b.data(), static_cast<Eigen::Index>(nb_) * nb_);
+          B_ia_P_beta_.col(P_start + p) = Eigen::Map<const Eigen::VectorXd>(B_ia_tmp_b.data(), static_cast<Eigen::Index>(vb_) * nb_);
+          B_vv_P_beta_.col(P_start + p) = Eigen::Map<const Eigen::VectorXd>(B_vv_tmp_b.data(), static_cast<Eigen::Index>(vb_) * vb_);
         }
-
-        if (has_beta) {
-            Eigen::MatrixXd X_b_occ = Cb_occ.transpose() * L_reshaped;
-            Eigen::MatrixXd X_b_vir = Cb_vir.transpose() * L_reshaped;
-
-            for (int p = 0; p < P_size; ++p) {
-                Eigen::Map<Eigen::MatrixXd> X_P_occ_b(X_b_occ.data() + static_cast<size_t>(p) * nb_ * nbf_, nb_, nbf_);
-                Eigen::Map<Eigen::MatrixXd> X_P_vir_b(X_b_vir.data() + static_cast<size_t>(p) * vb_ * nbf_, vb_, nbf_);
-
-                Eigen::MatrixXd B_oo_tmp_b = X_P_occ_b * Cb_occ;
-                Eigen::MatrixXd B_ia_tmp_b = X_P_vir_b * Cb_occ;
-                Eigen::MatrixXd B_vv_tmp_b = X_P_vir_b * Cb_vir;
-
-                B_oo_P_beta_.col(P_start + p) = Eigen::Map<Eigen::VectorXd>(B_oo_tmp_b.data(), nb_ * nb_);
-                B_ia_P_beta_.col(P_start + p) = Eigen::Map<Eigen::VectorXd>(B_ia_tmp_b.data(), vb_ * nb_);
-                B_vv_P_beta_.col(P_start + p) = Eigen::Map<Eigen::VectorXd>(B_vv_tmp_b.data(), vb_ * vb_);
-            }
-        }
+      }
     }
+  }
 }
 
 double OMP2::execute_micro_iterations() {

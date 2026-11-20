@@ -36,70 +36,92 @@ struct SubshellOcc {
     std::vector<double> f_occ;
 };
 
+// [INJECTED_HPC_V4_SAD_HEAVY]
 SubshellOcc get_subshell_occupations(int Z) {
-    SubshellOcc cfg;
-    auto push_if = [](std::vector<double>& vec, double val) {
-        if (val > 0.0) vec.push_back(val);
-    };
+  SubshellOcc cfg;
+  auto push_if = [](std::vector<double>& vec, double val) {
+    if (val > 0.0) vec.push_back(val);
+  };
 
-    // Periode 1 (H-He)
-    if (Z >= 1) push_if(cfg.s_occ, std::min(2.0, static_cast<double>(Z)));
+  // Tabel anomali konfigurasi ground-state eksperimental (logam transisi d & f-block)
+  // mencegah tebakan awal SCF terjebak di konfigurasi excited s^2 d^(n-1)
+  auto set_cfg = [&](std::initializer_list<double> s,
+                     std::initializer_list<double> p,
+                     std::initializer_list<double> d,
+                     std::initializer_list<double> f) -> SubshellOcc {
+    SubshellOcc out;
+    out.s_occ.assign(s.begin(), s.end());
+    out.p_occ.assign(p.begin(), p.end());
+    out.d_occ.assign(d.begin(), d.end());
+    out.f_occ.assign(f.begin(), f.end());
+    return out;
+  };
 
-    // Periode 2 (Li-Ne)
-    if (Z > 2) {
-        double rem = Z - 2;
-        double o2s = std::min(2.0, rem); rem -= o2s; push_if(cfg.s_occ, o2s);
-        double o2p = std::min(6.0, rem); rem -= o2p; push_if(cfg.p_occ, o2p);
-    }
+  switch (Z) {
+    case 24: return set_cfg({2,2,2,1}, {6,6}, {5}, {});               // Cr: [Ar] 4s1 3d5
+    case 29: return set_cfg({2,2,2,1}, {6,6}, {10}, {});              // Cu: [Ar] 4s1 3d10
+    case 41: return set_cfg({2,2,2,2,1}, {6,6,6}, {10,4}, {});        // Nb: [Kr] 5s1 4d4
+    case 42: return set_cfg({2,2,2,2,1}, {6,6,6}, {10,5}, {});        // Mo: [Kr] 5s1 4d5
+    case 44: return set_cfg({2,2,2,2,1}, {6,6,6}, {10,7}, {});        // Ru: [Kr] 5s1 4d7
+    case 45: return set_cfg({2,2,2,2,1}, {6,6,6}, {10,8}, {});        // Rh: [Kr] 5s1 4d8
+    case 46: return set_cfg({2,2,2,2},   {6,6,6}, {10,10}, {});       // Pd: [Kr] 4d10
+    case 47: return set_cfg({2,2,2,2,1}, {6,6,6}, {10,10}, {});       // Ag: [Kr] 5s1 4d10
+    case 57: return set_cfg({2,2,2,2,2,2}, {6,6,6,6}, {10,10,1}, {}); // La: [Xe] 6s2 5d1
+    case 58: return set_cfg({2,2,2,2,2,2}, {6,6,6,6}, {10,10,1}, {1});// Ce: [Xe] 6s2 4f1 5d1
+    case 64: return set_cfg({2,2,2,2,2,2}, {6,6,6,6}, {10,10,1}, {7});// Gd: [Xe] 6s2 4f7 5d1
+    case 78: return set_cfg({2,2,2,2,2,1}, {6,6,6,6}, {10,10,9}, {14});// Pt: [Xe] 6s1 4f14 5d9
+    case 79: return set_cfg({2,2,2,2,2,1}, {6,6,6,6}, {10,10,10}, {14});// Au: [Xe] 6s1 4f14 5d10
+    case 89: return set_cfg({2,2,2,2,2,2,2}, {6,6,6,6,6}, {10,10,10,1}, {14});    // Ac
+    case 90: return set_cfg({2,2,2,2,2,2,2}, {6,6,6,6,6}, {10,10,10,2}, {14});    // Th
+    case 91: return set_cfg({2,2,2,2,2,2,2}, {6,6,6,6,6}, {10,10,10,1}, {14,2});  // Pa
+    case 92: return set_cfg({2,2,2,2,2,2,2}, {6,6,6,6,6}, {10,10,10,1}, {14,3});  // U
+    case 93: return set_cfg({2,2,2,2,2,2,2}, {6,6,6,6,6}, {10,10,10,1}, {14,4});  // Np
+    case 96: return set_cfg({2,2,2,2,2,2,2}, {6,6,6,6,6}, {10,10,10,1}, {14,7});  // Cm
+    default: break;
+  }
 
-    // Periode 3 (Na-Ar)
-    if (Z > 10) {
-        double rem = Z - 10;
-        double o3s = std::min(2.0, rem); rem -= o3s; push_if(cfg.s_occ, o3s);
-        double o3p = std::min(6.0, rem); rem -= o3p; push_if(cfg.p_occ, o3p);
-    }
-
-    // Periode 4 (K-Kr)
-    if (Z > 18) {
-        double rem = Z - 18;
-        double o4s = std::min(2.0, rem); rem -= o4s; push_if(cfg.s_occ, o4s);
-        double o3d = std::min(10.0, rem); rem -= o3d; push_if(cfg.d_occ, o3d);
-        double o4p = std::min(6.0, rem); rem -= o4p; push_if(cfg.p_occ, o4p);
-    }
-
-    // Periode 5 (Rb-Xe)
-    if (Z > 36) {
-        double rem = Z - 36;
-        double o5s = std::min(2.0, rem); rem -= o5s; push_if(cfg.s_occ, o5s);
-        double o4d = std::min(10.0, rem); rem -= o4d; push_if(cfg.d_occ, o4d);
-        double o5p = std::min(6.0, rem); rem -= o5p; push_if(cfg.p_occ, o5p);
-    }
-
-    // Periode 6 (Cs-Rn)
-    if (Z > 54) {
-        double rem = Z - 54;
-        double o6s = std::min(2.0, rem); rem -= o6s; push_if(cfg.s_occ, o6s);
-        double o4f = std::min(14.0, rem); rem -= o4f; push_if(cfg.f_occ, o4f);
-        double o5d = std::min(10.0, rem); rem -= o5d; push_if(cfg.d_occ, o5d);
-        double o6p = std::min(6.0, rem); rem -= o6p; push_if(cfg.p_occ, o6p);
-    }
-
-    // Periode 7 (Fr-Og)
-    if (Z > 86) {
-        double rem = Z - 86;
-        double o7s = std::min(2.0, rem); rem -= o7s; push_if(cfg.s_occ, o7s);
-        double o5f = std::min(14.0, rem); rem -= o5f; push_if(cfg.f_occ, o5f);
-        double o6d = std::min(10.0, rem); rem -= o6d; push_if(cfg.d_occ, o6d);
-        double o7p = std::min(6.0, rem); rem -= o7p; push_if(cfg.p_occ, o7p);
-    }
-
-    // Periode 8
-    if (Z > 118) {
-        double rem = Z - 118;
-        double o8s = std::min(2.0, rem); rem -= o8s; push_if(cfg.s_occ, o8s);
-    }
-
-    return cfg;
+  if (Z >= 1) push_if(cfg.s_occ, std::min(2.0, static_cast<double>(Z)));
+  if (Z > 2) {
+    double rem = Z - 2;
+    double o2s = std::min(2.0, rem); rem -= o2s; push_if(cfg.s_occ, o2s);
+    double o2p = std::min(6.0, rem); rem -= o2p; push_if(cfg.p_occ, o2p);
+  }
+  if (Z > 10) {
+    double rem = Z - 10;
+    double o3s = std::min(2.0, rem); rem -= o3s; push_if(cfg.s_occ, o3s);
+    double o3p = std::min(6.0, rem); rem -= o3p; push_if(cfg.p_occ, o3p);
+  }
+  if (Z > 18) {
+    double rem = Z - 18;
+    double o4s = std::min(2.0, rem); rem -= o4s; push_if(cfg.s_occ, o4s);
+    double o3d = std::min(10.0, rem); rem -= o3d; push_if(cfg.d_occ, o3d);
+    double o4p = std::min(6.0, rem); rem -= o4p; push_if(cfg.p_occ, o4p);
+  }
+  if (Z > 36) {
+    double rem = Z - 36;
+    double o5s = std::min(2.0, rem); rem -= o5s; push_if(cfg.s_occ, o5s);
+    double o4d = std::min(10.0, rem); rem -= o4d; push_if(cfg.d_occ, o4d);
+    double o5p = std::min(6.0, rem); rem -= o5p; push_if(cfg.p_occ, o5p);
+  }
+  if (Z > 54) {
+    double rem = Z - 54;
+    double o6s = std::min(2.0, rem); rem -= o6s; push_if(cfg.s_occ, o6s);
+    double o4f = std::min(14.0, rem); rem -= o4f; push_if(cfg.f_occ, o4f);
+    double o5d = std::min(10.0, rem); rem -= o5d; push_if(cfg.d_occ, o5d);
+    double o6p = std::min(6.0, rem); rem -= o6p; push_if(cfg.p_occ, o6p);
+  }
+  if (Z > 86) {
+    double rem = Z - 86;
+    double o7s = std::min(2.0, rem); rem -= o7s; push_if(cfg.s_occ, o7s);
+    double o5f = std::min(14.0, rem); rem -= o5f; push_if(cfg.f_occ, o5f);
+    double o6d = std::min(10.0, rem); rem -= o6d; push_if(cfg.d_occ, o6d);
+    double o7p = std::min(6.0, rem); rem -= o7p; push_if(cfg.p_occ, o7p);
+  }
+  if (Z > 118) {
+    double rem = Z - 118;
+    double o8s = std::min(2.0, rem); rem -= o8s; push_if(cfg.s_occ, o8s);
+  }
+  return cfg;
 }
 
 } // namespace

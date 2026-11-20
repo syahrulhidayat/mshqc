@@ -31,7 +31,11 @@ _SYMBOL_TO_Z = {
     'Cs': 55, 'Ba': 56, 'La': 57, 'Ce': 58, 'Pr': 59, 'Nd': 60, 'Pm': 61, 'Sm': 62, 'Eu': 63, 'Gd': 64,
     'Tb': 65, 'Dy': 66, 'Ho': 67, 'Er': 68, 'Tm': 69, 'Yb': 70, 'Lu': 71,
     'Hf': 72, 'Ta': 73, 'W': 74, 'Re': 75, 'Os': 76, 'Ir': 77, 'Pt': 78, 'Au': 79, 'Hg': 80,
-    'Tl': 81, 'Pb': 82, 'Bi': 83, 'Po': 84, 'At': 85, 'Rn': 86
+    'Tl': 81, 'Pb': 82, 'Bi': 83, 'Po': 84, 'At': 85, 'Rn': 86,
+    'Fr': 87, 'Ra': 88, 'Ac': 89, 'Th': 90, 'Pa': 91, 'U': 92, 'Np': 93, 'Pu': 94,
+    'Am': 95, 'Cm': 96, 'Bk': 97, 'Cf': 98, 'Es': 99, 'Fm': 100, 'Md': 101, 'No': 102,
+    'Lr': 103, 'Rf': 104, 'Db': 105, 'Sg': 106, 'Bh': 107, 'Hs': 108, 'Mt': 109, 'Ds': 110,
+    'Rg': 111, 'Cn': 112, 'Nh': 113, 'Fl': 114, 'Mc': 115, 'Lv': 116, 'Ts': 117, 'Og': 118
 }
 
 def build_molecule(atoms: Union[mshqc.Molecule, str, List[Tuple]],
@@ -393,3 +397,91 @@ def optimize_geometry_universal(
         grad_max_tol=grad_max_tol,
     )
     return opt.run(coords_bohr)
+
+
+
+def recommend_hpc_settings(
+    molecule: Union[mshqc.Molecule, str, List[Tuple]],
+    basis_name: str = "cc-pVTZ",
+    method: str = "omp2",
+    charge: int = 0,
+    multiplicity: Optional[int] = None,
+    units: str = "angstrom",
+    memory_limit_gb: float = 8.0,
+    basis_dir: Optional[str] = None,
+) -> Dict[str, Any]:
+    """
+    Auto-profiler HPC untuk rentang molekul ringan -> berat dan atom berat.
+    Menghitung estimasi N_bf, N_aux, kebutuhan RAM, rekomendasi ERI/SCF/freeze_core,
+    serta peringatan fisika kuantum jika terdapat unsur Z > 36 (memerlukan ECP/relativistik).
+    """
+    mol = build_molecule(molecule, charge=charge, multiplicity=multiplicity, units=units)
+    bdir = basis_dir or os.environ.get("MSHQC_BASIS_PATH", "data/basis")
+    basis = mshqc.BasisSet(basis_name, mol, bdir)
+    nbf = int(basis.n_basis_functions())
+    n_elec = int(mol.total_nuclear_charge()) - int(mol.charge())
+    mult = int(mol.multiplicity())
+    na = (n_elec + mult - 1) // 2
+    nb = n_elec - na
+    va = max(0, nbf - na)
+    n_aux_est = int(nbf * 3.0)
+
+    max_z = max((int(mol.atom(i).atomic_number) for i in range(mol.n_atoms())), default=0)
+    n_frozen_std = int(mshqc.standard_frozen_core(mol)) if hasattr(mshqc, "standard_frozen_core") else 0
+
+    mem_exact_gb = (nbf ** 4) * 8.0 / 1.0e9
+    mem_df_packed_gb = (nbf * (nbf + 1) / 2.0) * n_aux_est * 8.0 / 1.0e9
+    mem_bvv_gb = (va ** 2) * n_aux_est * 8.0 / 1.0e9
+    mem_t2_gb = (max(1, na - n_frozen_std) ** 2) * (va ** 2) * 8.0 / 1.0e9
+
+    if nbf <= 60:
+        tier = "light"
+        eri_rec = "df" if method.lower() in ("omp2", "omp3") else "exact"
+        scf_rec = "incore"
+        fc_rec = False
+    elif nbf <= 250:
+        tier = "medium"
+        eri_rec = "df"
+        scf_rec = "incore"
+        fc_rec = True
+    else:
+        tier = "heavy"
+        eri_rec = "df"
+        scf_rec = "ooc" if mem_df_packed_gb > memory_limit_gb * 0.55 else "incore"
+        fc_rec = True
+
+    warnings: List[str] = []
+    if max_z > 36:
+        warnings.append(
+            f"Terdeteksi atom berat Z={max_z} (>36). mshqc-sync saat ini all-electron non-relativistik "
+            "tanpa ECP/X2C; gunakan dengan kehati-hatian karena efek relativistik signifikan."
+        )
+    elif max_z >= 21 and max_z <= 30 and mult > 1:
+        warnings.append(
+            f"Terdeteksi logam transisi 3d open-shell (Z={max_z}, mult={mult}). "
+            "Disarankan max_iterations>=200 dan verifikasi spin <S^2> serta kestabilan orbital."
+        )
+    if method.lower() in ("omp2", "omp3") and (mem_df_packed_gb + mem_bvv_gb + mem_t2_gb) > memory_limit_gb:
+        warnings.append(
+            f"Estimasi puncak RAM OMP2/OMP3 ({mem_df_packed_gb + mem_bvv_gb + mem_t2_gb:.2f} GB) "
+            f"melebihi memory_limit_gb={memory_limit_gb:.2f} GB; pertimbangkan DF-MP2 streaming atau basis lebih kecil."
+        )
+
+    return {
+        "tier": tier,
+        "nbf": nbf,
+        "n_electrons": n_elec,
+        "max_Z": max_z,
+        "eri_method": eri_rec,
+        "scf_type": scf_rec,
+        "freeze_core": fc_rec,
+        "n_frozen_standard": n_frozen_std,
+        "use_symmetry": (eri_rec == "exact"),
+        "est_ram_gb": {
+            "exact_eri_4d": round(mem_exact_gb, 3),
+            "df_packed_3c": round(mem_df_packed_gb, 3),
+            "omp_bvv_3c": round(mem_bvv_gb, 3),
+            "t2_active_4d": round(mem_t2_gb, 3),
+        },
+        "warnings": warnings,
+    }

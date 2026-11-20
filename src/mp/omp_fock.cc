@@ -16,6 +16,7 @@
 #include "mshqc/integrals/packed_ao_utils.h"
 #include "mshqc/integrals/eri_transformer.h" 
 #include <omp.h>
+#include <algorithm>
 #include <tblis/tblis.h>
 #include <iostream>
 
@@ -258,219 +259,435 @@ using tblis::safe_tblis_mult;
 void OMP2::build_fock_fast(const Eigen::MatrixXd& P_a, const Eigen::MatrixXd& P_b,
                            Eigen::MatrixXd& F_a, Eigen::MatrixXd& F_b)
 {
-    if (config_.eri_method != "exact") {
-        Eigen::MatrixXd P_tot = P_a + P_b;
-        int n_chol = scf_.L_mat.cols();
+  if (config_.eri_method != "exact") {
+    Eigen::MatrixXd P_tot = P_a + P_b;
+    const int n_chol = static_cast<int>(scf_.L_mat.cols());
 
-        // [INJECTED_PRIORITAS_2D_PACKED_AO]
-        const bool is_packed = integrals::is_packed_ao_matrix(scf_.L_mat, nbf_);
-        Eigen::MatrixXd J_mat = integrals::compute_coulomb_from_ao_factor(scf_.L_mat, P_tot, nbf_);
+    const bool is_packed = integrals::is_packed_ao_matrix(scf_.L_mat, nbf_);
+    Eigen::MatrixXd J_mat = integrals::compute_coulomb_from_ao_factor(scf_.L_mat, P_tot, nbf_);
 
-        bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
-        bool is_idempotent_pa = (&P_a == &scf_.P_alpha);
-        bool has_beta_unres = (!is_restricted && nb_ > 0);
+    const bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
+    const bool is_idempotent_pa = (&P_a == &scf_.P_alpha);
+    const bool has_beta_unres = (!is_restricted && nb_ > 0);
 
-        int max_threads = omp_get_max_threads();
-        std::vector<Eigen::MatrixXd> Ka_tls(max_threads, Eigen::MatrixXd::Zero(nbf_, nbf_));
-        std::vector<Eigen::MatrixXd> Kb_tls(is_restricted ? 0 : max_threads, Eigen::MatrixXd::Zero(nbf_, nbf_));
+    const int max_threads = omp_get_max_threads();
+    std::vector<Eigen::MatrixXd> Ka_tls(max_threads, Eigen::MatrixXd::Zero(nbf_, nbf_));
+    std::vector<Eigen::MatrixXd> Kb_tls(has_beta_unres ? max_threads : 0, Eigen::MatrixXd::Zero(nbf_, nbf_));
 
-        // Gabungkan Ca_o dan Cb_o atau P_a dan P_b agar matriks L_K cukup dibaca 1x dari cache per iterasi K
-        Eigen::MatrixXd Cab_o;
-        Eigen::MatrixXd Pab_full;
-        if (is_idempotent_pa) {
-            int n_tot_o = na_ + (has_beta_unres ? nb_ : 0);
-            Cab_o.resize(nbf_, n_tot_o);
-            if (na_ > 0) Cab_o.leftCols(na_) = scf_.C_alpha.leftCols(na_);
-            if (has_beta_unres) Cab_o.rightCols(nb_) = scf_.C_beta.leftCols(nb_);
-        } else if (has_beta_unres) {
-            Pab_full.resize(nbf_, 2 * nbf_);
-            Pab_full.leftCols(nbf_)  = P_a;
-            Pab_full.rightCols(nbf_) = P_b;
+    Eigen::MatrixXd Cab_o;
+    Eigen::MatrixXd Pab_full;
+    if (is_idempotent_pa) {
+      const int n_tot_o = na_ + (has_beta_unres ? nb_ : 0);
+      Cab_o.resize(nbf_, n_tot_o);
+      if (na_ > 0) Cab_o.leftCols(na_) = scf_.C_alpha.leftCols(na_);
+      if (has_beta_unres) Cab_o.rightCols(nb_) = scf_.C_beta.leftCols(nb_);
+    } else if (has_beta_unres) {
+      Pab_full.resize(nbf_, 2 * nbf_);
+      Pab_full.leftCols(nbf_) = P_a;
+      Pab_full.rightCols(nbf_) = P_b;
+    }
+
+    // Adaptive BATCH_P untuk saturasi Level-3 BLAS DGEMM sekaligus menjaga RAM per thread
+    const int max_o = std::max(1, std::max(na_, has_beta_unres ? nb_ : 0));
+    const int batch_p = std::clamp(
+        static_cast<int>((8ULL * 1024ULL * 1024ULL) /
+                         std::max<size_t>(1, static_cast<size_t>(nbf_) * max_o * sizeof(double))),
+        1, 32);
+
+    #pragma omp parallel
+    {
+      const int tid = omp_get_thread_num();
+      Eigen::MatrixXd& Ka_priv = Ka_tls[tid];
+      Eigen::MatrixXd L_K_buf;
+      if (is_packed) L_K_buf.resize(nbf_, nbf_);
+
+      if (is_idempotent_pa) {
+        Eigen::MatrixXd Tab_loc(nbf_, Cab_o.cols());
+        Eigen::MatrixXd Ta_batch(nbf_, na_ * batch_p);
+        Eigen::MatrixXd Tb_batch;
+        if (has_beta_unres) Tb_batch.resize(nbf_, nb_ * batch_p);
+        int cnt = 0;
+
+        #pragma omp for schedule(static) nowait
+        for (int K = 0; K < n_chol; ++K) {
+          const double* col_k = scf_.L_mat.col(K).data();
+          if (is_packed) integrals::unpack_ao_column(col_k, nbf_, true, L_K_buf);
+          Eigen::Map<const Eigen::MatrixXd> L_K(is_packed ? L_K_buf.data() : col_k, nbf_, nbf_);
+
+          Tab_loc.noalias() = L_K * Cab_o;
+          if (na_ > 0) Ta_batch.middleCols(cnt * na_, na_) = Tab_loc.leftCols(na_);
+          if (has_beta_unres) Tb_batch.middleCols(cnt * nb_, nb_) = Tab_loc.rightCols(nb_);
+          ++cnt;
+
+          if (cnt == batch_p) {
+            if (na_ > 0) Ka_priv.noalias() += Ta_batch * Ta_batch.transpose();
+            if (has_beta_unres) Kb_tls[tid].noalias() += Tb_batch * Tb_batch.transpose();
+            cnt = 0;
+          }
         }
-
-        #pragma omp parallel
-        {
-            int tid = omp_get_thread_num();
-            Eigen::MatrixXd& Ka_priv = Ka_tls[tid];
-            Eigen::MatrixXd Tab_buf(nbf_, is_idempotent_pa ? Cab_o.cols() : (has_beta_unres ? 2 * nbf_ : nbf_));
-            Eigen::MatrixXd L_K_buf;
-            if (is_packed) L_K_buf.resize(nbf_, nbf_);
-
-            #pragma omp for schedule(static) nowait
-            for (int K = 0; K < n_chol; ++K) {
-                const double* col_k = scf_.L_mat.col(K).data();
-                if (is_packed) integrals::unpack_ao_column(col_k, nbf_, true, L_K_buf);
-                Eigen::Map<const Eigen::MatrixXd> L_K(is_packed ? L_K_buf.data() : col_k, nbf_, nbf_);
-
-                if (is_idempotent_pa) {
-                    Tab_buf.noalias() = L_K * Cab_o;
-                    if (na_ > 0) {
-                        auto Ta = Tab_buf.leftCols(na_);
-                        Ka_priv.noalias() += Ta * Ta.transpose();
-                    }
-                    if (has_beta_unres) {
-                        auto Tb = Tab_buf.rightCols(nb_);
-                        Kb_tls[tid].noalias() += Tb * Tb.transpose();
-                    }
-                } else if (has_beta_unres) {
-                    Tab_buf.noalias() = L_K * Pab_full;
-                    Ka_priv.noalias() += Tab_buf.leftCols(nbf_) * L_K;
-                    Kb_tls[tid].noalias() += Tab_buf.rightCols(nbf_) * L_K;
-                } else {
-                    Tab_buf.noalias() = L_K * P_a;
-                    Ka_priv.noalias() += Tab_buf * L_K;
-                }
-            }
+        if (cnt > 0) {
+          if (na_ > 0) {
+            auto Ta_rem = Ta_batch.leftCols(cnt * na_);
+            Ka_priv.noalias() += Ta_rem * Ta_rem.transpose();
+          }
+          if (has_beta_unres) {
+            auto Tb_rem = Tb_batch.leftCols(cnt * nb_);
+            Kb_tls[tid].noalias() += Tb_rem * Tb_rem.transpose();
+          }
         }
+      } else {
+        Eigen::MatrixXd Tab_buf(nbf_, has_beta_unres ? 2 * nbf_ : nbf_);
+        #pragma omp for schedule(static) nowait
+        for (int K = 0; K < n_chol; ++K) {
+          const double* col_k = scf_.L_mat.col(K).data();
+          if (is_packed) integrals::unpack_ao_column(col_k, nbf_, true, L_K_buf);
+          Eigen::Map<const Eigen::MatrixXd> L_K(is_packed ? L_K_buf.data() : col_k, nbf_, nbf_);
 
-        // [INJECTED_FINAL_OPT_OMP_FOCK_SYMM]
+          if (has_beta_unres) {
+            Tab_buf.noalias() = L_K * Pab_full;
+            Ka_priv.noalias() += Tab_buf.leftCols(nbf_) * L_K;
+            Kb_tls[tid].noalias() += Tab_buf.rightCols(nbf_) * L_K;
+          } else {
+            Tab_buf.noalias() = L_K * P_a;
+            Ka_priv.noalias() += Tab_buf * L_K;
+          }
+        }
+      }
+    }
+
     Eigen::MatrixXd Ka_mat = Eigen::MatrixXd::Zero(nbf_, nbf_);
     Eigen::MatrixXd Kb_mat = Eigen::MatrixXd::Zero(nbf_, nbf_);
     for (int t = 0; t < max_threads; ++t) {
-        Ka_mat.noalias() += Ka_tls[t];
-        if (!is_restricted && nb_ > 0) Kb_mat.noalias() += Kb_tls[t];
+      Ka_mat.noalias() += Ka_tls[t];
+      if (has_beta_unres) Kb_mat.noalias() += Kb_tls[t];
     }
     if (!is_idempotent_pa) {
-        Ka_mat = 0.5 * (Ka_mat + Ka_mat.transpose());
-        if (!is_restricted && nb_ > 0) Kb_mat = 0.5 * (Kb_mat + Kb_mat.transpose());
+      Ka_mat = 0.5 * (Ka_mat + Ka_mat.transpose());
+      if (has_beta_unres) Kb_mat = 0.5 * (Kb_mat + Kb_mat.transpose());
     }
 
     F_a = H_core_ + J_mat - Ka_mat;
-        if (is_restricted) F_b = F_a;
-        else if (nb_ > 0) F_b = H_core_ + J_mat - Kb_mat;
-        else F_b = F_a;
+    if (is_restricted) F_b = F_a;
+    else if (nb_ > 0) F_b = H_core_ + J_mat - Kb_mat;
+    else F_b = F_a;
+    return;
+  }
 
-        return;
-    }
+  bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
+  Eigen::MatrixXd P_tot = P_a + P_b;
+  const auto& ERI = integrals_->compute_eri();
+  const double* __restrict__ eri_ptr = ERI.data();
 
-    bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
-    Eigen::MatrixXd P_tot = P_a + P_b;
-    const auto& ERI = integrals_->compute_eri();
-    const double* __restrict__ eri_ptr = ERI.data();
+  Eigen::Map<const Eigen::MatrixXd> ERI_mat(
+      eri_ptr, static_cast<Eigen::Index>(nbf_) * nbf_, static_cast<Eigen::Index>(nbf_) * nbf_);
+  Eigen::Map<const Eigen::VectorXd> P_tot_flat(P_tot.data(), static_cast<Eigen::Index>(nbf_) * nbf_);
+  Eigen::VectorXd J_flat = ERI_mat * P_tot_flat;
+  Eigen::Map<const Eigen::MatrixXd> J_mat(J_flat.data(), nbf_, nbf_);
 
-    Eigen::Map<const Eigen::MatrixXd> ERI_mat(eri_ptr, static_cast<Eigen::Index>(nbf_) * nbf_, static_cast<Eigen::Index>(nbf_) * nbf_);
-    Eigen::Map<const Eigen::VectorXd> P_tot_flat(P_tot.data(), static_cast<Eigen::Index>(nbf_) * nbf_);
-    Eigen::VectorXd J_flat = ERI_mat * P_tot_flat;
-    Eigen::Map<const Eigen::MatrixXd> J_mat(J_flat.data(), nbf_, nbf_);
+  Eigen::MatrixXd K_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
+  Eigen::MatrixXd K_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
 
-    Eigen::MatrixXd K_a = Eigen::MatrixXd::Zero(nbf_, nbf_);
-    Eigen::MatrixXd K_b = Eigen::MatrixXd::Zero(nbf_, nbf_);
-
-    #pragma omp parallel for schedule(dynamic, 4)
-    for (int mu = 0; mu < nbf_; ++mu) {
-        for (int nu = 0; nu <= mu; ++nu) {
-            double ka = 0.0, kb = 0.0;
-            for (int sig = 0; sig < nbf_; ++sig) {
-                const double* __restrict__ e_col = eri_ptr + static_cast<size_t>(nbf_) * (mu + static_cast<size_t>(nbf_) * (nu + static_cast<size_t>(nbf_) * sig));
-                const double* __restrict__ pa_col = P_a.data() + static_cast<size_t>(sig) * nbf_;
-                if (is_restricted) {
-                    #pragma omp simd reduction(+:ka)
-                    for (int lam = 0; lam < nbf_; ++lam) {
-                        ka += e_col[lam] * pa_col[lam];
-                    }
-                } else {
-                    const double* __restrict__ pb_col = P_b.data() + static_cast<size_t>(sig) * nbf_;
-                    #pragma omp simd reduction(+:ka, kb)
-                    for (int lam = 0; lam < nbf_; ++lam) {
-                        ka += e_col[lam] * pa_col[lam];
-                        kb += e_col[lam] * pb_col[lam];
-                    }
-                }
-            }
-            K_a(mu, nu) = ka;
-            K_a(nu, mu) = ka;
-            if (!is_restricted) {
-                K_b(mu, nu) = kb;
-                K_b(nu, mu) = kb;
-            }
+  #pragma omp parallel for schedule(dynamic, 4)
+  for (int mu = 0; mu < nbf_; ++mu) {
+    for (int nu = 0; nu <= mu; ++nu) {
+      double ka = 0.0, kb = 0.0;
+      for (int sig = 0; sig < nbf_; ++sig) {
+        const double* __restrict__ e_col =
+            eri_ptr + static_cast<size_t>(nbf_) * (mu + static_cast<size_t>(nbf_) * (nu + static_cast<size_t>(nbf_) * sig));
+        const double* __restrict__ pa_col = P_a.data() + static_cast<size_t>(sig) * nbf_;
+        if (is_restricted) {
+          #pragma omp simd reduction(+:ka)
+          for (int lam = 0; lam < nbf_; ++lam) ka += e_col[lam] * pa_col[lam];
+        } else {
+          const double* __restrict__ pb_col = P_b.data() + static_cast<size_t>(sig) * nbf_;
+          #pragma omp simd reduction(+:ka, kb)
+          for (int lam = 0; lam < nbf_; ++lam) {
+            ka += e_col[lam] * pa_col[lam];
+            kb += e_col[lam] * pb_col[lam];
+          }
         }
+      }
+      K_a(mu, nu) = ka;
+      K_a(nu, mu) = ka;
+      if (!is_restricted) {
+        K_b(mu, nu) = kb;
+        K_b(nu, mu) = kb;
+      }
     }
+  }
 
-    F_a = H_core_ + J_mat - K_a;
-    F_b = is_restricted ? F_a : (H_core_ + J_mat - K_b);
+  F_a = H_core_ + J_mat - K_a;
+  F_b = is_restricted ? F_a : (H_core_ + J_mat - K_b);
 }
 
 void OMP2::build_opdm_alpha() {
-    bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
-    G_oo_alpha_ = Eigen::MatrixXd::Zero(na_, na_);
-    G_vv_alpha_ = Eigen::MatrixXd::Zero(va_, va_);
-    
-    auto* t_aa_blk = t2_aa_.get_block(0,0,0,0);
-    if (!t_aa_blk) return;
+  const bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
+  G_oo_alpha_ = Eigen::MatrixXd::Zero(na_, na_);
+  G_vv_alpha_ = Eigen::MatrixXd::Zero(va_, va_);
 
-    Eigen::Tensor<double, 4> T2_aa_ijab(na_, na_, va_, va_);
-    #pragma omp parallel for collapse(4) schedule(static)
-    for(int i = 0; i < na_; ++i) {
-        for(int j = 0; j < na_; ++j) {
-            for(int a = 0; a < va_; ++a) {
-                for(int b = 0; b < va_; ++b) {
-                    T2_aa_ijab(i,j,a,b) = (*t_aa_blk)(i,a,j,b);
-                }
+  auto* t_aa_blk = t2_aa_.get_block(0, 0, 0, 0);
+  if (!t_aa_blk || na_ <= 0 || va_ <= 0) return;
+
+  const int nf_a = std::clamp(n_frozen_, 0, na_);
+  const int na_act = na_ - nf_a;
+  if (na_act <= 0) return;
+
+  const int max_t = omp_get_max_threads();
+  const int a_tile = std::clamp(
+      static_cast<int>((4ULL * 1024ULL * 1024ULL) /
+                       std::max<size_t>(1, static_cast<size_t>(na_act) * va_ * sizeof(double))),
+      1, va_);
+
+  // 1. Kontribusi AA (Zero-Copy Streaming BLAS-3: 0 byte tensor 4D baru, skip frozen core)
+  std::vector<Eigen::MatrixXd> Goo_tls(max_t, Eigen::MatrixXd::Zero(na_act, na_act));
+  std::vector<Eigen::MatrixXd> Gvv_tls(max_t, Eigen::MatrixXd::Zero(va_, va_));
+
+  #pragma omp parallel
+  {
+    const int tid = omp_get_thread_num();
+    Eigen::MatrixXd& Goo_loc = Goo_tls[tid];
+    Eigen::MatrixXd& Gvv_loc = Gvv_tls[tid];
+
+    Eigen::MatrixXd T_ij(va_, va_);
+    Eigen::MatrixXd Tt_ij;
+    if (is_restricted) Tt_ij.resize(va_, va_);
+
+    // G_vv (simetri pasangan i <= j untuk restricted / i < j untuk antisimetris UHF)
+    const int n_pairs = na_act * (na_act + 1) / 2;
+    #pragma omp for schedule(dynamic, 1) nowait
+    for (int p = 0; p < n_pairs; ++p) {
+      int i0 = static_cast<int>(na_act - 0.5 - std::sqrt((na_act + 0.5) * (na_act + 0.5) - 2.0 * p));
+      while (i0 > 0 && i0 * (2 * na_act - i0 + 1) / 2 > p) --i0;
+      while ((i0 + 1) * (2 * na_act - i0) / 2 <= p) ++i0;
+      const int j0 = i0 + (p - i0 * (2 * na_act - i0 + 1) / 2);
+      const int i = nf_a + i0;
+      const int j = nf_a + j0;
+
+      if (!is_restricted && i == j) continue;
+      for (int b = 0; b < va_; ++b)
+        for (int a = 0; a < va_; ++a)
+          T_ij(a, b) = (*t_aa_blk)(i, a, j, b);
+
+      if (is_restricted) {
+        Tt_ij.noalias() = 2.0 * T_ij - T_ij.transpose();
+        Gvv_loc.noalias() += T_ij * Tt_ij.transpose();
+        if (i != j) Gvv_loc.noalias() += T_ij.transpose() * Tt_ij;
+      } else {
+        // UHF AA: T(j, i, a, b) = -T(i, j, a, b) => kontribusi (i,j) + (j,i) = 2 * 0.5 = 1.0
+        Gvv_loc.noalias() += T_ij * T_ij.transpose();
+      }
+    }
+
+    // G_oo (tiled atas a agar RAM scratch <= 4 MB per thread)
+    Eigen::MatrixXd MatT(na_act, a_tile * va_);
+    Eigen::MatrixXd MatTt;
+    if (is_restricted) MatTt.resize(na_act, a_tile * va_);
+
+    #pragma omp for schedule(dynamic, 1) nowait
+    for (int k = nf_a; k < na_; ++k) {
+      for (int a0 = 0; a0 < va_; a0 += a_tile) {
+        const int alen = std::min(a_tile, va_ - a0);
+        const int cols = alen * va_;
+        for (int da = 0; da < alen; ++da) {
+          const int a = a0 + da;
+          for (int b = 0; b < va_; ++b) {
+            const int col = da * va_ + b;
+            for (int ii = 0; ii < na_act; ++ii) {
+              const int i = nf_a + ii;
+              const double t_val = (*t_aa_blk)(i, a, k, b);
+              MatT(ii, col) = t_val;
+              if (is_restricted) {
+                MatTt(ii, col) = 2.0 * t_val - (*t_aa_blk)(i, b, k, a);
+              }
             }
+          }
         }
+        if (is_restricted) {
+          Goo_loc.noalias() -= MatT.leftCols(cols) * MatTt.leftCols(cols).transpose();
+        } else {
+          Goo_loc.noalias() -= 0.5 * (MatT.leftCols(cols) * MatT.leftCols(cols).transpose());
+        }
+      }
     }
+  }
 
-    TBLIS_VIEW_2D(t_Goo_a, G_oo_alpha_.data(), na_, na_);
-    TBLIS_VIEW_2D(t_Gvv_a, G_vv_alpha_.data(), va_, va_);
+  for (int t = 0; t < max_t; ++t) {
+    G_oo_alpha_.block(nf_a, nf_a, na_act, na_act).noalias() += Goo_tls[t];
+    G_vv_alpha_.noalias() += Gvv_tls[t];
+  }
 
-    if (is_restricted) {
-        Eigen::Tensor<double, 4> T2_tilde(na_, na_, va_, va_);
-        #pragma omp parallel for collapse(4) schedule(static)
-        for (int i = 0; i < na_; ++i) {
-            for (int j = 0; j < na_; ++j) {
-                for (int a = 0; a < va_; ++a) {
-                    for (int b = 0; b < va_; ++b) {
-                        T2_tilde(i,j,a,b) = 2.0 * T2_aa_ijab(i,j,a,b) - T2_aa_ijab(i,j,b,a);
-                    }
-                }
+  if (is_restricted) return;
+
+  // 2. Kontribusi AB (Unrestricted)
+  auto* t_ab_blk = t2_ab_.get_block(0, 0, 0, 0);
+  const int nf_b = std::clamp(n_frozen_, 0, nb_);
+  const int nb_act = nb_ - nf_b;
+  if (nb_act > 0 && vb_ > 0 && t_ab_blk) {
+    for (int t = 0; t < max_t; ++t) {
+      Goo_tls[t].setZero();
+      Gvv_tls[t].setZero();
+    }
+    const int a_tile_ab = std::clamp(
+        static_cast<int>((4ULL * 1024ULL * 1024ULL) /
+                         std::max<size_t>(1, static_cast<size_t>(na_act) * vb_ * sizeof(double))),
+        1, va_);
+
+    #pragma omp parallel
+    {
+      const int tid = omp_get_thread_num();
+      Eigen::MatrixXd& Goo_loc = Goo_tls[tid];
+      Eigen::MatrixXd& Gvv_loc = Gvv_tls[tid];
+      Eigen::MatrixXd T_ab(va_, vb_);
+
+      const int n_ab = na_act * nb_act;
+      #pragma omp for schedule(dynamic, 1) nowait
+      for (int p = 0; p < n_ab; ++p) {
+        const int i = nf_a + p / nb_act;
+        const int j = nf_b + p % nb_act;
+        for (int b = 0; b < vb_; ++b)
+          for (int a = 0; a < va_; ++a)
+            T_ab(a, b) = (*t_ab_blk)(i, j, a, b);
+        Gvv_loc.noalias() += T_ab * T_ab.transpose();
+      }
+
+      Eigen::MatrixXd MatT(na_act, a_tile_ab * vb_);
+      #pragma omp for schedule(dynamic, 1) nowait
+      for (int k = nf_b; k < nb_; ++k) {
+        for (int a0 = 0; a0 < va_; a0 += a_tile_ab) {
+          const int alen = std::min(a_tile_ab, va_ - a0);
+          const int cols = alen * vb_;
+          for (int da = 0; da < alen; ++da) {
+            const int a = a0 + da;
+            for (int b = 0; b < vb_; ++b) {
+              const int col = da * vb_ + b;
+              for (int ii = 0; ii < na_act; ++ii) {
+                MatT(ii, col) = (*t_ab_blk)(nf_a + ii, k, a, b);
+              }
             }
+          }
+          Goo_loc.noalias() -= MatT.leftCols(cols) * MatT.leftCols(cols).transpose();
         }
-
-        TBLIS_VIEW_4D(t_T2, T2_aa_ijab, na_, na_, va_, va_);
-        TBLIS_VIEW_4D(t_T2t, T2_tilde, na_, na_, va_, va_);
-
-        tblis::mult<double>(-1.0, t_T2, "ikab", t_T2t, "jkab", 0.0, t_Goo_a, "ij");
-        tblis::mult<double>(1.0, t_T2, "ijac", t_T2t, "ijbc", 0.0, t_Gvv_a, "ab");
-
-        return;
+      }
     }
 
-    TBLIS_VIEW_4D(t_T2aa, T2_aa_ijab, na_, na_, va_, va_);
-
-    tblis::mult<double>(-0.5, t_T2aa, "ikab", t_T2aa, "jkab", 0.0, t_Goo_a, "ij");
-    tblis::mult<double>(0.5, t_T2aa, "ijac", t_T2aa, "ijbc", 0.0, t_Gvv_a, "ab");
-
-    auto* t_ab_blk = t2_ab_.get_block(0,0,0,0);
-    if (nb_ > 0 && vb_ > 0 && t_ab_blk) {
-        TBLIS_VIEW_4D(t_T2ab, (*t_ab_blk), na_, nb_, va_, vb_);
-        
-        tblis::mult<double>(-1.0, t_T2ab, "ikab", t_T2ab, "jkab", 1.0, t_Goo_a, "ij");
-        tblis::mult<double>(1.0, t_T2ab, "ijac", t_T2ab, "ijbc", 1.0, t_Gvv_a, "ab");
+    for (int t = 0; t < max_t; ++t) {
+      G_oo_alpha_.block(nf_a, nf_a, na_act, na_act).noalias() += Goo_tls[t];
+      G_vv_alpha_.noalias() += Gvv_tls[t];
     }
+  }
 }
 
 void OMP2::build_opdm_beta() {
-    G_oo_beta_ = Eigen::MatrixXd::Zero(nb_, nb_);
-    G_vv_beta_ = Eigen::MatrixXd::Zero(vb_, vb_);
-    if (nb_ == 0 || vb_ == 0) return;
+  G_oo_beta_ = Eigen::MatrixXd::Zero(nb_, nb_);
+  G_vv_beta_ = Eigen::MatrixXd::Zero(vb_, vb_);
+  if (nb_ <= 0 || vb_ <= 0) return;
 
-    auto* t_bb_blk = t2_bb_.get_block(0,0,0,0);
-    auto* t_ab_blk = t2_ab_.get_block(0,0,0,0);
+  const int nf_a = std::clamp(n_frozen_, 0, na_);
+  const int nf_b = std::clamp(n_frozen_, 0, nb_);
+  const int na_act = na_ - nf_a;
+  const int nb_act = nb_ - nf_b;
+  if (nb_act <= 0) return;
 
-    TBLIS_VIEW_2D(t_Goo_b, G_oo_beta_.data(), nb_, nb_);
-    TBLIS_VIEW_2D(t_Gvv_b, G_vv_beta_.data(), vb_, vb_);
+  auto* t_bb_blk = t2_bb_.get_block(0, 0, 0, 0);
+  auto* t_ab_blk = t2_ab_.get_block(0, 0, 0, 0);
+  const int max_t = omp_get_max_threads();
+  std::vector<Eigen::MatrixXd> Goo_tls(max_t, Eigen::MatrixXd::Zero(nb_act, nb_act));
+  std::vector<Eigen::MatrixXd> Gvv_tls(max_t, Eigen::MatrixXd::Zero(vb_, vb_));
 
-    if (t_bb_blk) {
-        TBLIS_VIEW_4D(t_T2bb, (*t_bb_blk), nb_, nb_, vb_, vb_);
-        tblis::mult<double>(-0.5, t_T2bb, "ikab", t_T2bb, "jkab", 0.0, t_Goo_b, "ij");
-        tblis::mult<double>(0.5, t_T2bb, "ijac", t_T2bb, "ijbc", 0.0, t_Gvv_b, "ab");
+  if (t_bb_blk && nb_act > 1) {
+    const int a_tile = std::clamp(
+        static_cast<int>((4ULL * 1024ULL * 1024ULL) /
+                         std::max<size_t>(1, static_cast<size_t>(nb_act) * vb_ * sizeof(double))),
+        1, vb_);
+    #pragma omp parallel
+    {
+      const int tid = omp_get_thread_num();
+      Eigen::MatrixXd& Goo_loc = Goo_tls[tid];
+      Eigen::MatrixXd& Gvv_loc = Gvv_tls[tid];
+      Eigen::MatrixXd T_bb(vb_, vb_);
+
+      const int n_pairs = nb_act * (nb_act - 1) / 2;
+      #pragma omp for schedule(dynamic, 1) nowait
+      for (int p = 0; p < n_pairs; ++p) {
+        int i0 = static_cast<int>(nb_act - 1.5 - std::sqrt((nb_act - 0.5) * (nb_act - 0.5) - 2.0 * p));
+        while (i0 > 0 && i0 * (2 * nb_act - i0 - 1) / 2 > p) --i0;
+        while ((i0 + 1) * (2 * nb_act - i0 - 2) / 2 <= p) ++i0;
+        const int j0 = i0 + 1 + (p - i0 * (2 * nb_act - i0 - 1) / 2);
+        const int i = nf_b + i0;
+        const int j = nf_b + j0;
+        for (int b = 0; b < vb_; ++b)
+          for (int a = 0; a < vb_; ++a)
+            T_bb(a, b) = (*t_bb_blk)(i, j, a, b);
+        Gvv_loc.noalias() += T_bb * T_bb.transpose();
+      }
+
+      Eigen::MatrixXd MatT(nb_act, a_tile * vb_);
+      #pragma omp for schedule(dynamic, 1) nowait
+      for (int k = nf_b; k < nb_; ++k) {
+        for (int a0 = 0; a0 < vb_; a0 += a_tile) {
+          const int alen = std::min(a_tile, vb_ - a0);
+          const int cols = alen * vb_;
+          for (int da = 0; da < alen; ++da) {
+            const int a = a0 + da;
+            for (int b = 0; b < vb_; ++b) {
+              const int col = da * vb_ + b;
+              for (int ii = 0; ii < nb_act; ++ii)
+                MatT(ii, col) = (*t_bb_blk)(nf_b + ii, k, a, b);
+            }
+          }
+          Goo_loc.noalias() -= 0.5 * (MatT.leftCols(cols) * MatT.leftCols(cols).transpose());
+        }
+      }
     }
+  }
 
-    if (t_ab_blk) {
-        TBLIS_VIEW_4D(t_T2ab, (*t_ab_blk), na_, nb_, va_, vb_);
-        tblis::mult<double>(-1.0, t_T2ab, "kiab", t_T2ab, "kjab", 1.0, t_Goo_b, "ij");
-        tblis::mult<double>(1.0, t_T2ab, "ijca", t_T2ab, "ijcb", 1.0, t_Gvv_b, "ab");
+  if (t_ab_blk && na_act > 0 && va_ > 0) {
+    const int b_tile = std::clamp(
+        static_cast<int>((4ULL * 1024ULL * 1024ULL) /
+                         std::max<size_t>(1, static_cast<size_t>(nb_act) * va_ * sizeof(double))),
+        1, vb_);
+    #pragma omp parallel
+    {
+      const int tid = omp_get_thread_num();
+      Eigen::MatrixXd& Goo_loc = Goo_tls[tid];
+      Eigen::MatrixXd& Gvv_loc = Gvv_tls[tid];
+      Eigen::MatrixXd T_ba(vb_, va_);
+
+      const int n_ab = na_act * nb_act;
+      #pragma omp for schedule(dynamic, 1) nowait
+      for (int p = 0; p < n_ab; ++p) {
+        const int i = nf_a + p / nb_act;
+        const int j = nf_b + p % nb_act;
+        for (int a = 0; a < va_; ++a)
+          for (int b = 0; b < vb_; ++b)
+            T_ba(b, a) = (*t_ab_blk)(i, j, a, b);
+        Gvv_loc.noalias() += T_ba * T_ba.transpose();
+      }
+
+      Eigen::MatrixXd MatT(nb_act, b_tile * va_);
+      #pragma omp for schedule(dynamic, 1) nowait
+      for (int k = nf_a; k < na_; ++k) {
+        for (int b0 = 0; b0 < vb_; b0 += b_tile) {
+          const int blen = std::min(b_tile, vb_ - b0);
+          const int cols = blen * va_;
+          for (int db = 0; db < blen; ++db) {
+            const int b = b0 + db;
+            for (int a = 0; a < va_; ++a) {
+              const int col = db * va_ + a;
+              for (int jj = 0; jj < nb_act; ++jj)
+                MatT(jj, col) = (*t_ab_blk)(k, nf_b + jj, a, b);
+            }
+          }
+          Goo_loc.noalias() -= MatT.leftCols(cols) * MatT.leftCols(cols).transpose();
+        }
+      }
     }
+  }
+
+  for (int t = 0; t < max_t; ++t) {
+    G_oo_beta_.block(nf_b, nf_b, nb_act, nb_act).noalias() += Goo_tls[t];
+    G_vv_beta_.noalias() += Gvv_tls[t];
+  }
 }
 
 void OMP2::build_generalized_fock() {

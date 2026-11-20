@@ -117,13 +117,23 @@ void OMP2::evaluate_z_vector_cholesky(Eigen::MatrixXd& Z_mat_a, Eigen::MatrixXd&
       Eigen::Map<const Eigen::MatrixXd> B_oo_a(B_oo_P_alpha_.col(P).data(), na_, na_);
       Eigen::Map<const Eigen::MatrixXd> B_vv_a(B_vv_P_alpha_.col(P).data(), va_, va_);
       Eigen::Map<const Eigen::MatrixXd> X_ai(X_a.col(P).data(), va_, na_);
-      Z_loc_a.noalias() += B_vv_a * X_ai - X_ai * B_oo_a;
+      const int na_act = na_ - nf_a;
+      if (na_act > 0) {
+        auto X_ai_act = X_ai.rightCols(na_act);
+        Z_loc_a.rightCols(na_act).noalias() += B_vv_a * X_ai_act;
+        Z_loc_a.noalias() -= X_ai_act * B_oo_a.bottomRows(na_act);
+      }
 
       if (has_beta) {
         Eigen::Map<const Eigen::MatrixXd> B_oo_b(B_oo_P_beta_.col(P).data(), nb_, nb_);
         Eigen::Map<const Eigen::MatrixXd> B_vv_b(B_vv_P_beta_.col(P).data(), vb_, vb_);
         Eigen::Map<const Eigen::MatrixXd> X_bi(X_b.col(P).data(), vb_, nb_);
-        Z_loc_b.noalias() += B_vv_b * X_bi - X_bi * B_oo_b;
+        const int nb_act = nb_ - nf_b;
+        if (nb_act > 0) {
+          auto X_bi_act = X_bi.rightCols(nb_act);
+          Z_loc_b.rightCols(nb_act).noalias() += B_vv_b * X_bi_act;
+          Z_loc_b.noalias() -= X_bi_act * B_oo_b.bottomRows(nb_act);
+        }
       }
     }
 
@@ -426,51 +436,47 @@ Eigen::VectorXd OMP2::compute_soscf_step(double trust_radius, double& expected_c
     expected_change = step_info.predicted_energy_change;
     return step_info.step;
 }
+// [INJECTED_HPC_V4_OMP_GRAD]
 void OMP2::apply_orbital_rotation(const Eigen::VectorXd& kappa) {
-    if (kappa.norm() < 1e-12) return;
-    bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
-    
-    
-    int idx = 0;
-    int n_mo_a = na_ + va_;
-    Eigen::MatrixXd K_a = Eigen::MatrixXd::Zero(n_mo_a, n_mo_a);
+  if (kappa.norm() < 1e-12) return;
+  const bool is_restricted = (na_ == nb_ && va_ == vb_ && mol_.multiplicity() == 1);
 
-    for (int i = 0; i < na_; ++i) {
-        for (int a = 0; a < va_; ++a) {
-            double val = kappa(idx++);
-            K_a(na_ + a, i) = val;
-            K_a(i, na_ + a) = -val;
-        }
+  int idx = 0;
+  const int n_mo_a = na_ + va_;
+  Eigen::MatrixXd K_a = Eigen::MatrixXd::Zero(n_mo_a, n_mo_a);
+
+  for (int i = 0; i < na_; ++i) {
+    for (int a = 0; a < va_; ++a) {
+      const double val = kappa(idx++);
+      K_a(na_ + a, i) = val;
+      K_a(i, na_ + a) = -val;
     }
-    {
+  }
+  {
     mshqc::utils::ScopedBlasThreads blas_exp_mt(n_mo_a, 96);
     C_a_current_ = C_a_current_ * K_a.exp();
   }
 
-   
+  if (is_restricted) {
+    if (nb_ > 0) C_b_current_ = C_a_current_;
+    return;
+  }
 
-    // Lanjutkan rotasi UMP2 asli jika unrestricted
-    int n_mo_b = nb_ + vb_;
+  if (nb_ > 0) {
+    const int n_mo_b = nb_ + vb_;
     Eigen::MatrixXd K_b = Eigen::MatrixXd::Zero(n_mo_b, n_mo_b);
-
-    if (!is_restricted && nb_ > 0) {
-        for (int i = 0; i < nb_; ++i) {
-            for (int a = 0; a < vb_; ++a) {
-                double val = kappa(idx++);
-                K_b(nb_ + a, i) = val;
-                K_b(i, nb_ + a) = -val;
-            }
-        }
-    } else if (is_restricted && nb_ > 0) {
-        K_b = K_a; 
+    for (int i = 0; i < nb_; ++i) {
+      for (int a = 0; a < vb_; ++a) {
+        const double val = kappa(idx++);
+        K_b(nb_ + a, i) = val;
+        K_b(i, nb_ + a) = -val;
+      }
     }
-
-    if (nb_ > 0) {
-        {
+    {
       mshqc::utils::ScopedBlasThreads blas_exp_mt(n_mo_b, 96);
       C_b_current_ = C_b_current_ * K_b.exp();
     }
-    }
+  }
 }
 Eigen::MatrixXd OMP2::solve_cphf_pcg_ov(const Eigen::MatrixXd& Z_ov, const Eigen::VectorXd& eps, int na, int va) {
     Eigen::MatrixXd X = Eigen::MatrixXd::Zero(va, na);
@@ -701,7 +707,8 @@ OMP2GradientData OMP2::build_df_gradient_data() {
     {
         Eigen::MatrixXd Fa_loc = Eigen::MatrixXd::Zero(nbf_, nbf_);
         Eigen::MatrixXd Fb_loc = has_beta ? Eigen::MatrixXd::Zero(nbf_, nbf_) : Eigen::MatrixXd();
-        Eigen::MatrixXd G_P(nbf_, nbf_), M_tmp(nbf_, nbf_), Conn_ao(nbf_, nbf_);
+        Eigen::MatrixXd G_P(nbf_, nbf_), M_tmp(nbf_, nbf_), Conn_ao(nbf_, nbf_), M_corr_a(nbf_, nbf_), M_corr_b;
+    if (has_beta) M_corr_b.resize(nbf_, nbf_);
 
         #pragma omp for schedule(static) nowait
         for (int P = 0; P < n_aux; ++P) {
@@ -721,7 +728,7 @@ OMP2GradientData OMP2::build_df_gradient_data() {
             // Exchange separabel (alpha)
             const double k_scale = is_restricted ? 2.0 : 1.0;
             M_tmp.noalias() = Ca_o * Boo_a * Ca_o.transpose();
-            Eigen::MatrixXd M_corr_a = Ca_o * (G_oo_alpha_ * Boo_a) * Ca_o.transpose()
+            M_corr_a.noalias() = Ca_o * (G_oo_alpha_ * Boo_a) * Ca_o.transpose()
                                      + Ca_v * (G_vv_alpha_ * Bvo_a) * Ca_o.transpose();
             G_P.noalias() -= k_scale * (M_tmp + M_corr_a + M_corr_a.transpose());
 
@@ -742,7 +749,7 @@ OMP2GradientData OMP2::build_df_gradient_data() {
                 Fb_loc.block(0, nb_, nb_, vb_).noalias()   += Boo_b * X_bi_b.transpose();
 
                 M_tmp.noalias() = Cb_o * Boo_b * Cb_o.transpose();
-                Eigen::MatrixXd M_corr_b = Cb_o * (G_oo_beta_ * Boo_b) * Cb_o.transpose()
+                M_corr_b.noalias() = Cb_o * (G_oo_beta_ * Boo_b) * Cb_o.transpose()
                                          + Cb_v * (G_vv_beta_ * Bvo_b) * Cb_o.transpose();
                 G_P.noalias() -= (M_tmp + M_corr_b + M_corr_b.transpose());
 

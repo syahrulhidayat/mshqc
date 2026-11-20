@@ -27,6 +27,7 @@
 #include "mshqc/integrals/packed_ao_utils.h"
 #include "mshqc/utils/blas_thread_guard.h"
 #include <iostream>
+#include <cstdlib>
 #include <iomanip>
 #include <cmath>
 #include <algorithm>
@@ -42,6 +43,27 @@
 namespace mshqc {
 
 namespace {
+// [INJECTED_HPC_V4_SCF]
+template <typename Cfg>
+inline double get_scf_memory_limit_gb(const Cfg& cfg) {
+  if constexpr (requires { cfg.memory_limit_gb; }) {
+    if (cfg.memory_limit_gb > 0.0) return cfg.memory_limit_gb;
+  }
+  if (const char* env_mem = std::getenv("MSHQC_MEMORY_GB")) {
+    const double v = std::atof(env_mem);
+    if (v >= 0.25) return v;
+  }
+  return 4.0;
+}
+
+template <typename Cfg>
+inline double get_scf_level_shift(const Cfg& cfg) {
+  if constexpr (requires { cfg.level_shift; }) {
+    return cfg.level_shift;
+  }
+  return 0.0;
+}
+
 
 // Mengekstrak faktor berperingkat rendah C_tilde (P = C_tilde * C_tilde^T) dari matriks
 // densitas simetris positif semidefinit (seperti P_sad) agar iterasi ke-1 Cholesky/DF
@@ -292,8 +314,19 @@ BaseSCF::BaseSCF(const Molecule& mol, const BasisSet& basis,
         auto df_integrals = std::make_shared<IntegralEngine>(mol_, combined_basis);
         auto df_engine = std::make_shared<integrals::DensityFittingERI>(basis_, aux_basis, df_integrals, config_.df_threshold);
 
-        bool use_disk = (config_.scf_type != "incore");
-        df_engine->compute(use_disk);
+        const double mem_lim_gb = get_scf_memory_limit_gb(config_);
+    const double est_df_packed_gb =
+        static_cast<double>(integrals::ao_tri_size(nbasis_)) *
+        static_cast<double>(aux_basis.n_basis_functions()) *
+        static_cast<double>(sizeof(double)) / 1.0e9;
+    bool use_disk = (config_.scf_type == "ooc") ||
+                    (mem_lim_gb > 0.0 && est_df_packed_gb > mem_lim_gb * 0.55);
+    if (use_disk && config_.print_level > 0) {
+      std::cout << "  [SCF-HPC] Packed DF tensor (" << std::fixed << std::setprecision(2)
+                << est_df_packed_gb << " GB) > budget; switching to HDF5 OOC mode.
+";
+    }
+    df_engine->compute(use_disk);
 
         if (!use_disk) {
             this->L_mat_ = std::move(df_engine->get_B_mat_mutable());
@@ -433,7 +466,22 @@ void BaseSCF::init_integrals_incore() {
         }
     }
 
-    incore_eri_pool_.resize(total_ints, 0.0);
+    const double mem_lim_gb = get_scf_memory_limit_gb(config_);
+  const double est_incore_gb =
+      static_cast<double>(total_ints) * static_cast<double>(sizeof(double)) / 1.0e9;
+  if (mem_lim_gb > 0.0 && est_incore_gb > mem_lim_gb * 0.70) {
+    if (config_.print_level > 0) {
+      std::cout << "  [SCF-HPC] Exact InCore ERI (" << std::fixed << std::setprecision(2)
+                << est_incore_gb << " GB) > budget (" << (mem_lim_gb * 0.70)
+                << " GB); auto-fallback to Direct SCF.
+";
+    }
+    incore_quartets_.clear();
+    incore_quartets_.shrink_to_fit();
+    config_.scf_type = "direct";
+    return;
+  }
+  incore_eri_pool_.resize(total_ints, 0.0);
 
     #pragma omp parallel for schedule(dynamic, 16)
     for (size_t i = 0; i < incore_quartets_.size(); ++i) {
@@ -579,15 +627,34 @@ SCFResult BaseSCF::compute() {
             }
         }
 
-        solve_fock(F_eff_a, C_alpha_, eps_alpha_);
-        if (is_uhf) {
-            if (iter_scf_ == 1 && (F_eff_a - F_eff_b).cwiseAbs().maxCoeff() < 1e-14) {
-                C_beta_ = C_alpha_;
-                eps_beta_ = eps_alpha_;
-            } else {
-                solve_fock(F_eff_b, C_beta_, eps_beta_);
-            }
-        } else {
+        // Adaptive AO-basis virtual level-shift: F_shift = F + sigma * (S - S*P*S)
+    // Aktif hanya bila level_shift diset atau SCF atom berat/transisi berosilasi (iter > 15),
+    // lalu otomatis dimatikan saat err_rms < 1e-4 agar solusi akhir 100% eksak.
+    double active_shift = get_scf_level_shift(config_);
+    if (active_shift <= 0.0 && iter_scf_ > 15 && err_rms > 1.0e-3) {
+      active_shift = (iter_scf_ > 35) ? 0.50 : 0.20;
+    }
+    if (err_rms > 0.0 && err_rms < 1.0e-4) {
+      active_shift = 0.0;
+    }
+    if (active_shift > 0.0 && iter_scf_ > 1) {
+      Eigen::MatrixXd SPa = S_ * P_alpha_;
+      F_eff_a.noalias() += active_shift * (S_ - SPa * S_);
+      if (is_uhf) {
+        Eigen::MatrixXd SPb = S_ * P_beta_;
+        F_eff_b.noalias() += active_shift * (S_ - SPb * S_);
+      }
+    }
+
+    solve_fock(F_eff_a, C_alpha_, eps_alpha_);
+    if (is_uhf) {
+      if (iter_scf_ == 1 && (F_eff_a - F_eff_b).cwiseAbs().maxCoeff() < 1e-14) {
+        C_beta_ = C_alpha_;
+        eps_beta_ = eps_alpha_;
+      } else {
+        solve_fock(F_eff_b, C_beta_, eps_beta_);
+      }
+    } else {
             C_beta_ = C_alpha_;
             eps_beta_ = eps_alpha_;
         }
@@ -617,7 +684,7 @@ SCFResult BaseSCF::compute() {
     }
 
     // Verifikasi keadaan dasar UHF khusus radikal poliatomik (mol_.n_atoms() > 2, misal NH2 2A1 -> 2B1)
-    if (is_uhf && !config_.has_initial_guess && mol_.n_atoms() > 2 && n_beta_ > 0) {
+    if (is_uhf && !config_.has_initial_guess && mol_.n_atoms() > 2 && n_beta_ > 0 && (!converged || nbasis_ <= 300)) {
         double best_energy = energy_;
         bool best_conv = converged;
         int best_iter = iter_scf_;
