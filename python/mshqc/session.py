@@ -104,7 +104,7 @@ class MSHQCSession:
                     self.timings[ref_key] = time.perf_counter() - t_s
                 t0 = time.perf_counter()
                 mp2_res = self.calc.run_mp2(scf_res)
-                key = "RMP2" if self.calc.reference == "rhf" else "UMP2"
+                key = "RMP2" if self.calc.reference == "rhf" else ("ROMP2" if self.calc.reference == "rohf" else "UMP2")  # [INJECTED_PROD_V7_ROMP_KEYS]
                 self.results[key] = mp2_res
                 self.timings[key] = time.perf_counter() - t0
 
@@ -115,7 +115,7 @@ class MSHQCSession:
                     mp2_res = self.calc.run_mp2(scf_res)
                 t0 = time.perf_counter()
                 mp3_res = self.calc.run_mp3(scf_res, mp2_res)
-                key = "RMP3" if self.calc.reference == "rhf" else "UMP3"
+                key = "RMP3" if self.calc.reference == "rhf" else ("ROMP3" if self.calc.reference == "rohf" else "UMP3")
                 self.results[key] = mp3_res
                 self.timings[key] = time.perf_counter() - t0
 

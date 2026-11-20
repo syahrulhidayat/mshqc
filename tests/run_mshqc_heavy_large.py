@@ -4,7 +4,7 @@ tests/run_mshqc_heavy_large.py
 ------------------------------
 Benchmark & Validasi mshqc untuk:
 - Atom berat hingga Z=36 (Ar, HBr, Kr) all-electron & freeze_core=True
-- Molekul menengah-besar (C6H6 cc-pVDZ 114 BF, C10H8 cc-pVDZ 188 BF, C6H6 cc-pVTZ 264 BF)
+- Molekul menengah-besar (C6H6 cc-pVDZ 114 BF, C10H8 cc-pVDZ 180 BF, C6H6 cc-pVTZ 264 BF)
 - Smoke-test mshqc.run() one-liner (memastikan PetiteList 4D tidak jalan pada mode DF)
 Menghasilkan: mshqc_heavy_large_raw.json & mshqc_heavy_large_summary.txt
 """
@@ -78,7 +78,7 @@ CASES = [
     ("Kr (Z=36, FC)",       [("Kr", 0.0, 0.0, 0.0)], 0, 1, "cc-pVTZ", True,  True),
     ("C6H6 (114 BF, AE)",   BENZENE, 0, 1, "cc-pVDZ", False, True),
     ("C6H6 (114 BF, FC)",   BENZENE, 0, 1, "cc-pVDZ", True,  True),
-    ("C10H8 (188 BF, FC)",  NAPHTHALENE, 0, 1, "cc-pVDZ", True,  True),
+    ("C10H8 (180 BF, FC)",  NAPHTHALENE, 0, 1, "cc-pVDZ", True,  True),
     ("C6H6 (264 BF, FC)",   BENZENE, 0, 1, "cc-pVTZ", True,  False),
 ]
 

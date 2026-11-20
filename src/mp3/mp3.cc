@@ -597,6 +597,12 @@ MP3Result RMP3::compute() {
     if(omp_get_thread_num() == 0) std::cout << "\n=== RMP3 (Unified Native TBLIS - Cholesky) ===\n";
 
     const int f_a = std::clamp(n_frozen_, 0, no_a_);
+  // [INJECTED_PROD_V7_MP3_OOC_GUARD]
+  if (config_.eri_method != "exact" && !integrals::has_valid_ao_factor(scf_.L_mat, nbf_)) {
+    throw std::runtime_error(
+        "RMP3/UMP3 requires in-core packed DF/Cholesky factors in RAM, but SCF ran in OOC disk mode. "
+        "Increase memory_limit_gb / MSHQC_MEMORY_GB or use DF-MP2 streaming.");
+  }
   if (t2_aa_.size() == 0) {
     throw std::runtime_error("RMP3/UMP3 memerlukan tensor T2 penuh di RAM, tetapi MP2 sebelumnya berjalan dalam mode streaming O(V^2) karena batas memory_limit_gb. Naikkan memory_limit_gb atau aktifkan freeze_core=True.");
   }
@@ -802,6 +808,12 @@ MP3Result UMP3::compute() {
     if(omp_get_thread_num() == 0) std::cout << "\n=== UMP3 (Unified Native TBLIS - Cholesky) ===\n";
 
     const int f_a = std::clamp(n_frozen_, 0, no_a_);
+  // [INJECTED_PROD_V7_MP3_OOC_GUARD]
+  if (config_.eri_method != "exact" && !integrals::has_valid_ao_factor(scf_.L_mat, nbf_)) {
+    throw std::runtime_error(
+        "RMP3/UMP3 requires in-core packed DF/Cholesky factors in RAM, but SCF ran in OOC disk mode. "
+        "Increase memory_limit_gb / MSHQC_MEMORY_GB or use DF-MP2 streaming.");
+  }
   if (t2_aa_.size() == 0) {
     throw std::runtime_error("RMP3/UMP3 memerlukan tensor T2 penuh di RAM, tetapi MP2 sebelumnya berjalan dalam mode streaming O(V^2) karena batas memory_limit_gb. Naikkan memory_limit_gb atau aktifkan freeze_core=True.");
   }
@@ -1831,14 +1843,29 @@ void OMP3::compute_mp3_correction() {
         auto t_Voovv = make_mat_view_4d_mp3(M_oovv, na_act, na_act, va_, va_);
 
         tblis::mult<double>( 1.0, t_T, "mnab", t_Voooo, "minj", 1.0, t_W, "ijab");
-        tblis::mult<double>( 2.0, t_Vovov, "iakc", t_T, "kjcb", 1.0, t_W, "ijab");
-        tblis::mult<double>(-1.0, t_Voovv, "ikac", t_T, "kjcb", 1.0, t_W, "ijab");
-        tblis::mult<double>( 2.0, t_T, "ikac", t_Vovov, "kcjb", 1.0, t_W, "ijab");
-        tblis::mult<double>(-1.0, t_T, "ikac", t_Voovv, "kjcb", 1.0, t_W, "ijab");
-        tblis::mult<double>(-1.0, t_T, "ikca", t_Vovov, "kcjb", 1.0, t_W, "ijab");
-        tblis::mult<double>(-1.0, t_Vovov, "iakc", t_T, "kjbc", 1.0, t_W, "ijab");
-        tblis::mult<double>(-1.0, t_Voovv, "ikbc", t_T, "kjac", 1.0, t_W, "ijab");
-        tblis::mult<double>(-1.0, t_T, "ikcb", t_Voovv, "jkac", 1.0, t_W, "ijab");
+        // [INJECTED_PROD_V7_RING_OPT]
+      {
+        Eigen::Tensor<double, 4> Tt_act(na_act, na_act, va_, va_);
+        #pragma omp parallel for collapse(4) schedule(static)
+        for (int i = 0; i < na_act; ++i)
+          for (int j = 0; j < na_act; ++j)
+            for (int a = 0; a < va_; ++a)
+              for (int b = 0; b < va_; ++b)
+                Tt_act(i, j, a, b) = 2.0 * T_act(i, j, a, b) - T_act(i, j, b, a);
+        TBLIS_VIEW_4D(t_Tt, Tt_act, na_act, na_act, va_, va_);
+        Eigen::Tensor<double, 4> W_ring_h(na_act, na_act, va_, va_);
+        W_ring_h.setZero();
+        TBLIS_VIEW_4D(t_Wr, W_ring_h, na_act, na_act, va_, va_);
+        tblis::mult<double>( 1.0, t_Vovov, "iakc", t_Tt, "kjcb", 0.0, t_Wr, "ijab");
+        tblis::mult<double>(-1.0, t_Voovv, "ikac", t_T,  "kjcb", 1.0, t_Wr, "ijab");
+        tblis::mult<double>(-1.0, t_Voovv, "ikbc", t_T,  "kjac", 1.0, t_Wr, "ijab");
+        #pragma omp parallel for collapse(4) schedule(static)
+        for (int i = 0; i < na_act; ++i)
+          for (int j = 0; j < na_act; ++j)
+            for (int a = 0; a < va_; ++a)
+              for (int b = 0; b < va_; ++b)
+                W(i, j, a, b) += W_ring_h(i, j, a, b) + W_ring_h(j, i, b, a);
+      }
       M_oooo.resize(0, 0); M_ovov.resize(0, 0); M_oovv.resize(0, 0);
       B_ij_act.resize(0, 0); B_ia_act.resize(0, 0);
 
@@ -2138,14 +2165,29 @@ void OMP3::compute_mp3_correction() {
         auto t_Voovv = make_mat_view_4d_mp3(M_oovv, na_, na_, va_, va_);
 
         tblis::mult< double >(1.0,  t_T, "mnab", t_Voooo, "minj", 1.0, t_W, "ijab");
-        tblis::mult< double >(2.0,  t_Vovov, "iakc", t_T, "kjcb", 1.0, t_W, "ijab");
-        tblis::mult< double >(-1.0, t_Voovv, "ikac", t_T, "kjcb", 1.0, t_W, "ijab");
-        tblis::mult< double >(2.0,  t_T, "ikac", t_Vovov, "kcjb", 1.0, t_W, "ijab");
-        tblis::mult< double >(-1.0, t_T, "ikac", t_Voovv, "kjcb", 1.0, t_W, "ijab");
-        tblis::mult< double >(-1.0, t_T, "ikca", t_Vovov, "kcjb", 1.0, t_W, "ijab"); 
-        tblis::mult< double >(-1.0, t_Vovov, "iakc", t_T, "kjbc", 1.0, t_W, "ijab");
-        tblis::mult< double >(-1.0, t_Voovv, "ikbc", t_T, "kjac", 1.0, t_W, "ijab");
-        tblis::mult< double >(-1.0, t_T, "ikcb", t_Voovv, "jkac", 1.0, t_W, "ijab"); 
+        {
+      Eigen::Tensor<double, 4> Tt_ae(na_, na_, va_, va_);
+      #pragma omp parallel for collapse(4) schedule(static)
+      for (int i = 0; i < na_; ++i)
+        for (int j = 0; j < na_; ++j)
+          for (int a = 0; a < va_; ++a)
+            for (int b = 0; b < va_; ++b)
+              Tt_ae(i, j, a, b) = 2.0 * T2_aa_ijab(i, j, a, b) - T2_aa_ijab(i, j, b, a);
+      TBLIS_VIEW_4D(t_Tt, Tt_ae, na_, na_, va_, va_);
+      Eigen::Tensor<double, 4> W_ring_h(na_, na_, va_, va_);
+      W_ring_h.setZero();
+      TBLIS_VIEW_4D(t_Wr, W_ring_h, na_, na_, va_, va_);
+      tblis::mult<double>( 1.0, t_Vovov, "iakc", t_Tt, "kjcb", 0.0, t_Wr, "ijab");
+      tblis::mult<double>(-1.0, t_Voovv, "ikac", t_T,  "kjcb", 1.0, t_Wr, "ijab");
+      tblis::mult<double>(-1.0, t_Voovv, "ikbc", t_T,  "kjac", 1.0, t_Wr, "ijab");
+      #pragma omp parallel for collapse(4) schedule(static)
+      for (int i = 0; i < na_; ++i)
+        for (int j = 0; j < na_; ++j)
+          for (int a = 0; a < va_; ++a)
+            for (int b = 0; b < va_; ++b)
+              W(i, j, a, b) += W_ring_h(i, j, a, b) + W_ring_h(j, i, b, a);
+    }
+    M_oooo.resize(0, 0); M_ovov.resize(0, 0); M_oovv.resize(0, 0); 
 
         // Eksploitasi simetri W_ji(a,b) = W_ij(b,a): hanya hitung pasangan unik i <= j!
         int n_pairs_sym = na_ * (na_ + 1) / 2;
@@ -2981,10 +3023,7 @@ void OMP3::build_generalized_fock() {
         G_ovov_aa.setZero();
         TBLIS_VIEW_4D(t_Govov_aa, G_ovov_aa, na_act, va_, na_act, va_);
         if (is_restricted) {
-          tblis::mult<double>( 0.50, t_T2, "kjcb", t_T2t, "ijab", 0.0, t_Govov_aa, "iakc");
-          tblis::mult<double>(-0.25, t_T2, "kjbc", t_T2t, "ijab", 1.0, t_Govov_aa, "iakc");
-          tblis::mult<double>( 0.50, t_T2, "miea", t_T2t, "mkec", 1.0, t_Govov_aa, "iakc");
-          tblis::mult<double>(-0.25, t_T2, "miae", t_T2t, "mkec", 1.0, t_Govov_aa, "iakc");
+          tblis::mult<double>( 0.50, t_T2t, "kjcb", t_T2t, "ijab", 0.0, t_Govov_aa, "iakc");
         } else {
           tblis::mult<double>(0.5, t_T2, "kjcb", t_T2t, "ijab", 0.0, t_Govov_aa, "iakc");
           if (has_b_act) {
@@ -3013,8 +3052,18 @@ void OMP3::build_generalized_fock() {
         G_oovv_aa.setZero();
         TBLIS_VIEW_4D(t_Goovv_aa, G_oovv_aa, na_act, na_act, va_, va_);
         if (is_restricted) {
-          tblis::mult<double>(-0.25, t_T2, "kjcb", t_T2t, "ijab", 0.0, t_Goovv_aa, "ikac");
-          tblis::mult<double>(-0.25, t_T2, "miea", t_T2t, "mkec", 1.0, t_Goovv_aa, "ikac");
+          {
+            Eigen::Tensor<double, 4> G_t1(na_act, na_act, va_, va_);
+            G_t1.setZero();
+            TBLIS_VIEW_4D(t_Gt1, G_t1, na_act, na_act, va_, va_);
+            tblis::mult<double>(1.0, t_T2, "kjcb", t_T2t, "ijab", 0.0, t_Gt1, "ikac");
+            #pragma omp parallel for collapse(4) schedule(static)
+            for (int i = 0; i < na_act; ++i)
+              for (int k = 0; k < na_act; ++k)
+                for (int a = 0; a < va_; ++a)
+                  for (int c = 0; c < va_; ++c)
+                    G_oovv_aa(i, k, a, c) = -0.25 * (G_t1(i, k, a, c) + G_t1(k, i, c, a));
+          }
           tblis::mult<double>(-0.50, t_T2, "kmec", t_T2t, "imea", 1.0, t_Goovv_aa, "ikac");
         } else {
           tblis::mult<double>(-0.5, t_T2, "kjcb", t_T2t, "ijab", 0.0, t_Goovv_aa, "ikac");
@@ -3245,10 +3294,7 @@ void OMP3::build_generalized_fock() {
     TBLIS_VIEW_4D(t_Goovv_aa, G_oovv_aa, na_, na_, va_, va_);
 
     if (is_restricted) {
-      tblis::mult<double>( 0.50, t_T2, "kjcb", t_T2t, "ijab", 0.0, t_Govov_aa, "iakc");
-      tblis::mult<double>(-0.25, t_T2, "kjbc", t_T2t, "ijab", 1.0, t_Govov_aa, "iakc");
-      tblis::mult<double>( 0.50, t_T2, "miea", t_T2t, "mkec", 1.0, t_Govov_aa, "iakc");
-      tblis::mult<double>(-0.25, t_T2, "miae", t_T2t, "mkec", 1.0, t_Govov_aa, "iakc");
+      tblis::mult<double>( 0.50, t_T2t, "kjcb", t_T2t, "ijab", 0.0, t_Govov_aa, "iakc");
       tblis::mult<double>(-0.25, t_T2, "kjcb", t_T2t, "ijab", 0.0, t_Goovv_aa, "ikac");
       tblis::mult<double>(-0.25, t_T2, "miea", t_T2t, "mkec", 1.0, t_Goovv_aa, "ikac");
       tblis::mult<double>(-0.50, t_T2, "kmec", t_T2t, "imea", 1.0, t_Goovv_aa, "ikac");

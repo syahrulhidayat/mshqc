@@ -1,7 +1,7 @@
 name: Compile Locally and Run Full Test & Benchmark Suite (mshqc vs Psi4)
 
 on: 
-  push:
+
     
   workflow_dispatch:
 
