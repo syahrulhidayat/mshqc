@@ -72,9 +72,14 @@ CASES = [
 ]
 
 
-def set_case_options(basis_name: str, aux: str, fc: bool) -> None:
+def set_case_options(
+    basis_name: str,
+    aux: str,
+    fc: bool,
+    damped: bool = False,
+) -> None:
     psi4.core.clean_options()
-    psi4.set_options({
+    opts = {
         "basis": basis_name,
         "df_basis_scf": aux,
         "df_basis_mp2": aux,
@@ -85,12 +90,33 @@ def set_case_options(basis_name: str, aux: str, fc: bool) -> None:
         "mp_type": "df",
         "cc_type": "df",
         "freeze_core": "true" if fc else "false",
-        "e_convergence": 1e-9,
-        "d_convergence": 1e-9,
-        "r_convergence": 1e-6,
-        "rms_mograd_convergence": 1e-5,
-        "max_mograd_convergence": 1e-4,
-    })
+        "e_convergence": 1e-8,
+        "d_convergence": 1e-8,
+        "r_convergence": 1e-5,
+        "rms_mograd_convergence": 1e-4,
+        "max_mograd_convergence": 1e-3,
+        "mo_maxiter": 200,
+        "cc_maxiter": 200,
+    }
+    if damped:
+        opts["mo_step_max"] = 0.2
+        opts["diis_max_vecs"] = 10
+        opts["mo_maxiter"] = 300
+    psi4.set_options(opts)
+
+
+def run_dfocc_method(method: str, p4_mol, basis_name: str, aux: str, fc: bool):
+    for damped in (False, True):
+        psi4.core.clean()
+        set_case_options(basis_name, aux, fc, damped=damped)
+        t0 = time.perf_counter()
+        try:
+            energy = float(psi4.energy(method, molecule=p4_mol))
+            return energy, time.perf_counter() - t0
+        except RuntimeError as exc:
+            if not damped and "did not converge" in str(exc):
+                continue
+            raise
 
 
 def main():
@@ -122,12 +148,8 @@ def main():
         nf = int(p4_scf.nfrzc())
         del p4_scf
 
-        # 2. OMP2 (biarkan run_dfocc menjalankan SCF post_scf=True sendiri)
-        psi4.core.clean()
-        set_case_options(basis_name, aux, fc)
-        t0 = time.perf_counter()
-        e_omp2 = float(psi4.energy("omp2", molecule=p4_mol))
-        t_omp2_total = time.perf_counter() - t0
+        # 2. OMP2 (dengan auto-retry damped jika iterasi DFOCC belum konvergen)
+        e_omp2, t_omp2_total = run_dfocc_method("omp2", p4_mol, basis_name, aux, fc)
         t_omp2 = max(0.0, t_omp2_total - t_scf)
 
         # 3. OMP3 (opsional)
@@ -135,11 +157,7 @@ def main():
         t_omp3_total = None
         e_omp3 = None
         if do_omp3:
-            psi4.core.clean()
-            set_case_options(basis_name, aux, fc)
-            t0 = time.perf_counter()
-            e_omp3 = float(psi4.energy("omp3", molecule=p4_mol))
-            t_omp3_total = time.perf_counter() - t0
+            e_omp3, t_omp3_total = run_dfocc_method("omp3", p4_mol, basis_name, aux, fc)
             t_omp3 = max(0.0, t_omp3_total - t_scf)
 
         psi4.core.clean()
