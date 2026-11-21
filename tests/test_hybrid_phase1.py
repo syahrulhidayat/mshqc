@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """
-Validasi Fase 1 Arsitektur Hibrida:
-Orkestrasi DF-RHF, DF-RMP2, dan DF-OMP2 di Python memakai primitif C++20 `mshqc.kernels`,
-dibandingkan head-to-head terhadap solver C++ penuh `mshqc`.
+Validasi Fase 1 (Fixed): DF-RHF, DF-OMP2, dan SCS-OMP2 hibrida vs solver C++20 penuh.
 """
 import numpy as np
 from scipy.linalg import eigh, expm
@@ -42,7 +40,7 @@ def run_hybrid_df_rhf(mol, basis, ints, B_ao, max_iter=50, tol=1e-10):
     raise RuntimeError("Hybrid DF-RHF did not converge")
 
 
-def run_hybrid_df_omp2(mol, basis, ints, B_ao, C0, c_os=1.0, c_ss=1.0, max_iter=30, grad_tol=1e-6):
+def run_hybrid_df_omp2(mol, basis, ints, B_ao, C0, c_os=1.0, c_ss=1.0, max_iter=40, grad_tol=1e-6):
     H = ints.compute_kinetic() + ints.compute_nuclear()
     nbf = basis.n_basis_functions()
     n_occ = mol.n_electrons() // 2
@@ -50,9 +48,7 @@ def run_hybrid_df_omp2(mol, basis, ints, B_ao, C0, c_os=1.0, c_ss=1.0, max_iter=
     v_nn = mol.nuclear_repulsion_energy()
 
     C = C0.copy()
-    diis = mshqc.DIIS(8)
-    e_tot = 0.0
-
+    w_rms = 1.0
     for it in range(max_iter):
         C_occ = np.ascontiguousarray(C[:, :n_occ])
         J, K_mat = K.build_jk_3c_rhf(B_ao, C_occ, nbf)
@@ -69,34 +65,31 @@ def run_hybrid_df_omp2(mol, basis, ints, B_ao, C0, c_os=1.0, c_ss=1.0, max_iter=
         B_vv = K.transform_3c_mo(B_ao, C_vir, C_vir, nbf)
 
         e_os, e_ss, T2 = K.eval_rmp2_df(B_ov, eps[:n_occ], eps[n_occ:])
-        e_corr = c_os * e_os + c_ss * e_ss
-        e_tot = e_ref + e_corr
+        e_tot = e_ref + c_os * e_os + c_ss * e_ss
 
         gamma_oo, gamma_vv = K.eval_omp2_1rdm_rhf(T2, n_occ, n_vir, c_os=c_os, c_ss=c_ss)
         Z_vo = K.eval_omp2_zvec_rhf_df(T2, B_oo, B_ov, B_vv, n_occ, n_vir, c_os=c_os, c_ss=c_ss)
 
-        # Respons medan rata-rata 1-RDM korelasi: G_ao = 2*J[P_corr_a] - K[P_corr_a]
         P_corr_a = C_occ @ gamma_oo @ C_occ.T + C_vir @ gamma_vv @ C_vir.T
         G_ao = 2.0 * K.build_coulomb_3c(B_ao, P_corr_a, nbf) - K.build_exchange_3c_sym(B_ao, P_corr_a, nbf)
         G_vo = C_vir.T @ G_ao @ C_occ
 
         L_sep = F_vo @ gamma_oo - gamma_vv @ F_vo
         w_vo = 4.0 * (F_vo + G_vo + L_sep + Z_vo)
-        w_rms = np.sqrt(np.mean(w_vo ** 2))
+        w_rms = float(np.sqrt(np.mean(w_vo ** 2)))
         if w_rms < grad_tol:
             return e_tot, it, w_rms
 
-        # Langkah aproksimasi Hessian diagonal + trust radius sederhana
         H_diag = 4.0 * np.maximum(np.abs(eps[n_occ:, None] - eps[None, :n_occ]), 1e-3)
         kappa = -w_vo / H_diag
-        norm_k = np.linalg.norm(kappa)
+        norm_k = float(np.linalg.norm(kappa))
         if norm_k > 0.25:
             kappa *= 0.25 / norm_k
 
-        K_mat_rot = np.zeros((nbf, nbf))
-        K_mat_rot[n_occ:, :n_occ] = kappa
-        K_mat_rot[:n_occ, n_occ:] = -kappa.T
-        C = C @ expm(K_mat_rot)
+        K_rot = np.zeros((nbf, nbf))
+        K_rot[n_occ:, :n_occ] = kappa
+        K_rot[:n_occ, n_occ:] = -kappa.T
+        C = C @ expm(K_rot)
 
     raise RuntimeError(f"Hybrid DF-OMP2 did not converge (last w_rms={w_rms:.3e})")
 
@@ -111,32 +104,32 @@ def test_phase1_hybrid_matches_cpp():
     aux_basis = mshqc.BasisSet("cc-pVDZ-RI", mol)
     ints = mshqc.IntegralEngine(mol, basis)
 
-    # 1. Referensi solver C++20 penuh
     scf_conf = mshqc.SCFConfig(eri_method="df", threshold=1e-10)
     scf_ref = mshqc.RHF(mol, basis, ints, scf_conf).compute()
     mp2_conf = mshqc.MP2Config(eri_method="df", threshold=1e-10, gradient_threshold=1e-6)
     omp2_ref = mshqc.OMP2(mol, basis, ints, scf_ref, mp2_conf).compute()
 
-    # 2. Orkestrasi Python + Primitif C++20 `mshqc.kernels`
-    df = K.DensityFittingERI(basis, aux_basis, ints, 1e-10)
+    # Safe RAII DF engine (auto-combines primary + aux basis, bebas segfault!)
+    df = K.DensityFittingERI(mol, basis, aux_basis, 1e-10)
     df.compute(False)
     B_ao = df.get_B_mat()
+    assert K.is_packed_ao(B_ao, basis.n_basis_functions())
 
     e_rhf_hyb, C_rhf, _ = run_hybrid_df_rhf(mol, basis, ints, B_ao)
-    e_omp2_hyb, n_it, w_rms = run_hybrid_df_omp2(mol, basis, ints, B_ao, C_rhf)
+    e_omp2_hyb, n_it, _ = run_hybrid_df_omp2(mol, basis, ints, B_ao, C_rhf)
     e_scs_omp2, n_it_scs, _ = run_hybrid_df_omp2(mol, basis, ints, B_ao, C_rhf, c_os=1.2, c_ss=1.0 / 3.0)
 
     diff_rhf = abs(e_rhf_hyb - scf_ref.energy_total)
     diff_omp2 = abs(e_omp2_hyb - omp2_ref.energy_total)
 
-    print(f"[DF-RHF ] Hybrid={e_rhf_hyb:.10f} | C++={scf_ref.energy_total:.10f} | |dE|={diff_rhf:.2e} Ha")
-    print(f"[DF-OMP2] Hybrid={e_omp2_hyb:.10f} ({n_it} it) | C++={omp2_ref.energy_total:.10f} | |dE|={diff_omp2:.2e} Ha")
-    print(f"[SCS-OMP2] Hybrid={e_scs_omp2:.10f} ({n_it_scs} it) | berhasil dijalankan dari Python!")
+    print(f"[DF-RHF  ] Hybrid={e_rhf_hyb:.10f} | C++={scf_ref.energy_total:.10f} | |dE|={diff_rhf:.2e} Ha")
+    print(f"[DF-OMP2 ] Hybrid={e_omp2_hyb:.10f} ({n_it} it) | C++={omp2_ref.energy_total:.10f} | |dE|={diff_omp2:.2e} Ha")
+    print(f"[SCS-OMP2] Hybrid={e_scs_omp2:.10f} ({n_it_scs} it)")
 
-    assert diff_rhf < 1e-9, f"Deviasi RHF terlalu besar: {diff_rhf}"
-    assert diff_omp2 < 1e-8, f"Deviasi OMP2 terlalu besar: {diff_omp2}"
+    assert diff_rhf < 1e-9
+    assert diff_omp2 < 1e-8
 
 
 if __name__ == "__main__":
     test_phase1_hybrid_matches_cpp()
-    print("[PASS] Semua validasi Fase 1 Hibrida lulus!")
+    print("[PASS] Fase 1 Hibrida lulus!")

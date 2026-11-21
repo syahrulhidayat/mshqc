@@ -1,23 +1,84 @@
 // Copyright 2026 Muhamad Syahrul Hidayat
 // Licensed under the Apache License, Version 2.0
-// [INJECTED_HYBRID_PHASE1_PRIMITIVES]
+// [INJECTED_HYBRID_PHASE2_PRIMITIVES]
 #pragma once
 
 #include <Eigen/Dense>
 #include <Eigen/Eigenvalues>
 #include <algorithm>
 #include <cmath>
+#include <memory>
 #include <omp.h>
 #include <stdexcept>
 #include <tuple>
 #include <utility>
 #include <vector>
 
+#include "mshqc/basis.h"
+#include "mshqc/core/molecule.h"
+#include "mshqc/integrals/df_eri.h"
 #include "mshqc/integrals/packed_ao_utils.h"
+#include "mshqc/ints/integrals.h"
 #include "mshqc/utils/blas_thread_guard.h"
 
 namespace mshqc {
 namespace kernels {
+
+// 0. RAII-safe Density Fitting AO 3-index factor builder (auto-combines primary + aux basis)
+inline Eigen::MatrixXd compute_df_ao_factor(
+    const Molecule& mol,
+    const BasisSet& primary_basis,
+    const BasisSet& aux_basis,
+    double cutoff = 1e-10,
+    bool save_hdf5 = false)
+{
+    BasisSet combined = primary_basis;
+    combined.append(aux_basis);
+    auto df_ints = std::make_shared<IntegralEngine>(mol, combined);
+    integrals::DensityFittingERI df_eng(primary_basis, aux_basis, df_ints, cutoff);
+    df_eng.compute(save_hdf5);
+    return std::move(df_eng.get_B_mat_mutable());
+}
+
+// Safe RAII class for Python bindings (prevents dangling BasisSet/IntegralEngine references)
+class SafeDFEngine {
+public:
+    SafeDFEngine(const Molecule& mol,
+                 const BasisSet& primary_basis,
+                 const BasisSet& aux_basis,
+                 double cutoff = 1e-10)
+        : mol_(mol),
+          primary_(primary_basis),
+          aux_(aux_basis),
+          combined_(primary_basis),
+          cutoff_(cutoff)
+    {
+        combined_.append(aux_);
+        df_ints_ = std::make_shared<IntegralEngine>(mol_, combined_);
+        df_eng_ = std::make_unique<integrals::DensityFittingERI>(
+            primary_, aux_, df_ints_, cutoff_);
+    }
+
+    void compute(bool save_hdf5 = false) {
+        df_eng_->compute(save_hdf5);
+    }
+
+    const Eigen::MatrixXd& get_B_mat() const {
+        return df_eng_->get_B_mat();
+    }
+
+    void set_hdf5_path(const std::string& path) { df_eng_->set_hdf5_path(path); }
+    const std::string& get_hdf5_path() const { return df_eng_->get_hdf5_path(); }
+
+private:
+    Molecule mol_;
+    BasisSet primary_;
+    BasisSet aux_;
+    BasisSet combined_;
+    double cutoff_;
+    std::shared_ptr<IntegralEngine> df_ints_;
+    std::unique_ptr<integrals::DensityFittingERI> df_eng_;
+};
 
 // 1. Coulomb J[P_tot] dari faktor 3-indeks AO (packed atau full)
 inline Eigen::MatrixXd build_coulomb_3c(
@@ -135,7 +196,6 @@ inline std::tuple<Eigen::MatrixXd, Eigen::VectorXd, Eigen::MatrixXd> semicanonic
     const Eigen::MatrixXd& F_ao,
     int n_occ)
 {
-    const int nbf = static_cast<int>(C.rows());
     const int n_vir = static_cast<int>(C.cols()) - n_occ;
     if (n_occ < 0 || n_vir < 0) {
         throw std::invalid_argument("semicanonicalize_subspaces: n_occ di luar rentang");
@@ -167,7 +227,6 @@ inline std::tuple<Eigen::MatrixXd, Eigen::VectorXd, Eigen::MatrixXd> semicanonic
 }
 
 // 7. Evaluasi amplitudo T2 dan energi OS/SS RMP2 dari B_ov (no*nv x n_aux)
-//    Layout T2: (nv*nv x no*no), kolom (i*no + j) memuat T_ij(a, b) pada indeks (a + b*nv)
 inline std::tuple<double, double, Eigen::MatrixXd> eval_rmp2_df(
     const Eigen::MatrixXd& B_ov,
     const Eigen::VectorXd& eps_occ,
@@ -230,59 +289,7 @@ inline std::tuple<double, double, Eigen::MatrixXd> eval_rmp2_df(
     return {e_os, e_ss, std::move(T2)};
 }
 
-// 8. Pengirisan pasangan terisi (i <= j) bebas O(V^4) untuk suku Particle-Particle Ladder RHF
-inline Eigen::MatrixXd eval_pp_ladder_rhf_df(
-    const Eigen::MatrixXd& T2,
-    const Eigen::MatrixXd& B_vv,
-    int n_occ,
-    int n_vir)
-{
-    const int n_aux = static_cast<int>(B_vv.cols());
-    Eigen::MatrixXd W_pp = Eigen::MatrixXd::Zero(
-        static_cast<Eigen::Index>(n_vir) * n_vir,
-        static_cast<Eigen::Index>(n_occ) * n_occ);
-
-    std::vector<std::pair<int, int>> pairs;
-    pairs.reserve(static_cast<size_t>(n_occ) * (n_occ + 1) / 2);
-    for (int i = 0; i < n_occ; ++i) {
-        for (int j = i; j < n_occ; ++j) {
-            pairs.emplace_back(i, j);
-        }
-    }
-
-    #pragma omp parallel
-    {
-        Eigen::MatrixXd W_ij(n_vir, n_vir);
-        Eigen::MatrixXd tmp(n_vir, n_vir);
-
-        #pragma omp for schedule(dynamic, 1)
-        for (int idx = 0; idx < static_cast<int>(pairs.size()); ++idx) {
-            const int i = pairs[idx].first;
-            const int j = pairs[idx].second;
-            Eigen::Map<const Eigen::MatrixXd> T_ij(
-                T2.col(static_cast<Eigen::Index>(i) * n_occ + j).data(), n_vir, n_vir);
-
-            W_ij.setZero();
-            for (int P = 0; P < n_aux; ++P) {
-                Eigen::Map<const Eigen::MatrixXd> B_P(B_vv.col(P).data(), n_vir, n_vir);
-                tmp.noalias() = T_ij * B_P;
-                W_ij.noalias() += B_P * tmp;
-            }
-
-            Eigen::Map<Eigen::MatrixXd> dst_ij(
-                W_pp.col(static_cast<Eigen::Index>(i) * n_occ + j).data(), n_vir, n_vir);
-            dst_ij = W_ij;
-            if (i != j) {
-                Eigen::Map<Eigen::MatrixXd> dst_ji(
-                    W_pp.col(static_cast<Eigen::Index>(j) * n_occ + i).data(), n_vir, n_vir);
-                dst_ji = W_ij.transpose();
-            }
-        }
-    }
-    return W_pp;
-}
-
-// 9. 1-RDM korelasi RHF per kanal spin alpha (Pers. 2.69b), mendukung spin-scaling (c_os, c_ss)
+// 8. 1-RDM korelasi OMP2 RHF per kanal spin alpha, mendukung spin-scaling (c_os, c_ss)
 inline std::pair<Eigen::MatrixXd, Eigen::MatrixXd> eval_omp2_1rdm_rhf(
     const Eigen::MatrixXd& T2,
     int n_occ,
@@ -334,7 +341,7 @@ inline std::pair<Eigen::MatrixXd, Eigen::MatrixXd> eval_omp2_1rdm_rhf(
     return {std::move(gamma_oo), std::move(gamma_vv)};
 }
 
-// 10. Vektor-Z OMP2 RHF via faktor 3-indeks (Pers. 2.71g), mendukung SCS-OMP2 (c_os, c_ss)
+// 9. Vektor-Z OMP2 RHF via faktor 3-indeks (Pers. 2.71g), mendukung SCS-OMP2
 inline Eigen::MatrixXd eval_omp2_zvec_rhf_df(
     const Eigen::MatrixXd& T2,
     const Eigen::MatrixXd& B_oo,
