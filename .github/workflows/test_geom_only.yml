@@ -3,7 +3,6 @@ name: Compile Locally and Run Full Test & Benchmark Suite (mshqc vs Psi4)
 on: 
 
     
-  workflow_dispatch:
 
 jobs:
   full_test_suite:

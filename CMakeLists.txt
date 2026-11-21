@@ -366,7 +366,7 @@ foreach(_inc IN LISTS MSHQC_BUILD_INCLUDES)
     endif()
 endforeach()
 
-nanobind_add_module(_mshqc NOMINSIZE "python/bindings.cc")
+nanobind_add_module(_mshqc NOMINSIZE "python/bindings.cc" "python/bind_kernels.cc")
 
 foreach(_inc IN LISTS MSHQC_BUILD_INCLUDES)
     if(_inc AND IS_ABSOLUTE "${_inc}" AND EXISTS "${_inc}")

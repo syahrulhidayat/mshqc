@@ -287,3 +287,8 @@ def _psi4_compatible_optimize_geometry(
 
 if _orig_mol_opt_geom is not None:
     Molecule.optimize_geometry = _psi4_compatible_optimize_geometry
+
+# [INJECTED_HYBRID_PHASE1_INIT]
+from ._mshqc import kernels
+if 'kernels' not in __all__:
+    __all__.append('kernels')

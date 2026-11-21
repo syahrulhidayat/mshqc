@@ -1,13 +1,7 @@
 name: Compile Locally and Run Full Test & Benchmark Suite (mshqc)
 
 on:
-  push:
-    branches:
-      - build-pypi
-      - test-geom
-      - test
-      - main
-  workflow_dispatch:
+
 
 jobs:
   full_test_suite:

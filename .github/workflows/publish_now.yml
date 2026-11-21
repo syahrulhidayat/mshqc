@@ -2,9 +2,7 @@ name: Instant Publish Artifacts to PyPI and GitHub Release
 
 on:
   push:
-    branches: [""]
-    tags: [""]
-  workflow_dispatch:
+
     inputs:
       run_id:
         description: "GitHub Actions Run ID yang memiliki artifact wheel"

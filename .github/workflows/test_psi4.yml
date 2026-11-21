@@ -1,13 +1,7 @@
 name: Psi4 Only - Heavy Atoms & Large Molecules Reference
 
 on:
-  push:
-    branches:
-      - build-pypi
-      - test-geom
-      - test
-      - main
-    paths:
+
       - "tests/run_psi4_heavy_large.py"
       - ".github/workflows/test-psi4-heavy-large.yml"
   workflow_dispatch:

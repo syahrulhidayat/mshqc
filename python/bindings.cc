@@ -267,6 +267,9 @@ namespace mshqc_auto_tune {
     }
 }
 
+// [INJECTED_HYBRID_PHASE1_BINDINGS]
+namespace mshqc { void bind_kernels_module(nanobind::module_& m); }
+
 NB_MODULE(_mshqc, m) {
 
     mshqc_auto_tune::initialize_hpc_environment();
@@ -1008,4 +1011,7 @@ NB_MODULE(_mshqc, m) {
                     nb::arg("distances_angstrom"),
                     nb::arg("config") = mshqc::gradient::GeomOptConfig(),
                     nb::call_guard<nb::gil_scoped_release>());
+
+    // [INJECTED_HYBRID_PHASE1_BINDINGS]
+    mshqc::bind_kernels_module(m);
 }

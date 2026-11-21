@@ -3,7 +3,7 @@ name: Heavy Atoms & Large Molecules Benchmark (mshqc vs Psi4)
 on:
   
     
-  workflow_dispatch:
+
 
 env:
   OMP_NUM_THREADS: "4"

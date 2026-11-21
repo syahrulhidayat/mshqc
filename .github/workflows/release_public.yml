@@ -2,9 +2,6 @@ name: Compile and Release Wheel to Public Repo
 
 on:
   push:
-    branches: [""]
-    tags: ["*"]
-  workflow_dispatch:
 
 permissions:
   contents: write

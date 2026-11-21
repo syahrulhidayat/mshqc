@@ -5,7 +5,7 @@ on:
     branches:
       - build-pypi
       - test
-      - test-geom
+      - hybrid-v2
       - master
   workflow_dispatch:
 
