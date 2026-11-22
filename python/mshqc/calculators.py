@@ -252,6 +252,38 @@ class MSHQCCalculator:
         return solver.compute()
 
 
+    def _run_hybrid_omp_method(self, method_name: str, scf_res: Optional[mshqc.SCFResult] = None, grad_thresh: float = 1e-5, max_iter: int = 50):
+        from .methods.interop import run_from_arrays
+        if self.eri_method != "df":
+            raise ValueError(f"Metode hibrida '{method_name}' saat ini mendukung eri_method='df'.")
+        if scf_res is None:
+            scf_res = self.scf_res or self.run_scf()
+        aux_basis = mshqc.BasisSet(self.aux_basis_name, self.molecule, self.basis_dir)
+        B_ao = mshqc.kernels.compute_df_ao_factor(self.molecule, self.basis, aux_basis, self.threshold, False)
+        H_core = self.integrals.compute_kinetic() + self.integrals.compute_nuclear()
+        S_ovlp = self.integrals.compute_overlap()
+        v_nn = self.molecule.nuclear_repulsion_energy()
+        if self.reference == "rhf":
+            return run_from_arrays(
+                H_core, S_ovlp, v_nn, B_ao, scf_res.C_alpha, scf_res.n_occ_alpha,
+                method=method_name, grad_tol=grad_thresh, energy_tol=self.threshold, max_iter=max_iter,
+            )
+        return run_from_arrays(
+            H_core, S_ovlp, v_nn, B_ao, scf_res.C_alpha, scf_res.n_occ_alpha,
+            C_beta=scf_res.C_beta, n_occ_beta=scf_res.n_occ_beta,
+            method=method_name, grad_tol=grad_thresh, energy_tol=self.threshold, max_iter=max_iter,
+        )
+
+    def run_scs_omp2(self, scf_res: Optional[mshqc.SCFResult] = None, grad_thresh: float = 1e-5, max_iter: int = 50):
+        return self._run_hybrid_omp_method("scs-omp2", scf_res=scf_res, grad_thresh=grad_thresh, max_iter=max_iter)
+
+    def run_sos_omp2(self, scf_res: Optional[mshqc.SCFResult] = None, grad_thresh: float = 1e-5, max_iter: int = 50):
+        return self._run_hybrid_omp_method("sos-omp2", scf_res=scf_res, grad_thresh=grad_thresh, max_iter=max_iter)
+
+    def run_omp25(self, scf_res: Optional[mshqc.SCFResult] = None, grad_thresh: float = 1e-5, max_iter: int = 50):
+        return self._run_hybrid_omp_method("omp2.5", scf_res=scf_res, grad_thresh=grad_thresh, max_iter=max_iter)
+
+
 def run(molecule: Union[mshqc.Molecule, str, List[Tuple]],
         method: Union[str, List[str]] = "omp2",
         basis: str = "cc-pVTZ",
@@ -301,6 +333,12 @@ def run(molecule: Union[mshqc.Molecule, str, List[Tuple]],
             res = calc.run_omp2(opt_method=opt_method, grad_thresh=grad_thresh)
         elif m_low == "omp3":
             res = calc.run_omp3(opt_method=opt_method, grad_thresh=grad_thresh)
+        elif m_low in ("scs-omp2", "scs_omp2"):
+            res = calc.run_scs_omp2(grad_thresh=grad_thresh)
+        elif m_low in ("sos-omp2", "sos_omp2"):
+            res = calc.run_sos_omp2(grad_thresh=grad_thresh)
+        elif m_low in ("omp2.5", "omp25", "omp2_5"):
+            res = calc.run_omp25(grad_thresh=grad_thresh)
         else:
             raise ValueError(f"Metode tidak dikenali: {m}")
         elapsed = time.perf_counter() - t0

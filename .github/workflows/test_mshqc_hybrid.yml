@@ -161,19 +161,26 @@ jobs:
             # =========================================================================
       # SINGLE TEST SUITE: HYBRID ARCHITECTURE PHASE 1 & 2
       # =========================================================================
-      - name: "[01/02] Run Hybrid Phase 1 Verification (test_hybrid_phase1.py)"
+      - name: "[01/03] Run Hybrid Phase 1 Verification (test_hybrid_phase1.py)"
         shell: bash -el {0}
         run: |
           set -o pipefail
           micromamba activate geom_env
           python -m pytest tests/test_hybrid_phase1.py -v -s 2>&1 | tee 01_test_hybrid_phase1_log.txt
 
-      - name: "[02/02] Run Hybrid Phase 2 Verification (test_hybrid_phase2.py)"
+      - name: "[02/03] Run Hybrid Phase 2 Verification (test_hybrid_phase2.py)"
         shell: bash -el {0}
         run: |
           set -o pipefail
           micromamba activate geom_env
           python -m pytest tests/test_hybrid_phase2.py -v -s 2>&1 | tee 02_test_hybrid_phase2_log.txt
+
+      - name: "[03/03] Run Hybrid Phase 3 Verification (test_hybrid_phase3.py)"
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate geom_env
+          python -m pytest tests/test_hybrid_phase3.py -v -s 2>&1 | tee 03_test_hybrid_phase3_log.txt
 
       # =========================================================================
       # UPLOAD ARTIFACT (.txt)
@@ -191,3 +198,10 @@ jobs:
         with:
           name: mshqc-hybrid-phase2-log-${{ matrix.os }}
           path: 02_test_hybrid_phase2_log.txt
+
+      - name: Upload Hybrid Phase 3 Test Log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mshqc-hybrid-phase3-log-${{ matrix.os }}
+          path: 03_test_hybrid_phase3_log.txt
