@@ -280,23 +280,43 @@ endif()
 # ==============================================================================
 # 6. SOURCE FILES & TARGET CONFIGURATION
 # ==============================================================================
+
+option(MSHQC_THIN_CORE "Compile minimal C++20 core kernels only (~65% less C++ code)" OFF)
+
 file(GLOB_RECURSE SRC_CORE CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/core/*.cc")
-file(GLOB_RECURSE SRC_SCF CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/scf/*.cc")
-file(GLOB_RECURSE SRC_MP CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/mp/*.cc" "${CMAKE_SOURCE_DIR}/src/mp2/*.cc" "${CMAKE_SOURCE_DIR}/src/mp3/*.cc")
-file(GLOB_RECURSE SRC_INTEGRALS CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/integrals/*.cc" "${CMAKE_SOURCE_DIR}/src/ints/*.cc")
-file(GLOB_RECURSE SRC_GRADIENT CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/gradient/*.cc")
-file(GLOB_RECURSE SRC_SYMMETRY CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/symmetry/*.cc")
+file(GLOB_RECURSE SRC_INTS CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/ints/*.cc")
 file(GLOB_RECURSE SRC_UTILS CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/utils/*.cc")
 file(GLOB_RECURSE SRC_KERNELS CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/kernels/*.cc")
-
-# [INJECTED_THIN_CORE_STAGE2_CMAKE]
-set(ALL_SOURCES
-    ${SRC_CORE} ${SRC_SCF} ${SRC_MP}
-    ${SRC_INTEGRALS} ${SRC_GRADIENT}
-    ${SRC_SYMMETRY}
-    ${SRC_UTILS}
-${SRC_KERNELS}
+set(SRC_INTEGRALS_CORE
+    "${CMAKE_SOURCE_DIR}/src/integrals/df_eri.cc"
+    "${CMAKE_SOURCE_DIR}/src/integrals/cholesky_eri.cc"
 )
+
+set(ALL_SOURCES
+    ${SRC_CORE}
+    ${SRC_INTS}
+    ${SRC_INTEGRALS_CORE}
+    ${SRC_UTILS}
+    ${SRC_KERNELS}
+)
+
+if(NOT MSHQC_THIN_CORE)
+    file(GLOB_RECURSE SRC_SCF CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/scf/*.cc")
+    file(GLOB_RECURSE SRC_MP CONFIGURE_DEPENDS
+        "${CMAKE_SOURCE_DIR}/src/mp/*.cc"
+        "${CMAKE_SOURCE_DIR}/src/mp2/*.cc"
+        "${CMAKE_SOURCE_DIR}/src/mp3/*.cc"
+    )
+    file(GLOB_RECURSE SRC_GRADIENT CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/gradient/*.cc")
+    file(GLOB_RECURSE SRC_SYMMETRY CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/symmetry/*.cc")
+    list(APPEND ALL_SOURCES
+        "${CMAKE_SOURCE_DIR}/src/integrals/eri_transformer.cc"
+        ${SRC_SCF} ${SRC_MP} ${SRC_GRADIENT} ${SRC_SYMMETRY}
+    )
+    message(STATUS "mshqc build profile: FULL (Thin-Core + Legacy C++ Solvers)")
+else()
+    message(STATUS "mshqc build profile: THIN-CORE ONLY (Minimal C++20 Kernels + Python Orchestration)")
+endif()
 
 add_library(mshqc STATIC ${ALL_SOURCES})
 
@@ -366,6 +386,9 @@ foreach(_inc IN LISTS MSHQC_BUILD_INCLUDES)
 endforeach()
 
 nanobind_add_module(_mshqc NOMINSIZE "python/bindings.cc" "python/bind_kernels.cc")
+if(MSHQC_THIN_CORE)
+    target_compile_definitions(_mshqc PRIVATE MSHQC_THIN_CORE_BUILD=1)
+endif()
 
 foreach(_inc IN LISTS MSHQC_BUILD_INCLUDES)
     if(_inc AND IS_ABSOLUTE "${_inc}" AND EXISTS "${_inc}")

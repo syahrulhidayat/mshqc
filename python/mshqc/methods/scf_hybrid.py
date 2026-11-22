@@ -2,15 +2,15 @@
 # Licensed under the Apache License, Version 2.0
 """
 Orkestrasi SCF Python tipis (DF / Cholesky RHF & UHF) di atas kernel C++20 `mshqc.kernels`.
-Menyatukan Pulay DIIS (SVD-equilibrated), Löwdin orthogonalizer tahan ketergantungan linear,
-level shifting opsional, dan reuse faktor 3-indeks AO (`L_mat`).
+Mencakup Pure-Python SAD Guess (Z=1..118 + anomali d/f-block), faktorisasi low-rank Iter-1,
+Pulay DIIS (SVD-equilibrated), dan orthogonalizer Löwdin tahan ketergantungan linear.
 """
 
 from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
-from typing import Deque, Optional, Tuple
+from typing import Deque, Dict, List, Optional, Tuple
 import numpy as np
 from scipy.linalg import eigh
 
@@ -35,6 +35,131 @@ class HybridSCFResult:
     @property
     def e_total(self) -> float:
         return self.energy_total
+
+
+_SAD_ANOMALIES: Dict[int, Tuple[Tuple[float, ...], Tuple[float, ...], Tuple[float, ...], Tuple[float, ...]]] = {
+    24: ((2, 2, 2, 1), (6, 6), (5,), ()),
+    29: ((2, 2, 2, 1), (6, 6), (10,), ()),
+    41: ((2, 2, 2, 2, 1), (6, 6, 6), (10, 4), ()),
+    42: ((2, 2, 2, 2, 1), (6, 6, 6), (10, 5), ()),
+    44: ((2, 2, 2, 2, 1), (6, 6, 6), (10, 7), ()),
+    45: ((2, 2, 2, 2, 1), (6, 6, 6), (10, 8), ()),
+    46: ((2, 2, 2, 2), (6, 6, 6), (10, 10), ()),
+    47: ((2, 2, 2, 2, 1), (6, 6, 6), (10, 10), ()),
+    57: ((2, 2, 2, 2, 2, 2), (6, 6, 6, 6), (10, 10, 1), ()),
+    58: ((2, 2, 2, 2, 2, 2), (6, 6, 6, 6), (10, 10, 1), (1,)),
+    64: ((2, 2, 2, 2, 2, 2), (6, 6, 6, 6), (10, 10, 1), (7,)),
+    78: ((2, 2, 2, 2, 2, 1), (6, 6, 6, 6), (10, 10, 9), (14,)),
+    79: ((2, 2, 2, 2, 2, 1), (6, 6, 6, 6), (10, 10, 10), (14,)),
+    89: ((2, 2, 2, 2, 2, 2, 2), (6, 6, 6, 6, 6), (10, 10, 10, 1), (14,)),
+    90: ((2, 2, 2, 2, 2, 2, 2), (6, 6, 6, 6, 6), (10, 10, 10, 2), (14,)),
+    91: ((2, 2, 2, 2, 2, 2, 2), (6, 6, 6, 6, 6), (10, 10, 10, 1), (14, 2)),
+    92: ((2, 2, 2, 2, 2, 2, 2), (6, 6, 6, 6, 6), (10, 10, 10, 1), (14, 3)),
+    93: ((2, 2, 2, 2, 2, 2, 2), (6, 6, 6, 6, 6), (10, 10, 10, 1), (14, 4)),
+    96: ((2, 2, 2, 2, 2, 2, 2), (6, 6, 6, 6, 6), (10, 10, 10, 1), (14, 7)),
+}
+
+
+def _subshell_occupations(z: int) -> Tuple[List[float], List[float], List[float], List[float]]:
+    if z in _SAD_ANOMALIES:
+        s, p, d, f = _SAD_ANOMALIES[z]
+        return list(s), list(p), list(d), list(f)
+
+    s_occ: List[float] = []
+    p_occ: List[float] = []
+    d_occ: List[float] = []
+    f_occ: List[float] = []
+
+    def take(rem: float, cap: float, target: List[float]) -> float:
+        val = min(cap, max(0.0, rem))
+        if val > 0.0:
+            target.append(val)
+        return rem - val
+
+    rem = float(z)
+    for caps in (
+        ((2.0, s_occ),),
+        ((2.0, s_occ), (6.0, p_occ)),
+        ((2.0, s_occ), (6.0, p_occ)),
+        ((2.0, s_occ), (10.0, d_occ), (6.0, p_occ)),
+        ((2.0, s_occ), (10.0, d_occ), (6.0, p_occ)),
+        ((2.0, s_occ), (14.0, f_occ), (10.0, d_occ), (6.0, p_occ)),
+        ((2.0, s_occ), (14.0, f_occ), (10.0, d_occ), (6.0, p_occ)),
+        ((2.0, s_occ),),
+    ):
+        for cap, target in caps:
+            if rem <= 0.0:
+                return s_occ, p_occ, d_occ, f_occ
+            rem = take(rem, cap, target)
+    return s_occ, p_occ, d_occ, f_occ
+
+
+def _shell_l_and_nf(shell) -> Tuple[int, int]:
+    l_val = int(shell.l()) if hasattr(shell, "l") else int(shell.angular_momentum.value)
+    nf = int(shell.n_functions()) if hasattr(shell, "n_functions") else (2 * l_val + 1)
+    return l_val, nf
+
+
+def build_sad_guess(mol, basis) -> np.ndarray:
+    """Pure-Python SAD guess (identik secara matematis dengan src/scf/sad_guess.cc)."""
+    nbf = int(basis.n_basis_functions())
+    p_diag = np.zeros(nbf, dtype=np.float64)
+    bname = str(basis.name()).lower()
+    allow_split = not any(tok in bname for tok in ("sto", "min", "3-21g"))
+
+    n_shells = int(basis.n_shells())
+    sh_idx = 0
+    bf_off = 0
+
+    for atom_i in range(int(mol.n_atoms())):
+        z = int(mol.atom(atom_i).atomic_number)
+        groups: List[List[Tuple[int, int]]] = [[], [], [], []]
+        atom_bf = 0
+
+        while sh_idx < n_shells:
+            sh = basis.shell(sh_idx)
+            if int(sh.center) != atom_i:
+                break
+            l_val, nf = _shell_l_and_nf(sh)
+            if 0 <= l_val <= 3:
+                groups[l_val].append((bf_off + atom_bf, nf))
+            atom_bf += nf
+            sh_idx += 1
+
+        occ_groups = _subshell_occupations(z)
+        for occ_list, sh_list in zip(occ_groups, groups):
+            n_sub = len(occ_list)
+            for k, occ in enumerate(occ_list):
+                if k >= len(sh_list):
+                    break
+                off1, deg = sh_list[k]
+                avg = occ / float(deg)
+                if (k + 1 == n_sub) and allow_split and (k + 1 < len(sh_list)):
+                    off2, _ = sh_list[k + 1]
+                    p_diag[off1 : off1 + deg] = 0.8 * avg
+                    p_diag[off2 : off2 + deg] = 0.2 * avg
+                else:
+                    p_diag[off1 : off1 + deg] = avg
+
+        bf_off += atom_bf
+
+    return np.diag(p_diag)
+
+
+def _factorize_psd_density(P: np.ndarray, tol: float = 1.0e-12) -> np.ndarray:
+    """Ekstrak faktor low-rank C_fac (P = C_fac @ C_fac.T) agar Iter-1 memakai batched DGEMM."""
+    n = P.shape[0]
+    diag = np.diag(P)
+    off_norm = float(np.max(np.abs(P - np.diag(diag)))) if n > 0 else 0.0
+    if off_norm < 1.0e-13:
+        nz = np.flatnonzero(diag > tol)
+        C_fac = np.zeros((n, nz.size), dtype=np.float64)
+        C_fac[nz, np.arange(nz.size)] = np.sqrt(diag[nz])
+        return np.ascontiguousarray(C_fac)
+
+    evals, evecs = eigh(0.5 * (P + P.T))
+    keep = evals > tol
+    return np.ascontiguousarray(evecs[:, keep] * np.sqrt(evals[keep])[None, :])
 
 
 class PulayDIIS:
@@ -159,8 +284,9 @@ def run_df_rhf(
         eps = np.zeros(nbf, dtype=np.float64)
     elif P_init is not None:
         P0 = np.ascontiguousarray(P_init, dtype=np.float64)
+        C_sad = _factorize_psd_density(0.5 * P0)
         J0 = K.build_coulomb_3c(B, P0, nbf)
-        K0 = K.build_exchange_3c_sym(B, 0.5 * P0, nbf)
+        K0 = K.build_exchange_3c_occ(B, C_sad, nbf)
         eps, C = _diagonalize_fock(H + J0 - K0, X)
     else:
         eps, C = _diagonalize_fock(H, X)
@@ -227,6 +353,7 @@ def run_df_uhf(
     level_shift: float = 0.0,
     C_init_a: Optional[np.ndarray] = None,
     C_init_b: Optional[np.ndarray] = None,
+    P_init: Optional[np.ndarray] = None,
     mix_homo_lumo: bool = False,
 ) -> HybridSCFResult:
     """Menjalankan DF/Cholesky-UHF di Python menggunakan kernel C++20 `build_jk_3c_uhf`."""
@@ -241,6 +368,18 @@ def run_df_uhf(
         Cb = np.array(C_init_b, dtype=np.float64, copy=True)
         eps_a = np.zeros(nbf, dtype=np.float64)
         eps_b = np.zeros(nbf, dtype=np.float64)
+    elif P_init is not None:
+        P0 = np.ascontiguousarray(P_init, dtype=np.float64)
+        n_tot = max(1, na + nb)
+        fa_scale = float(na) / float(n_tot)
+        fb_scale = float(nb) / float(n_tot)
+        J0 = K.build_coulomb_3c(B, P0, nbf)
+        Ca_fac = _factorize_psd_density(fa_scale * P0)
+        Cb_fac = _factorize_psd_density(fb_scale * P0)
+        Ka0 = K.build_exchange_3c_occ(B, Ca_fac, nbf)
+        Kb0 = K.build_exchange_3c_occ(B, Cb_fac, nbf) if nb > 0 else np.zeros((nbf, nbf), dtype=np.float64)
+        eps_a, Ca = _diagonalize_fock(H + J0 - Ka0, X)
+        eps_b, Cb = _diagonalize_fock(H + J0 - Kb0, X)
     else:
         eps_a, Ca = _diagonalize_fock(H, X)
         eps_b, Cb = eps_a.copy(), Ca.copy()

@@ -160,9 +160,9 @@ jobs:
           python -c "import mshqc; print('Compiled mshqc version:', getattr(mshqc, '__version__', 'local-build'))"
 
       # =========================================================================
-      # SINGLE TEST SUITE: HYBRID ARCHITECTURE PHASE 1-5 & THIN CORE STAGE 1-2
+      # SINGLE TEST SUITE: HYBRID ARCHITECTURE PHASE 1-5 & THIN CORE STAGE 1-3
       # =========================================================================
-      - name: "[01/07] Run Hybrid Phase 1 Verification (test_hybrid_phase1.py)"
+      - name: "[01/08] Run Hybrid Phase 1 Verification (test_hybrid_phase1.py)"
         if: steps.compile.outcome == 'success'
         shell: bash -el {0}
         run: |
@@ -170,7 +170,7 @@ jobs:
           micromamba activate geom_env
           python -m pytest tests/test_hybrid_phase1.py -v -s 2>&1 | tee 01_test_hybrid_phase1_log.txt
 
-      - name: "[02/07] Run Hybrid Phase 2 Verification (test_hybrid_phase2.py)"
+      - name: "[02/08] Run Hybrid Phase 2 Verification (test_hybrid_phase2.py)"
         if: steps.compile.outcome == 'success'
         shell: bash -el {0}
         run: |
@@ -178,7 +178,7 @@ jobs:
           micromamba activate geom_env
           python -m pytest tests/test_hybrid_phase2.py -v -s 2>&1 | tee 02_test_hybrid_phase2_log.txt
 
-      - name: "[03/07] Run Hybrid Phase 3 Verification (test_hybrid_phase3.py)"
+      - name: "[03/08] Run Hybrid Phase 3 Verification (test_hybrid_phase3.py)"
         if: steps.compile.outcome == 'success'
         shell: bash -el {0}
         run: |
@@ -186,7 +186,7 @@ jobs:
           micromamba activate geom_env
           python -m pytest tests/test_hybrid_phase3.py -v -s 2>&1 | tee 03_test_hybrid_phase3_log.txt
 
-      - name: "[04/07] Run Hybrid Phase 4 Verification (test_hybrid_phase4.py)"
+      - name: "[04/08] Run Hybrid Phase 4 Verification (test_hybrid_phase4.py)"
         if: steps.compile.outcome == 'success'
         shell: bash -el {0}
         run: |
@@ -194,7 +194,7 @@ jobs:
           micromamba activate geom_env
           python -m pytest tests/test_hybrid_phase4.py -v -s 2>&1 | tee 04_test_hybrid_phase4_log.txt
 
-      - name: "[05/07] Run Hybrid Phase 5 Verification (test_hybrid_phase5.py)"
+      - name: "[05/08] Run Hybrid Phase 5 Verification (test_hybrid_phase5.py)"
         if: steps.compile.outcome == 'success'
         shell: bash -el {0}
         run: |
@@ -202,7 +202,7 @@ jobs:
           micromamba activate geom_env
           python -m pytest tests/test_hybrid_phase5.py -v -s 2>&1 | tee 05_test_hybrid_phase5_log.txt
 
-      - name: "[06/07] Run Thin Core Stage 1 Verification (test_thin_core_stage1.py)"
+      - name: "[06/08] Run Thin Core Stage 1 Verification (test_thin_core_stage1.py)"
         if: steps.compile.outcome == 'success'
         shell: bash -el {0}
         run: |
@@ -210,13 +210,21 @@ jobs:
           micromamba activate geom_env
           python -m pytest tests/test_thin_core_stage1.py -v -s 2>&1 | tee 06_test_thin_core_stage1_log.txt
 
-      - name: "[07/07] Run Thin Core Stage 2 Verification (test_thin_core_stage2.py)"
+      - name: "[07/08] Run Thin Core Stage 2 Verification (test_thin_core_stage2.py)"
         if: steps.compile.outcome == 'success'
         shell: bash -el {0}
         run: |
           set -o pipefail
           micromamba activate geom_env
           python -m pytest tests/test_thin_core_stage2.py -v -s 2>&1 | tee 07_test_thin_core_stage2_log.txt
+
+      - name: "[08/08] Run Thin Core Stage 3 Verification (test_thin_core_stage3.py)"
+        if: steps.compile.outcome == 'success'
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate geom_env
+          python -m pytest tests/test_thin_core_stage3.py -v -s 2>&1 | tee 08_test_thin_core_stage3_log.txt
 
       # =========================================================================
       # UPLOAD ALL TEST LOGS AS SINGLE COMBINED ARTIFACT (.zip)

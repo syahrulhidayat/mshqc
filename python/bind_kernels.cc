@@ -166,6 +166,20 @@ void bind_kernels_module(nb::module_& parent) {
           nb::arg("eps_oa"), nb::arg("eps_va"), nb::arg("eps_ob"), nb::arg("eps_vb"),
           nb::arg("B_oo_a"), nb::arg("B_ov_a"), nb::arg("B_vv_a"),
           nb::arg("B_oo_b"), nb::arg("B_ov_b"), nb::arg("B_vv_b"));
+
+    // --- Stage 3: Thin-Core Analytic DF Nuclear Gradient Primitives ---
+    k.def("contract_ao_sym", &kernels::contract_ao_sym,
+          nb::call_guard<nb::gil_scoped_release>(),
+          nb::arg("L_mat"), nb::arg("M_sym"), nb::arg("nbf"));
+    k.def("compute_gamma2c", &kernels::compute_gamma2c,
+          nb::call_guard<nb::gil_scoped_release>(),
+          nb::arg("Gamma_full"), nb::arg("L_mat"), nb::arg("nbf"));
+    k.def("eval_df_nuclear_gradient", &kernels::eval_df_nuclear_gradient,
+          nb::call_guard<nb::gil_scoped_release>(),
+          nb::arg("mol"), nb::arg("primary_basis"), nb::arg("aux_basis"),
+          nb::arg("P_eff_ao"), nb::arg("W_eff_ao"),
+          nb::arg("Gamma_3c"), nb::arg("gamma_2c"),
+          nb::arg("cutoff") = 1e-12);
 }
 
 } // namespace mshqc

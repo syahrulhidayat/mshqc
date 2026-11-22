@@ -297,3 +297,8 @@ if 'kernels' not in __all__:
 from . import methods
 if 'methods' not in __all__:
     __all__.append('methods')
+
+THIN_CORE_ONLY = not hasattr(_mshqc, "RHF")
+__all__ = [sym for sym in __all__ if sym in globals()]
+if "THIN_CORE_ONLY" not in __all__:
+    __all__.append("THIN_CORE_ONLY")

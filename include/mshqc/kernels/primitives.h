@@ -18,6 +18,7 @@
 #include "mshqc/core/molecule.h"
 #include "mshqc/integrals/df_eri.h"
 #include "mshqc/integrals/packed_ao_utils.h"
+#include "mshqc/integrals/df_metric_utils.h"
 #include "mshqc/ints/integrals.h"
 #include "mshqc/utils/blas_thread_guard.h"
 
@@ -629,6 +630,113 @@ inline Eigen::MatrixXd eval_omp2_zvec_rhf_df(
         }
     }
     return Z_vo;
+}
+
+// [INJECTED_THIN_CORE_STAGE3_GRAD_KERNEL]
+// 10. Kontraksi simetris AO & gamma_2c untuk gradien analitik DF (thin wrapper ke packed_ao_utils)
+inline Eigen::VectorXd contract_ao_sym(
+    const Eigen::MatrixXd& L_mat,
+    const Eigen::MatrixXd& M_sym,
+    int nbf)
+{
+    if (!integrals::has_valid_ao_factor(L_mat, nbf)) {
+        throw std::invalid_argument("contract_ao_sym: dimensi L_mat tidak cocok dengan nbf");
+    }
+    return integrals::contract_ao_factor_with_sym(L_mat, M_sym, nbf);
+}
+
+inline Eigen::MatrixXd compute_gamma2c(
+    const Eigen::MatrixXd& Gamma_full,
+    const Eigen::MatrixXd& L_mat,
+    int nbf)
+{
+    if (!integrals::has_valid_ao_factor(L_mat, nbf)) {
+        throw std::invalid_argument("compute_gamma2c: dimensi L_mat tidak cocok dengan nbf");
+    }
+    return integrals::compute_gamma2c_from_full_and_L(Gamma_full, L_mat, nbf);
+}
+
+// 11. Kontraksi gradien nuklir analitik DF (1e + 2e 3-pusat/2-pusat + repulsi nuklir) via libcint
+inline Eigen::MatrixXd eval_df_nuclear_gradient(
+    const Molecule& mol,
+    const BasisSet& primary_basis,
+    const BasisSet& aux_basis,
+    const Eigen::MatrixXd& P_eff_ao,
+    const Eigen::MatrixXd& W_eff_ao,
+    Eigen::MatrixXd Gamma_3c,
+    const Eigen::MatrixXd& gamma_2c,
+    double cutoff = 1e-12)
+{
+    const int natoms = static_cast<int>(mol.n_atoms());
+    Eigen::MatrixXd g_tot = Eigen::MatrixXd::Zero(natoms, 3);
+
+    // 1. Gradien repulsi nuklir klasik dV_nn/dR
+    for (int a = 0; a < natoms; ++a) {
+        const double Za = static_cast<double>(mol.atom(a).atomic_number);
+        const Eigen::Vector3d ra(mol.atom(a).x, mol.atom(a).y, mol.atom(a).z);
+        for (int b = a + 1; b < natoms; ++b) {
+            const double Zb = static_cast<double>(mol.atom(b).atomic_number);
+            const Eigen::Vector3d rb(mol.atom(b).x, mol.atom(b).y, mol.atom(b).z);
+            const Eigen::Vector3d rab = ra - rb;
+            const double r2 = rab.squaredNorm();
+            const Eigen::Vector3d f = (-Za * Zb / (r2 * std::sqrt(r2))) * rab;
+            g_tot.row(a) += f.transpose();
+            g_tot.row(b) -= f.transpose();
+        }
+    }
+
+    // 2. Gradien 1-elektron (T + V + Pulay -W*dS)
+    IntegralEngine prim_ints(mol, primary_basis);
+    g_tot.noalias() += prim_ints.compute_1e_gradient(P_eff_ao, W_eff_ao);
+
+    // 3. Metrik 2-pusat DF & transformasi Gamma_3c -> Gamma_tilde, gamma_2c -> gamma_tilde
+    BasisSet combined = primary_basis;
+    combined.append(aux_basis);
+    IntegralEngine df_ints(mol, combined);
+
+    const int n_shells_prim = static_cast<int>(primary_basis.n_shells());
+    const int n_shells_aux = static_cast<int>(aux_basis.n_shells());
+    const int nbf = static_cast<int>(primary_basis.n_basis_functions());
+    const int n_aux = static_cast<int>(aux_basis.n_basis_functions());
+
+    std::vector<int> aux_starts(n_shells_aux), aux_sizes(n_shells_aux);
+    int off = 0, max_a = 1;
+    for (int i = 0; i < n_shells_aux; ++i) {
+        aux_starts[i] = off;
+        aux_sizes[i] = aux_basis.shell(i).n_functions();
+        max_a = std::max(max_a, aux_sizes[i]);
+        off += aux_sizes[i];
+    }
+
+    Eigen::MatrixXd J_metric = Eigen::MatrixXd::Zero(n_aux, n_aux);
+    const size_t buf_sz = std::max<size_t>(64, static_cast<size_t>(max_a) * max_a);
+    #pragma omp parallel
+    {
+        std::vector<double> buf(buf_sz);
+        #pragma omp for schedule(dynamic, 1) nowait
+        for (int R = 0; R < n_shells_aux; ++R) {
+            const int abs_R = n_shells_prim + R, dim_R = aux_sizes[R], st_R = aux_starts[R];
+            for (int S = 0; S <= R; ++S) {
+                const int abs_S = n_shells_prim + S, dim_S = aux_sizes[S], st_S = aux_starts[S];
+                if (!df_ints.compute_2c2e_block_raw(abs_R, abs_S, buf.data())) continue;
+                for (int s = 0; s < dim_S; ++s) {
+                    for (int r = 0; r < dim_R; ++r) {
+                        const double val = buf[r + dim_R * s];
+                        J_metric(st_R + r, st_S + s) = val;
+                        if (st_R + r != st_S + s) J_metric(st_S + s, st_R + r) = val;
+                    }
+                }
+            }
+        }
+    }
+
+    auto df_metric = integrals::DFMetricFactor::compute(J_metric, cutoff);
+    df_metric.apply_Gamma_to_tilde_inplace(Gamma_3c);
+    Eigen::MatrixXd gamma_tilde = df_metric.apply_gamma2c_to_tilde(gamma_2c);
+
+    g_tot.noalias() += df_ints.compute_df_2e_gradient(
+        n_shells_prim, n_shells_aux, nbf, n_aux, Gamma_3c, gamma_tilde);
+    return g_tot;
 }
 
 } // namespace kernels

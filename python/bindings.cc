@@ -42,21 +42,22 @@
 #include "mshqc/core/molecule.h"
 #include "mshqc/basis.h"
 #include "mshqc/ints/integrals.h"
+// [INJECTED_THIN_CORE_STAGE3_BINDINGS]
+#include "mshqc/integrals/screening.h"
+#include "mshqc/core/fock_builder.h"
+#include "mshqc/integrals/cholesky_eri.h"
+#ifndef MSHQC_THIN_CORE_BUILD
 #include "mshqc/symmetry/point_group.h"
 #include "mshqc/symmetry/petite_list.h"
 #include "mshqc/symmetry/molecule_sym.h"
 #include "mshqc/scf/scf.h"
 #include "mshqc/scf/diis.h"
-#include "mshqc/integrals/screening.h"
-#include "mshqc/core/fock_builder.h"
-
 #include "mshqc/mp2/mp2.h"
 #include "mshqc/mp3/mp3.h"
 #include "mshqc/mp3/omp3.h"
-
-#include "mshqc/integrals/cholesky_eri.h"
 #include "mshqc/integrals/eri_transformer.h"
 #include "mshqc/gradient/hpc_geom_opt.h"
+#endif
 #include <nanobind/stl/map.h>
 #include <nanobind/stl/pair.h>
 
@@ -235,6 +236,7 @@ namespace mshqc_auto_tune {
         return 1.0;
     }
 
+#ifndef MSHQC_THIN_CORE_BUILD
     SCFConfig normalize_scf_config(const SCFConfig& conf, const BasisSet& basis) {
         SCFConfig c = conf;
         std::string m = c.eri_method;
@@ -265,6 +267,23 @@ namespace mshqc_auto_tune {
         }
         return c;
     }
+#else
+    inline int compute_standard_frozen_core_thin(const Molecule& mol) {
+        int nf = 0;
+        for (size_t i = 0; i < mol.n_atoms(); ++i) {
+            const int Z = mol.atom(i).atomic_number;
+            if (Z <= 2) nf += 0;
+            else if (Z <= 10) nf += 1;
+            else if (Z <= 18) nf += 5;
+            else if (Z <= 36) nf += 9;
+            else if (Z <= 54) nf += 18;
+            else if (Z <= 71) nf += 27;
+            else if (Z <= 86) nf += 34;
+            else nf += 43;
+        }
+        return nf;
+    }
+#endif
 }
 
 // [INJECTED_HYBRID_PHASE1_BINDINGS]
@@ -324,6 +343,7 @@ NB_MODULE(_mshqc, m) {
         .def("set_multiplicity", &Molecule::set_multiplicity, nb::arg("m"))
         .def("nuclear_repulsion_energy", &Molecule::nuclear_repulsion_energy)
         .def("set_atom_position", &Molecule::set_atom_position, nb::arg("i"), nb::arg("x"), nb::arg("y"), nb::arg("z"))
+#ifndef MSHQC_THIN_CORE_BUILD
         .def("optimize_geometry", [](Molecule& mol,
                                      const std::string& method,
                                      const std::string& eri_mode,
@@ -445,7 +465,9 @@ NB_MODULE(_mshqc, m) {
             return mshqc::gradient::HPCGeometryOptimizer::scan_bond_pes(mol, atom_i, atom_j, distances_angstrom, cfg);
         }, nb::arg("atom_i"), nb::arg("atom_j"), nb::arg("distances_angstrom"),
            nb::arg("method") = "omp2", nb::arg("eri_mode") = "df", nb::arg("basis") = "cc-pVDZ",
-           "Scan bond dissociation Potential Energy Surface");
+           "Scan bond dissociation Potential Energy Surface")
+#endif
+        ;
 
     nb::enum_<AngularMomentum>(m, "AngularMomentum")
         .value("S", AngularMomentum::S)
@@ -467,7 +489,9 @@ NB_MODULE(_mshqc, m) {
              nb::arg("am"), nb::arg("center"), nb::arg("center_pos"))
         .def_prop_ro("angular_momentum", &Shell::angular_momentum)
         .def_prop_ro("center", &Shell::center)
-        .def_prop_ro("primitives", &Shell::primitives);
+        .def_prop_ro("primitives", &Shell::primitives)
+        .def("l", &Shell::l)
+        .def("n_functions", &Shell::n_functions);
 
     nb::class_<BasisSet>(m, "BasisSet")
         .def(nb::init<>())
@@ -520,6 +544,7 @@ NB_MODULE(_mshqc, m) {
         .def("is_decomposed", &integrals::CholeskyERI::is_decomposed)
         .def("decomposed", &integrals::CholeskyERI::decomposed);
 
+#ifndef MSHQC_THIN_CORE_BUILD
     nb::enum_<SymOpType>(m, "SymOpType")
         .value("Identity", SymOpType::Identity)
         .value("Rotation", SymOpType::Rotation)
@@ -564,6 +589,7 @@ NB_MODULE(_mshqc, m) {
         .def("clear", &DIIS::clear)
         .def("add_iteration", &DIIS::add_iteration, nb::arg("F"), nb::arg("err"))
         .def("extrapolate", &DIIS::extrapolate);
+#endif
 
     nb::class_<mshqc::integrals::ShellPair>(m, "ShellPair")
         .def_rw("sh_a", &mshqc::integrals::ShellPair::sh_a)
@@ -590,6 +616,7 @@ NB_MODULE(_mshqc, m) {
         .def("get_schwarz_val", &mshqc::integrals::Screening::get_schwarz_val)
         .def("max_schwarz", &mshqc::integrals::Screening::max_schwarz);
 
+#ifndef MSHQC_THIN_CORE_BUILD
     nb::class_<SCFConfig>(m, "SCFConfig")
         .def("__init__", [](SCFConfig *c, const std::string& eri_method, double threshold,
                             const std::string& aux_basis_name, const std::string& scf_type,
@@ -919,14 +946,21 @@ NB_MODULE(_mshqc, m) {
            nb::arg("config") = MP2Config(), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
         .def("compute", &OMP3::compute_omp3, nb::call_guard<nb::gil_scoped_release>(), "Run Orbital-Optimized MP3")
         .def("set_frozen_core", &mshqc::BaseMP2::set_frozen_core, nb::arg("n_frozen"));
+#endif
 
     m.def("bohr_to_angstrom", [](double bohr) { return bohr * 0.529177210903; }, "Convert Bohr to Angstrom");
     m.def("angstrom_to_bohr", [](double angstrom) { return angstrom / 0.529177210903; }, "Convert Angstrom to Bohr");
     m.def("hartree_to_ev", [](double hartree) { return hartree * 27.211386245988; }, "Convert Hartree to eV");
+#ifndef MSHQC_THIN_CORE_BUILD
     m.def("standard_frozen_core", &mshqc::compute_standard_frozen_core, nb::arg("mol"),
-        "Compute standard noble-gas frozen core orbital count (Psi4 convention)");
+          "Compute standard noble-gas frozen core orbital count (Psi4 convention)");
+#else
+    m.def("standard_frozen_core", &mshqc_auto_tune::compute_standard_frozen_core_thin, nb::arg("mol"),
+          "Compute standard noble-gas frozen core orbital count (Psi4 convention)");
+#endif
   m.def("hartree_to_kcal", [](double hartree) { return hartree * 627.5094740631; }, "Convert Hartree to kcal/mol");
     
+#ifndef MSHQC_THIN_CORE_BUILD
     nb::class_<mshqc::gradient::GeomOptConfig>(m, "GeomOptConfig")
         .def(nb::init<>())
         .def_rw("method", &mshqc::gradient::GeomOptConfig::method)
@@ -1012,6 +1046,8 @@ NB_MODULE(_mshqc, m) {
                     nb::arg("distances_angstrom"),
                     nb::arg("config") = mshqc::gradient::GeomOptConfig(),
                     nb::call_guard<nb::gil_scoped_release>());
+
+#endif
 
     // [INJECTED_HYBRID_PHASE1_BINDINGS]
     mshqc::bind_kernels_module(m);

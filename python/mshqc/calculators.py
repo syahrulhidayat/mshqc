@@ -97,7 +97,8 @@ class MSHQCCalculator:
         self.eri_method = eri_method.lower()
         self.use_symmetry = use_symmetry
 
-        if use_symmetry:
+        # [INJECTED_THIN_CORE_STAGE3_CALC]
+        if use_symmetry and hasattr(mshqc, "PointGroup"):
             self.pg = mshqc.PointGroup(raw_mol)
             self.pg.detect()
             self.molecule = self.pg.get_aligned_molecule()
@@ -188,13 +189,14 @@ class MSHQCCalculator:
 
     # [INJECTED_THIN_CORE_STAGE1_ROUTING]
     def _hybrid_enabled(self, use_hybrid: Optional[bool]) -> bool:
+        if not hasattr(mshqc, "RHF"):
+            return True
         if use_hybrid is not None:
             return bool(use_hybrid)
         return os.environ.get("MSHQC_USE_HYBRID_SOLVERS", "0").strip().lower() in ("1", "true", "yes")
 
     def run_scf(self, ref: Optional[str] = None, use_hybrid: Optional[bool] = None):
         ref_mode = (ref or self.reference).lower()
-        conf = self._make_scf_config()
         use_sym = (self.pg is not None and self.pl is not None)
         if (
             self._hybrid_enabled(use_hybrid)
@@ -203,7 +205,8 @@ class MSHQCCalculator:
             and self.scf_type != "ooc"
             and ref_mode in ("rhf", "uhf")
         ):
-            from .methods.scf_hybrid import run_df_rhf, run_df_uhf
+            from .methods.scf_hybrid import build_sad_guess, run_df_rhf, run_df_uhf
+            P_sad = build_sad_guess(self.molecule, self.basis)
             B_ao = self._get_ao_3index_factor(None)
             H_core = self.integrals.compute_kinetic() + self.integrals.compute_nuclear()
             S_ovlp = self.integrals.compute_overlap()
@@ -213,14 +216,17 @@ class MSHQCCalculator:
                     H_core, S_ovlp, v_nn, B_ao, self.n_alpha,
                     energy_tol=self.threshold, density_tol=self.threshold,
                     level_shift=self.level_shift,
+                    P_init=P_sad,
                 )
             else:
                 self.scf_res = run_df_uhf(
                     H_core, S_ovlp, v_nn, B_ao, self.n_alpha, self.n_beta,
                     energy_tol=self.threshold, density_tol=self.threshold,
                     level_shift=self.level_shift,
+                    P_init=P_sad,
                 )
             return self.scf_res
+        conf = self._make_scf_config()
         if ref_mode == "rhf":
             if use_sym:
                 solver = mshqc.RHF(self.molecule, self.basis, self.integrals, self.pg, self.pl, conf)
@@ -244,7 +250,7 @@ class MSHQCCalculator:
         if scf_res is None:
             scf_res = self.scf_res or self.run_scf(use_hybrid=use_hybrid)
         if (
-            (self._hybrid_enabled(use_hybrid) or not isinstance(scf_res, mshqc.SCFResult))
+            (self._hybrid_enabled(use_hybrid) or (not hasattr(mshqc, 'SCFResult') or not isinstance(scf_res, mshqc.SCFResult)))
             and self.eri_method in ("df", "cholesky")
             and self.reference in ("rhf", "uhf")
         ):
@@ -265,14 +271,14 @@ class MSHQCCalculator:
         if scf_res is None:
             scf_res = self.scf_res or self.run_scf(use_hybrid=use_hybrid)
         if (
-            (self._hybrid_enabled(use_hybrid) or not isinstance(scf_res, mshqc.SCFResult))
+            (self._hybrid_enabled(use_hybrid) or (not hasattr(mshqc, 'SCFResult') or not isinstance(scf_res, mshqc.SCFResult)))
             and self.eri_method in ("df", "cholesky")
             and self.reference in ("rhf", "uhf")
         ):
             return self._run_hybrid_omp_method("mp3", scf_res=scf_res)
         if mp2_res is None:
             mp2_res = (
-                self.mp2_res if isinstance(self.mp2_res, mshqc.MP2Result)
+                self.mp2_res if (hasattr(mshqc, 'MP2Result') and isinstance(self.mp2_res, mshqc.MP2Result))
                 else self.run_mp2(scf_res, use_hybrid=False)
             )
         conf = self._make_mp2_config()
@@ -288,7 +294,7 @@ class MSHQCCalculator:
         if scf_res is None:
             scf_res = self.scf_res or self.run_scf(use_hybrid=use_hybrid)
         if (
-            (self._hybrid_enabled(use_hybrid) or not isinstance(scf_res, mshqc.SCFResult))
+            (self._hybrid_enabled(use_hybrid) or (not hasattr(mshqc, 'SCFResult') or not isinstance(scf_res, mshqc.SCFResult)))
             and self.eri_method in ("df", "cholesky")
             and self.reference in ("rhf", "uhf")
         ):
@@ -302,7 +308,7 @@ class MSHQCCalculator:
         if scf_res is None:
             scf_res = self.scf_res or self.run_scf(use_hybrid=use_hybrid)
         if (
-            (self._hybrid_enabled(use_hybrid) or not isinstance(scf_res, mshqc.SCFResult))
+            (self._hybrid_enabled(use_hybrid) or (not hasattr(mshqc, 'SCFResult') or not isinstance(scf_res, mshqc.SCFResult)))
             and self.eri_method in ("df", "cholesky")
             and self.reference in ("rhf", "uhf")
         ):
