@@ -203,9 +203,10 @@ class MSHQCCalculator:
             and not use_sym
             and self.eri_method in ("df", "cholesky")
             and self.scf_type != "ooc"
-            and ref_mode in ("rhf", "uhf")
+            # [INJECTED_THIN_CORE_STAGE4_ROHF]
+            and ref_mode in ("rhf", "uhf", "rohf")
         ):
-            from .methods.scf_hybrid import build_sad_guess, run_df_rhf, run_df_uhf
+            from .methods.scf_hybrid import build_sad_guess, run_df_rhf, run_df_rohf, run_df_uhf
             P_sad = build_sad_guess(self.molecule, self.basis)
             B_ao = self._get_ao_3index_factor(None)
             H_core = self.integrals.compute_kinetic() + self.integrals.compute_nuclear()
@@ -216,6 +217,12 @@ class MSHQCCalculator:
                     H_core, S_ovlp, v_nn, B_ao, self.n_alpha,
                     energy_tol=self.threshold, density_tol=self.threshold,
                     level_shift=self.level_shift,
+                    P_init=P_sad,
+                )
+            elif ref_mode == "rohf":
+                self.scf_res = run_df_rohf(
+                    H_core, S_ovlp, v_nn, B_ao, self.n_alpha, self.n_beta,
+                    energy_tol=self.threshold, density_tol=self.threshold,
                     P_init=P_sad,
                 )
             else:
@@ -252,9 +259,10 @@ class MSHQCCalculator:
         if (
             (self._hybrid_enabled(use_hybrid) or (not hasattr(mshqc, 'SCFResult') or not isinstance(scf_res, mshqc.SCFResult)))
             and self.eri_method in ("df", "cholesky")
-            and self.reference in ("rhf", "uhf")
+            and self.reference in ("rhf", "uhf", "rohf")
         ):
-            self.mp2_res = self._run_hybrid_omp_method("mp2", scf_res=scf_res)
+            m_key = "romp2" if self.reference == "rohf" else "mp2"
+            self.mp2_res = self._run_hybrid_omp_method(m_key, scf_res=scf_res)
             return self.mp2_res
         conf = self._make_mp2_config()
         sym_args = (self.pg, self.pl) if (self.pg is not None and self.pl is not None) else ()
@@ -273,9 +281,10 @@ class MSHQCCalculator:
         if (
             (self._hybrid_enabled(use_hybrid) or (not hasattr(mshqc, 'SCFResult') or not isinstance(scf_res, mshqc.SCFResult)))
             and self.eri_method in ("df", "cholesky")
-            and self.reference in ("rhf", "uhf")
+            and self.reference in ("rhf", "uhf", "rohf")
         ):
-            return self._run_hybrid_omp_method("mp3", scf_res=scf_res)
+            m_key = "romp3" if self.reference == "rohf" else "mp3"
+            return self._run_hybrid_omp_method(m_key, scf_res=scf_res)
         if mp2_res is None:
             mp2_res = (
                 self.mp2_res if (hasattr(mshqc, 'MP2Result') and isinstance(self.mp2_res, mshqc.MP2Result))

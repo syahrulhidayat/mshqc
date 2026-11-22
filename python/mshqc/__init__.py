@@ -302,3 +302,42 @@ THIN_CORE_ONLY = not hasattr(_mshqc, "RHF")
 __all__ = [sym for sym in __all__ if sym in globals()]
 if "THIN_CORE_ONLY" not in __all__:
     __all__.append("THIN_CORE_ONLY")
+
+
+if THIN_CORE_ONLY:
+    from .methods.geom_hybrid import optimize_geometry_thin_core as _tc_opt_geom
+    from .methods.geom_hybrid import compute_frequencies_thin_core as _tc_freq
+    from .methods.grad_hybrid import compute_df_gradient as _tc_grad
+
+    def _tc_mol_opt(self, method="omp2", eri_mode="df", eri_method="", basis="cc-pVDZ",
+                    aux_basis="", reference="auto", max_iter=40, g_rms_tol=1e-6, g_max_tol=2e-6,
+                    dx_rms_tol=4e-6, dx_max_tol=6e-6, energy_thresh=1e-12, orb_grad_thresh=1e-10,
+                    fd_step_bohr=5e-4, use_analytic_gradient=True, verbose=False, **_kw):
+        del verbose
+        return _tc_opt_geom(
+            self, method=method, eri_mode=(eri_method or eri_mode), basis=basis,
+            aux_basis=(aux_basis or None), reference=reference, max_iter=max_iter,
+            g_rms_tol=g_rms_tol, g_max_tol=g_max_tol, dx_rms_tol=dx_rms_tol, dx_max_tol=dx_max_tol,
+            energy_thresh=energy_thresh, orb_grad_thresh=orb_grad_thresh,
+            fd_step_bohr=fd_step_bohr, use_analytic_gradient=use_analytic_gradient,
+        )
+
+    def _tc_mol_freq(self, method="omp2", eri_mode="df", eri_method="", basis="cc-pVDZ",
+                     reference="auto", temperature_k=298.15, verbose=False, **_kw):
+        del verbose
+        return _tc_freq(
+            self, method=method, eri_mode=(eri_method or eri_mode), basis=basis,
+            reference=reference, temperature_k=temperature_k,
+        )
+
+    def _tc_mol_grad(self, method="omp2", eri_mode="df", eri_method="", basis="cc-pVDZ",
+                     aux_basis="", reference="auto", **_kw):
+        del eri_mode, eri_method
+        return _tc_grad(
+            self, method=method, basis_name=basis, aux_basis_name=(aux_basis or None),
+            reference=reference,
+        )
+
+    Molecule.optimize_geometry = _tc_mol_opt
+    Molecule.frequencies = _tc_mol_freq
+    Molecule.gradient = _tc_mol_grad

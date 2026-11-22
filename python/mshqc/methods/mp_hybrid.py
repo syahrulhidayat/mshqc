@@ -1,14 +1,13 @@
 # Copyright 2026 Muhamad Syahrul Hidayat
 # Licensed under the Apache License, Version 2.0
 """
-Orkestrasi Python tipis untuk MP2 & MP3 kanonik (RHF & UHF, DF & Cholesky,
+Orkestrasi Python tipis untuk MP2 & MP3 kanonik/semikanonik (RHF, UHF, ROHF; DF & Cholesky,
 mendukung strict frozen-core `n_frozen`) di atas kernel C++20 `mshqc.kernels`.
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 import numpy as np
 
 from .._mshqc import kernels as K
@@ -34,6 +33,7 @@ class HybridMP2Result:
     n_virt_alpha: int
     n_virt_beta: int
     n_frozen: int = 0
+    energy_mp2_singles: float = 0.0
 
     @property
     def e_total(self) -> float:
@@ -90,6 +90,27 @@ class HybridMP3Result:
 
 def _clamp_frozen(n_frozen: int, n_occ: int) -> int:
     return max(0, min(int(n_frozen), int(n_occ)))
+
+
+def _compute_romp2_singles(
+    F_vo_a: np.ndarray,
+    F_vo_b: np.ndarray,
+    eps_oa: np.ndarray,
+    eps_va: np.ndarray,
+    eps_ob: np.ndarray,
+    eps_vb: np.ndarray,
+) -> float:
+    """Suku eksitasi tunggal non-Brillouin ROMP2: sum_{i,a} |F_ia|^2 / (eps_i - eps_a)."""
+    e_s = 0.0
+    if F_vo_a.size > 0:
+        denom_a = eps_oa[None, :] - eps_va[:, None]
+        mask_a = np.abs(denom_a) > 1.0e-12
+        e_s += float(np.sum(np.where(mask_a, (F_vo_a ** 2) / np.where(mask_a, denom_a, 1.0), 0.0)))
+    if F_vo_b.size > 0:
+        denom_b = eps_ob[None, :] - eps_vb[:, None]
+        mask_b = np.abs(denom_b) > 1.0e-12
+        e_s += float(np.sum(np.where(mask_b, (F_vo_b ** 2) / np.where(mask_b, denom_b, 1.0), 0.0)))
+    return e_s
 
 
 def run_df_mp2_rhf(
@@ -158,8 +179,10 @@ def run_df_mp2_uhf(
     n_frozen: int = 0,
     c_os: float = 1.0,
     c_ss: float = 1.0,
+    include_singles: bool = False,
+    reference: str = "uhf",
 ) -> HybridMP2Result:
-    """DF/Cholesky-UMP2 (radikal kulit terbuka) berbasis C++20 `mshqc.kernels`."""
+    """DF/Cholesky-UMP2 & Semicanonical ROMP2 berbasis C++20 `mshqc.kernels`."""
     H = np.ascontiguousarray(H_core, dtype=np.float64)
     B = np.ascontiguousarray(B_ao, dtype=np.float64)
     Ca = np.ascontiguousarray(C0_a, dtype=np.float64)
@@ -178,8 +201,16 @@ def run_df_mp2_uhf(
     Pb = Cb_all @ Cb_all.T if nb > 0 else np.zeros((nbf, nbf), dtype=np.float64)
     e_scf = float(0.5 * (np.sum(Pa * (H + Fa)) + np.sum(Pb * (H + Fb))) + v_nn)
 
-    Ca_sc, eps_a, _ = semicanonicalize_subspaces_frozen(Ca, Fa, na, nf_a)
-    Cb_sc, eps_b, _ = semicanonicalize_subspaces_frozen(Cb, Fb, nb, nf_b)
+    Ca_sc, eps_a, Fvo_a = semicanonicalize_subspaces_frozen(Ca, Fa, na, nf_a)
+    Cb_sc, eps_b, Fvo_b = semicanonicalize_subspaces_frozen(Cb, Fb, nb, nf_b)
+
+    e_singles = (
+        _compute_romp2_singles(
+            Fvo_a, Fvo_b, eps_a[nf_a:na], eps_a[na:], eps_b[nf_b:nb], eps_b[nb:]
+        )
+        if include_singles
+        else 0.0
+    )
 
     na_act = na - nf_a
     nb_act = nb - nf_b
@@ -200,9 +231,9 @@ def run_df_mp2_uhf(
     )
     e_ss = c_ss * (e_aa + e_bb)
     e_os = c_os * e_ab
-    e_corr = e_ss + e_os
+    e_corr = e_singles + e_ss + e_os
     return HybridMP2Result(
-        reference="uhf",
+        reference=reference,
         energy_scf=e_scf,
         energy_mp2_ss=e_ss,
         energy_mp2_os=e_os,
@@ -219,6 +250,23 @@ def run_df_mp2_uhf(
         n_virt_alpha=va,
         n_virt_beta=vb,
         n_frozen=nf_a,
+        energy_mp2_singles=e_singles,
+    )
+
+
+def run_df_romp2(
+    H_core: np.ndarray,
+    v_nn: float,
+    B_ao: np.ndarray,
+    C_rohf: np.ndarray,
+    na: int,
+    nb: int,
+    n_frozen: int = 0,
+) -> HybridMP2Result:
+    """DF/Cholesky-ROMP2 semikanonik (non-Brillouin singles + doubles)."""
+    return run_df_mp2_uhf(
+        H_core, v_nn, B_ao, C_rohf, C_rohf, na, nb,
+        n_frozen=n_frozen, include_singles=True, reference="rohf",
     )
 
 
@@ -286,14 +334,15 @@ def run_df_mp3_uhf(
     na: int,
     nb: int,
     n_frozen: int = 0,
+    include_singles: bool = False,
+    reference: str = "uhf",
 ) -> HybridMP3Result:
-    """DF/Cholesky-UMP3 bebas O(V^4) memakai 1x transformasi MO terpadu UHF."""
+    """DF/Cholesky-UMP3 & Semicanonical ROMP3 bebas O(V^4) memakai 1x transformasi MO terpadu."""
     H = np.ascontiguousarray(H_core, dtype=np.float64)
     B = np.ascontiguousarray(B_ao, dtype=np.float64)
     Ca = np.ascontiguousarray(C0_a, dtype=np.float64)
     Cb = np.ascontiguousarray(C0_b, dtype=np.float64)
     nbf = H.shape[0]
-    va, vb = nbf - na, nbf - nb
     nf_a = _clamp_frozen(n_frozen, na)
     nf_b = _clamp_frozen(n_frozen, nb)
 
@@ -306,8 +355,8 @@ def run_df_mp3_uhf(
     Pb = Cb_all @ Cb_all.T if nb > 0 else np.zeros((nbf, nbf), dtype=np.float64)
     e_scf = float(0.5 * (np.sum(Pa * (H + Fa)) + np.sum(Pb * (H + Fb))) + v_nn)
 
-    Ca_sc, eps_a, _ = semicanonicalize_subspaces_frozen(Ca, Fa, na, nf_a)
-    Cb_sc, eps_b, _ = semicanonicalize_subspaces_frozen(Cb, Fb, nb, nf_b)
+    Ca_sc, eps_a, Fvo_a = semicanonicalize_subspaces_frozen(Ca, Fa, na, nf_a)
+    Cb_sc, eps_b, Fvo_b = semicanonicalize_subspaces_frozen(Cb, Fb, nb, nf_b)
 
     Ca_act = np.ascontiguousarray(Ca_sc[:, nf_a:na])
     Ca_v = np.ascontiguousarray(Ca_sc[:, na:])
@@ -316,13 +365,19 @@ def run_df_mp3_uhf(
     eps_oa, eps_va = eps_a[nf_a:na], eps_a[na:]
     eps_ob, eps_vb = eps_b[nf_b:nb], eps_b[nb:]
 
+    e_singles = (
+        _compute_romp2_singles(Fvo_a, Fvo_b, eps_oa, eps_va, eps_ob, eps_vb)
+        if include_singles
+        else 0.0
+    )
+
     B_oo_a, B_ov_a, B_vv_a, B_oo_b, B_ov_b, B_vv_b = K.transform_3c_mo_blocks_uhf(
         B, Ca_act, Ca_v, Cb_act, Cb_v, nbf
     )
     e_aa, e_bb, e_ab, T2_aa, T2_bb, T2_ab = K.eval_ump2_df(
         B_ov_a, B_ov_b, eps_oa, eps_va, eps_ob, eps_vb
     )
-    e_mp2 = e_aa + e_bb + e_ab
+    e_mp2 = e_singles + e_aa + e_bb + e_ab
     e3_aa, e3_bb, e3_ab, _, _, _ = K.eval_ump3_df(
         T2_aa, T2_bb, T2_ab,
         B_oo_a, B_ov_a, B_vv_a, B_oo_b, B_ov_b, B_vv_b,
@@ -331,7 +386,7 @@ def run_df_mp3_uhf(
     e_mp3 = e3_aa + e3_bb + e3_ab
     e_corr = e_mp2 + e_mp3
     return HybridMP3Result(
-        reference="uhf",
+        reference=reference,
         e_hf=e_scf,
         e_mp2=e_mp2,
         e_mp3=e_mp3,
@@ -347,4 +402,20 @@ def run_df_mp3_uhf(
         n_occ_alpha=na,
         n_occ_beta=nb,
         n_frozen=nf_a,
+    )
+
+
+def run_df_romp3(
+    H_core: np.ndarray,
+    v_nn: float,
+    B_ao: np.ndarray,
+    C_rohf: np.ndarray,
+    na: int,
+    nb: int,
+    n_frozen: int = 0,
+) -> HybridMP3Result:
+    """DF/Cholesky-ROMP3 semikanonik (identik dengan ROMP3::compute() C++)."""
+    return run_df_mp3_uhf(
+        H_core, v_nn, B_ao, C_rohf, C_rohf, na, nb,
+        n_frozen=n_frozen, include_singles=True, reference="rohf",
     )

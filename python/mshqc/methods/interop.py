@@ -11,6 +11,8 @@ from .mp_hybrid import (
     run_df_mp2_uhf,
     run_df_mp3_rhf,
     run_df_mp3_uhf,
+    run_df_romp2,
+    run_df_romp3,
 )
 from .omp_hybrid import HybridOMPResult, run_df_omp_rhf, run_df_omp_uhf
 
@@ -46,8 +48,8 @@ def run_from_arrays(
     n_frozen: int = 0,
 ) -> Union[HybridOMPResult, HybridMP2Result, HybridMP3Result]:
     """
-    Menjalankan MP2 / MP3 / OMP2 / SCS-OMP2 / SOS-OMP2 / OMP2.5 / OMP3 langsung dari array NumPy
-    (mendukung faktor AO packed triangular maupun full (nbf^2, n_aux) serta strict n_frozen).
+    Menjalankan MP2 / ROMP2 / MP3 / ROMP3 / OMP2 / SCS-OMP2 / SOS-OMP2 / OMP2.5 / OMP3
+    langsung dari array NumPy (packed triangular maupun full, mendukung strict n_frozen).
     """
     m_low = method.strip().lower().replace("_", "-")
     H = np.ascontiguousarray(H_core, dtype=np.float64)
@@ -56,6 +58,14 @@ def run_from_arrays(
     Ca = np.ascontiguousarray(C_alpha, dtype=np.float64)
     na = int(n_occ_alpha)
     nf = int(n_frozen)
+
+    if m_low == "romp2":
+        nb = int(na if n_occ_beta is None else n_occ_beta)
+        return run_df_romp2(H, float(v_nn), B, Ca, na, nb, n_frozen=nf)
+
+    if m_low == "romp3":
+        nb = int(na if n_occ_beta is None else n_occ_beta)
+        return run_df_romp3(H, float(v_nn), B, Ca, na, nb, n_frozen=nf)
 
     if m_low in ("mp2", "rmp2", "ump2"):
         if C_beta is None:

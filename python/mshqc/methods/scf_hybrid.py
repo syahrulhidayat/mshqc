@@ -1,9 +1,9 @@
 # Copyright 2026 Muhamad Syahrul Hidayat
 # Licensed under the Apache License, Version 2.0
 """
-Orkestrasi SCF Python tipis (DF / Cholesky RHF & UHF) di atas kernel C++20 `mshqc.kernels`.
+Orkestrasi SCF Python tipis (DF / Cholesky RHF, UHF, ROHF) di atas kernel C++20 `mshqc.kernels`.
 Mencakup Pure-Python SAD Guess (Z=1..118 + anomali d/f-block), faktorisasi low-rank Iter-1,
-Pulay DIIS (SVD-equilibrated), dan orthogonalizer Löwdin tahan ketergantungan linear.
+Pulay DIIS (SVD-equilibrated), dan konvergensi komutator ketat `err_rms <= density_tol`.
 """
 
 from __future__ import annotations
@@ -31,6 +31,8 @@ class HybridSCFResult:
     n_occ_beta: int
     s2: float
     L_mat: np.ndarray
+    F_alpha: Optional[np.ndarray] = None
+    F_beta: Optional[np.ndarray] = None
 
     @property
     def e_total(self) -> float:
@@ -146,6 +148,19 @@ def build_sad_guess(mol, basis) -> np.ndarray:
     return np.diag(p_diag)
 
 
+def orthonormalize_mo_guess(C_in: np.ndarray, S: np.ndarray) -> Optional[np.ndarray]:
+    """Ortonormalisasi simetris Löwdin untuk warm-start orbital pada geometri tergeser."""
+    n = S.shape[0]
+    if C_in is None or C_in.shape != (n, n) or n == 0:
+        return None
+    M = C_in.T @ S @ C_in
+    evals, evecs = eigh(0.5 * (M + M.T))
+    if float(np.min(evals)) < 1.0e-10:
+        return None
+    inv_sqrt = 1.0 / np.sqrt(evals)
+    return np.ascontiguousarray(C_in @ ((evecs * inv_sqrt[None, :]) @ evecs.T))
+
+
 def _factorize_psd_density(P: np.ndarray, tol: float = 1.0e-12) -> np.ndarray:
     """Ekstrak faktor low-rank C_fac (P = C_fac @ C_fac.T) agar Iter-1 memakai batched DGEMM."""
     n = P.shape[0]
@@ -160,6 +175,22 @@ def _factorize_psd_density(P: np.ndarray, tol: float = 1.0e-12) -> np.ndarray:
     evals, evecs = eigh(0.5 * (P + P.T))
     keep = evals > tol
     return np.ascontiguousarray(evecs[:, keep] * np.sqrt(evals[keep])[None, :])
+
+
+def _smear_electrons(eps: np.ndarray, target_elec: int, degen_tol: float = 1.0e-4) -> np.ndarray:
+    occ = np.zeros(eps.size, dtype=np.float64)
+    left = int(target_elec)
+    i = 0
+    n = eps.size
+    while i < n and left > 0:
+        cnt = 1
+        while i + cnt < n and abs(eps[i + cnt] - eps[i]) < degen_tol:
+            cnt += 1
+        fill = min(left, cnt)
+        occ[i : i + cnt] = float(fill) / float(cnt)
+        left -= fill
+        i += cnt
+    return occ
 
 
 class PulayDIIS:
@@ -248,13 +279,14 @@ def _diagonalize_fock(
         F_mo = C_prev.T @ F_ao @ C_prev
         idx_v = np.arange(n_occ, F_ao.shape[0])
         F_mo[idx_v, idx_v] += level_shift
-        eps_s, U = eigh(F_mo)
+        eps_s, U = eigh(0.5 * (F_mo + F_mo.T))
         C_new = C_prev @ U
         eps = eps_s.copy()
         eps[n_occ:] -= level_shift
         return eps, C_new
 
-    eps, C_orth = eigh(X.T @ F_ao @ X)
+    Fp = X.T @ F_ao @ X
+    eps, C_orth = eigh(0.5 * (Fp + Fp.T))
     return eps, X @ C_orth
 
 
@@ -280,7 +312,8 @@ def run_df_rhf(
     X = _symmetric_orthogonalizer(S)
 
     if C_init is not None:
-        C = np.array(C_init, dtype=np.float64, copy=True)
+        C_orth = orthonormalize_mo_guess(np.asarray(C_init, dtype=np.float64), S)
+        C = C_orth if C_orth is not None else np.array(C_init, dtype=np.float64, copy=True)
         eps = np.zeros(nbf, dtype=np.float64)
     elif P_init is not None:
         P0 = np.ascontiguousarray(P_init, dtype=np.float64)
@@ -296,6 +329,7 @@ def run_df_rhf(
     P_prev = np.zeros((nbf, nbf), dtype=np.float64)
     converged = False
     e_tot = 0.0
+    F = H.copy()
     it_used = 0
 
     for it in range(1, max_iter + 1):
@@ -308,11 +342,18 @@ def run_df_rhf(
 
         grad_ao = F @ P @ S - S @ P @ F
         grad_orth = X.T @ grad_ao @ X
-        grad_norm = float(np.linalg.norm(grad_orth))
+        err_rms = 0.5 * float(np.linalg.norm(grad_orth)) / float(nbf)
         dE = abs(e_tot - e_prev)
         dP_rms = float(np.sqrt(np.mean((P - P_prev) ** 2)))
 
-        if it > 1 and dE <= energy_tol and dP_rms <= density_tol and grad_norm <= max(1.0e-6, density_tol * 1.0e3):
+        strict_conv = (dE <= energy_tol and dP_rms <= density_tol and err_rms <= density_tol)
+        plateau_conv = (
+            it > 40
+            and dE <= max(energy_tol, 1.0e-12)
+            and dP_rms <= max(density_tol, 1.0e-11)
+            and err_rms <= max(density_tol, 1.0e-11)
+        )
+        if it > 2 and (strict_conv or plateau_conv):
             eps, C = _diagonalize_fock(F, X)
             converged = True
             break
@@ -336,6 +377,8 @@ def run_df_rhf(
         n_occ_beta=n_occ,
         s2=0.0,
         L_mat=B,
+        F_alpha=F,
+        F_beta=F.copy(),
     )
 
 
@@ -364,8 +407,10 @@ def run_df_uhf(
     X = _symmetric_orthogonalizer(S)
 
     if C_init_a is not None and C_init_b is not None:
-        Ca = np.array(C_init_a, dtype=np.float64, copy=True)
-        Cb = np.array(C_init_b, dtype=np.float64, copy=True)
+        Ca_o_g = orthonormalize_mo_guess(np.asarray(C_init_a, dtype=np.float64), S)
+        Cb_o_g = orthonormalize_mo_guess(np.asarray(C_init_b, dtype=np.float64), S)
+        Ca = Ca_o_g if Ca_o_g is not None else np.array(C_init_a, dtype=np.float64, copy=True)
+        Cb = Cb_o_g if Cb_o_g is not None else np.array(C_init_b, dtype=np.float64, copy=True)
         eps_a = np.zeros(nbf, dtype=np.float64)
         eps_b = np.zeros(nbf, dtype=np.float64)
     elif P_init is not None:
@@ -397,6 +442,8 @@ def run_df_uhf(
     Pb_prev = np.zeros((nbf, nbf), dtype=np.float64)
     converged = False
     e_tot = 0.0
+    Fa = H.copy()
+    Fb = H.copy()
     it_used = 0
 
     for it in range(1, max_iter + 1):
@@ -414,14 +461,21 @@ def run_df_uhf(
         ga_orth = X.T @ (Fa @ Pa @ S - S @ Pa @ Fa) @ X
         gb_orth = X.T @ (Fb @ Pb @ S - S @ Pb @ Fb) @ X
         err_stack = np.concatenate((ga_orth.ravel(), gb_orth.ravel()))
-        grad_norm = float(np.linalg.norm(err_stack))
+        err_rms = float(np.linalg.norm(err_stack)) / float(nbf)
 
         dE = abs(e_tot - e_prev)
         dP_rms = float(
             np.sqrt(0.5 * (np.mean((Pa - Pa_prev) ** 2) + np.mean((Pb - Pb_prev) ** 2)))
         )
 
-        if it > 1 and dE <= energy_tol and dP_rms <= density_tol and grad_norm <= max(1.0e-6, density_tol * 1.0e3):
+        strict_conv = (dE <= energy_tol and dP_rms <= density_tol and err_rms <= density_tol)
+        plateau_conv = (
+            it > 40
+            and dE <= max(energy_tol, 1.0e-12)
+            and dP_rms <= max(density_tol, 1.0e-11)
+            and err_rms <= max(density_tol, 1.0e-11)
+        )
+        if it > 2 and (strict_conv or plateau_conv):
             eps_a, Ca = _diagonalize_fock(Fa, X)
             eps_b, Cb = _diagonalize_fock(Fb, X)
             converged = True
@@ -454,4 +508,172 @@ def run_df_uhf(
         n_occ_beta=nb,
         s2=s2,
         L_mat=B,
+        F_alpha=Fa,
+        F_beta=Fb,
+    )
+
+
+def run_df_rohf(
+    H_core: np.ndarray,
+    S_ovlp: np.ndarray,
+    v_nn: float,
+    B_ao: np.ndarray,
+    na: int,
+    nb: int,
+    energy_tol: float = 1.0e-9,
+    density_tol: float = 1.0e-9,
+    max_iter: int = 150,
+    diis_space: int = 8,
+    C_init: Optional[np.ndarray] = None,
+    P_init: Optional[np.ndarray] = None,
+) -> HybridSCFResult:
+    """
+    Menjalankan DF/Cholesky-ROHF (Guest-Saunders / Roothaan unified Fock F_uni)
+    di atas kernel C++20 `build_jk_3c_uhf` (identik secara matematis dengan src/scf/scf.cc).
+    """
+    if na < nb:
+        raise ValueError("ROHF mensyaratkan n_alpha >= n_beta")
+    if na == nb:
+        return run_df_rhf(
+            H_core, S_ovlp, v_nn, B_ao, na,
+            energy_tol=energy_tol, density_tol=density_tol,
+            max_iter=max_iter, diis_space=diis_space,
+            C_init=C_init, P_init=P_init,
+        )
+
+    H = np.ascontiguousarray(H_core, dtype=np.float64)
+    S = np.ascontiguousarray(S_ovlp, dtype=np.float64)
+    B = np.ascontiguousarray(B_ao, dtype=np.float64)
+    nbf = H.shape[0]
+    X = _symmetric_orthogonalizer(S)
+
+    n_c = nb
+    n_o = na - nb
+    n_v = nbf - na
+    shift_o = 0.5
+    shift_v = 1.0
+
+    C: Optional[np.ndarray] = None
+    eps = np.zeros(nbf, dtype=np.float64)
+    if C_init is not None:
+        C = orthonormalize_mo_guess(np.asarray(C_init, dtype=np.float64), S)
+        if C is None:
+            C = np.array(C_init, dtype=np.float64, copy=True)
+        Pa = C[:, :na] @ C[:, :na].T
+        Pb = C[:, :nb] @ C[:, :nb].T if nb > 0 else np.zeros((nbf, nbf), dtype=np.float64)
+    elif P_init is not None:
+        P0 = np.ascontiguousarray(P_init, dtype=np.float64)
+        n_tot = max(1, na + nb)
+        Pa = (float(na) / float(n_tot)) * P0
+        Pb = (float(nb) / float(n_tot)) * P0
+    else:
+        eps, C = _diagonalize_fock(H, X)
+        Pa = C[:, :na] @ C[:, :na].T
+        Pb = C[:, :nb] @ C[:, :nb].T if nb > 0 else np.zeros((nbf, nbf), dtype=np.float64)
+
+    diis = PulayDIIS(max_vectors=diis_space)
+    e_prev = 0.0
+    P_tot_prev = np.zeros((nbf, nbf), dtype=np.float64)
+    converged = False
+    e_tot = 0.0
+    Fa = H.copy()
+    Fb = H.copy()
+    occ_a: Optional[np.ndarray] = None
+    occ_b: Optional[np.ndarray] = None
+    it_used = 0
+
+    for it in range(1, max_iter + 1):
+        it_used = it
+        use_mo_int = (C is not None and occ_a is None)
+        if use_mo_int:
+            Ca_fac = np.ascontiguousarray(C[:, :na])
+            Cb_fac = np.ascontiguousarray(C[:, :nb])
+        else:
+            Ca_fac = _factorize_psd_density(Pa)
+            Cb_fac = _factorize_psd_density(Pb) if nb > 0 else np.zeros((nbf, 0), dtype=np.float64)
+
+        J, Ka, Kb = K.build_jk_3c_uhf(B, Ca_fac, Cb_fac, nbf)
+        Fa = 0.5 * ((H + J - Ka) + (H + J - Ka).T)
+        Fb = 0.5 * ((H + J - Kb) + (H + J - Kb).T)
+        e_tot = float(0.5 * (np.sum(Pa * (H + Fa)) + np.sum(Pb * (H + Fb))) + v_nn)
+
+        if C is None:
+            eps, C = _diagonalize_fock(0.5 * (Fa + Fb), X)
+
+        Fa_mo = C.T @ Fa @ C
+        Fb_mo = C.T @ Fb @ C
+        F_uni = np.zeros((nbf, nbf), dtype=np.float64)
+
+        if n_c > 0:
+            F_uni[:n_c, :n_c] = 0.5 * (Fa_mo[:n_c, :n_c] + Fb_mo[:n_c, :n_c])
+        if n_o > 0:
+            F_uni[n_c:na, n_c:na] = Fa_mo[n_c:na, n_c:na] + shift_o * np.eye(n_o)
+        if n_v > 0:
+            F_uni[na:, na:] = 0.5 * (Fa_mo[na:, na:] + Fb_mo[na:, na:]) + shift_v * np.eye(n_v)
+        if n_c > 0 and n_o > 0:
+            blk = Fb_mo[:n_c, n_c:na]
+            F_uni[:n_c, n_c:na] = blk
+            F_uni[n_c:na, :n_c] = blk.T
+        if n_c > 0 and n_v > 0:
+            blk = 0.5 * (Fa_mo[:n_c, na:] + Fb_mo[:n_c, na:])
+            F_uni[:n_c, na:] = blk
+            F_uni[na:, :n_c] = blk.T
+        if n_o > 0 and n_v > 0:
+            blk = Fa_mo[n_c:na, na:]
+            F_uni[n_c:na, na:] = blk
+            F_uni[na:, n_c:na] = blk.T
+
+        SC = S @ C
+        F_eff_ao = SC @ F_uni @ SC.T
+        err_ao = F_eff_ao @ Pa @ S - S @ Pa @ F_eff_ao
+        err_orth = X.T @ err_ao @ X
+        err_rms = float(np.linalg.norm(err_orth)) / float(nbf)
+
+        P_tot = Pa + Pb
+        dE = abs(e_tot - e_prev)
+        dP_rms = float(np.linalg.norm(P_tot - P_tot_prev)) / float(nbf)
+
+        if it > 2 and dE <= energy_tol and dP_rms <= density_tol and err_rms <= max(density_tol * 10.0, 1.0e-11):
+            converged = True
+            break
+
+        diis.add((F_eff_ao,), err_ao)
+        if it <= 1:
+            F_solve = 0.7 * F_eff_ao + 0.3 * H
+        else:
+            (F_solve,) = diis.extrapolate()
+
+        eps, C = _diagonalize_fock(F_solve, X)
+        occ_a_vec = _smear_electrons(eps, na)
+        occ_b_vec = _smear_electrons(eps, nb)
+        if np.all((occ_a_vec == 0.0) | (occ_a_vec == 1.0)) and np.all((occ_b_vec == 0.0) | (occ_b_vec == 1.0)):
+            occ_a = None
+            occ_b = None
+            Pa = C[:, :na] @ C[:, :na].T
+            Pb = C[:, :nb] @ C[:, :nb].T if nb > 0 else np.zeros((nbf, nbf), dtype=np.float64)
+        else:
+            occ_a = occ_a_vec
+            occ_b = occ_b_vec
+            Pa = (C * occ_a[None, :]) @ C.T
+            Pb = (C * occ_b[None, :]) @ C.T
+
+        e_prev = e_tot
+        P_tot_prev = P_tot
+
+    sz = 0.5 * (na - nb)
+    return HybridSCFResult(
+        reference="rohf",
+        energy_total=e_tot,
+        converged=converged,
+        iterations=it_used,
+        C_alpha=C,
+        C_beta=C.copy(),
+        orbital_energies_alpha=eps,
+        orbital_energies_beta=eps.copy(),
+        n_occ_alpha=na,
+        n_occ_beta=nb,
+        s2=float(sz * (sz + 1.0)),
+        L_mat=B,
+        F_alpha=Fa,
+        F_beta=Fb,
     )
