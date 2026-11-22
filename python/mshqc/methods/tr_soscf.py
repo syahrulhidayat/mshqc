@@ -8,7 +8,7 @@ from .._mshqc import kernels as K
 
 
 def _steihaug_boundary_tau(x_sq: float, xp_dot: float, p_sq: float, radius: float) -> float:
-    """Akar positif eksak ||x + tau * p||_2 = radius (identik dengan src/gradient/optimizer.cc)."""
+    """Akar positif eksak ||x + tau * p||_2 = radius untuk overshoot kurvatur positif."""
     if p_sq <= 1.0e-30:
         return 0.0
     b = 2.0 * xp_dot
@@ -44,16 +44,16 @@ def solve_tr_soscf_rhf(
     rz = float(np.sum(r * z))
     tol = min(1e-4, 0.1 * grad_norm)
 
-    for _ in range(max_cg):
+    for cg_it in range(max_cg):
         if float(np.linalg.norm(r)) < tol:
             break
         Hp = K.apply_mo_df_hessian_rhf(np.ascontiguousarray(p), eps_occ, eps_vir, B_oo, B_ov, B_vv)
         pHp = float(np.sum(p * Hp))
         if pHp <= 1e-12:
-            tau = _steihaug_boundary_tau(
-                float(np.sum(x * x)), float(np.sum(x * p)), float(np.sum(p * p)), trust_radius
-            )
-            return x + tau * p
+            # Approximate HF Hessian tidak selalu PD; jangan melompat ke batas trust_radius.
+            if cg_it == 0 or float(np.sum(w_vo * x)) >= 0.0:
+                x = -w_vo / H_diag
+            break
 
         alpha = rz / pHp
         x_next = x + alpha * p
@@ -112,7 +112,7 @@ def solve_tr_soscf_uhf(
     rz = float(np.sum(ra * za) + np.sum(rb * zb))
     tol = min(1e-4, 0.1 * grad_norm)
 
-    for _ in range(max_cg):
+    for cg_it in range(max_cg):
         if float(np.sqrt(np.sum(ra ** 2) + np.sum(rb ** 2))) < tol:
             break
         Hpa, Hpb = K.apply_mo_df_hessian_uhf(
@@ -122,11 +122,10 @@ def solve_tr_soscf_uhf(
         )
         pHp = float(np.sum(pa * Hpa) + np.sum(pb * Hpb))
         if pHp <= 1e-12:
-            x_sq = float(np.sum(xa * xa) + np.sum(xb * xb))
-            xp = float(np.sum(xa * pa) + np.sum(xb * pb))
-            p_sq = float(np.sum(pa * pa) + np.sum(pb * pb))
-            tau = _steihaug_boundary_tau(x_sq, xp, p_sq, trust_radius)
-            return xa + tau * pa, xb + tau * pb
+            g_dot_x = float(np.sum(w_vo_a * xa) + np.sum(w_vo_b * xb))
+            if cg_it == 0 or g_dot_x >= 0.0:
+                xa, xb = -w_vo_a / H_da, -w_vo_b / H_db
+            break
 
         alpha = rz / pHp
         xa_next, xb_next = xa + alpha * pa, xb + alpha * pb

@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """
 Validasi Tahap 1 Thin-Core Hybrid Migration:
-1. DF-RHF & Cholesky-RHF hibrida (Python PulayDIIS + C++ build_jk_3c_rhf) vs C++ mshqc.RHF
+1. DF-RHF hibrida (Python PulayDIIS + C++ build_jk_3c_rhf) vs C++ mshqc.RHF
 2. DF-UHF hibrida radikal OH (Python coupled PulayDIIS + C++ build_jk_3c_uhf) vs C++ mshqc.UHF
-3. Exact Steihaug-Toint TR-SOSCF pada DF-OMP2 & DF-OMP3 (RHF + UHF) vs C++ mshqc.OMP2/OMP3
-4. Opt-in routing `MSHQC_USE_HYBRID_SOLVERS=1` pada MSHQCCalculator tanpa breaking change
+3. Opt-in routing `use_hybrid` & `MSHQC_USE_HYBRID_SOLVERS=1` pada MSHQCCalculator (RHF & UHF)
 """
 import os
 import time
 import mshqc
 from mshqc import methods as M
+
+
+def _get_energy(res) -> float:
+    return float(getattr(res, "energy_total", getattr(res, "e_total")))
 
 
 def test_hybrid_df_rhf_parity_and_speed():
@@ -93,8 +96,9 @@ def test_calculator_opt_in_hybrid_routing():
 
     assert isinstance(omp2_hyb, M.HybridOMPResult)
     assert isinstance(omp3_hyb, M.HybridOMPResult)
-    assert abs(omp2_hyb.energy_total - omp2_cpp.energy_total) < 1e-8
-    assert abs(omp3_hyb.energy_total - omp3_cpp.energy_total) < 1e-8
+    assert omp2_hyb.converged and omp3_hyb.converged
+    assert abs(omp2_hyb.energy_total - _get_energy(omp2_cpp)) < 1e-8
+    assert abs(omp3_hyb.energy_total - _get_energy(omp3_cpp)) < 1e-8
 
     prev_env = os.environ.get("MSHQC_USE_HYBRID_SOLVERS")
     try:
@@ -103,7 +107,7 @@ def test_calculator_opt_in_hybrid_routing():
         omp2_env = calc.run_omp2(scf_env, grad_thresh=1e-6)
         assert isinstance(scf_env, M.HybridSCFResult)
         assert isinstance(omp2_env, M.HybridOMPResult)
-        assert abs(omp2_env.energy_total - omp2_cpp.energy_total) < 1e-8
+        assert abs(omp2_env.energy_total - _get_energy(omp2_cpp)) < 1e-8
     finally:
         if prev_env is None:
             os.environ.pop("MSHQC_USE_HYBRID_SOLVERS", None)
