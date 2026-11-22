@@ -143,6 +143,7 @@ class MSHQCCalculator:
 
         self.scf_res = None
         self.mp2_res = None
+        self._ao_factor_cache = None
 
     def _make_scf_config(self) -> mshqc.SCFConfig:
         conf = mshqc.SCFConfig()
@@ -252,14 +253,34 @@ class MSHQCCalculator:
         return solver.compute()
 
 
+    # [INJECTED_HYBRID_PHASE4_CACHE]
+    def _get_ao_3index_factor(self, scf_res: mshqc.SCFResult):
+        if hasattr(scf_res, "L_mat") and scf_res.L_mat.shape[0] > 0 and scf_res.L_mat.shape[1] > 0:
+            return scf_res.L_mat
+        if self._ao_factor_cache is not None:
+            return self._ao_factor_cache
+        if self.eri_method == "df":
+            aux_basis = mshqc.BasisSet(self.aux_basis_name, self.molecule, self.basis_dir)
+            self._ao_factor_cache = mshqc.kernels.compute_df_ao_factor(
+                self.molecule, self.basis, aux_basis, self.threshold, False, self.print_level > 0
+            )
+            return self._ao_factor_cache
+        if self.eri_method == "cholesky":
+            chol = mshqc.CholeskyERI(self.basis, self.integrals)
+            chol.set_threshold(self.threshold)
+            chol.set_print_level(self.print_level)
+            chol.compute()
+            self._ao_factor_cache = chol.get_L_mat().copy()
+            return self._ao_factor_cache
+        raise ValueError(f"Metode hibrida mendukung eri_method='df' atau 'cholesky', diterima: {self.eri_method}")
+
     def _run_hybrid_omp_method(self, method_name: str, scf_res: Optional[mshqc.SCFResult] = None, grad_thresh: float = 1e-5, max_iter: int = 50):
         from .methods.interop import run_from_arrays
-        if self.eri_method != "df":
-            raise ValueError(f"Metode hibrida '{method_name}' saat ini mendukung eri_method='df'.")
+        if self.eri_method not in ("df", "cholesky"):
+            raise ValueError(f"Metode hibrida '{method_name}' mendukung eri_method='df' atau 'cholesky'.")
         if scf_res is None:
             scf_res = self.scf_res or self.run_scf()
-        aux_basis = mshqc.BasisSet(self.aux_basis_name, self.molecule, self.basis_dir)
-        B_ao = mshqc.kernels.compute_df_ao_factor(self.molecule, self.basis, aux_basis, self.threshold, False)
+        B_ao = self._get_ao_3index_factor(scf_res)
         H_core = self.integrals.compute_kinetic() + self.integrals.compute_nuclear()
         S_ovlp = self.integrals.compute_overlap()
         v_nn = self.molecule.nuclear_repulsion_energy()

@@ -1,6 +1,6 @@
 // Copyright 2026 Muhamad Syahrul Hidayat
 // Licensed under the Apache License, Version 2.0
-// [INJECTED_HYBRID_PHASE2_TBLIS_SAFE]
+// [INJECTED_HYBRID_PHASE4_TBLIS_SAFE]
 #pragma once
 
 #include <Eigen/Dense>
@@ -172,11 +172,12 @@ inline void win32_eigen_tensor_mult(
 }
 #endif
 
+template <typename T = double>
 inline void safe_tblis_mult(
-    double alpha,
+    T alpha,
     const tblis::varray_view<double>& A, const char* idxA,
     const tblis::varray_view<double>& B, const char* idxB,
-    double beta,
+    T beta,
     tblis::varray_view<double>& C, const char* idxC)
 {
     const size_t szA = view_num_elements(A);
@@ -186,17 +187,43 @@ inline void safe_tblis_mult(
 
     if (szA == 0 || szB == 0) {
         Eigen::Map<Eigen::VectorXd> vecC(C.data(), static_cast<Eigen::Index>(szC));
-        if (beta == 0.0) vecC.setZero();
-        else vecC *= beta;
+        if (beta == T(0)) vecC.setZero();
+        else vecC *= static_cast<double>(beta);
+        return;
+    }
+
+    if (szC == 1 && szA == szB) {
+        Eigen::Map<const Eigen::VectorXd> vecA(A.data(), static_cast<Eigen::Index>(szA));
+        Eigen::Map<const Eigen::VectorXd> vecB(B.data(), static_cast<Eigen::Index>(szB));
+        const double dot = vecA.dot(vecB);
+        C.data()[0] = (beta == T(0))
+            ? (static_cast<double>(alpha) * dot)
+            : (static_cast<double>(beta) * C.data()[0] + static_cast<double>(alpha) * dot);
+        return;
+    }
+    if (szA == 1 && szB == szC) {
+        Eigen::Map<const Eigen::VectorXd> vecB(B.data(), static_cast<Eigen::Index>(szB));
+        Eigen::Map<Eigen::VectorXd> vecC(C.data(), static_cast<Eigen::Index>(szC));
+        const double scale = static_cast<double>(alpha) * A.data()[0];
+        if (beta == T(0)) vecC.noalias() = scale * vecB;
+        else vecC.noalias() = static_cast<double>(beta) * vecC + scale * vecB;
+        return;
+    }
+    if (szB == 1 && szA == szC) {
+        Eigen::Map<const Eigen::VectorXd> vecA(A.data(), static_cast<Eigen::Index>(szA));
+        Eigen::Map<Eigen::VectorXd> vecC(C.data(), static_cast<Eigen::Index>(szC));
+        const double scale = static_cast<double>(alpha) * B.data()[0];
+        if (beta == T(0)) vecC.noalias() = scale * vecA;
+        else vecC.noalias() = static_cast<double>(beta) * vecC + scale * vecA;
         return;
     }
 
 #ifdef _WIN32
-    win32_eigen_tensor_mult(alpha, A, idxA, B, idxB, beta, C, idxC);
+    win32_eigen_tensor_mult(static_cast<double>(alpha), A, idxA, B, idxB, static_cast<double>(beta), C, idxC);
 #else
-    tblis::tblis_tensor A_s(alpha, const_cast<tblis::varray_view<double>&>(A));
+    tblis::tblis_tensor A_s(static_cast<double>(alpha), const_cast<tblis::varray_view<double>&>(A));
     tblis::tblis_tensor B_s(const_cast<tblis::varray_view<double>&>(B));
-    tblis::tblis_tensor C_s(beta, C);
+    tblis::tblis_tensor C_s(static_cast<double>(beta), C);
     tblis_tensor_mult(nullptr, nullptr, &A_s, idxA, &B_s, idxB, &C_s, idxC);
 #endif
 }
@@ -216,7 +243,6 @@ inline Eigen::MatrixXd parallel_gemm_abt(const Eigen::MatrixXd& A, const Eigen::
     return C;
 }
 
-// Zero-copy 4D view atas M = B1 * B2^T berdimensi (d1*d2 x d3*d4)
 inline tblis::varray_view<double> make_mat_view_4d(
     Eigen::MatrixXd& M, int d1, int d2, int d3, int d4)
 {
@@ -230,7 +256,6 @@ inline tblis::varray_view<double> make_mat_view_4d(
          (stride_type)(static_cast<ptrdiff_t>(d1) * d2)});
 }
 
-// Zero-copy 4D view atas T2/W/L2 berdimensi (nv*nv x no*no) dengan indeks logis (i, j, a, b)
 inline tblis::varray_view<double> make_t2_view_4d(
     const Eigen::MatrixXd& M, int no, int nv)
 {

@@ -40,6 +40,8 @@ public:
     void compute(bool save_hdf5 = false);
     void set_hdf5_path(const std::string& path) { hdf5_path_ = path; }
     const std::string& get_hdf5_path() const { return hdf5_path_; }
+    void set_verbose(bool verbose) { verbose_ = verbose; }
+    bool verbose() const { return verbose_; }
     const Eigen::MatrixXd& get_B_mat() const { return B_mat_; }
     Eigen::MatrixXd& get_B_mat_mutable() { return B_mat_; }
 
@@ -55,6 +57,7 @@ private:
     Eigen::MatrixXd compute_J_inv_half();
     double cutoff_;
     std::string hdf5_path_ = "df_tensor.h5";
+    bool verbose_ = true;
 };
 
 } // namespace integrals

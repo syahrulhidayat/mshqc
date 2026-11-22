@@ -644,7 +644,8 @@ NB_MODULE(_mshqc, m) {
         .def_rw("iterations", &SCFResult::iterations)
         .def_rw("converged", &SCFResult::converged)
         .def_rw("n_occ_alpha", &SCFResult::n_occ_alpha)
-        .def_rw("n_occ_beta", &SCFResult::n_occ_beta);
+        .def_rw("n_occ_beta", &SCFResult::n_occ_beta)
+        .def_ro("L_mat", &SCFResult::L_mat, nb::rv_policy::reference_internal);
 
     nb::class_<UHF>(m, "UHF")
         .def("__init__", [](UHF *t, const Molecule& mol, const BasisSet& basis,

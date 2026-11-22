@@ -12,6 +12,7 @@ from .omp_hybrid import (
     run_df_omp_uhf,
 )
 from .interop import run_from_arrays, run_from_pyscf
+from .custom import optimize_orbitals_rhf
 
 __all__ = [
     "t2_to_4d", "t2_from_4d", "b3c_to_3d", "b3c_from_3d",
@@ -20,4 +21,5 @@ __all__ = [
     "eval_omp_rhf_point", "eval_omp_uhf_point",
     "run_df_omp_rhf", "run_df_omp_uhf",
     "run_from_arrays", "run_from_pyscf",
+    "optimize_orbitals_rhf",
 ]

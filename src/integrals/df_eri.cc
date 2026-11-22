@@ -103,9 +103,11 @@ CholeskyResult compute_pivoted_cholesky(Eigen::MatrixXd& J, double tol = 1e-10) 
 
 // [INJECTED_PRIORITAS_2D_PACKED_AO]
 void DensityFittingERI::compute(bool save_hdf5) {
-    std::cout << "  Starting Density Fitting (RI) Decomposition (Packed Triangular AO)...\n";
-    std::cout << "  Primary Basis: " << n_primary_ << " BF\n";
-    std::cout << "  Auxiliary Basis: " << n_aux_ << " BF\n";
+    if (verbose_) {
+        std::cout << "  Starting Density Fitting (RI) Decomposition (Packed Triangular AO)...\n";
+        std::cout << "  Primary Basis: " << n_primary_ << " BF\n";
+        std::cout << "  Auxiliary Basis: " << n_aux_ << " BF\n";
+    }
 
     const int n_shells_prim = primary_basis_->n_shells();
     const int n_shells_aux  = aux_basis_->n_shells();

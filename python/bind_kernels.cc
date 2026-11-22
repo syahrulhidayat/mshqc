@@ -39,13 +39,14 @@ void bind_kernels_module(nb::module_& parent) {
              nb::arg("save_hdf5") = false)
         .def("get_B_mat", &kernels::SafeDFEngine::get_B_mat,
              nb::rv_policy::reference_internal)
+        .def("set_verbose", &kernels::SafeDFEngine::set_verbose, nb::arg("verbose"))
         .def("set_hdf5_path", &kernels::SafeDFEngine::set_hdf5_path, nb::arg("path"))
         .def("get_hdf5_path", &kernels::SafeDFEngine::get_hdf5_path);
 
     k.def("compute_df_ao_factor", &kernels::compute_df_ao_factor,
           nb::call_guard<nb::gil_scoped_release>(),
           nb::arg("mol"), nb::arg("primary_basis"), nb::arg("aux_basis"),
-          nb::arg("cutoff") = 1e-10, nb::arg("save_hdf5") = false);
+          nb::arg("cutoff") = 1e-10, nb::arg("save_hdf5") = false, nb::arg("verbose") = false);
 
     nb::class_<FockBuilder>(k, "FockBuilder")
         .def("__init__",

@@ -30,12 +30,14 @@ inline Eigen::MatrixXd compute_df_ao_factor(
     const BasisSet& primary_basis,
     const BasisSet& aux_basis,
     double cutoff = 1e-10,
-    bool save_hdf5 = false)
+    bool save_hdf5 = false,
+    bool verbose = false)
 {
     BasisSet combined = primary_basis;
     combined.append(aux_basis);
     auto df_ints = std::make_shared<IntegralEngine>(mol, combined);
     integrals::DensityFittingERI df_eng(primary_basis, aux_basis, df_ints, cutoff);
+    df_eng.set_verbose(verbose);
     df_eng.compute(save_hdf5);
     return std::move(df_eng.get_B_mat_mutable());
 }
@@ -67,6 +69,7 @@ public:
         return df_eng_->get_B_mat();
     }
 
+    void set_verbose(bool v) { df_eng_->set_verbose(v); }
     void set_hdf5_path(const std::string& path) { df_eng_->set_hdf5_path(path); }
     const std::string& get_hdf5_path() const { return df_eng_->get_hdf5_path(); }
 
