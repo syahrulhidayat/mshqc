@@ -245,122 +245,123 @@ jobs:
           path: 0*_test_*_log.txt
           if-no-files-found: warn
 
+  # [INJECTED_THIN_CORE_STAGE4_CI_JOB]
+  thin_core_only_test:
+    name: Thin-Core Only (-DMSHQC_THIN_CORE=ON, ${{ matrix.os }})
+    needs: hybrid_phase1_test
+    if: always()
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
 
-# [INJECTED_THIN_CORE_STAGE4_CI_JOB]
-thin_core_only_test:
-  name: Thin-Core Only (-DMSHQC_THIN_CORE=ON, ${{ matrix.os }})
-  runs-on: ${{ matrix.os }}
-  timeout-minutes: 60
-  strategy:
-    fail-fast: false
-    matrix:
-      os: [ubuntu-latest, macos-latest]
+    env:
+      OMP_NUM_THREADS: "4"
+      OMP_WAIT_POLICY: "PASSIVE"
+      TBLIS_NUM_THREADS: "4"
+      MKL_NUM_THREADS: "1"
+      OPENBLAS_NUM_THREADS: "1"
+      HDF5_USE_FILE_LOCKING: "FALSE"
+      PYTHONUNBUFFERED: "1"
+      PYTHONIOENCODING: "utf-8"
 
-  env:
-    OMP_NUM_THREADS: "4"
-    OMP_WAIT_POLICY: "PASSIVE"
-    TBLIS_NUM_THREADS: "4"
-    MKL_NUM_THREADS: "1"
-    OPENBLAS_NUM_THREADS: "1"
-    HDF5_USE_FILE_LOCKING: "FALSE"
-    PYTHONUNBUFFERED: "1"
-    PYTHONIOENCODING: "utf-8"
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
 
-  steps:
-    - name: Checkout Source Code
-      uses: actions/checkout@v4
+      - name: Fetch Basis Sets from mshqc-basis
+        shell: bash -eo pipefail {0}
+        run: |
+          git clone --depth 1 https://github.com/syahrulhidayat/mshqc-basis.git /tmp/mshqc-basis
+          mkdir -p data/basis python/mshqc/basis
+          cp -rf /tmp/mshqc-basis/data/basis/* data/basis/
+          cp -rf /tmp/mshqc-basis/data/basis/* python/mshqc/basis/
+          rm -rf /tmp/mshqc-basis
 
-    - name: Fetch Basis Sets from mshqc-basis
-      shell: bash -eo pipefail {0}
-      run: |
-        git clone --depth 1 https://github.com/syahrulhidayat/mshqc-basis.git /tmp/mshqc-basis
-        mkdir -p data/basis python/mshqc/basis
-        cp -rf /tmp/mshqc-basis/data/basis/* data/basis/
-        cp -rf /tmp/mshqc-basis/data/basis/* python/mshqc/basis/
-        rm -rf /tmp/mshqc-basis
+      - name: Set up Micromamba Build Environment (geom_env)
+        uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: geom_env
+          create-args: >-
+            -c conda-forge
+            python=3.11
+            cmake
+            ninja
+            make
+            pkg-config
+            cxx-compiler
+            c-compiler
+            llvm-openmp
+            eigen
+            hdf5=1.14.3
+            openblas
+            liblapacke
+            nanobind
+            setuptools
+            wheel
+            pip
+            numpy
+            scipy
+            pytest
 
-    - name: Set up Micromamba Build Environment (geom_env)
-      uses: mamba-org/setup-micromamba@v2
-      with:
-        environment-name: geom_env
-        create-args: >-
-          -c conda-forge
-          python=3.11
-          cmake
-          ninja
-          make
-          pkg-config
-          cxx-compiler
-          c-compiler
-          llvm-openmp
-          eigen
-          hdf5=1.14.3
-          openblas
-          liblapacke
-          nanobind
-          setuptools
-          wheel
-          pip
-          numpy
-          scipy
-          pytest
+      - name: Restore Cached libcint & TBLIS (${{ runner.os }})
+        uses: actions/cache@v4
+        with:
+          path: .cache_local_deps
+          key: local-geom-deps-${{ runner.os }}-v2
 
-    - name: Restore Cached libcint & TBLIS (${{ runner.os }})
-      uses: actions/cache@v4
-      with:
-        path: .cache_local_deps
-        key: local-geom-deps-${{ runner.os }}-v2
-
-    - name: Install Cached libcint & TBLIS into geom_env
-      shell: bash -el {0}
-      run: |
-        set -o pipefail
-        micromamba activate geom_env
-        if [ -f ".cache_local_deps/lib/libtblis.a" ]; then
-          cp -rf .cache_local_deps/include/* "$CONDA_PREFIX/include/"
-          cp -rf .cache_local_deps/lib/* "$CONDA_PREFIX/lib/" 2>/dev/null || true
-          if [ -d ".cache_local_deps/lib64" ]; then
-            cp -rf .cache_local_deps/lib64/* "$CONDA_PREFIX/lib/" 2>/dev/null || true
+      - name: Install Cached libcint & TBLIS into geom_env
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate geom_env
+          if [ -f ".cache_local_deps/lib/libtblis.a" ]; then
+            cp -rf .cache_local_deps/include/* "$CONDA_PREFIX/include/"
+            cp -rf .cache_local_deps/lib/* "$CONDA_PREFIX/lib/" 2>/dev/null || true
+            if [ -d ".cache_local_deps/lib64" ]; then
+              cp -rf .cache_local_deps/lib64/* "$CONDA_PREFIX/lib/" 2>/dev/null || true
+            fi
+          else
+            echo "Cache miss for libcint/TBLIS; run full build job first to populate cache."
+            exit 1
           fi
-        else
-          echo "Cache miss for libcint/TBLIS; run full build job first to populate cache."
-          exit 1
-        fi
 
-    - name: Compile Minimal C++20 Thin-Core (-DMSHQC_THIN_CORE=ON)
-      id: compile_thin
-      shell: bash -el {0}
-      run: |
-        set -o pipefail
-        micromamba activate geom_env
-        export TBLIS_DIR="$CONDA_PREFIX"
-        export OpenMP_ROOT="$CONDA_PREFIX"
-        export CMAKE_PREFIX_PATH="$CONDA_PREFIX"
-        export CMAKE_ARGS="-DOpenMP_ROOT=$CONDA_PREFIX -DMSHQC_THIN_CORE=ON"
-        export CMAKE_BUILD_PARALLEL_LEVEL=4
-        python -m pip install --no-build-isolation --no-deps -e . -v
-        python -c "import mshqc; assert mshqc.THIN_CORE_ONLY is True; assert not hasattr(mshqc, 'RHF'); print('Verified THIN_CORE_ONLY=True')"
+      - name: Compile Minimal C++20 Thin-Core (-DMSHQC_THIN_CORE=ON)
+        id: compile_thin
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate geom_env
+          export TBLIS_DIR="$CONDA_PREFIX"
+          export OpenMP_ROOT="$CONDA_PREFIX"
+          export CMAKE_PREFIX_PATH="$CONDA_PREFIX"
+          export CMAKE_ARGS="-DOpenMP_ROOT=$CONDA_PREFIX -DMSHQC_THIN_CORE=ON"
+          export CMAKE_BUILD_PARALLEL_LEVEL=4
+          python -m pip install --no-build-isolation --no-deps -e . -v
+          python -c "import mshqc; assert mshqc.THIN_CORE_ONLY is True; assert not hasattr(mshqc, 'RHF'); print('Verified THIN_CORE_ONLY=True')"
 
-    - name: "[THIN-CORE 1/2] Run Stage 3 Verification (No Legacy C++)"
-      if: steps.compile_thin.outcome == 'success'
-      shell: bash -el {0}
-      run: |
-        set -o pipefail
-        micromamba activate geom_env
-        python -m pytest tests/test_thin_core_stage3.py -v -s 2>&1 | tee tc_01_stage3_log.txt
+      - name: "[THIN-CORE 1/2] Run Stage 3 Verification (No Legacy C++)"
+        if: steps.compile_thin.outcome == 'success'
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate geom_env
+          python -m pytest tests/test_thin_core_stage3.py -v -s 2>&1 | tee tc_01_stage3_log.txt
 
-    - name: "[THIN-CORE 2/2] Run Stage 4 Verification (No Legacy C++)"
-      if: steps.compile_thin.outcome == 'success'
-      shell: bash -el {0}
-      run: |
-        set -o pipefail
-        micromamba activate geom_env
-        python -m pytest tests/test_thin_core_stage4.py -v -s 2>&1 | tee tc_02_stage4_log.txt
+      - name: "[THIN-CORE 2/2] Run Stage 4 Verification (No Legacy C++)"
+        if: steps.compile_thin.outcome == 'success'
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate geom_env
+          python -m pytest tests/test_thin_core_stage4.py -v -s 2>&1 | tee tc_02_stage4_log.txt
 
-    - name: Upload Thin-Core Test Logs
-      if: always()
-      uses: actions/upload-artifact@v4
-      with:
-        name: mshqc-thin-core-only-logs-${{ matrix.os }}
-        path: tc_*_log.txt
-        if-no-files-found: warn
+      - name: Upload Thin-Core Test Logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mshqc-thin-core-only-logs-${{ matrix.os }}
+          path: tc_*_log.txt
+          if-no-files-found: warn
