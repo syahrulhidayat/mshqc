@@ -2,11 +2,11 @@ name: Compile Locally and Run Hybrid Phase 1 Test (mshqc)
 
 on:
   push:
-      branches:
-        - build-pypi
-        - test-geom
-        - test
-        - hybrid-v2
+    branches:
+      - build-pypi
+      - test-geom
+      - test
+      - hybrid-v2
   workflow_dispatch:
 
 jobs:
@@ -158,43 +158,50 @@ jobs:
           python -m pip install --no-build-isolation --no-deps -e . -v
           python -c "import mshqc; print('Compiled mshqc version:', getattr(mshqc, '__version__', 'local-build'))"
 
-            # =========================================================================
-      # SINGLE TEST SUITE: HYBRID ARCHITECTURE PHASE 1 & 2
       # =========================================================================
-      - name: "[01/05] Run Hybrid Phase 1 Verification (test_hybrid_phase1.py)"
+      # SINGLE TEST SUITE: HYBRID ARCHITECTURE PHASE 1-5 & THIN CORE STAGE 1
+      # =========================================================================
+      - name: "[01/06] Run Hybrid Phase 1 Verification (test_hybrid_phase1.py)"
         shell: bash -el {0}
         run: |
           set -o pipefail
           micromamba activate geom_env
           python -m pytest tests/test_hybrid_phase1.py -v -s 2>&1 | tee 01_test_hybrid_phase1_log.txt
 
-      - name: "[02/05] Run Hybrid Phase 2 Verification (test_hybrid_phase2.py)"
+      - name: "[02/06] Run Hybrid Phase 2 Verification (test_hybrid_phase2.py)"
         shell: bash -el {0}
         run: |
           set -o pipefail
           micromamba activate geom_env
           python -m pytest tests/test_hybrid_phase2.py -v -s 2>&1 | tee 02_test_hybrid_phase2_log.txt
 
-      - name: "[03/05] Run Hybrid Phase 3 Verification (test_hybrid_phase3.py)"
+      - name: "[03/06] Run Hybrid Phase 3 Verification (test_hybrid_phase3.py)"
         shell: bash -el {0}
         run: |
           set -o pipefail
           micromamba activate geom_env
           python -m pytest tests/test_hybrid_phase3.py -v -s 2>&1 | tee 03_test_hybrid_phase3_log.txt
 
-      - name: "[04/05] Run Hybrid Phase 4 Verification (test_hybrid_phase4.py)"
+      - name: "[04/06] Run Hybrid Phase 4 Verification (test_hybrid_phase4.py)"
         shell: bash -el {0}
         run: |
           set -o pipefail
           micromamba activate geom_env
           python -m pytest tests/test_hybrid_phase4.py -v -s 2>&1 | tee 04_test_hybrid_phase4_log.txt
 
-      - name: "[05/05] Run Hybrid Phase 5 Verification (test_hybrid_phase5.py)"
+      - name: "[05/06] Run Hybrid Phase 5 Verification (test_hybrid_phase5.py)"
         shell: bash -el {0}
         run: |
           set -o pipefail
           micromamba activate geom_env
           python -m pytest tests/test_hybrid_phase5.py -v -s 2>&1 | tee 05_test_hybrid_phase5_log.txt
+
+      - name: "[06/06] Run Thin Core Stage 1 Verification (test_thin_core_stage1.py)"
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate geom_env
+          python -m pytest tests/test_thin_core_stage1.py -v -s 2>&1 | tee 06_test_thin_core_stage1_log.txt
 
       # =========================================================================
       # UPLOAD ARTIFACT (.txt)
@@ -233,3 +240,10 @@ jobs:
         with:
           name: mshqc-hybrid-phase5-log-${{ matrix.os }}
           path: 05_test_hybrid_phase5_log.txt
+
+      - name: Upload Thin Core Stage 1 Test Log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mshqc-thin-core-stage1-log-${{ matrix.os }}
+          path: 06_test_thin_core_stage1_log.txt

@@ -7,6 +7,16 @@ import numpy as np
 from .._mshqc import kernels as K
 
 
+def _steihaug_boundary_tau(x_sq: float, xp_dot: float, p_sq: float, radius: float) -> float:
+    """Akar positif eksak ||x + tau * p||_2 = radius (identik dengan src/gradient/optimizer.cc)."""
+    if p_sq <= 1.0e-30:
+        return 0.0
+    b = 2.0 * xp_dot
+    c = x_sq - radius * radius
+    disc = max(0.0, b * b - 4.0 * p_sq * c)
+    return (-b + float(np.sqrt(disc))) / (2.0 * p_sq)
+
+
 def solve_tr_soscf_rhf(
     w_vo: np.ndarray,
     eps_occ: np.ndarray,
@@ -17,7 +27,7 @@ def solve_tr_soscf_rhf(
     trust_radius: float = 0.25,
     max_cg: int = 15,
 ) -> np.ndarray:
-    """Preconditioned Steihaug-CG untuk langkah rotasi orbital RHF memakai MO-DF Hessian."""
+    """Preconditioned Steihaug-Toint CG untuk langkah rotasi orbital RHF memakai MO-DF Hessian."""
     nv, no = w_vo.shape
     grad_norm = float(np.linalg.norm(w_vo))
     if grad_norm == 0.0:
@@ -40,13 +50,19 @@ def solve_tr_soscf_rhf(
         Hp = K.apply_mo_df_hessian_rhf(np.ascontiguousarray(p), eps_occ, eps_vir, B_oo, B_ov, B_vv)
         pHp = float(np.sum(p * Hp))
         if pHp <= 1e-12:
-            x = -w_vo / H_diag
-            break
+            tau = _steihaug_boundary_tau(
+                float(np.sum(x * x)), float(np.sum(x * p)), float(np.sum(p * p)), trust_radius
+            )
+            return x + tau * p
+
         alpha = rz / pHp
         x_next = x + alpha * p
         if float(np.linalg.norm(x_next)) >= trust_radius:
-            x = x_next * (trust_radius / float(np.linalg.norm(x_next)))
-            break
+            tau = _steihaug_boundary_tau(
+                float(np.sum(x * x)), float(np.sum(x * p)), float(np.sum(p * p)), trust_radius
+            )
+            return x + tau * p
+
         x = x_next
         r = r - alpha * Hp
         z = r / H_diag
@@ -76,7 +92,7 @@ def solve_tr_soscf_uhf(
     trust_radius: float = 0.25,
     max_cg: int = 15,
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Preconditioned Steihaug-CG terkopel (alpha + beta) untuk langkah TR-SOSCF UHF."""
+    """Preconditioned Steihaug-Toint CG terkopel (alpha + beta) untuk langkah TR-SOSCF UHF."""
     va, na = w_vo_a.shape
     vb, nb = w_vo_b.shape
     grad_norm = float(np.sqrt(np.sum(w_vo_a ** 2) + np.sum(w_vo_b ** 2)))
@@ -106,15 +122,22 @@ def solve_tr_soscf_uhf(
         )
         pHp = float(np.sum(pa * Hpa) + np.sum(pb * Hpb))
         if pHp <= 1e-12:
-            xa, xb = -w_vo_a / H_da, -w_vo_b / H_db
-            break
+            x_sq = float(np.sum(xa * xa) + np.sum(xb * xb))
+            xp = float(np.sum(xa * pa) + np.sum(xb * pb))
+            p_sq = float(np.sum(pa * pa) + np.sum(pb * pb))
+            tau = _steihaug_boundary_tau(x_sq, xp, p_sq, trust_radius)
+            return xa + tau * pa, xb + tau * pb
+
         alpha = rz / pHp
         xa_next, xb_next = xa + alpha * pa, xb + alpha * pb
         n_next = float(np.sqrt(np.sum(xa_next ** 2) + np.sum(xb_next ** 2)))
         if n_next >= trust_radius:
-            scale = trust_radius / n_next
-            xa, xb = xa_next * scale, xb_next * scale
-            break
+            x_sq = float(np.sum(xa * xa) + np.sum(xb * xb))
+            xp = float(np.sum(xa * pa) + np.sum(xb * pb))
+            p_sq = float(np.sum(pa * pa) + np.sum(pb * pb))
+            tau = _steihaug_boundary_tau(x_sq, xp, p_sq, trust_radius)
+            return xa + tau * pa, xb + tau * pb
+
         xa, xb = xa_next, xb_next
         ra, rb = ra - alpha * Hpa, rb - alpha * Hpb
         za, zb = ra / H_da, rb / H_db

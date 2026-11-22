@@ -1,13 +1,7 @@
 name: Compile Locally and Run All mshqc Tests
 
 on:
-  push:
-    branches:
-      - build-pypi
-      - test-geom
-      - test
-      - hybrid-v2
-  workflow_dispatch:
+
 
 jobs:
   mshqc_full_test:

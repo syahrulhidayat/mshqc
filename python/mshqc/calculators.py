@@ -186,10 +186,41 @@ class MSHQCCalculator:
             conf.cholesky_threshold = self.threshold
         return conf
 
-    def run_scf(self, ref: Optional[str] = None) -> mshqc.SCFResult:
+    # [INJECTED_THIN_CORE_STAGE1_ROUTING]
+    def _hybrid_enabled(self, use_hybrid: Optional[bool]) -> bool:
+        if use_hybrid is not None:
+            return bool(use_hybrid)
+        return os.environ.get("MSHQC_USE_HYBRID_SOLVERS", "0").strip().lower() in ("1", "true", "yes")
+
+    def run_scf(self, ref: Optional[str] = None, use_hybrid: Optional[bool] = None):
         ref_mode = (ref or self.reference).lower()
         conf = self._make_scf_config()
         use_sym = (self.pg is not None and self.pl is not None)
+        if (
+            self._hybrid_enabled(use_hybrid)
+            and not use_sym
+            and self.eri_method in ("df", "cholesky")
+            and self.scf_type != "ooc"
+            and ref_mode in ("rhf", "uhf")
+        ):
+            from .methods.scf_hybrid import run_df_rhf, run_df_uhf
+            B_ao = self._get_ao_3index_factor(None)
+            H_core = self.integrals.compute_kinetic() + self.integrals.compute_nuclear()
+            S_ovlp = self.integrals.compute_overlap()
+            v_nn = self.molecule.nuclear_repulsion_energy()
+            if ref_mode == "rhf":
+                self.scf_res = run_df_rhf(
+                    H_core, S_ovlp, v_nn, B_ao, self.n_alpha,
+                    energy_tol=self.threshold, density_tol=self.threshold,
+                    level_shift=self.level_shift,
+                )
+            else:
+                self.scf_res = run_df_uhf(
+                    H_core, S_ovlp, v_nn, B_ao, self.n_alpha, self.n_beta,
+                    energy_tol=self.threshold, density_tol=self.threshold,
+                    level_shift=self.level_shift,
+                )
+            return self.scf_res
         if ref_mode == "rhf":
             if use_sym:
                 solver = mshqc.RHF(self.molecule, self.basis, self.integrals, self.pg, self.pl, conf)
@@ -236,17 +267,31 @@ class MSHQCCalculator:
             solver = mshqc.UMP3(scf_res, mp2_res, conf, self.integrals)
         return solver.compute()
 
-    def run_omp2(self, scf_res: Optional[mshqc.SCFResult] = None, opt_method: str = "soscf", grad_thresh: float = 1e-5, max_iter: int = 50) -> mshqc.MP2Result:
+    def run_omp2(self, scf_res: Optional[mshqc.SCFResult] = None, opt_method: str = "soscf", grad_thresh: float = 1e-5, max_iter: int = 50, use_hybrid: Optional[bool] = None):
         if scf_res is None:
-            scf_res = self.scf_res or self.run_scf()
+            scf_res = self.scf_res or self.run_scf(use_hybrid=use_hybrid)
+        if (
+            (self._hybrid_enabled(use_hybrid) or not isinstance(scf_res, mshqc.SCFResult))
+            and self.eri_method in ("df", "cholesky")
+            and self.n_frozen == 0
+            and self.reference in ("rhf", "uhf")
+        ):
+            return self._run_hybrid_omp_method("omp2", scf_res=scf_res, grad_thresh=grad_thresh, max_iter=max_iter)
         conf = self._make_mp2_config(opt_method=opt_method, grad_thresh=grad_thresh, max_iter=max_iter)
         sym_args = (self.pg, self.pl) if (self.pg is not None and self.pl is not None) else ()
         solver = mshqc.OMP2(self.molecule, self.basis, self.integrals, scf_res, conf, *sym_args)
         return solver.compute()
 
-    def run_omp3(self, scf_res: Optional[mshqc.SCFResult] = None, opt_method: str = "soscf", grad_thresh: float = 1e-5, max_iter: int = 50) -> mshqc.MP3Result:
+    def run_omp3(self, scf_res: Optional[mshqc.SCFResult] = None, opt_method: str = "soscf", grad_thresh: float = 1e-5, max_iter: int = 50, use_hybrid: Optional[bool] = None):
         if scf_res is None:
-            scf_res = self.scf_res or self.run_scf()
+            scf_res = self.scf_res or self.run_scf(use_hybrid=use_hybrid)
+        if (
+            (self._hybrid_enabled(use_hybrid) or not isinstance(scf_res, mshqc.SCFResult))
+            and self.eri_method in ("df", "cholesky")
+            and self.n_frozen == 0
+            and self.reference in ("rhf", "uhf")
+        ):
+            return self._run_hybrid_omp_method("omp3", scf_res=scf_res, grad_thresh=grad_thresh, max_iter=max_iter)
         conf = self._make_mp2_config(opt_method=opt_method, grad_thresh=grad_thresh, max_iter=max_iter)
         sym_args = (self.pg, self.pl) if (self.pg is not None and self.pl is not None) else ()
         solver = mshqc.OMP3(self.molecule, self.basis, self.integrals, scf_res, conf, *sym_args)
@@ -254,8 +299,8 @@ class MSHQCCalculator:
 
 
     # [INJECTED_HYBRID_PHASE4_CACHE]
-    def _get_ao_3index_factor(self, scf_res: mshqc.SCFResult):
-        if hasattr(scf_res, "L_mat") and scf_res.L_mat.shape[0] > 0 and scf_res.L_mat.shape[1] > 0:
+    def _get_ao_3index_factor(self, scf_res: Optional[Any] = None):
+        if scf_res is not None and hasattr(scf_res, "L_mat") and scf_res.L_mat.shape[0] > 0 and scf_res.L_mat.shape[1] > 0:
             return scf_res.L_mat
         if self._ao_factor_cache is not None:
             return self._ao_factor_cache
