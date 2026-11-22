@@ -104,8 +104,10 @@ def test_thin_core_analytic_df_gradients():
             _, g_cpp = mshqc.HPCGeometryOptimizer.compute_nuclear_gradient_cpp(mol, cfg)
             diff_cpp = float(np.max(np.abs(g_ana - np.asarray(g_cpp).reshape(-1, 3))))
             msg += f" | max|py-cpp|={diff_cpp:.2e}"
+            print(msg)
             assert diff_cpp < 1.0e-9, f"Python vs C++ analytic grad mismatch on {label}: {diff_cpp}"
-        print(msg)
+        else:
+            print(msg)
 
 
 def test_report_thin_core_vs_legacy_profile():

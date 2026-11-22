@@ -226,27 +226,36 @@ class PulayDIIS:
             self._B[i, idx] = val
             self._B[idx, i] = val
 
+    # [INJECTED_THIN_CORE_STAGE4_DIAG_DIIS]
     def extrapolate(self) -> Tuple[np.ndarray, ...]:
         n = len(self._focks)
         if n < 2:
             return self._focks[-1]
 
         B_sub = self._B[:n, :n]
-        b_scale = float(np.max(np.abs(B_sub)))
-        if b_scale <= 0.0:
+        diag = np.diag(B_sub)
+        if not np.all(np.isfinite(diag)) or float(np.min(diag)) <= 1.0e-30:
             return self._focks[-1]
 
+        d = np.sqrt(diag)
+        s_l = float(np.min(d))
+
         A = np.zeros((n + 1, n + 1), dtype=np.float64)
-        A[:n, :n] = B_sub / b_scale
-        A[:n, n] = -1.0
-        A[n, :n] = -1.0
+        A[:n, :n] = B_sub / np.outer(d, d)
+        lag = -s_l / d
+        A[:n, n] = lag
+        A[n, :n] = lag
 
         U, s, Vt = np.linalg.svd(A, full_matrices=False)
-        tol = 1.0e-12 * max(1.0, float(s[0]))
+        tol = 1.0e-13 * max(1.0, float(s[0]))
         s_inv = np.where(s > tol, 1.0 / s, 0.0)
         rhs = np.zeros(n + 1, dtype=np.float64)
-        rhs[n] = -1.0
-        coeffs = (Vt.T * s_inv) @ (U.T @ rhs)
+        rhs[n] = -s_l
+        y = (Vt.T * s_inv) @ (U.T @ rhs)
+        coeffs = y[:n] / d
+
+        if not np.all(np.isfinite(coeffs)) or abs(float(np.sum(coeffs)) - 1.0) > 1.0e-4:
+            return self._focks[-1]
 
         n_mats = len(self._focks[0])
         out = []
@@ -256,7 +265,6 @@ class PulayDIIS:
                 acc += coeffs[k] * self._focks[k][m_idx]
             out.append(acc)
         return tuple(out)
-
 
 def _symmetric_orthogonalizer(S: np.ndarray, lindep_tol: float = 1.0e-8) -> np.ndarray:
     evals, evecs = eigh(S)
@@ -355,6 +363,12 @@ def run_df_rhf(
         )
         if it > 2 and (strict_conv or plateau_conv):
             eps, C = _diagonalize_fock(F, X)
+            C_occ = np.ascontiguousarray(C[:, :n_occ])
+            J, K_mat = K.build_jk_3c_rhf(B, C_occ, nbf)
+            F = H + J - K_mat
+            P = 2.0 * (C_occ @ C_occ.T)
+            e_tot = float(0.5 * np.sum(P * (H + F)) + v_nn)
+            eps, C = _diagonalize_fock(F, X)
             converged = True
             break
 
@@ -391,7 +405,7 @@ def run_df_uhf(
     nb: int,
     energy_tol: float = 1.0e-9,
     density_tol: float = 1.0e-9,
-    max_iter: int = 120,
+    max_iter: int = 200,
     diis_space: int = 8,
     level_shift: float = 0.0,
     C_init_a: Optional[np.ndarray] = None,
@@ -476,6 +490,16 @@ def run_df_uhf(
             and err_rms <= max(density_tol, 1.0e-11)
         )
         if it > 2 and (strict_conv or plateau_conv):
+            eps_a, Ca = _diagonalize_fock(Fa, X)
+            eps_b, Cb = _diagonalize_fock(Fb, X)
+            Ca_o = np.ascontiguousarray(Ca[:, :na])
+            Cb_o = np.ascontiguousarray(Cb[:, :nb])
+            J, Ka, Kb = K.build_jk_3c_uhf(B, Ca_o, Cb_o, nbf)
+            Fa = H + J - Ka
+            Fb = H + J - Kb
+            Pa = Ca_o @ Ca_o.T if na > 0 else np.zeros((nbf, nbf), dtype=np.float64)
+            Pb = Cb_o @ Cb_o.T if nb > 0 else np.zeros((nbf, nbf), dtype=np.float64)
+            e_tot = float(0.5 * (np.sum(Pa * (H + Fa)) + np.sum(Pb * (H + Fb))) + v_nn)
             eps_a, Ca = _diagonalize_fock(Fa, X)
             eps_b, Cb = _diagonalize_fock(Fb, X)
             converged = True

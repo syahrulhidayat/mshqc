@@ -23,6 +23,7 @@
 
 #include "mshqc/scf/diis.h"
 #include <vector>
+#include <cmath>
 #include <Eigen/SVD>
 #ifdef I
 #undef I
@@ -93,21 +94,40 @@ Eigen::VectorXd DIIS::solve_svd(const Eigen::MatrixXd& A) {
     return svd.matrixV() * S_inv * svd.matrixU().transpose() * rhs;
 }
 
+// [INJECTED_THIN_CORE_STAGE4_DIAG_DIIS]
 Eigen::MatrixXd DIIS::extrapolate() {
-    int n = fock_history_.size();
+    int n = static_cast<int>(fock_history_.size());
     if (n < 2) return fock_history_.back();
 
     Eigen::MatrixXd B_sub = B_matrix_.topLeftCorner(n, n);
-    double b_scale = B_sub.cwiseAbs().maxCoeff();
-    if (b_scale <= 0.0) return fock_history_.back();
+    Eigen::VectorXd d(n);
+    for (int i = 0; i < n; ++i) {
+        const double bii = B_sub(i, i);
+        if (!std::isfinite(bii) || bii <= 1.0e-30) {
+            return fock_history_.back();
+        }
+        d(i) = std::sqrt(bii);
+    }
 
+    const double s_l = d.minCoeff();
     Eigen::MatrixXd A = Eigen::MatrixXd::Zero(n + 1, n + 1);
-    A.topLeftCorner(n, n) = B_sub / b_scale;
-    A.col(n).head(n).setConstant(-1.0);
-    A.row(n).head(n).setConstant(-1.0);
+    for (int i = 0; i < n; ++i) {
+        for (int j = 0; j < n; ++j) {
+            A(i, j) = B_sub(i, j) / (d(i) * d(j));
+        }
+        const double lag = -s_l / d(i);
+        A(i, n) = lag;
+        A(n, i) = lag;
+    }
     A(n, n) = 0.0;
 
-    Eigen::VectorXd coeffs = solve_svd(A);
+    Eigen::VectorXd y = solve_svd(A) * s_l;
+    Eigen::VectorXd coeffs = y.head(n).cwiseQuotient(d);
+
+    const double sum_c = coeffs.sum();
+    if (!std::isfinite(sum_c) || std::abs(sum_c - 1.0) > 1.0e-4) {
+        return fock_history_.back();
+    }
 
     Eigen::MatrixXd F_new = Eigen::MatrixXd::Zero(fock_history_[0].rows(), fock_history_[0].cols());
     for (int i = 0; i < n; ++i) {
@@ -115,6 +135,4 @@ Eigen::MatrixXd DIIS::extrapolate() {
     }
     return F_new;
 }
-
-
 } // namespace mshqc
