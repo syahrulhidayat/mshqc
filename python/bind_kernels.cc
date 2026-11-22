@@ -84,6 +84,13 @@ void bind_kernels_module(nb::module_& parent) {
           nb::call_guard<nb::gil_scoped_release>(), nb::arg("L_mat"), nb::arg("C_occ"), nb::arg("nbf"));
     k.def("transform_3c_mo", &kernels::transform_3c_mo,
           nb::call_guard<nb::gil_scoped_release>(), nb::arg("L_mat"), nb::arg("C1"), nb::arg("C2"), nb::arg("nbf"));
+    k.def("transform_3c_mo_blocks", &kernels::transform_3c_mo_blocks,
+          nb::call_guard<nb::gil_scoped_release>(),
+          nb::arg("L_mat"), nb::arg("C_occ"), nb::arg("C_vir"), nb::arg("nbf"));
+    k.def("transform_3c_mo_blocks_uhf", &kernels::transform_3c_mo_blocks_uhf,
+          nb::call_guard<nb::gil_scoped_release>(),
+          nb::arg("L_mat"), nb::arg("Ca_occ"), nb::arg("Ca_vir"),
+          nb::arg("Cb_occ"), nb::arg("Cb_vir"), nb::arg("nbf"));
     k.def("semicanonicalize_subspaces", &kernels::semicanonicalize_subspaces,
           nb::call_guard<nb::gil_scoped_release>(), nb::arg("C"), nb::arg("F_ao"), nb::arg("n_occ"));
 

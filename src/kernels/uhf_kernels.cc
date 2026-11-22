@@ -109,21 +109,96 @@ inline void accum_vvvv_ladder_uhf_chunked(
 
 } // namespace
 
+
 std::tuple<Eigen::MatrixXd, Eigen::MatrixXd, Eigen::MatrixXd> build_jk_3c_uhf(
     const Eigen::MatrixXd& L_mat,
     const Eigen::MatrixXd& C_occ_a,
     const Eigen::MatrixXd& C_occ_b,
     int nbf)
 {
-    Eigen::MatrixXd P_tot = Eigen::MatrixXd::Zero(nbf, nbf);
-    if (C_occ_a.cols() > 0) P_tot.noalias() += C_occ_a * C_occ_a.transpose();
-    if (C_occ_b.cols() > 0) P_tot.noalias() += C_occ_b * C_occ_b.transpose();
+    if (!integrals::has_valid_ao_factor(L_mat, nbf)) {
+        throw std::invalid_argument("build_jk_3c_uhf: dimensi L_mat tidak cocok dengan nbf");
+    }
+    const int na = static_cast<int>(C_occ_a.cols());
+    const int nb = static_cast<int>(C_occ_b.cols());
+    const int n_aux = static_cast<int>(L_mat.cols());
 
+    Eigen::MatrixXd P_tot = Eigen::MatrixXd::Zero(nbf, nbf);
+    if (na > 0) P_tot.noalias() += C_occ_a * C_occ_a.transpose();
+    if (nb > 0) P_tot.noalias() += C_occ_b * C_occ_b.transpose();
     Eigen::MatrixXd J = build_coulomb_3c(L_mat, P_tot, nbf);
-    Eigen::MatrixXd Ka = build_exchange_3c_occ(L_mat, C_occ_a, nbf);
-    Eigen::MatrixXd Kb = build_exchange_3c_occ(L_mat, C_occ_b, nbf);
+
+    Eigen::MatrixXd Ka = Eigen::MatrixXd::Zero(nbf, nbf);
+    Eigen::MatrixXd Kb = Eigen::MatrixXd::Zero(nbf, nbf);
+    if (n_aux == 0 || (na == 0 && nb == 0)) {
+        return {std::move(J), std::move(Ka), std::move(Kb)};
+    }
+
+    const bool packed = integrals::is_packed_ao_matrix(L_mat, nbf);
+    const int n_tot_o = na + nb;
+    Eigen::MatrixXd Cab_o(nbf, n_tot_o);
+    if (na > 0) Cab_o.leftCols(na) = C_occ_a;
+    if (nb > 0) Cab_o.rightCols(nb) = C_occ_b;
+
+    const int max_o = std::max(1, std::max(na, nb));
+    const int batch_p = std::clamp(
+        static_cast<int>((8ULL * 1024ULL * 1024ULL) /
+            std::max<size_t>(1, static_cast<size_t>(nbf) * static_cast<size_t>(max_o) * sizeof(double))),
+        1, 32);
+
+    const int max_threads = omp_get_max_threads();
+    std::vector<Eigen::MatrixXd> Ka_tls(na > 0 ? max_threads : 0, Eigen::MatrixXd::Zero(nbf, nbf));
+    std::vector<Eigen::MatrixXd> Kb_tls(nb > 0 ? max_threads : 0, Eigen::MatrixXd::Zero(nbf, nbf));
+
+    #pragma omp parallel
+    {
+        const int tid = omp_get_thread_num();
+        Eigen::MatrixXd L_P_buf;
+        if (packed) L_P_buf.resize(nbf, nbf);
+        Eigen::MatrixXd Tab_loc(nbf, n_tot_o);
+        Eigen::MatrixXd Ta_batch, Tb_batch;
+        if (na > 0) Ta_batch.resize(nbf, static_cast<Eigen::Index>(na) * batch_p);
+        if (nb > 0) Tb_batch.resize(nbf, static_cast<Eigen::Index>(nb) * batch_p);
+        int cnt = 0;
+
+        #pragma omp for schedule(static) nowait
+        for (int P = 0; P < n_aux; ++P) {
+            const double* col_p = L_mat.col(P).data();
+            if (packed) integrals::unpack_ao_column(col_p, nbf, true, L_P_buf);
+            Eigen::Map<const Eigen::MatrixXd> L_P(packed ? L_P_buf.data() : col_p, nbf, nbf);
+
+            Tab_loc.noalias() = L_P * Cab_o;
+            if (na > 0) Ta_batch.middleCols(static_cast<Eigen::Index>(cnt) * na, na) = Tab_loc.leftCols(na);
+            if (nb > 0) Tb_batch.middleCols(static_cast<Eigen::Index>(cnt) * nb, nb) = Tab_loc.rightCols(nb);
+            ++cnt;
+
+            if (cnt == batch_p) {
+                if (na > 0) Ka_tls[tid].noalias() += Ta_batch * Ta_batch.transpose();
+                if (nb > 0) Kb_tls[tid].noalias() += Tb_batch * Tb_batch.transpose();
+                cnt = 0;
+            }
+        }
+        if (cnt > 0) {
+            if (na > 0) {
+                auto Ta_rem = Ta_batch.leftCols(static_cast<Eigen::Index>(cnt) * na);
+                Ka_tls[tid].noalias() += Ta_rem * Ta_rem.transpose();
+            }
+            if (nb > 0) {
+                auto Tb_rem = Tb_batch.leftCols(static_cast<Eigen::Index>(cnt) * nb);
+                Kb_tls[tid].noalias() += Tb_rem * Tb_rem.transpose();
+            }
+        }
+    }
+
+    for (int t = 0; t < max_threads; ++t) {
+        if (na > 0) Ka.noalias() += Ka_tls[t];
+        if (nb > 0) Kb.noalias() += Kb_tls[t];
+    }
+    if (na > 0) Ka = 0.5 * (Ka + Ka.transpose());
+    if (nb > 0) Kb = 0.5 * (Kb + Kb.transpose());
     return {std::move(J), std::move(Ka), std::move(Kb)};
 }
+
 
 std::tuple<double, double, double, Eigen::MatrixXd, Eigen::MatrixXd, Eigen::MatrixXd> eval_ump2_df(
     const Eigen::MatrixXd& B_ov_a,

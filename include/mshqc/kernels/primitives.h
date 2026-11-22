@@ -95,7 +95,8 @@ inline Eigen::MatrixXd build_coulomb_3c(
     return integrals::compute_coulomb_from_ao_factor(L_mat, P_tot, nbf);
 }
 
-// 2. Exchange K[C_occ * C_occ^T] berorde O(N_aux * N_occ * N_bf^2)
+// [INJECTED_THIN_CORE_STAGE2_PRIMITIVES]
+// 2. Exchange K[C_occ * C_occ^T] berorde O(N_aux * N_occ * N_bf^2) via adaptive batched Level-3 BLAS DGEMM
 inline Eigen::MatrixXd build_exchange_3c_occ(
     const Eigen::MatrixXd& L_mat,
     const Eigen::MatrixXd& C_occ,
@@ -110,24 +111,43 @@ inline Eigen::MatrixXd build_exchange_3c_occ(
     if (n_occ == 0 || n_aux == 0) return K_tot;
 
     const bool packed = integrals::is_packed_ao_matrix(L_mat, nbf);
+    const int batch_p = std::clamp(
+        static_cast<int>((8ULL * 1024ULL * 1024ULL) /
+            std::max<size_t>(1, static_cast<size_t>(nbf) * static_cast<size_t>(n_occ) * sizeof(double))),
+        1, 32);
+
+    const int max_threads = omp_get_max_threads();
+    std::vector<Eigen::MatrixXd> K_tls(max_threads, Eigen::MatrixXd::Zero(nbf, nbf));
 
     #pragma omp parallel
     {
-        Eigen::MatrixXd K_loc = Eigen::MatrixXd::Zero(nbf, nbf);
-        Eigen::MatrixXd L_P(nbf, nbf);
-        Eigen::MatrixXd T_P(nbf, n_occ);
+        const int tid = omp_get_thread_num();
+        Eigen::MatrixXd& K_loc = K_tls[tid];
+        Eigen::MatrixXd L_P_buf;
+        if (packed) L_P_buf.resize(nbf, nbf);
+        Eigen::MatrixXd T_batch(nbf, static_cast<Eigen::Index>(n_occ) * batch_p);
+        int cnt = 0;
 
-        #pragma omp for schedule(static)
+        #pragma omp for schedule(static) nowait
         for (int P = 0; P < n_aux; ++P) {
-            integrals::unpack_ao_column(L_mat.col(P).data(), nbf, packed, L_P);
-            T_P.noalias() = L_P * C_occ;
-            K_loc.noalias() += T_P * T_P.transpose();
+            const double* col_p = L_mat.col(P).data();
+            if (packed) integrals::unpack_ao_column(col_p, nbf, true, L_P_buf);
+            Eigen::Map<const Eigen::MatrixXd> L_P(packed ? L_P_buf.data() : col_p, nbf, nbf);
+            T_batch.middleCols(static_cast<Eigen::Index>(cnt) * n_occ, n_occ).noalias() = L_P * C_occ;
+            ++cnt;
+            if (cnt == batch_p) {
+                K_loc.noalias() += T_batch * T_batch.transpose();
+                cnt = 0;
+            }
         }
+        if (cnt > 0) {
+            auto T_rem = T_batch.leftCols(static_cast<Eigen::Index>(cnt) * n_occ);
+            K_loc.noalias() += T_rem * T_rem.transpose();
+        }
+    }
 
-        #pragma omp critical
-        {
-            K_tot.noalias() += K_loc;
-        }
+    for (int t = 0; t < max_threads; ++t) {
+        K_tot.noalias() += K_tls[t];
     }
     return 0.5 * (K_tot + K_tot.transpose());
 }
@@ -191,6 +211,221 @@ inline Eigen::MatrixXd transform_3c_mo(
         throw std::invalid_argument("transform_3c_mo: dimensi L_mat tidak cocok dengan nbf");
     }
     return integrals::transform_3c_ao_to_mo_block(L_mat, C1, C2, nbf);
+}
+
+// 5b. Transformasi 3-indeks terpadu (B_oo, B_ov, B_vv) dalam 1x AO unpack adaptif (<= 8 MB/thread)
+inline std::tuple<Eigen::MatrixXd, Eigen::MatrixXd, Eigen::MatrixXd> transform_3c_mo_blocks(
+    const Eigen::MatrixXd& L_mat,
+    const Eigen::MatrixXd& C_occ,
+    const Eigen::MatrixXd& C_vir,
+    int nbf)
+{
+    if (!integrals::has_valid_ao_factor(L_mat, nbf)) {
+        throw std::invalid_argument("transform_3c_mo_blocks: dimensi L_mat tidak cocok dengan nbf");
+    }
+    const int no = static_cast<int>(C_occ.cols());
+    const int nv = static_cast<int>(C_vir.cols());
+    const int n_aux = static_cast<int>(L_mat.cols());
+
+    Eigen::MatrixXd B_oo(static_cast<Eigen::Index>(no) * no, n_aux);
+    Eigen::MatrixXd B_ov(static_cast<Eigen::Index>(no) * nv, n_aux);
+    Eigen::MatrixXd B_vv(static_cast<Eigen::Index>(nv) * nv, n_aux);
+    if (n_aux == 0 || (no == 0 && nv == 0)) {
+        return {std::move(B_oo), std::move(B_ov), std::move(B_vv)};
+    }
+
+    const bool packed = integrals::is_packed_ao_matrix(L_mat, nbf);
+    const size_t bytes_per_p = std::max<size_t>(1, static_cast<size_t>(nbf) * nbf * sizeof(double));
+    const int chunk_size = std::clamp(
+        static_cast<int>((8ULL * 1024ULL * 1024ULL) / bytes_per_p), 1, 32);
+
+    #pragma omp parallel
+    {
+        Eigen::MatrixXd L_sq_buf;
+        if (packed) L_sq_buf.resize(static_cast<Eigen::Index>(nbf) * nbf, chunk_size);
+        Eigen::MatrixXd B_oo_tmp(no, no);
+        Eigen::MatrixXd B_ov_tmp(nv, no);
+        Eigen::MatrixXd B_vv_tmp(nv, nv);
+
+        #pragma omp for schedule(dynamic, 1) nowait
+        for (int P_start = 0; P_start < n_aux; P_start += chunk_size) {
+            const int P_size = std::min(chunk_size, n_aux - P_start);
+            const double* L_sq_ptr = nullptr;
+            if (packed) {
+                for (int p = 0; p < P_size; ++p) {
+                    const double* s = L_mat.col(P_start + p).data();
+                    double* d = L_sq_buf.col(p).data();
+                    for (int i = 0; i < nbf; ++i) {
+                        const int base = i * (i + 1) / 2;
+                        for (int j = 0; j < i; ++j) {
+                            const double v = s[base + j];
+                            d[i + j * nbf] = v;
+                            d[j + i * nbf] = v;
+                        }
+                        d[i + i * nbf] = s[base + i];
+                    }
+                }
+                L_sq_ptr = L_sq_buf.data();
+            } else {
+                L_sq_ptr = L_mat.col(P_start).data();
+            }
+
+            Eigen::Map<const Eigen::MatrixXd> L_res(
+                L_sq_ptr, nbf, static_cast<Eigen::Index>(nbf) * P_size);
+            Eigen::MatrixXd X_occ, X_vir;
+            if (no > 0) X_occ.noalias() = C_occ.transpose() * L_res;
+            if (nv > 0) X_vir.noalias() = C_vir.transpose() * L_res;
+
+            for (int p = 0; p < P_size; ++p) {
+                if (no > 0) {
+                    Eigen::Map<const Eigen::MatrixXd> X_Po(
+                        X_occ.data() + static_cast<size_t>(p) * no * nbf, no, nbf);
+                    B_oo_tmp.noalias() = X_Po * C_occ;
+                    B_oo.col(P_start + p) = Eigen::Map<const Eigen::VectorXd>(
+                        B_oo_tmp.data(), static_cast<Eigen::Index>(no) * no);
+                }
+                if (nv > 0) {
+                    Eigen::Map<const Eigen::MatrixXd> X_Pv(
+                        X_vir.data() + static_cast<size_t>(p) * nv * nbf, nv, nbf);
+                    if (no > 0) {
+                        B_ov_tmp.noalias() = X_Pv * C_occ;
+                        B_ov.col(P_start + p) = Eigen::Map<const Eigen::VectorXd>(
+                            B_ov_tmp.data(), static_cast<Eigen::Index>(nv) * no);
+                    }
+                    B_vv_tmp.noalias() = X_Pv * C_vir;
+                    B_vv.col(P_start + p) = Eigen::Map<const Eigen::VectorXd>(
+                        B_vv_tmp.data(), static_cast<Eigen::Index>(nv) * nv);
+                }
+            }
+        }
+    }
+    return {std::move(B_oo), std::move(B_ov), std::move(B_vv)};
+}
+
+// 5c. Transformasi 3-indeks terpadu UHF (6 blok spin dalam 1x AO unpack)
+inline std::tuple<
+    Eigen::MatrixXd, Eigen::MatrixXd, Eigen::MatrixXd,
+    Eigen::MatrixXd, Eigen::MatrixXd, Eigen::MatrixXd>
+transform_3c_mo_blocks_uhf(
+    const Eigen::MatrixXd& L_mat,
+    const Eigen::MatrixXd& Ca_occ,
+    const Eigen::MatrixXd& Ca_vir,
+    const Eigen::MatrixXd& Cb_occ,
+    const Eigen::MatrixXd& Cb_vir,
+    int nbf)
+{
+    if (!integrals::has_valid_ao_factor(L_mat, nbf)) {
+        throw std::invalid_argument("transform_3c_mo_blocks_uhf: dimensi L_mat tidak cocok dengan nbf");
+    }
+    const int na = static_cast<int>(Ca_occ.cols());
+    const int va = static_cast<int>(Ca_vir.cols());
+    const int nb = static_cast<int>(Cb_occ.cols());
+    const int vb = static_cast<int>(Cb_vir.cols());
+    const int n_aux = static_cast<int>(L_mat.cols());
+
+    const bool has_b = (nb > 0 && vb > 0);
+    Eigen::MatrixXd B_oo_a(static_cast<Eigen::Index>(na) * na, n_aux);
+    Eigen::MatrixXd B_ov_a(static_cast<Eigen::Index>(na) * va, n_aux);
+    Eigen::MatrixXd B_vv_a(static_cast<Eigen::Index>(va) * va, n_aux);
+    Eigen::MatrixXd B_oo_b(has_b ? static_cast<Eigen::Index>(nb) * nb : 0, n_aux);
+    Eigen::MatrixXd B_ov_b(has_b ? static_cast<Eigen::Index>(nb) * vb : 0, n_aux);
+    Eigen::MatrixXd B_vv_b(has_b ? static_cast<Eigen::Index>(vb) * vb : 0, n_aux);
+    if (n_aux == 0) {
+        return {std::move(B_oo_a), std::move(B_ov_a), std::move(B_vv_a),
+                std::move(B_oo_b), std::move(B_ov_b), std::move(B_vv_b)};
+    }
+
+    const bool packed = integrals::is_packed_ao_matrix(L_mat, nbf);
+    const size_t bytes_per_p = std::max<size_t>(1, static_cast<size_t>(nbf) * nbf * sizeof(double));
+    const int chunk_size = std::clamp(
+        static_cast<int>((8ULL * 1024ULL * 1024ULL) / bytes_per_p), 1, 32);
+
+    #pragma omp parallel
+    {
+        Eigen::MatrixXd L_sq_buf;
+        if (packed) L_sq_buf.resize(static_cast<Eigen::Index>(nbf) * nbf, chunk_size);
+        Eigen::MatrixXd Boo_a(na, na), Bov_a(va, na), Bvv_a(va, va);
+        Eigen::MatrixXd Boo_b, Bov_b, Bvv_b;
+        if (has_b) {
+            Boo_b.resize(nb, nb);
+            Bov_b.resize(vb, nb);
+            Bvv_b.resize(vb, vb);
+        }
+
+        #pragma omp for schedule(dynamic, 1) nowait
+        for (int P_start = 0; P_start < n_aux; P_start += chunk_size) {
+            const int P_size = std::min(chunk_size, n_aux - P_start);
+            const double* L_sq_ptr = nullptr;
+            if (packed) {
+                for (int p = 0; p < P_size; ++p) {
+                    const double* s = L_mat.col(P_start + p).data();
+                    double* d = L_sq_buf.col(p).data();
+                    for (int i = 0; i < nbf; ++i) {
+                        const int base = i * (i + 1) / 2;
+                        for (int j = 0; j < i; ++j) {
+                            const double v = s[base + j];
+                            d[i + j * nbf] = v;
+                            d[j + i * nbf] = v;
+                        }
+                        d[i + i * nbf] = s[base + i];
+                    }
+                }
+                L_sq_ptr = L_sq_buf.data();
+            } else {
+                L_sq_ptr = L_mat.col(P_start).data();
+            }
+
+            Eigen::Map<const Eigen::MatrixXd> L_res(
+                L_sq_ptr, nbf, static_cast<Eigen::Index>(nbf) * P_size);
+            Eigen::MatrixXd Xa_o, Xa_v;
+            if (na > 0) Xa_o.noalias() = Ca_occ.transpose() * L_res;
+            if (va > 0) Xa_v.noalias() = Ca_vir.transpose() * L_res;
+
+            for (int p = 0; p < P_size; ++p) {
+                if (na > 0) {
+                    Eigen::Map<const Eigen::MatrixXd> Xpo(
+                        Xa_o.data() + static_cast<size_t>(p) * na * nbf, na, nbf);
+                    Boo_a.noalias() = Xpo * Ca_occ;
+                    B_oo_a.col(P_start + p) = Eigen::Map<const Eigen::VectorXd>(
+                        Boo_a.data(), static_cast<Eigen::Index>(na) * na);
+                }
+                if (va > 0) {
+                    Eigen::Map<const Eigen::MatrixXd> Xpv(
+                        Xa_v.data() + static_cast<size_t>(p) * va * nbf, va, nbf);
+                    if (na > 0) {
+                        Bov_a.noalias() = Xpv * Ca_occ;
+                        B_ov_a.col(P_start + p) = Eigen::Map<const Eigen::VectorXd>(
+                            Bov_a.data(), static_cast<Eigen::Index>(va) * na);
+                    }
+                    Bvv_a.noalias() = Xpv * Ca_vir;
+                    B_vv_a.col(P_start + p) = Eigen::Map<const Eigen::VectorXd>(
+                        Bvv_a.data(), static_cast<Eigen::Index>(va) * va);
+                }
+            }
+
+            if (has_b) {
+                Eigen::MatrixXd Xb_o = Cb_occ.transpose() * L_res;
+                Eigen::MatrixXd Xb_v = Cb_vir.transpose() * L_res;
+                for (int p = 0; p < P_size; ++p) {
+                    Eigen::Map<const Eigen::MatrixXd> Xpo(
+                        Xb_o.data() + static_cast<size_t>(p) * nb * nbf, nb, nbf);
+                    Eigen::Map<const Eigen::MatrixXd> Xpv(
+                        Xb_v.data() + static_cast<size_t>(p) * vb * nbf, vb, nbf);
+                    Boo_b.noalias() = Xpo * Cb_occ;
+                    Bov_b.noalias() = Xpv * Cb_occ;
+                    Bvv_b.noalias() = Xpv * Cb_vir;
+                    B_oo_b.col(P_start + p) = Eigen::Map<const Eigen::VectorXd>(
+                        Boo_b.data(), static_cast<Eigen::Index>(nb) * nb);
+                    B_ov_b.col(P_start + p) = Eigen::Map<const Eigen::VectorXd>(
+                        Bov_b.data(), static_cast<Eigen::Index>(vb) * nb);
+                    B_vv_b.col(P_start + p) = Eigen::Map<const Eigen::VectorXd>(
+                        Bvv_b.data(), static_cast<Eigen::Index>(vb) * vb);
+                }
+            }
+        }
+    }
+    return {std::move(B_oo_a), std::move(B_ov_a), std::move(B_vv_a),
+            std::move(B_oo_b), std::move(B_ov_b), std::move(B_vv_b)};
 }
 
 // 6. Semi-kanonikalisasi sub-ruang Occ-Occ dan Vir-Vir

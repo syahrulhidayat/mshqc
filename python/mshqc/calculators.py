@@ -239,9 +239,17 @@ class MSHQCCalculator:
         self.scf_res = solver.compute()
         return self.scf_res
 
-    def run_mp2(self, scf_res: Optional[mshqc.SCFResult] = None) -> mshqc.MP2Result:
+    # [INJECTED_THIN_CORE_STAGE2_CALC]
+    def run_mp2(self, scf_res: Optional[mshqc.SCFResult] = None, use_hybrid: Optional[bool] = None):
         if scf_res is None:
-            scf_res = self.scf_res or self.run_scf()
+            scf_res = self.scf_res or self.run_scf(use_hybrid=use_hybrid)
+        if (
+            (self._hybrid_enabled(use_hybrid) or not isinstance(scf_res, mshqc.SCFResult))
+            and self.eri_method in ("df", "cholesky")
+            and self.reference in ("rhf", "uhf")
+        ):
+            self.mp2_res = self._run_hybrid_omp_method("mp2", scf_res=scf_res)
+            return self.mp2_res
         conf = self._make_mp2_config()
         sym_args = (self.pg, self.pl) if (self.pg is not None and self.pl is not None) else ()
         if self.reference == "rhf":
@@ -253,11 +261,20 @@ class MSHQCCalculator:
         self.mp2_res = solver.compute()
         return self.mp2_res
 
-    def run_mp3(self, scf_res: Optional[mshqc.SCFResult] = None, mp2_res: Optional[mshqc.MP2Result] = None) -> mshqc.MP3Result:
+    def run_mp3(self, scf_res: Optional[mshqc.SCFResult] = None, mp2_res: Optional[mshqc.MP2Result] = None, use_hybrid: Optional[bool] = None):
         if scf_res is None:
-            scf_res = self.scf_res or self.run_scf()
+            scf_res = self.scf_res or self.run_scf(use_hybrid=use_hybrid)
+        if (
+            (self._hybrid_enabled(use_hybrid) or not isinstance(scf_res, mshqc.SCFResult))
+            and self.eri_method in ("df", "cholesky")
+            and self.reference in ("rhf", "uhf")
+        ):
+            return self._run_hybrid_omp_method("mp3", scf_res=scf_res)
         if mp2_res is None:
-            mp2_res = self.mp2_res or self.run_mp2(scf_res)
+            mp2_res = (
+                self.mp2_res if isinstance(self.mp2_res, mshqc.MP2Result)
+                else self.run_mp2(scf_res, use_hybrid=False)
+            )
         conf = self._make_mp2_config()
         if self.reference == "rhf":
             solver = mshqc.RMP3(scf_res, mp2_res, conf, self.integrals)
@@ -273,7 +290,6 @@ class MSHQCCalculator:
         if (
             (self._hybrid_enabled(use_hybrid) or not isinstance(scf_res, mshqc.SCFResult))
             and self.eri_method in ("df", "cholesky")
-            and self.n_frozen == 0
             and self.reference in ("rhf", "uhf")
         ):
             return self._run_hybrid_omp_method("omp2", scf_res=scf_res, grad_thresh=grad_thresh, max_iter=max_iter)
@@ -288,7 +304,6 @@ class MSHQCCalculator:
         if (
             (self._hybrid_enabled(use_hybrid) or not isinstance(scf_res, mshqc.SCFResult))
             and self.eri_method in ("df", "cholesky")
-            and self.n_frozen == 0
             and self.reference in ("rhf", "uhf")
         ):
             return self._run_hybrid_omp_method("omp3", scf_res=scf_res, grad_thresh=grad_thresh, max_iter=max_iter)
@@ -332,12 +347,14 @@ class MSHQCCalculator:
         if self.reference == "rhf":
             return run_from_arrays(
                 H_core, S_ovlp, v_nn, B_ao, scf_res.C_alpha, scf_res.n_occ_alpha,
-                method=method_name, grad_tol=grad_thresh, energy_tol=self.threshold, max_iter=max_iter,
+                method=method_name, grad_tol=grad_thresh, energy_tol=self.threshold,
+                max_iter=max_iter, n_frozen=self.n_frozen,
             )
         return run_from_arrays(
             H_core, S_ovlp, v_nn, B_ao, scf_res.C_alpha, scf_res.n_occ_alpha,
             C_beta=scf_res.C_beta, n_occ_beta=scf_res.n_occ_beta,
-            method=method_name, grad_tol=grad_thresh, energy_tol=self.threshold, max_iter=max_iter,
+            method=method_name, grad_tol=grad_thresh, energy_tol=self.threshold,
+            max_iter=max_iter, n_frozen=self.n_frozen,
         )
 
     def run_scs_omp2(self, scf_res: Optional[mshqc.SCFResult] = None, grad_thresh: float = 1e-5, max_iter: int = 50):

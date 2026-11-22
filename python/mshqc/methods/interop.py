@@ -2,12 +2,20 @@
 # Licensed under the Apache License, Version 2.0
 """Adapter interoperabilitas berbasis NumPy/PySCF (tanpa wajib membuat mshqc.Molecule)."""
 
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 import numpy as np
+from .mp_hybrid import (
+    HybridMP2Result,
+    HybridMP3Result,
+    run_df_mp2_rhf,
+    run_df_mp2_uhf,
+    run_df_mp3_rhf,
+    run_df_mp3_uhf,
+)
 from .omp_hybrid import HybridOMPResult, run_df_omp_rhf, run_df_omp_uhf
 
 
-def _resolve_method_params(method: str) -> Tuple[str, float, float, float]:
+def _resolve_omp_params(method: str) -> Tuple[str, float, float, float]:
     m = method.strip().lower().replace("_", "-")
     if m == "omp2":
         return ("omp2", 1.0, 1.0, 0.0)
@@ -35,30 +43,48 @@ def run_from_arrays(
     grad_tol: float = 1e-5,
     energy_tol: float = 1e-9,
     max_iter: int = 40,
-) -> HybridOMPResult:
+    n_frozen: int = 0,
+) -> Union[HybridOMPResult, HybridMP2Result, HybridMP3Result]:
     """
-    Menjalankan DF-OMP2 / SCS-OMP2 / SOS-OMP2 / OMP2.5 / DF-OMP3 langsung dari array NumPy
-    (mendukung faktor AO packed triangular maupun full (nbf^2, n_aux)).
+    Menjalankan MP2 / MP3 / OMP2 / SCS-OMP2 / SOS-OMP2 / OMP2.5 / OMP3 langsung dari array NumPy
+    (mendukung faktor AO packed triangular maupun full (nbf^2, n_aux) serta strict n_frozen).
     """
-    m_name, c_os, c_ss, lam_mp3 = _resolve_method_params(method)
+    m_low = method.strip().lower().replace("_", "-")
     H = np.ascontiguousarray(H_core, dtype=np.float64)
     S = np.ascontiguousarray(S_ovlp, dtype=np.float64)
     B = np.ascontiguousarray(B_ao, dtype=np.float64)
     Ca = np.ascontiguousarray(C_alpha, dtype=np.float64)
+    na = int(n_occ_alpha)
+    nf = int(n_frozen)
 
+    if m_low in ("mp2", "rmp2", "ump2"):
+        if C_beta is None:
+            return run_df_mp2_rhf(H, float(v_nn), B, Ca, na, n_frozen=nf)
+        Cb = np.ascontiguousarray(C_beta, dtype=np.float64)
+        nb = int(na if n_occ_beta is None else n_occ_beta)
+        return run_df_mp2_uhf(H, float(v_nn), B, Ca, Cb, na, nb, n_frozen=nf)
+
+    if m_low in ("mp3", "rmp3", "ump3"):
+        if C_beta is None:
+            return run_df_mp3_rhf(H, float(v_nn), B, Ca, na, n_frozen=nf)
+        Cb = np.ascontiguousarray(C_beta, dtype=np.float64)
+        nb = int(na if n_occ_beta is None else n_occ_beta)
+        return run_df_mp3_uhf(H, float(v_nn), B, Ca, Cb, na, nb, n_frozen=nf)
+
+    m_name, c_os, c_ss, lam_mp3 = _resolve_omp_params(m_low)
     if C_beta is None:
         return run_df_omp_rhf(
-            H, float(v_nn), B, Ca, int(n_occ_alpha),
+            H, float(v_nn), B, Ca, na,
             method_name=m_name, c_os=c_os, c_ss=c_ss, lam_mp3=lam_mp3,
-            grad_tol=grad_tol, energy_tol=energy_tol, max_iter=max_iter,
+            grad_tol=grad_tol, energy_tol=energy_tol, max_iter=max_iter, n_frozen=nf,
         )
 
     Cb = np.ascontiguousarray(C_beta, dtype=np.float64)
-    nb = int(n_occ_alpha if n_occ_beta is None else n_occ_beta)
+    nb = int(na if n_occ_beta is None else n_occ_beta)
     return run_df_omp_uhf(
-        H, S, float(v_nn), B, Ca, Cb, int(n_occ_alpha), nb,
+        H, S, float(v_nn), B, Ca, Cb, na, nb,
         method_name=m_name, c_os=c_os, c_ss=c_ss, lam_mp3=lam_mp3,
-        grad_tol=grad_tol, energy_tol=energy_tol, max_iter=max_iter,
+        grad_tol=grad_tol, energy_tol=energy_tol, max_iter=max_iter, n_frozen=nf,
     )
 
 
@@ -68,13 +94,9 @@ def run_from_pyscf(
     grad_tol: float = 1e-5,
     energy_tol: float = 1e-9,
     max_iter: int = 40,
-) -> HybridOMPResult:
-    """
-    Plug-and-play adapter untuk objek PySCF `RHF`/`UHF` bermode `.density_fit()`.
-    Contoh:
-        mf = scf.RHF(mol).density_fit(auxbasis="cc-pVTZ-RI").run()
-        res = mshqc.methods.run_from_pyscf(mf, method="omp2.5")
-    """
+    n_frozen: int = 0,
+) -> Union[HybridOMPResult, HybridMP2Result, HybridMP3Result]:
+    """Plug-and-play adapter untuk objek PySCF `RHF`/`UHF` bermode `.density_fit()`."""
     if not hasattr(mf, "with_df") or mf.with_df is None:
         raise ValueError("Objek PySCF mf harus menjalankan `.density_fit()` terlebih dahulu.")
 
@@ -85,7 +107,6 @@ def run_from_pyscf(
     if cderi is None:
         mf.with_df.build()
         cderi = mf.with_df._cderi
-    # PySCF _cderi berbentuk (n_aux, n_tri) -> transpose ke (n_tri, n_aux)
     B_ao = np.ascontiguousarray(cderi.T, dtype=np.float64)
 
     mo_coeff = mf.mo_coeff
@@ -93,7 +114,8 @@ def run_from_pyscf(
         na = int(np.count_nonzero(mf.mo_occ > 0))
         return run_from_arrays(
             H_core, S_ovlp, v_nn, B_ao, mo_coeff, na,
-            method=method, grad_tol=grad_tol, energy_tol=energy_tol, max_iter=max_iter,
+            method=method, grad_tol=grad_tol, energy_tol=energy_tol,
+            max_iter=max_iter, n_frozen=n_frozen,
         )
 
     Ca, Cb = mo_coeff[0], mo_coeff[1]
@@ -101,5 +123,6 @@ def run_from_pyscf(
     nb = int(np.count_nonzero(mf.mo_occ[1] > 0))
     return run_from_arrays(
         H_core, S_ovlp, v_nn, B_ao, Ca, na, C_beta=Cb, n_occ_beta=nb,
-        method=method, grad_tol=grad_tol, energy_tol=energy_tol, max_iter=max_iter,
+        method=method, grad_tol=grad_tol, energy_tol=energy_tol,
+        max_iter=max_iter, n_frozen=n_frozen,
     )
