@@ -8,7 +8,7 @@ Orbital-Optimized Perturbation Theory (RHF & UHF):
 """
 
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Tuple
 import numpy as np
 from scipy.linalg import expm
 
@@ -72,6 +72,58 @@ def _compute_s2_uhf(C_a: np.ndarray, C_b: np.ndarray, S: np.ndarray, na: int, nb
     return float(sz * (sz + 1.0) + nb - np.sum(ovlp ** 2))
 
 
+def _update_trust_radius(trust_radius: float, it: int, e_tot: float, e_prev: float) -> float:
+    if it == 0:
+        return trust_radius
+    if e_tot > e_prev + 1e-7:
+        return max(0.05, 0.5 * trust_radius)
+    return min(0.30, 1.25 * trust_radius)
+
+
+def _assemble_orbital_grad_rhf(
+    B_ao: np.ndarray,
+    C_occ: np.ndarray,
+    C_vir: np.ndarray,
+    F_vo: np.ndarray,
+    g_oo: np.ndarray,
+    g_vv: np.ndarray,
+    Z_vo: np.ndarray,
+) -> np.ndarray:
+    nbf = C_occ.shape[0]
+    P_corr_a = C_occ @ g_oo @ C_occ.T + C_vir @ g_vv @ C_vir.T
+    G_ao = 2.0 * K.build_coulomb_3c(B_ao, P_corr_a, nbf) - K.build_exchange_3c_sym(B_ao, P_corr_a, nbf)
+    G_vo = C_vir.T @ G_ao @ C_occ
+    L_sep = F_vo @ g_oo - g_vv @ F_vo
+    return 4.0 * (F_vo + G_vo + L_sep + Z_vo)
+
+
+def _assemble_orbital_grad_uhf(
+    B_ao: np.ndarray,
+    Ca_o: np.ndarray,
+    Ca_v: np.ndarray,
+    Cb_o: np.ndarray,
+    Cb_v: np.ndarray,
+    Fvo_a: np.ndarray,
+    Fvo_b: np.ndarray,
+    g_oo_a: np.ndarray,
+    g_vv_a: np.ndarray,
+    g_oo_b: np.ndarray,
+    g_vv_b: np.ndarray,
+    Za: np.ndarray,
+    Zb: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray]:
+    nbf = Ca_o.shape[0]
+    P_corr_a = Ca_o @ g_oo_a @ Ca_o.T + Ca_v @ g_vv_a @ Ca_v.T
+    P_corr_b = Cb_o @ g_oo_b @ Cb_o.T + Cb_v @ g_vv_b @ Cb_v.T
+    J_corr = K.build_coulomb_3c(B_ao, P_corr_a + P_corr_b, nbf)
+    Ga_ao = J_corr - K.build_exchange_3c_sym(B_ao, P_corr_a, nbf)
+    Gb_ao = J_corr - K.build_exchange_3c_sym(B_ao, P_corr_b, nbf)
+
+    wa_vo = 2.0 * (Fvo_a + Ca_v.T @ Ga_ao @ Ca_o + (Fvo_a @ g_oo_a - g_vv_a @ Fvo_a) + Za)
+    wb_vo = 2.0 * (Fvo_b + Cb_v.T @ Gb_ao @ Cb_o + (Fvo_b @ g_oo_b - g_vv_b @ Fvo_b) + Zb)
+    return wa_vo, wb_vo
+
+
 def eval_omp_rhf_point(
     H_core: np.ndarray,
     v_nn: float,
@@ -123,19 +175,13 @@ def eval_omp_rhf_point(
         g_oo, g_vv = K.eval_omp3_1rdm_rhf(T2, L2, n_occ, n_vir)
         Z_vo = K.eval_omp3_zvec_rhf_df(T2, L2, B_oo, B_ov, B_vv, n_occ, n_vir)
     else:
-        g2_oo, g2_vv = K.eval_omp2_1rdm_rhf(T2, n_occ, n_vir)
-        g3_oo, g3_vv = K.eval_omp3_1rdm_rhf(T2, L2, n_occ, n_vir)
+        # Linearitas eksak 1-RDM terhadap L2 menghemat 1x panggilan 1-RDM penuh untuk OMP2.5
+        g_oo, g_vv = K.eval_omp3_1rdm_rhf(T2, np.ascontiguousarray(lam_mp3 * L2), n_occ, n_vir)
         Z2 = K.eval_omp2_zvec_rhf_df(T2, B_oo, B_ov, B_vv, n_occ, n_vir)
         Z3 = K.eval_omp3_zvec_rhf_df(T2, L2, B_oo, B_ov, B_vv, n_occ, n_vir)
-        g_oo = (1.0 - lam_mp3) * g2_oo + lam_mp3 * g3_oo
-        g_vv = (1.0 - lam_mp3) * g2_vv + lam_mp3 * g3_vv
         Z_vo = (1.0 - lam_mp3) * Z2 + lam_mp3 * Z3
 
-    P_corr_a = C_occ @ g_oo @ C_occ.T + C_vir @ g_vv @ C_vir.T
-    G_ao = 2.0 * K.build_coulomb_3c(B_ao, P_corr_a, nbf) - K.build_exchange_3c_sym(B_ao, P_corr_a, nbf)
-    G_vo = C_vir.T @ G_ao @ C_occ
-    L_sep = F_vo @ g_oo - g_vv @ F_vo
-    w_vo = 4.0 * (F_vo + G_vo + L_sep + Z_vo)
+    w_vo = _assemble_orbital_grad_rhf(B_ao, C_occ, C_vir, F_vo, g_oo, g_vv, Z_vo)
     return e_tot, e_ref, e_mp2, e_mp3, C_sc, eps, w_vo, (eps_o, eps_v, B_oo, B_ov, B_vv)
 
 
@@ -157,7 +203,6 @@ def run_df_omp_rhf(
     C = np.array(C0, dtype=np.float64, copy=True)
     e_prev = 0.0
     trust_radius = 0.25
-    converged = False
 
     for it in range(max_iter):
         e_tot, e_ref, e_mp2, e_mp3, C, eps, w_vo, aux = eval_omp_rhf_point(
@@ -165,7 +210,6 @@ def run_df_omp_rhf(
         )
         w_rms = float(np.sqrt(np.mean(w_vo ** 2)))
         if w_rms <= grad_tol and (it == 0 or abs(e_tot - e_prev) <= energy_tol):
-            converged = True
             return HybridOMPResult(
                 method=method_name, reference="rhf",
                 energy_scf=e_ref, energy_mp2_corr=e_mp2, energy_mp3_corr=e_mp3,
@@ -175,12 +219,8 @@ def run_df_omp_rhf(
                 n_occ_alpha=n_occ, n_occ_beta=n_occ,
             )
 
-        if it > 0 and e_tot > e_prev + 1e-7:
-            trust_radius = max(0.05, 0.5 * trust_radius)
-        elif it > 0:
-            trust_radius = min(0.30, 1.25 * trust_radius)
+        trust_radius = _update_trust_radius(trust_radius, it, e_tot, e_prev)
         e_prev = e_tot
-
         eps_o, eps_v, B_oo, B_ov, B_vv = aux
         kappa = solve_tr_soscf_rhf(w_vo, eps_o, eps_v, B_oo, B_ov, B_vv, trust_radius=trust_radius)
         C = _rotate_orbitals(C, kappa, n_occ)
@@ -188,7 +228,7 @@ def run_df_omp_rhf(
     return HybridOMPResult(
         method=method_name, reference="rhf",
         energy_scf=e_ref, energy_mp2_corr=e_mp2, energy_mp3_corr=e_mp3,
-        energy_total=e_tot, converged=converged, iterations=max_iter, grad_rms=w_rms, s2=0.0,
+        energy_total=e_tot, converged=False, iterations=max_iter, grad_rms=w_rms, s2=0.0,
         C_alpha=C, C_beta=C.copy(),
         orbital_energies_alpha=eps, orbital_energies_beta=eps.copy(),
         n_occ_alpha=n_occ, n_occ_beta=n_occ,
@@ -276,9 +316,12 @@ def eval_omp_uhf_point(
             na, va, nb, vb,
         )
     else:
-        g2_oo_a, g2_vv_a, g2_oo_b, g2_vv_b = K.eval_omp2_1rdm_uhf(T2_aa, T2_bb, T2_ab, na, va, nb, vb)
-        g3_oo_a, g3_vv_a, g3_oo_b, g3_vv_b = K.eval_omp3_1rdm_uhf(
-            T2_aa, T2_bb, T2_ab, L2_aa, L2_bb, L2_ab, na, va, nb, vb
+        g_oo_a, g_vv_a, g_oo_b, g_vv_b = K.eval_omp3_1rdm_uhf(
+            T2_aa, T2_bb, T2_ab,
+            np.ascontiguousarray(lam_mp3 * L2_aa),
+            np.ascontiguousarray(lam_mp3 * L2_bb),
+            np.ascontiguousarray(lam_mp3 * L2_ab),
+            na, va, nb, vb,
         )
         Z2a, Z2b = K.eval_omp2_zvec_uhf_df(
             T2_aa, T2_bb, T2_ab, B_oo_a, B_ov_a, B_vv_a, B_oo_b, B_ov_b, B_vv_b, na, va, nb, vb
@@ -288,23 +331,11 @@ def eval_omp_uhf_point(
             B_oo_a, B_ov_a, B_vv_a, B_oo_b, B_ov_b, B_vv_b, na, va, nb, vb,
         )
         w2, w3 = 1.0 - lam_mp3, lam_mp3
-        g_oo_a, g_vv_a = w2 * g2_oo_a + w3 * g3_oo_a, w2 * g2_vv_a + w3 * g3_vv_a
-        g_oo_b, g_vv_b = w2 * g2_oo_b + w3 * g3_oo_b, w2 * g2_vv_b + w3 * g3_vv_b
         Za, Zb = w2 * Z2a + w3 * Z3a, w2 * Z2b + w3 * Z3b
 
-    P_corr_a = Ca_o @ g_oo_a @ Ca_o.T + Ca_v @ g_vv_a @ Ca_v.T
-    P_corr_b = Cb_o @ g_oo_b @ Cb_o.T + Cb_v @ g_vv_b @ Cb_v.T
-    J_corr = K.build_coulomb_3c(B_ao, P_corr_a + P_corr_b, nbf)
-    Ga_ao = J_corr - K.build_exchange_3c_sym(B_ao, P_corr_a, nbf)
-    Gb_ao = J_corr - K.build_exchange_3c_sym(B_ao, P_corr_b, nbf)
-
-    Ga_vo = Ca_v.T @ Ga_ao @ Ca_o
-    Gb_vo = Cb_v.T @ Gb_ao @ Cb_o
-    La_sep = Fvo_a @ g_oo_a - g_vv_a @ Fvo_a
-    Lb_sep = Fvo_b @ g_oo_b - g_vv_b @ Fvo_b
-
-    wa_vo = 2.0 * (Fvo_a + Ga_vo + La_sep + Za)
-    wb_vo = 2.0 * (Fvo_b + Gb_vo + Lb_sep + Zb)
+    wa_vo, wb_vo = _assemble_orbital_grad_uhf(
+        B_ao, Ca_o, Ca_v, Cb_o, Cb_v, Fvo_a, Fvo_b, g_oo_a, g_vv_a, g_oo_b, g_vv_b, Za, Zb
+    )
     aux = (eps_oa, eps_va, eps_ob, eps_vb, B_oo_a, B_ov_a, B_vv_a, B_oo_b, B_ov_b, B_vv_b)
     return e_tot, e_ref, e_mp2, e_mp3, Ca_sc, Cb_sc, eps_a, eps_b, wa_vo, wb_vo, aux
 
@@ -331,7 +362,6 @@ def run_df_omp_uhf(
     Cb = np.array(C0_b, dtype=np.float64, copy=True)
     e_prev = 0.0
     trust_radius = 0.25
-    converged = False
     n_params = max(1, (H_core.shape[0] - na) * na + (H_core.shape[0] - nb) * nb)
 
     for it in range(max_iter):
@@ -341,7 +371,6 @@ def run_df_omp_uhf(
         )
         w_rms = float(np.sqrt((np.sum(wa_vo ** 2) + np.sum(wb_vo ** 2)) / n_params))
         if w_rms <= grad_tol and (it == 0 or abs(e_tot - e_prev) <= energy_tol):
-            converged = True
             s2 = _compute_s2_uhf(Ca, Cb, S_ovlp, na, nb)
             return HybridOMPResult(
                 method=method_name, reference="uhf",
@@ -352,12 +381,8 @@ def run_df_omp_uhf(
                 n_occ_alpha=na, n_occ_beta=nb,
             )
 
-        if it > 0 and e_tot > e_prev + 1e-7:
-            trust_radius = max(0.05, 0.5 * trust_radius)
-        elif it > 0:
-            trust_radius = min(0.30, 1.25 * trust_radius)
+        trust_radius = _update_trust_radius(trust_radius, it, e_tot, e_prev)
         e_prev = e_tot
-
         ka, kb = solve_tr_soscf_uhf(wa_vo, wb_vo, *aux, trust_radius=trust_radius)
         Ca = _rotate_orbitals(Ca, ka, na)
         if nb > 0:
@@ -367,7 +392,7 @@ def run_df_omp_uhf(
     return HybridOMPResult(
         method=method_name, reference="uhf",
         energy_scf=e_ref, energy_mp2_corr=e_mp2, energy_mp3_corr=e_mp3,
-        energy_total=e_tot, converged=converged, iterations=max_iter, grad_rms=w_rms, s2=s2,
+        energy_total=e_tot, converged=False, iterations=max_iter, grad_rms=w_rms, s2=s2,
         C_alpha=Ca, C_beta=Cb,
         orbital_energies_alpha=eps_a, orbital_energies_beta=eps_b,
         n_occ_alpha=na, n_occ_beta=nb,

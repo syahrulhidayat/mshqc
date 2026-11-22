@@ -56,3 +56,9 @@ debug
 # --- Text Files and Custom Script Exceptions ---
 *.sh
 !recaftor.py
+
+# Temporary injector & backup artifacts
+
+inject.py
+inject_*.py
+fix_phase*.py

@@ -39,20 +39,10 @@ namespace mshqc {
 using integrals::ERITransformer;
 
 // [INJECTED_PRIORITAS_2E_ANALYTIC_GRAD]
+#include "mshqc/kernels/tblis_safe.h"
 namespace {
-Eigen::MatrixXd parallel_gemm_abt_mp2(const Eigen::MatrixXd& A, const Eigen::MatrixXd& B) {
-    if (A.rows() <= 0 || B.rows() <= 0 || A.cols() <= 0 || B.cols() <= 0) {
-        return Eigen::MatrixXd();
-    }
-    Eigen::MatrixXd C(A.rows(), B.rows());
-    const int m = static_cast<int>(A.rows());
-    constexpr int tile = 64;
-    #pragma omp parallel for schedule(dynamic)
-    for (int i = 0; i < m; i += tile) {
-        int rows = std::min(tile, m - i);
-        C.middleRows(i, rows).noalias() = A.middleRows(i, rows) * B.transpose();
-    }
-    return C;
+inline Eigen::MatrixXd parallel_gemm_abt_mp2(const Eigen::MatrixXd& A, const Eigen::MatrixXd& B) {
+    return mshqc::kernels::parallel_gemm_abt(A, B);
 }
 } // namespace
 

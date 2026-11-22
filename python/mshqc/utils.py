@@ -70,7 +70,7 @@ def quick_calculation(element_or_mol: Union[str, int, List[Tuple], mshqc.Molecul
 
     if clean_method in ("uhf", "ump2", "ump3"):
         reference = "uhf"
-    elif clean_method == "rohf":
+    elif clean_method in ("rohf", "romp2", "romp3"):
         reference = "rohf"
     elif clean_method in ("rhf", "rmp2", "rmp3"):
         reference = "rhf"
@@ -94,14 +94,21 @@ def quick_calculation(element_or_mol: Union[str, int, List[Tuple], mshqc.Molecul
     scf_res = calc.run_scf()
     if clean_method in ("scf", "hf", "rhf", "uhf", "rohf"):
         return scf_res
-    if clean_method in ("mp2", "rmp2", "ump2"):
+    # [INJECTED_HYBRID_PHASE5_UTILS]
+    if clean_method in ("mp2", "rmp2", "ump2", "romp2"):
         return calc.run_mp2(scf_res)
-    if clean_method in ("mp3", "rmp3", "ump3"):
+    if clean_method in ("mp3", "rmp3", "ump3", "romp3"):
         return calc.run_mp3(scf_res)
     if clean_method == "omp2":
         return calc.run_omp2(scf_res)
     if clean_method == "omp3":
         return calc.run_omp3(scf_res)
+    if clean_method in ("scs-omp2", "scs_omp2"):
+        return calc.run_scs_omp2(scf_res)
+    if clean_method in ("sos-omp2", "sos_omp2"):
+        return calc.run_sos_omp2(scf_res)
+    if clean_method in ("omp2.5", "omp25", "omp2_5"):
+        return calc.run_omp25(scf_res)
 
     raise ValueError(f"Metode tidak dikenali: {method}")
 

@@ -135,6 +135,28 @@ class MSHQCSession:
                 self.results["OMP3"] = omp3_res
                 self.timings["OMP3"] = time.perf_counter() - t0
 
+            # [INJECTED_HYBRID_PHASE5_SESSION]
+            elif m in ("scs-omp2", "scs_omp2"):
+                if scf_res is None:
+                    scf_res = self.calc.run_scf()
+                t0 = time.perf_counter()
+                self.results["SCS-OMP2"] = self.calc.run_scs_omp2(scf_res, grad_thresh=grad_thresh)
+                self.timings["SCS-OMP2"] = time.perf_counter() - t0
+
+            elif m in ("sos-omp2", "sos_omp2"):
+                if scf_res is None:
+                    scf_res = self.calc.run_scf()
+                t0 = time.perf_counter()
+                self.results["SOS-OMP2"] = self.calc.run_sos_omp2(scf_res, grad_thresh=grad_thresh)
+                self.timings["SOS-OMP2"] = time.perf_counter() - t0
+
+            elif m in ("omp2.5", "omp25", "omp2_5"):
+                if scf_res is None:
+                    scf_res = self.calc.run_scf()
+                t0 = time.perf_counter()
+                self.results["OMP2.5"] = self.calc.run_omp25(scf_res, grad_thresh=grad_thresh)
+                self.timings["OMP2.5"] = time.perf_counter() - t0
+
             else:
                 raise ValueError(f"Metode tidak dikenali dalam MSHQCSession: {m}")
 
@@ -184,7 +206,7 @@ class MSHQCSession:
                 ref_e = e_tot
                 e_corr_str = "-"
             else:
-                e_corr = getattr(res, "energy_mp2_corr", getattr(res, "e_corr_total", e_tot - ref_e))
+                e_corr = getattr(res, "e_corr_total", getattr(res, "energy_mp2_corr", e_tot - ref_e))
                 e_corr_str = f"{e_corr:.10f}"
             t_val = self.timings.get(name, 0.0)
             print(f"{name:<12} {e_tot:<22.10f} {e_corr_str:<20} {t_val:<10.4f}")
