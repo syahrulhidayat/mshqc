@@ -169,6 +169,17 @@ jobs:
           python -m pytest tests/test_hybrid_phase1.py -v -s 2>&1 | tee 01_test_hybrid_phase1_log.txt
 
       # =========================================================================
+      # SINGLE TEST SUITE: HYBRID ARCHITECTURE PHASE 2
+      # =========================================================================
+      - name: "[01/01] Run Hybrid Phase 2 Verification (test_hybrid_phase2.py)"
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate geom_env
+          python -m pytest tests/test_hybrid_phase2.py -v -s 2>&1 | tee 01_test_hybrid_phase2_log.txt
+
+
+      # =========================================================================
       # UPLOAD ARTIFACT (.txt)
       # =========================================================================
       - name: Upload Hybrid Phase 1 Test Log
