@@ -1,13 +1,6 @@
 name: Compile Locally and Run Hybrid Phase 1 Test (mshqc)
 
 on:
-  push:
-    branches:
-      - build-pypi
-      - test-geom
-      - test
-      - hybrid-v2
-  workflow_dispatch:
 
 jobs:
   hybrid_phase1_test:
