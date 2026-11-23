@@ -53,7 +53,12 @@ from .geom_hybrid import (
     scan_bond_pes_thin_core,
 )
 from .kappa_omp2 import run_df_kappa_omp2_rhf, run_df_kappa_omp2_uhf
-from .lt_sos_omp2 import build_laplace_quadrature, run_df_lt_sos_omp2_rhf, run_df_lt_sos_omp2_uhf
+from .lt_sos_omp2 import (
+    AdaptiveLaplaceCache,
+    build_laplace_quadrature,
+    run_df_lt_sos_omp2_rhf,
+    run_df_lt_sos_omp2_uhf,
+)
 from .checkpoint import save_orbital_checkpoint, load_orbital_checkpoint
 from .properties import (
     NaturalOrbitalResult,
@@ -66,6 +71,7 @@ from .properties import (
     write_molden,
 )
 from .excited import ExcitedStateResult, run_df_cis_rhf, run_df_tdhf_rhf
+from .oo_dh_dft import OODoubleHybridResult, run_oo_double_hybrid_rhf
 from .interop import run_from_arrays, run_from_pyscf
 
 __all__ = [
@@ -87,10 +93,11 @@ __all__ = [
     "ThinCoreGeomResult", "ThinCoreVibResult",
     "ThinCorePESPoint", "optimize_geometry_thin_core", "compute_frequencies_thin_core", "scan_bond_pes_thin_core",
     "run_df_kappa_omp2_rhf", "run_df_kappa_omp2_uhf",
-    "build_laplace_quadrature", "run_df_lt_sos_omp2_rhf", "run_df_lt_sos_omp2_uhf",
+    "AdaptiveLaplaceCache", "build_laplace_quadrature", "run_df_lt_sos_omp2_rhf", "run_df_lt_sos_omp2_uhf",
     "save_orbital_checkpoint", "load_orbital_checkpoint",
     "NaturalOrbitalResult", "PopulationResult", "build_1rdm_ao", "scf_density_ao", "correlated_density_ao",
     "compute_natural_orbitals", "mulliken_and_lowdin_charges", "write_molden",
     "ExcitedStateResult", "run_df_cis_rhf", "run_df_tdhf_rhf",
+    "OODoubleHybridResult", "run_oo_double_hybrid_rhf",
     "run_from_arrays", "run_from_pyscf",
 ]

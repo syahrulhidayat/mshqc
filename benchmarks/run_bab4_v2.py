@@ -410,7 +410,7 @@ def verify_orbital_gradients_fd(sys_list: List[str], basis_name: str, traces: Di
         if not is_uhf:
             scf = M.run_df_rhf(H_c, S_o, v_nn, B_ao, na, energy_tol=1e-11, density_tol=1e-11)
             for meth, lam in (("OMP2", 0.0), ("OMP3", 1.0)):
-                e0, _, _, C_sc, w_vo, _ = eval_omp_rhf_point(H_c, v_nn, B_ao, scf.C_alpha, na, lam_mp3=lam, need_grad=True)
+                e0, _, _, _, C_sc, _, w_vo, _ = eval_omp_rhf_point(H_c, v_nn, B_ao, scf.C_alpha, na, lam_mp3=lam, need_grad=True)
                 a_i, i_i = np.unravel_index(int(np.argmax(np.abs(w_vo))), w_vo.shape)
                 g_ana = float(w_vo[a_i, i_i])
                 K_rot = np.zeros((nbf, nbf))
@@ -425,7 +425,7 @@ def verify_orbital_gradients_fd(sys_list: List[str], basis_name: str, traces: Di
         else:
             scf = M.run_df_uhf(H_c, S_o, v_nn, B_ao, na, nb, energy_tol=1e-11, density_tol=1e-11)
             for meth, lam in (("OMP2", 0.0), ("OMP3", 1.0)):
-                _, _, _, Ca_sc, Cb_sc, wa, _, _ = eval_omp_uhf_point(
+                _, _, _, _, Ca_sc, Cb_sc, _, _, wa, _, _ = eval_omp_uhf_point(
                     H_c, v_nn, B_ao, scf.C_alpha, scf.C_beta, na, nb, lam_mp3=lam, need_grad=True
                 )
                 a_i, i_i = np.unravel_index(int(np.argmax(np.abs(wa))), wa.shape)

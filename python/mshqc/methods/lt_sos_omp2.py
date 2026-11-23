@@ -2,7 +2,7 @@
 # Licensed under the Apache License, Version 2.0
 """
 O(N^4) Zero-T2 Laplace-Transformed SOS-OMP2 (RHF & UHF, all-electron & frozen-core).
-Kuadratur NNLS sparse di Python + kontraksi paralel OpenMP di C++20 `mshqc.kernels`.
+Kuadratur NNLS sparse dengan caching adaptif + kontraksi paralel OpenMP C++20 `mshqc.kernels`.
 """
 
 from __future__ import annotations
@@ -45,6 +45,33 @@ def build_laplace_quadrature(
     return np.ascontiguousarray(weights, dtype=np.float64), np.ascontiguousarray(nodes, dtype=np.float64)
 
 
+class AdaptiveLaplaceCache:
+    """Cache kuadratur NNLS antar iterasi makro OMP selama celah energi berada dalam selubung +-5%."""
+
+    def __init__(self) -> None:
+        self.d_min: float = -1.0
+        self.d_max: float = -1.0
+        self.weights: Optional[np.ndarray] = None
+        self.nodes: Optional[np.ndarray] = None
+        self.solves: int = 0
+
+    def get(self, delta_min: float, delta_max: float) -> Tuple[np.ndarray, np.ndarray]:
+        d0 = max(float(delta_min), 1.0e-5)
+        d1 = max(float(delta_max), d0 * 1.1)
+        if (
+            self.weights is not None
+            and self.nodes is not None
+            and 0.95 * self.d_min <= d0
+            and d1 <= 1.05 * self.d_max
+        ):
+            return self.weights, self.nodes
+        self.d_min = 0.95 * d0
+        self.d_max = 1.05 * d1
+        self.weights, self.nodes = build_laplace_quadrature(self.d_min, self.d_max)
+        self.solves += 1
+        return self.weights, self.nodes
+
+
 def _assemble_lt_1rdm_and_zvec(
     B_oo: np.ndarray,
     B_ov: np.ndarray,
@@ -81,7 +108,9 @@ def _assemble_lt_1rdm_and_zvec(
     return g_oo, g_vv, Z1 - Z2
 
 
-def _lt_sos_omp2_rhf_callback(c_os: float = 1.3):
+def _lt_sos_omp2_rhf_callback(c_os: float = 1.3, cache: Optional[AdaptiveLaplaceCache] = None):
+    q_cache = cache if cache is not None else AdaptiveLaplaceCache()
+
     def corr_fn(B_oo, B_ov, B_vv, eps_o, eps_v):
         no, nv = eps_o.size, eps_v.size
         n_aux = B_ov.shape[1]
@@ -89,9 +118,7 @@ def _lt_sos_omp2_rhf_callback(c_os: float = 1.3):
             return 0.0, 0.0, np.zeros((no, no)), np.zeros((nv, nv)), np.zeros((nv, no))
 
         d_ov = np.ascontiguousarray((eps_v[None, :] - eps_o[:, None]).reshape(-1), dtype=np.float64)
-        d_min = max(2.0 * float(np.min(d_ov)), 1.0e-5)
-        d_max = max(2.0 * float(np.max(d_ov)), d_min * 1.1)
-        weights, nodes = build_laplace_quadrature(d_min, d_max)
+        weights, nodes = q_cache.get(2.0 * float(np.min(d_ov)), 2.0 * float(np.max(d_ov)))
 
         e_corr, X_conn, X_deriv = K.eval_lt_sos_intermediates_rhf_df(
             np.ascontiguousarray(B_ov, dtype=np.float64), d_ov, weights, nodes, float(c_os)
@@ -102,7 +129,9 @@ def _lt_sos_omp2_rhf_callback(c_os: float = 1.3):
     return corr_fn
 
 
-def _lt_sos_omp2_uhf_callback(c_os: float = 1.3):
+def _lt_sos_omp2_uhf_callback(c_os: float = 1.3, cache: Optional[AdaptiveLaplaceCache] = None):
+    q_cache = cache if cache is not None else AdaptiveLaplaceCache()
+
     def corr_fn(B_oo_a, B_ov_a, B_vv_a, B_oo_b, B_ov_b, B_vv_b, eps_oa, eps_va, eps_ob, eps_vb):
         na, va = eps_oa.size, eps_va.size
         nb, vb = eps_ob.size, eps_vb.size
@@ -117,9 +146,10 @@ def _lt_sos_omp2_uhf_callback(c_os: float = 1.3):
 
         da = np.ascontiguousarray((eps_va[None, :] - eps_oa[:, None]).reshape(-1), dtype=np.float64)
         db = np.ascontiguousarray((eps_vb[None, :] - eps_ob[:, None]).reshape(-1), dtype=np.float64)
-        d_min = max(float(np.min(da)) + float(np.min(db)), 1.0e-5)
-        d_max = max(float(np.max(da)) + float(np.max(db)), d_min * 1.1)
-        weights, nodes = build_laplace_quadrature(d_min, d_max)
+        weights, nodes = q_cache.get(
+            float(np.min(da)) + float(np.min(db)),
+            float(np.max(da)) + float(np.max(db)),
+        )
 
         e_corr, Xc_a, Xd_a, Xc_b, Xd_b = K.eval_lt_sos_intermediates_uhf_df(
             np.ascontiguousarray(B_ov_a, dtype=np.float64),
@@ -146,7 +176,7 @@ def run_df_lt_sos_omp2_rhf(
     n_frozen: int = 0,
     callback: Optional[Callable[[dict], None]] = None,
 ) -> HybridOMPResult:
-    """Jalankan O(N^4) Zero-T2 LT-SOS-OMP2 RHF (OpenMP C++20 quadrature kernel)."""
+    """Jalankan O(N^4) Zero-T2 LT-SOS-OMP2 RHF (cached NNLS + OpenMP C++20 kernel)."""
     return optimize_orbitals_rhf(
         H_core, v_nn, B_ao, C0, n_occ,
         corr_fn=_lt_sos_omp2_rhf_callback(c_os=c_os),
@@ -172,7 +202,7 @@ def run_df_lt_sos_omp2_uhf(
     n_frozen: int = 0,
     callback: Optional[Callable[[dict], None]] = None,
 ) -> HybridOMPResult:
-    """Jalankan O(N^4) Zero-T2 LT-SOS-OMP2 UHF (OpenMP C++20 quadrature kernel)."""
+    """Jalankan O(N^4) Zero-T2 LT-SOS-OMP2 UHF (cached NNLS + OpenMP C++20 kernel)."""
     return optimize_orbitals_uhf(
         H_core, S_ovlp, v_nn, B_ao, C0_a, C0_b, na, nb,
         corr_fn=_lt_sos_omp2_uhf_callback(c_os=c_os),
