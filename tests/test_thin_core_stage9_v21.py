@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """
 Validasi Upgrade v2.1:
-1. Kernel C++20 OpenMP `eval_lt_sos_intermediates_rhf_df` & `uhf_df` cocok < 1e-13 vs NumPy murni.
-2. `compute_natural_orbitals` (kekekalan elektron, NOONs, Head-Gordon N_U pada H2O & radikal OH).
-3. `mulliken_and_lowdin_charges` (kekekalan muatan total < 1e-12, polaritas O- / H+ pada H2O).
+1. Kernel C++20 OpenMP `eval_lt_sos_intermediates_rhf_df` & `uhf_df` cocok hingga presisi mesin
+   (rtol < 1e-13) terhadap implementasi NumPy murni.
+2. `compute_natural_orbitals` (kekekalan elektron, NOONs, Head-Gordon N_U pada H2O).
+3. `mulliken_and_lowdin_charges` (kekekalan muatan total < 1e-11, polaritas O- / H+ pada H2O).
 4. `write_molden` menghasilkan berkas `.molden` valid ([Molden Format], [Atoms], [GTO], [5D], [MO]).
 """
 from pathlib import Path
@@ -21,8 +22,8 @@ def test_cpp_openmp_lt_sos_kernel_matches_numpy():
     d_ov = np.ascontiguousarray(rng.uniform(0.3, 4.0, size=no * nv))
     weights, nodes = M.build_laplace_quadrature(0.6, 8.0)
 
+    # 1. RHF OpenMP kernel parity
     e_cpp, xc_cpp, xd_cpp = K.eval_lt_sos_intermediates_rhf_df(B_ov, d_ov, weights, nodes, 1.3)
-
     e_sum = 0.0
     xc_ref = np.zeros_like(B_ov)
     xd_ref = np.zeros_like(B_ov)
@@ -35,10 +36,42 @@ def test_cpp_openmp_lt_sos_kernel_matches_numpy():
         xc_ref -= (1.3 * wq) * Yq
         xd_ref -= (1.3 * wq * tq) * Yq
 
-    assert abs(e_cpp - (-1.3 * e_sum)) < 1.0e-12
-    assert float(np.max(np.abs(xc_cpp - xc_ref))) < 1.0e-12
-    assert float(np.max(np.abs(xd_cpp - xd_ref))) < 1.0e-12
-    print(f"[LT-SOS C++ ] RHF OpenMP kernel parity < 1e-12 (nq={len(weights)})")
+    e_ref = -1.3 * e_sum
+    rel_e = abs(e_cpp - e_ref) / max(1.0, abs(e_ref))
+    assert np.isclose(e_cpp, e_ref, rtol=1.0e-13, atol=1.0e-12), f"RHF rel_err={rel_e:.2e}"
+    assert np.allclose(xc_cpp, xc_ref, rtol=1.0e-12, atol=1.0e-12)
+    assert np.allclose(xd_cpp, xd_ref, rtol=1.0e-12, atol=1.0e-12)
+
+    # 2. UHF OpenMP kernel parity
+    na, va, nb, vb = 5, 14, 4, 15
+    Ba = np.ascontiguousarray(rng.standard_normal((na * va, n_aux)))
+    Bb = np.ascontiguousarray(rng.standard_normal((nb * vb, n_aux)))
+    da = np.ascontiguousarray(rng.uniform(0.3, 3.5, size=na * va))
+    db = np.ascontiguousarray(rng.uniform(0.3, 3.5, size=nb * vb))
+    eu_cpp, xca, xda, xcb, xdb = K.eval_lt_sos_intermediates_uhf_df(Ba, Bb, da, db, weights, nodes, 1.3)
+
+    eu_sum = 0.0
+    xca_r, xda_r = np.zeros_like(Ba), np.zeros_like(Ba)
+    xcb_r, xdb_r = np.zeros_like(Bb), np.zeros_like(Bb)
+    for wq, tq in zip(weights, nodes):
+        ea, eb = np.exp(-0.5 * tq * da), np.exp(-0.5 * tq * db)
+        Baw, Bbw = Ba * ea[:, None], Bb * eb[:, None]
+        Xa, Xb = Baw.T @ Baw, Bbw.T @ Bbw
+        eu_sum += wq * float(np.sum(Xa * Xb))
+        Ya, Yb = (Baw @ Xb) * ea[:, None], (Bbw @ Xa) * eb[:, None]
+        xca_r -= (1.3 * wq) * Ya
+        xda_r -= (1.3 * wq * tq) * Ya
+        xcb_r -= (1.3 * wq) * Yb
+        xdb_r -= (1.3 * wq * tq) * Yb
+
+    eu_ref = -1.3 * eu_sum
+    rel_eu = abs(eu_cpp - eu_ref) / max(1.0, abs(eu_ref))
+    assert np.isclose(eu_cpp, eu_ref, rtol=1.0e-13, atol=1.0e-12), f"UHF rel_err={rel_eu:.2e}"
+    assert np.allclose(xca, xca_r, rtol=1.0e-12, atol=1.0e-12)
+    assert np.allclose(xda, xda_r, rtol=1.0e-12, atol=1.0e-12)
+    assert np.allclose(xcb, xcb_r, rtol=1.0e-12, atol=1.0e-12)
+    assert np.allclose(xdb, xdb_r, rtol=1.0e-12, atol=1.0e-12)
+    print(f"[LT-SOS C++ ] RHF rel={rel_e:.2e} | UHF rel={rel_eu:.2e} (nq={len(weights)})")
 
 
 def test_natural_orbitals_charges_and_molden_export():
@@ -62,7 +95,6 @@ def test_natural_orbitals_charges_and_molden_export():
     assert abs(no_scf.n_electrons - 10.0) < 1.0e-11
     assert no_scf.n_unpaired_head_gordon < 1.0e-10
 
-    # Correlated OMP2 1-RDM -> NOONs fraksional dan N_U > 0
     omp_res = M.run_df_omp_rhf(H, v_nn, B_ao, scf_res.C_alpha, no, grad_tol=1e-7)
     B_ov = K.transform_3c_mo(B_ao, np.ascontiguousarray(omp_res.C_alpha[:, :no]), np.ascontiguousarray(omp_res.C_alpha[:, no:]), nbf)
     _, _, T2 = K.eval_rmp2_df(B_ov, omp_res.orbital_energies_alpha[:no], omp_res.orbital_energies_alpha[no:])
@@ -72,13 +104,11 @@ def test_natural_orbitals_charges_and_molden_export():
     assert abs(no_omp2.n_electrons - 10.0) < 1.0e-10
     assert no_omp2.n_unpaired_head_gordon > 0.05
 
-    # Mulliken & Lowdin charges
     pop = M.mulliken_and_lowdin_charges(h2o, basis, S, P_omp2)
     assert abs(float(np.sum(pop.mulliken_charges))) < 1.0e-11
     assert abs(float(np.sum(pop.lowdin_charges))) < 1.0e-11
     assert pop.lowdin_charges[0] < 0.0 and pop.lowdin_charges[1] > 0.0
 
-    # Molden export
     with tempfile.TemporaryDirectory() as td:
         mfile = M.write_molden(
             Path(td) / "h2o_omp2_no.molden",
