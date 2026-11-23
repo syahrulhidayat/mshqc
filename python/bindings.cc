@@ -11,55 +11,41 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-
 #include <nanobind/nanobind.h>
-#include <nanobind/stl/string.h>
-#include <nanobind/stl/vector.h>
-#include <nanobind/stl/shared_ptr.h>
-#include <nanobind/stl/tuple.h>
-#include <nanobind/stl/array.h>
 #include <nanobind/eigen/dense.h>
-#include <thread>
-#include <omp.h>
-#include <cstdlib>
+#include <nanobind/stl/array.h>
+#include <nanobind/stl/shared_ptr.h>
+#include <nanobind/stl/string.h>
+#include <nanobind/stl/tuple.h>
+#include <nanobind/stl/vector.h>
+
 #include <algorithm>
 #include <cctype>
-#include <iostream>
+#include <cstdlib>
+#include <omp.h>
+#include <stdexcept>
+#include <thread>
 #include <unordered_map>
 
 #if defined(_WIN32)
-    #include <windows.h>
-    #include <vector>
+  #include <windows.h>
 #elif defined(__APPLE__)
-    #include <sys/types.h>
-    #include <sys/sysctl.h>
+  #include <dlfcn.h>
+  #include <sys/sysctl.h>
+  #include <sys/types.h>
 #elif defined(__linux__)
-    #include <fstream>
-    #include <string>
-    #include <unordered_set>
+  #include <dlfcn.h>
+  #include <fstream>
+  #include <sched.h>
+  #include <unordered_set>
 #endif
 
-#include "mshqc/core/molecule.h"
 #include "mshqc/basis.h"
-#include "mshqc/ints/integrals.h"
-// [INJECTED_THIN_CORE_STAGE3_BINDINGS]
-#include "mshqc/integrals/screening.h"
 #include "mshqc/core/fock_builder.h"
+#include "mshqc/core/molecule.h"
 #include "mshqc/integrals/cholesky_eri.h"
-#ifndef MSHQC_THIN_CORE_BUILD
-#include "mshqc/symmetry/point_group.h"
-#include "mshqc/symmetry/petite_list.h"
-#include "mshqc/symmetry/molecule_sym.h"
-#include "mshqc/scf/scf.h"
-#include "mshqc/scf/diis.h"
-#include "mshqc/mp2/mp2.h"
-#include "mshqc/mp3/mp3.h"
-#include "mshqc/mp3/omp3.h"
-#include "mshqc/integrals/eri_transformer.h"
-#include "mshqc/gradient/hpc_geom_opt.h"
-#endif
-#include <nanobind/stl/map.h>
-#include <nanobind/stl/pair.h>
+#include "mshqc/integrals/screening.h"
+#include "mshqc/ints/integrals.h"
 
 namespace nb = nanobind;
 using namespace mshqc;
@@ -67,90 +53,90 @@ using namespace mshqc::integrals;
 
 namespace mshqc_auto_tune {
 
-    void set_env_if_empty(const char* name, const char* value) {
-        if (std::getenv(name) == nullptr) {
-        #if defined(_WIN32)
-            _putenv_s(name, value);
-        #else
-            setenv(name, value, 0);
-        #endif
-        }
+void set_env_if_empty(const char* name, const char* value) {
+    if (std::getenv(name) == nullptr) {
+#if defined(_WIN32)
+        _putenv_s(name, value);
+#else
+        setenv(name, value, 0);
+#endif
     }
+}
 
-    int get_physical_cores() {
-    #if defined(_WIN32)
-        DWORD length = 0;
-        GetLogicalProcessorInformation(nullptr, &length);
-        if (GetLastError() != ERROR_INSUFFICIENT_BUFFER) return std::max(1, static_cast<int>(std::thread::hardware_concurrency()) / 2);
-        std::vector<SYSTEM_LOGICAL_PROCESSOR_INFORMATION> buffer(length / sizeof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION));
-        if (!GetLogicalProcessorInformation(buffer.data(), &length)) return std::max(1, static_cast<int>(std::thread::hardware_concurrency()) / 2);
-        int physical_cores = 0;
-        for (const auto& info : buffer) { if (info.Relationship == RelationProcessorCore) physical_cores++; }
-        return physical_cores > 0 ? physical_cores : std::max(1, static_cast<int>(std::thread::hardware_concurrency()) / 2);
-    #elif defined(__APPLE__)
-        int count = 0;
-        size_t size = sizeof(count);
-        if (sysctlbyname("hw.physicalcpu", &count, &size, nullptr, 0) == 0) return count;
+int get_physical_cores() {
+#if defined(_WIN32)
+    DWORD length = 0;
+    GetLogicalProcessorInformation(nullptr, &length);
+    if (GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
         return std::max(1, static_cast<int>(std::thread::hardware_concurrency()) / 2);
-    #elif defined(__linux__)
-        std::ifstream cpuinfo("/proc/cpuinfo");
-        std::string line, current_phys_id = "0", current_core_id = "0";
-        std::unordered_set<std::string> unique_cores;
-        if (cpuinfo.is_open()) {
-            while (std::getline(cpuinfo, line)) {
-                if (line.find("physical id") == 0) current_phys_id = line.substr(line.find(":") + 1);
-                else if (line.find("core id") == 0) {
-                    current_core_id = line.substr(line.find(":") + 1);
-                    unique_cores.insert(current_phys_id + "_" + current_core_id);
-                }
+    }
+    std::vector<SYSTEM_LOGICAL_PROCESSOR_INFORMATION> buffer(
+        length / sizeof(SYSTEM_LOGICAL_PROCESSOR_INFORMATION));
+    if (!GetLogicalProcessorInformation(buffer.data(), &length)) {
+        return std::max(1, static_cast<int>(std::thread::hardware_concurrency()) / 2);
+    }
+    int physical_cores = 0;
+    for (const auto& info : buffer) {
+        if (info.Relationship == RelationProcessorCore) physical_cores++;
+    }
+    return physical_cores > 0
+        ? physical_cores
+        : std::max(1, static_cast<int>(std::thread::hardware_concurrency()) / 2);
+#elif defined(__APPLE__)
+    int count = 0;
+    size_t size = sizeof(count);
+    if (sysctlbyname("hw.physicalcpu", &count, &size, nullptr, 0) == 0) return count;
+    return std::max(1, static_cast<int>(std::thread::hardware_concurrency()) / 2);
+#elif defined(__linux__)
+    std::ifstream cpuinfo("/proc/cpuinfo");
+    std::string line, current_phys_id = "0", current_core_id = "0";
+    std::unordered_set<std::string> unique_cores;
+    if (cpuinfo.is_open()) {
+        while (std::getline(cpuinfo, line)) {
+            if (line.find("physical id") == 0) current_phys_id = line.substr(line.find(":") + 1);
+            else if (line.find("core id") == 0) {
+                current_core_id = line.substr(line.find(":") + 1);
+                unique_cores.insert(current_phys_id + "_" + current_core_id);
             }
-            if (!unique_cores.empty()) return static_cast<int>(unique_cores.size());
         }
-        return std::max(1, static_cast<int>(std::thread::hardware_concurrency()) / 2);
-    #else
-        return std::max(1, static_cast<int>(std::thread::hardware_concurrency()) / 2);
-    #endif
+        if (!unique_cores.empty()) return static_cast<int>(unique_cores.size());
     }
+    return std::max(1, static_cast<int>(std::thread::hardware_concurrency()) / 2);
+#else
+    return std::max(1, static_cast<int>(std::thread::hardware_concurrency()) / 2);
+#endif
+}
 
-#if defined(__linux__) || defined(__APPLE__)
-    #include <dlfcn.h>
-    #include <sched.h>
+void initialize_hpc_environment() {
+#if defined(__linux__)
+    cpu_set_t mask;
+    CPU_ZERO(&mask);
+    unsigned int logical_cpus = std::max(1u, std::thread::hardware_concurrency());
+    for (unsigned int i = 0; i < logical_cpus; ++i) CPU_SET(i, &mask);
+    sched_setaffinity(0, sizeof(mask), &mask);
 #endif
 
-// Di dalam namespace mshqc_auto_tune pada bindings.cc:
-    void initialize_hpc_environment() {
-    #if defined(__linux__)
-        // Pastikan proses tidak terkunci pada 1 core oleh scheduler
-        cpu_set_t mask;
-        CPU_ZERO(&mask);
-        unsigned int logical_cpus = std::max(1u, std::thread::hardware_concurrency());
-        for (unsigned int i = 0; i < logical_cpus; ++i) {
-            CPU_SET(i, &mask);
-        }
-        sched_setaffinity(0, sizeof(mask), &mask);
-    #endif
+    int num_threads = get_physical_cores();
+    if (const char* env_omp = std::getenv("OMP_NUM_THREADS")) {
+        int parsed = std::atoi(env_omp);
+        if (parsed > 0) num_threads = parsed;
+    }
 
-        int num_threads = get_physical_cores();
-        if (const char* env_omp = std::getenv("OMP_NUM_THREADS")) {
-            int parsed = std::atoi(env_omp);
-            if (parsed > 0) num_threads = parsed;
-        }
-
-        std::string threads_str = std::to_string(num_threads);
+    std::string threads_str = std::to_string(num_threads);
     set_env_if_empty("OMP_NUM_THREADS", threads_str.c_str());
-    #if defined(__APPLE__) || defined(_WIN32)
-      #if defined(_WIN32)
-        _putenv_s("TBLIS_NUM_THREADS", "1");
-        _putenv_s("MKL_NUM_THREADS", "1");
-        _putenv_s("OPENBLAS_NUM_THREADS", "1");
-      #else
-        set_env_if_empty("TBLIS_NUM_THREADS", "1");
-      #endif
-      set_env_if_empty("OMP_WAIT_POLICY", "PASSIVE");
-      set_env_if_empty("KMP_BLOCKTIME", "0");
-    #else
-      set_env_if_empty("TBLIS_NUM_THREADS", threads_str.c_str());
-    #endif
+#if defined(__APPLE__) || defined(_WIN32)
+  #if defined(_WIN32)
+    _putenv_s("TBLIS_NUM_THREADS", "1");
+    _putenv_s("MKL_NUM_THREADS", "1");
+    _putenv_s("OPENBLAS_NUM_THREADS", "1");
+  #else
+    set_env_if_empty("TBLIS_NUM_THREADS", "1");
+  #endif
+    set_env_if_empty("OMP_WAIT_POLICY", "PASSIVE");
+    set_env_if_empty("KMP_BLOCKTIME", "0");
+#else
+    set_env_if_empty("TBLIS_NUM_THREADS", threads_str.c_str());
+#endif
     set_env_if_empty("OPENBLAS_NUM_THREADS", "1");
     set_env_if_empty("MKL_NUM_THREADS", "1");
     set_env_if_empty("VECLIB_MAXIMUM_THREADS", "1");
@@ -159,143 +145,100 @@ namespace mshqc_auto_tune {
     set_env_if_empty("HDF5_USE_FILE_LOCKING", "FALSE");
 
     Eigen::setNbThreads(1);
-
     omp_set_dynamic(0);
     omp_set_num_threads(num_threads);
     omp_set_max_active_levels(1);
 
-    #if defined(_WIN32)
+#if defined(_WIN32)
     using set_threads_fn = void (*)(int);
-    const char* tblis_dlls[] = {"libtblis.dll", "tblis.dll"};
-    for (const char* dll : tblis_dlls) {
-      if (HMODULE h = GetModuleHandleA(dll)) {
-        if (auto fn = reinterpret_cast<set_threads_fn>(GetProcAddress(h, "tblis_set_num_threads"))) {
-          fn(1);
+    for (const char* dll : {"libtblis.dll", "tblis.dll"}) {
+        if (HMODULE h = GetModuleHandleA(dll)) {
+            if (auto fn = reinterpret_cast<set_threads_fn>(GetProcAddress(h, "tblis_set_num_threads"))) fn(1);
         }
-      }
     }
-    const char* mkl_dlls[] = {"mkl_rt.2.dll", "mkl_rt.3.dll", "mkl_rt.dll"};
-    for (const char* dll : mkl_dlls) {
-      if (HMODULE h = GetModuleHandleA(dll)) {
-        if (auto fn = reinterpret_cast<set_threads_fn>(GetProcAddress(h, "MKL_Set_Num_Threads"))) {
-          fn(1);
+    for (const char* dll : {"mkl_rt.2.dll", "mkl_rt.3.dll", "mkl_rt.dll"}) {
+        if (HMODULE h = GetModuleHandleA(dll)) {
+            if (auto fn = reinterpret_cast<set_threads_fn>(GetProcAddress(h, "MKL_Set_Num_Threads"))) fn(1);
         }
-      }
     }
-    #elif defined(__linux__) || defined(__APPLE__)
-        using set_threads_fn = void (*)(int);
-        if (auto fn = reinterpret_cast<set_threads_fn>(dlsym(RTLD_DEFAULT, "openblas_set_num_threads"))) {
-            fn(1);
-        }
-        if (auto fn = reinterpret_cast<set_threads_fn>(dlsym(RTLD_DEFAULT, "MKL_Set_Num_Threads"))) {
-            fn(1);
-        }
-        if (auto fn = reinterpret_cast<set_threads_fn>(dlsym(RTLD_DEFAULT, "tblis_set_num_threads"))) {
-        #if defined(__APPLE__)
-            fn(1);
-        #else
-            fn(num_threads);
-        #endif
-        }
-    #endif
-    }
-
-    int symbol_to_z(const std::string& sym) {
-        static const std::unordered_map<std::string, int> table = {
-            {"H",1},{"He",2},{"Li",3},{"Be",4},{"B",5},{"C",6},{"N",7},{"O",8},{"F",9},{"Ne",10},
-            {"Na",11},{"Mg",12},{"Al",13},{"Si",14},{"P",15},{"S",16},{"Cl",17},{"Ar",18},
-            {"K",19},{"Ca",20},{"Sc",21},{"Ti",22},{"V",23},{"Cr",24},{"Mn",25},{"Fe",26},
-            {"Co",27},{"Ni",28},{"Cu",29},{"Zn",30},{"Ga",31},{"Ge",32},{"As",33},{"Se",34},
-            {"Br",35},{"Kr",36},{"Rb",37},{"Sr",38},{"Y",39},{"Zr",40},{"Nb",41},{"Mo",42},
-            {"Tc",43},{"Ru",44},{"Rh",45},{"Pd",46},{"Ag",47},{"Cd",48},{"In",49},{"Sn",50},
-            {"Sb",51},{"Te",52},{"I",53},{"Xe",54},
-            {"Cs",55},{"Ba",56},{"La",57},{"Ce",58},{"Pr",59},{"Nd",60},{"Pm",61},{"Sm",62},{"Eu",63},{"Gd",64},
-            {"Tb",65},{"Dy",66},{"Ho",67},{"Er",68},{"Tm",69},{"Yb",70},{"Lu",71},
-            {"Hf",72},{"Ta",73},{"W",74},{"Re",75},{"Os",76},{"Ir",77},{"Pt",78},{"Au",79},{"Hg",80},
-            {"Tl",81},{"Pb",82},{"Bi",83},{"Po",84},{"At",85},{"Rn",86},
-            {"Fr",87},{"Ra",88},{"Ac",89},{"Th",90},{"Pa",91},{"U",92},{"Np",93},{"Pu",94},
-            {"Am",95},{"Cm",96},{"Bk",97},{"Cf",98},{"Es",99},{"Fm",100},{"Md",101},{"No",102},
-            {"Lr",103},{"Rf",104},{"Db",105},{"Sg",106},{"Bh",107},{"Hs",108},{"Mt",109},{"Ds",110},
-            {"Rg",111},{"Cn",112},{"Nh",113},{"Fl",114},{"Mc",115},{"Lv",116},{"Ts",117},{"Og",118}
-        };
-        if (sym.empty()) throw std::invalid_argument("Empty atom symbol");
-        std::string key = sym;
-        key[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(key[0])));
-        for (size_t i = 1; i < key.size(); ++i) {
-            key[i] = static_cast<char>(std::tolower(static_cast<unsigned char>(key[i])));
-        }
-        auto it = table.find(key);
-        if (it == table.end()) throw std::invalid_argument("Unknown element symbol: " + sym);
-        return it->second;
-    }
-
-    double unit_scale(const std::string& units) {
-        if (!units.empty() && (units[0] == 'a' || units[0] == 'A')) {
-            return 1.0 / 0.529177210903;
-        }
-        return 1.0;
-    }
-
-#ifndef MSHQC_THIN_CORE_BUILD
-    SCFConfig normalize_scf_config(const SCFConfig& conf, const BasisSet& basis) {
-        SCFConfig c = conf;
-        std::string m = c.eri_method;
-        std::transform(m.begin(), m.end(), m.begin(), [](unsigned char ch){ return std::tolower(ch); });
-        c.eri_method = m;
-        if (c.eri_method == "df") {
-            c.use_df = true;
-        }
-        if (c.use_df && (c.aux_basis_name.empty() || c.aux_basis_name == "cc-pVDZ-JKFIT")) {
-            c.aux_basis_name = basis.name().empty() ? "cc-pVTZ-RI" : (basis.name() + "-RI");
-        }
-        return c;
-    }
-
-    MP2Config normalize_mp2_config(const MP2Config& conf, const BasisSet& basis, const SCFResult& scf_guess) {
-        MP2Config c = conf;
-        std::string m = c.eri_method;
-        std::transform(m.begin(), m.end(), m.begin(), [](unsigned char ch){ return std::tolower(ch); });
-        c.eri_method = m;
-        if (c.eri_method == "df") {
-            c.use_df = true;
-        }
-        if (c.use_df && c.aux_basis_name.empty()) {
-            c.aux_basis_name = basis.name().empty() ? "cc-pVTZ-RI" : (basis.name() + "-RI");
-        }
-        if (c.gradient_threshold <= 0.0) {
-            c.gradient_threshold = 1e-5;
-        }
-        return c;
-    }
-#else
-    inline int compute_standard_frozen_core_thin(const Molecule& mol) {
-        int nf = 0;
-        for (size_t i = 0; i < mol.n_atoms(); ++i) {
-            const int Z = mol.atom(i).atomic_number;
-            if (Z <= 2) nf += 0;
-            else if (Z <= 10) nf += 1;
-            else if (Z <= 18) nf += 5;
-            else if (Z <= 36) nf += 9;
-            else if (Z <= 54) nf += 18;
-            else if (Z <= 71) nf += 27;
-            else if (Z <= 86) nf += 34;
-            else nf += 43;
-        }
-        return nf;
+#elif defined(__linux__) || defined(__APPLE__)
+    using set_threads_fn = void (*)(int);
+    if (auto fn = reinterpret_cast<set_threads_fn>(dlsym(RTLD_DEFAULT, "openblas_set_num_threads"))) fn(1);
+    if (auto fn = reinterpret_cast<set_threads_fn>(dlsym(RTLD_DEFAULT, "MKL_Set_Num_Threads"))) fn(1);
+    if (auto fn = reinterpret_cast<set_threads_fn>(dlsym(RTLD_DEFAULT, "tblis_set_num_threads"))) {
+  #if defined(__APPLE__)
+        fn(1);
+  #else
+        fn(num_threads);
+  #endif
     }
 #endif
 }
 
-// [INJECTED_HYBRID_PHASE1_BINDINGS]
-namespace mshqc { void bind_kernels_module(nanobind::module_& m); }
+int symbol_to_z(const std::string& sym) {
+    static const std::unordered_map<std::string, int> table = {
+        {"H",1},{"He",2},{"Li",3},{"Be",4},{"B",5},{"C",6},{"N",7},{"O",8},{"F",9},{"Ne",10},
+        {"Na",11},{"Mg",12},{"Al",13},{"Si",14},{"P",15},{"S",16},{"Cl",17},{"Ar",18},
+        {"K",19},{"Ca",20},{"Sc",21},{"Ti",22},{"V",23},{"Cr",24},{"Mn",25},{"Fe",26},
+        {"Co",27},{"Ni",28},{"Cu",29},{"Zn",30},{"Ga",31},{"Ge",32},{"As",33},{"Se",34},
+        {"Br",35},{"Kr",36},{"Rb",37},{"Sr",38},{"Y",39},{"Zr",40},{"Nb",41},{"Mo",42},
+        {"Tc",43},{"Ru",44},{"Rh",45},{"Pd",46},{"Ag",47},{"Cd",48},{"In",49},{"Sn",50},
+        {"Sb",51},{"Te",52},{"I",53},{"Xe",54},
+        {"Cs",55},{"Ba",56},{"La",57},{"Ce",58},{"Pr",59},{"Nd",60},{"Pm",61},{"Sm",62},{"Eu",63},{"Gd",64},
+        {"Tb",65},{"Dy",66},{"Ho",67},{"Er",68},{"Tm",69},{"Yb",70},{"Lu",71},
+        {"Hf",72},{"Ta",73},{"W",74},{"Re",75},{"Os",76},{"Ir",77},{"Pt",78},{"Au",79},{"Hg",80},
+        {"Tl",81},{"Pb",82},{"Bi",83},{"Po",84},{"At",85},{"Rn",86},
+        {"Fr",87},{"Ra",88},{"Ac",89},{"Th",90},{"Pa",91},{"U",92},{"Np",93},{"Pu",94},
+        {"Am",95},{"Cm",96},{"Bk",97},{"Cf",98},{"Es",99},{"Fm",100},{"Md",101},{"No",102},
+        {"Lr",103},{"Rf",104},{"Db",105},{"Sg",106},{"Bh",107},{"Hs",108},{"Mt",109},{"Ds",110},
+        {"Rg",111},{"Cn",112},{"Nh",113},{"Fl",114},{"Mc",115},{"Lv",116},{"Ts",117},{"Og",118}
+    };
+    if (sym.empty()) throw std::invalid_argument("Empty atom symbol");
+    std::string key = sym;
+    key[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(key[0])));
+    for (size_t i = 1; i < key.size(); ++i) {
+        key[i] = static_cast<char>(std::tolower(static_cast<unsigned char>(key[i])));
+    }
+    auto it = table.find(key);
+    if (it == table.end()) throw std::invalid_argument("Unknown element symbol: " + sym);
+    return it->second;
+}
+
+double unit_scale(const std::string& units) {
+    if (!units.empty() && (units[0] == 'a' || units[0] == 'A')) {
+        return 1.0 / 0.529177210903;
+    }
+    return 1.0;
+}
+
+int standard_frozen_core_count(const Molecule& mol) {
+    int nf = 0;
+    for (size_t i = 0; i < mol.n_atoms(); ++i) {
+        const int Z = mol.atom(i).atomic_number;
+        if (Z <= 2) nf += 0;
+        else if (Z <= 10) nf += 1;
+        else if (Z <= 18) nf += 5;
+        else if (Z <= 36) nf += 9;
+        else if (Z <= 54) nf += 18;
+        else if (Z <= 71) nf += 27;
+        else if (Z <= 86) nf += 34;
+        else nf += 43;
+    }
+    return nf;
+}
+
+} // namespace mshqc_auto_tune
+
+namespace mshqc {
+void bind_kernels_module(nanobind::module_& m);
+#ifndef MSHQC_THIN_CORE_BUILD
+void bind_legacy_module(nanobind::module_& m, nanobind::class_<Molecule>& mol_cls);
+#endif
+} // namespace mshqc
 
 NB_MODULE(_mshqc, m) {
-
     mshqc_auto_tune::initialize_hpc_environment();
-
-    m.doc() = "MSHQC: Modern C++20 Quantum Chemistry Library";
-
-
+    m.doc() = "MSHQC: Thin-Core C++20 / Python Quantum Chemistry Engine";
 
     nb::class_<ERITensor>(m, "ERITensor")
         .def("size", &ERITensor::size)
@@ -320,7 +263,8 @@ NB_MODULE(_mshqc, m) {
         .def_rw("z", &Atom::z)
         .def("position", &Atom::position);
 
-    nb::class_<Molecule>(m, "Molecule")
+    nb::class_<Molecule> mol_cls(m, "Molecule");
+    mol_cls
         .def(nb::init<int, int>(), nb::arg("charge") = 0, nb::arg("multiplicity") = 1)
         .def("add_atom", [](Molecule& mol, int Z, double x, double y, double z, const std::string& units) {
             double s = mshqc_auto_tune::unit_scale(units);
@@ -342,132 +286,8 @@ NB_MODULE(_mshqc, m) {
         .def("multiplicity", &Molecule::multiplicity)
         .def("set_multiplicity", &Molecule::set_multiplicity, nb::arg("m"))
         .def("nuclear_repulsion_energy", &Molecule::nuclear_repulsion_energy)
-        .def("set_atom_position", &Molecule::set_atom_position, nb::arg("i"), nb::arg("x"), nb::arg("y"), nb::arg("z"))
-#ifndef MSHQC_THIN_CORE_BUILD
-        .def("optimize_geometry", [](Molecule& mol,
-                                     const std::string& method,
-                                     const std::string& eri_mode,
-                                     const std::string& eri_method,
-                                     const std::string& basis,
-                                     const std::string& aux_basis,
-                                     const std::string& reference,
-                                     int max_iter,
-                                     double g_rms_tol,
-                                     double g_max_tol,
-                                     double dx_rms_tol,
-                                     double dx_max_tol,
-                                     double energy_thresh,
-                                     double orb_grad_thresh,
-                                     double fd_step_bohr,
-                                     bool use_analytic_gradient,
-                                     bool verbose) {
-            mshqc::gradient::GeomOptConfig cfg;
-            cfg.method = method;
-            cfg.eri_method = !eri_method.empty() ? eri_method : eri_mode;
-            cfg.basis_name = basis;
-            cfg.aux_basis_name = aux_basis;
-            cfg.reference = reference;
-            cfg.max_iter = max_iter;
-            cfg.g_rms_tol = g_rms_tol;
-            cfg.g_max_tol = g_max_tol;
-            cfg.dx_rms_tol = dx_rms_tol;
-            cfg.dx_max_tol = dx_max_tol;
-            cfg.energy_thresh = energy_thresh;
-            cfg.orb_grad_thresh = orb_grad_thresh;
-            cfg.fd_step_bohr = fd_step_bohr;
-            cfg.use_analytic_gradient = use_analytic_gradient;
-            cfg.verbose = verbose;
-            nb::gil_scoped_release release;
-            return mshqc::gradient::HPCGeometryOptimizer::optimize_molecule(mol, cfg);
-        }, nb::arg("method") = "omp2",
-           nb::arg("eri_mode") = "df",
-           nb::arg("eri_method") = "",
-           nb::arg("basis") = "cc-pVDZ",
-           nb::arg("aux_basis") = "",
-           nb::arg("reference") = "auto",
-           nb::arg("max_iter") = 40,
-           nb::arg("g_rms_tol") = 1.0e-8,
-           nb::arg("g_max_tol") = 3.0e-8,
-           nb::arg("dx_rms_tol") = 1.0e-6,
-           nb::arg("dx_max_tol") = 3.0e-6,
-           nb::arg("energy_thresh") = 1.0e-12,
-           nb::arg("orb_grad_thresh") = 1.0e-10,
-           nb::arg("fd_step_bohr") = 5.0e-4,
-           nb::arg("use_analytic_gradient") = true,
-           nb::arg("verbose") = true,
-           "Optimize molecular geometry in C++20 and update coordinates in-place")
-        .def("frequencies", [](const Molecule& mol,
-                               const std::string& method,
-                               const std::string& eri_mode,
-                               const std::string& eri_method,
-                               const std::string& basis,
-                               const std::string& reference,
-                               double temperature_k,
-                               bool verbose) {
-            mshqc::gradient::GeomOptConfig cfg;
-            cfg.method = method;
-            cfg.eri_method = !eri_method.empty() ? eri_method : eri_mode;
-            cfg.basis_name = basis;
-            cfg.reference = reference;
-            cfg.verbose = verbose;
-            nb::gil_scoped_release release;
-            return mshqc::gradient::HPCGeometryOptimizer::compute_frequencies(mol, cfg, temperature_k, 1.0);
-        }, nb::arg("method") = "omp2",
-           nb::arg("eri_mode") = "df",
-           nb::arg("eri_method") = "",
-           nb::arg("basis") = "cc-pVDZ",
-           nb::arg("reference") = "auto",
-           nb::arg("temperature_k") = 298.15,
-           nb::arg("verbose") = true,
-           "Compute harmonic vibrational frequencies (cm^-1), ZPE, Enthalpy H, and Gibbs G")
-        .def("gradient", [](const Molecule& mol,
-                            const std::string& method,
-                            const std::string& eri_mode,
-                            const std::string& eri_method,
-                            const std::string& basis,
-                            const std::string& aux_basis,
-                            const std::string& reference,
-                            double fd_step_bohr,
-                            bool use_analytic_gradient) {
-            mshqc::gradient::GeomOptConfig cfg;
-            cfg.method = method;
-            cfg.eri_method = !eri_method.empty() ? eri_method : eri_mode;
-            cfg.basis_name = basis;
-            cfg.aux_basis_name = aux_basis;
-            cfg.reference = reference;
-            cfg.fd_step_bohr = fd_step_bohr;
-            cfg.use_analytic_gradient = use_analytic_gradient;
-            cfg.verbose = false;
-            nb::gil_scoped_release release;
-            return mshqc::gradient::HPCGeometryOptimizer::compute_nuclear_gradient_cpp(mol, cfg);
-        }, nb::arg("method") = "omp2",
-           nb::arg("eri_mode") = "df",
-           nb::arg("eri_method") = "",
-           nb::arg("basis") = "cc-pVDZ",
-           nb::arg("aux_basis") = "",
-           nb::arg("reference") = "auto",
-           nb::arg("fd_step_bohr") = 5.0e-4,
-           nb::arg("use_analytic_gradient") = true,
-           "Compute nuclear gradient vector dE/dR (Ha/Bohr)")
-        .def("scan_pes", [](const Molecule& mol,
-                            int atom_i,
-                            int atom_j,
-                            const std::vector<double>& distances_angstrom,
-                            const std::string& method,
-                            const std::string& eri_mode,
-                            const std::string& basis) {
-            mshqc::gradient::GeomOptConfig cfg;
-            cfg.method = method;
-            cfg.eri_method = eri_mode;
-            cfg.basis_name = basis;
-            cfg.verbose = false;
-            nb::gil_scoped_release release;
-            return mshqc::gradient::HPCGeometryOptimizer::scan_bond_pes(mol, atom_i, atom_j, distances_angstrom, cfg);
-        }, nb::arg("atom_i"), nb::arg("atom_j"), nb::arg("distances_angstrom"),
-           nb::arg("method") = "omp2", nb::arg("eri_mode") = "df", nb::arg("basis") = "cc-pVDZ",
-           "Scan bond dissociation Potential Energy Surface")
-#endif
-        ;
+        .def("set_atom_position", &Molecule::set_atom_position,
+             nb::arg("i"), nb::arg("x"), nb::arg("y"), nb::arg("z"));
 
     nb::enum_<AngularMomentum>(m, "AngularMomentum")
         .value("S", AngularMomentum::S)
@@ -525,530 +345,57 @@ NB_MODULE(_mshqc, m) {
         .def(nb::init<double>(), nb::arg("threshold") = 1e-9)
         .def(nb::init<const BasisSet&, std::shared_ptr<IntegralEngine>>(),
              nb::arg("basis"), nb::arg("integrals"))
-        .def("__init__", [](CholeskyERI *chol, const Molecule& mol, const BasisSet& basis, double threshold) {
+        .def("__init__", [](CholeskyERI* chol, const Molecule& mol, const BasisSet& basis, double threshold) {
             auto ints = std::make_shared<IntegralEngine>(mol, basis);
             new (chol) CholeskyERI(basis, ints);
             chol->set_threshold(threshold);
             chol->compute();
         }, nb::arg("mol"), nb::arg("basis"), nb::arg("threshold") = 1e-9)
-        .def("set_threshold", &integrals::CholeskyERI::set_threshold)
-        .def("set_print_level", &integrals::CholeskyERI::set_print_level)
-        .def("n_vectors", &integrals::CholeskyERI::n_vectors)
-        .def("n_cholesky_vectors", &integrals::CholeskyERI::n_vectors)
-        .def("threshold", &integrals::CholeskyERI::threshold)
-        .def("compute", &integrals::CholeskyERI::compute, nb::call_guard<nb::gil_scoped_release>())
-        .def("decompose", &integrals::CholeskyERI::decompose, nb::call_guard<nb::gil_scoped_release>())
-        .def("get_L_mat", &integrals::CholeskyERI::get_L_mat, nb::rv_policy::reference_internal)
-        .def("reconstruct", &integrals::CholeskyERI::reconstruct)
-        .def("reconstruct_full", &integrals::CholeskyERI::reconstruct_full)
-        .def("is_decomposed", &integrals::CholeskyERI::is_decomposed)
-        .def("decomposed", &integrals::CholeskyERI::decomposed);
+        .def("set_threshold", &CholeskyERI::set_threshold)
+        .def("set_print_level", &CholeskyERI::set_print_level)
+        .def("n_vectors", &CholeskyERI::n_vectors)
+        .def("n_cholesky_vectors", &CholeskyERI::n_vectors)
+        .def("threshold", &CholeskyERI::threshold)
+        .def("compute", &CholeskyERI::compute, nb::call_guard<nb::gil_scoped_release>())
+        .def("decompose", &CholeskyERI::decompose, nb::call_guard<nb::gil_scoped_release>())
+        .def("get_L_mat", &CholeskyERI::get_L_mat, nb::rv_policy::reference_internal)
+        .def("reconstruct", &CholeskyERI::reconstruct)
+        .def("reconstruct_full", &CholeskyERI::reconstruct_full)
+        .def("is_decomposed", &CholeskyERI::is_decomposed)
+        .def("decomposed", &CholeskyERI::decomposed);
 
-#ifndef MSHQC_THIN_CORE_BUILD
-    nb::enum_<SymOpType>(m, "SymOpType")
-        .value("Identity", SymOpType::Identity)
-        .value("Rotation", SymOpType::Rotation)
-        .value("Reflection", SymOpType::Reflection)
-        .value("Inversion", SymOpType::Inversion)
-        .value("ImproperRotation", SymOpType::ImproperRotation)
-        .export_values();
-
-    nb::class_<SymmetryOperation>(m, "SymmetryOperation")
-        .def_rw("type", &SymmetryOperation::type)
-        .def_rw("order", &SymmetryOperation::order)
-        .def_rw("matrix", &SymmetryOperation::matrix)
-        .def_rw("name", &SymmetryOperation::name);
-
-    nb::class_<PointGroup>(m, "PointGroup")
-        .def(nb::init<const Molecule&, double>(), "Initialize and auto-detect symmetry",
-             nb::arg("mol"), nb::arg("tolerance") = 1e-6)
-        .def("detect", &PointGroup::detect)
-        .def("get_symbol", &PointGroup::get_symbol)
-        .def("get_order", &PointGroup::get_order)
-        .def("get_aligned_molecule", &PointGroup::get_aligned_molecule)
-        .def("get_operations", &PointGroup::get_operations, nb::rv_policy::reference_internal);
-
-    nb::class_<UniqueShellPair>(m, "UniqueShellPair")
-        .def_rw("p", &UniqueShellPair::p)
-        .def_rw("q", &UniqueShellPair::q)
-        .def_rw("weight", &UniqueShellPair::weight);
-
-    nb::class_<PetiteList>(m, "PetiteList")
-        .def(nb::init<const BasisSet&, const PointGroup&>())
-        .def("build", nb::overload_cast<>(&PetiteList::build))
-        .def("build", nb::overload_cast<const Eigen::MatrixXd&, double>(&PetiteList::build),
-             nb::arg("schwarz"), nb::arg("cutoff") = 1e-12)
-        .def("get_unique_pairs", &PetiteList::get_unique_pairs);
-
-    nb::class_<BasisSymmetrizer>(m, "BasisSymmetrizer")
-        .def(nb::init<const BasisSet&, const PointGroup&, const PetiteList&>())
-        .def("symmetrize", &BasisSymmetrizer::symmetrize);
-
-    nb::class_<DIIS>(m, "DIIS")
-        .def(nb::init<int>(), nb::arg("max_vectors") = 8)
-        .def("clear", &DIIS::clear)
-        .def("add_iteration", &DIIS::add_iteration, nb::arg("F"), nb::arg("err"))
-        .def("extrapolate", &DIIS::extrapolate);
-#endif
-
-    nb::class_<mshqc::integrals::ShellPair>(m, "ShellPair")
-        .def_rw("sh_a", &mshqc::integrals::ShellPair::sh_a)
-        .def_rw("sh_b", &mshqc::integrals::ShellPair::sh_b)
-        .def_rw("max_val", &mshqc::integrals::ShellPair::max_val)
-        .def_prop_rw("center",
-            [](const mshqc::integrals::ShellPair& sp) {
-                return std::make_tuple(sp.center(0), sp.center(1), sp.center(2));
-            },
-            [](mshqc::integrals::ShellPair& sp, const std::tuple<double,double,double>& t) {
+    nb::class_<ShellPair>(m, "ShellPair")
+        .def_rw("sh_a", &ShellPair::sh_a)
+        .def_rw("sh_b", &ShellPair::sh_b)
+        .def_rw("max_val", &ShellPair::max_val)
+        .def_prop_rw(
+            "center",
+            [](const ShellPair& sp) { return std::make_tuple(sp.center(0), sp.center(1), sp.center(2)); },
+            [](ShellPair& sp, const std::tuple<double, double, double>& t) {
                 sp.center = Eigen::Vector3d(std::get<0>(t), std::get<1>(t), std::get<2>(t));
-            }
-        );
+            });
 
-    nb::class_<mshqc::integrals::Screening>(m, "Screening")
+    nb::class_<Screening>(m, "Screening")
         .def(nb::init<const BasisSet&>(), nb::arg("basis"))
-        .def("reset", &mshqc::integrals::Screening::reset)
-        .def("compute", &mshqc::integrals::Screening::compute, nb::call_guard<nb::gil_scoped_release>(), nb::arg("integrals"))
-        .def("print_stats", &mshqc::integrals::Screening::print_stats, nb::arg("threshold"))
-        .def("get_significant_pairs", &mshqc::integrals::Screening::get_significant_pairs, nb::arg("threshold"))
+        .def("reset", &Screening::reset)
+        .def("compute", &Screening::compute, nb::call_guard<nb::gil_scoped_release>(), nb::arg("integrals"))
+        .def("print_stats", &Screening::print_stats, nb::arg("threshold"))
+        .def("get_significant_pairs", &Screening::get_significant_pairs, nb::arg("threshold"))
         .def("is_significant",
-             static_cast<bool (mshqc::integrals::Screening::*)(int, int, int, int, double) const>(&mshqc::integrals::Screening::is_significant),
+             static_cast<bool (Screening::*)(int, int, int, int, double) const>(&Screening::is_significant),
              nb::arg("sh_a"), nb::arg("sh_b"), nb::arg("sh_c"), nb::arg("sh_d"), nb::arg("threshold"))
-        .def("get_schwarz_val", &mshqc::integrals::Screening::get_schwarz_val)
-        .def("max_schwarz", &mshqc::integrals::Screening::max_schwarz);
-
-#ifndef MSHQC_THIN_CORE_BUILD
-    nb::class_<SCFConfig>(m, "SCFConfig")
-        .def("__init__", [](SCFConfig *c, const std::string& eri_method, double threshold,
-                            const std::string& aux_basis_name, const std::string& scf_type,
-                            int print_level, int max_iterations) {
-            new (c) SCFConfig();
-            c->eri_method = eri_method;
-            c->scf_type = scf_type;
-            c->energy_threshold = threshold;
-            c->density_threshold = threshold;
-            c->cholesky_threshold = threshold;
-            c->df_threshold = threshold;
-            c->print_level = print_level;
-            c->max_iterations = max_iterations;
-            c->aux_basis_name = aux_basis_name;
-            c->use_df = (eri_method == "df" || eri_method == "DF");
-        }, nb::arg("eri_method") = "exact",
-           nb::arg("threshold") = 1e-9,
-           nb::arg("aux_basis_name") = "",
-           nb::arg("scf_type") = "incore",
-           nb::arg("print_level") = 0,
-           nb::arg("max_iterations") = 100)
-        .def_rw("scf_type", &SCFConfig::scf_type)
-        .def_rw("eri_method", &SCFConfig::eri_method)
-        .def_rw("cholesky_threshold", &SCFConfig::cholesky_threshold)
-        .def_rw("df_threshold", &SCFConfig::df_threshold)
-        .def_rw("max_iterations", &SCFConfig::max_iterations)
-        .def_rw("energy_threshold", &SCFConfig::energy_threshold)
-        .def_rw("density_threshold", &SCFConfig::density_threshold)
-        .def_rw("diis_threshold", &SCFConfig::diis_threshold)
-        .def_rw("diis_max_vectors", &SCFConfig::diis_max_vectors)
-        .def_rw("print_level", &SCFConfig::print_level)
-        .def_rw("use_df", &SCFConfig::use_df)
-        .def_rw("aux_basis_name", &SCFConfig::aux_basis_name)
-        // [INJECTED_HPC_V5_BINDINGS]
-        .def_rw("memory_limit_gb", &SCFConfig::memory_limit_gb)
-        .def_rw("level_shift", &SCFConfig::level_shift);
-
-    nb::class_<SCFResult>(m, "SCFResult")
-        .def(nb::init<>())
-        .def_rw("energy_electronic", &SCFResult::energy_electronic)
-        .def_rw("energy_nuclear", &SCFResult::energy_nuclear)
-        .def_rw("energy_total", &SCFResult::energy_total)
-        .def_prop_ro("e_total", [](const SCFResult& r) { return r.energy_total; })
-        .def_rw("orbital_energies_alpha", &SCFResult::orbital_energies_alpha)
-        .def_rw("orbital_energies_beta", &SCFResult::orbital_energies_beta)
-        .def_rw("C_alpha", &SCFResult::C_alpha)
-        .def_rw("C_beta", &SCFResult::C_beta)
-        .def_rw("P_alpha", &SCFResult::P_alpha)
-        .def_rw("P_beta", &SCFResult::P_beta)
-        .def_rw("F_alpha", &SCFResult::F_alpha)
-        .def_rw("F_beta", &SCFResult::F_beta)
-        .def_rw("iterations", &SCFResult::iterations)
-        .def_rw("converged", &SCFResult::converged)
-        .def_rw("n_occ_alpha", &SCFResult::n_occ_alpha)
-        .def_rw("n_occ_beta", &SCFResult::n_occ_beta)
-        .def_ro("L_mat", &SCFResult::L_mat, nb::rv_policy::reference_internal);
-
-    nb::class_<UHF>(m, "UHF")
-        .def("__init__", [](UHF *t, const Molecule& mol, const BasisSet& basis,
-                            IntegralEngine* integrals, PointGroup* pg, PetiteList* pl,
-                            int na, int nb, const SCFConfig& conf) {
-            auto sp_int = std::shared_ptr<IntegralEngine>(integrals, [](IntegralEngine*){});
-            auto sp_pg = pg ? std::shared_ptr<PointGroup>(pg, [](PointGroup*){}) : nullptr;
-            auto sp_pl = pl ? std::shared_ptr<PetiteList>(pl, [](PetiteList*){}) : nullptr;
-            new (t) UHF(mol, basis, sp_int, sp_pg, sp_pl, na, nb, mshqc_auto_tune::normalize_scf_config(conf, basis));
-        }, nb::arg("molecule"), nb::arg("basis"), nb::arg("integrals"),
-           nb::arg("pg"), nb::arg("pl"), nb::arg("n_alpha"), nb::arg("n_beta"),
-           nb::arg("config") = SCFConfig())
-        .def("__init__", [](UHF *t, const Molecule& mol, const BasisSet& basis,
-                            IntegralEngine* integrals, int na, int nb, const SCFConfig& conf) {
-            auto sp_int = std::shared_ptr<IntegralEngine>(integrals, [](IntegralEngine*){});
-            new (t) UHF(mol, basis, sp_int, nullptr, nullptr, na, nb, mshqc_auto_tune::normalize_scf_config(conf, basis));
-        }, nb::arg("molecule"), nb::arg("basis"), nb::arg("integrals"),
-           nb::arg("n_alpha"), nb::arg("n_beta"), nb::arg("config") = SCFConfig())
-        .def("__init__", [](UHF *t, const Molecule& mol, const BasisSet& basis,
-                            IntegralEngine* integrals, const SCFConfig& conf,
-                            PointGroup* pg, PetiteList* pl) {
-            int n_elec = mol.n_electrons();
-            int mult = mol.multiplicity();
-            int na = (n_elec + mult - 1) / 2;
-            int nb = n_elec - na;
-            auto sp_int = std::shared_ptr<IntegralEngine>(integrals, [](IntegralEngine*){});
-            auto sp_pg = pg ? std::shared_ptr<PointGroup>(pg, [](PointGroup*){}) : nullptr;
-            auto sp_pl = pl ? std::shared_ptr<PetiteList>(pl, [](PetiteList*){}) : nullptr;
-            new (t) UHF(mol, basis, sp_int, sp_pg, sp_pl, na, nb, mshqc_auto_tune::normalize_scf_config(conf, basis));
-        }, nb::arg("molecule"), nb::arg("basis"), nb::arg("integrals"),
-           nb::arg("config") = SCFConfig(), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
-        .def("compute", &UHF::compute, nb::call_guard<nb::gil_scoped_release>())
-        .def("energy", &UHF::energy);
-
-    nb::class_<RHF>(m, "RHF")
-        .def("__init__", [](RHF *t, const Molecule& mol, const BasisSet& basis,
-                            IntegralEngine* integrals, PointGroup* pg, PetiteList* pl,
-                            const SCFConfig& conf) {
-            auto sp_int = std::shared_ptr<IntegralEngine>(integrals, [](IntegralEngine*){});
-            auto sp_pg = pg ? std::shared_ptr<PointGroup>(pg, [](PointGroup*){}) : nullptr;
-            auto sp_pl = pl ? std::shared_ptr<PetiteList>(pl, [](PetiteList*){}) : nullptr;
-            new (t) RHF(mol, basis, sp_int, sp_pg, sp_pl, mshqc_auto_tune::normalize_scf_config(conf, basis));
-        }, nb::arg("molecule"), nb::arg("basis"), nb::arg("integrals"),
-           nb::arg("pg"), nb::arg("pl"), nb::arg("config") = SCFConfig())
-        .def("__init__", [](RHF *t, const Molecule& mol, const BasisSet& basis,
-                            IntegralEngine* integrals, const SCFConfig& conf,
-                            PointGroup* pg, PetiteList* pl) {
-            auto sp_int = std::shared_ptr<IntegralEngine>(integrals, [](IntegralEngine*){});
-            auto sp_pg = pg ? std::shared_ptr<PointGroup>(pg, [](PointGroup*){}) : nullptr;
-            auto sp_pl = pl ? std::shared_ptr<PetiteList>(pl, [](PetiteList*){}) : nullptr;
-            new (t) RHF(mol, basis, sp_int, sp_pg, sp_pl, mshqc_auto_tune::normalize_scf_config(conf, basis));
-        }, nb::arg("molecule"), nb::arg("basis"), nb::arg("integrals"),
-           nb::arg("config") = SCFConfig(), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
-        .def("compute", &RHF::compute, nb::call_guard<nb::gil_scoped_release>())
-        .def("energy", &RHF::energy);
-
-    nb::class_<ROHF>(m, "ROHF")
-        .def("__init__", [](ROHF *t, const Molecule& mol, const BasisSet& basis,
-                            IntegralEngine* integrals, PointGroup* pg, PetiteList* pl,
-                            int na, int nb, const SCFConfig& conf) {
-            auto sp_int = std::shared_ptr<IntegralEngine>(integrals, [](IntegralEngine*){});
-            auto sp_pg = pg ? std::shared_ptr<PointGroup>(pg, [](PointGroup*){}) : nullptr;
-            auto sp_pl = pl ? std::shared_ptr<PetiteList>(pl, [](PetiteList*){}) : nullptr;
-            new (t) ROHF(mol, basis, sp_int, sp_pg, sp_pl, na, nb, mshqc_auto_tune::normalize_scf_config(conf, basis));
-        }, nb::arg("molecule"), nb::arg("basis"), nb::arg("integrals"),
-           nb::arg("pg"), nb::arg("pl"), nb::arg("n_alpha"), nb::arg("n_beta"), nb::arg("config") = SCFConfig())
-        .def("__init__", [](ROHF *t, const Molecule& mol, const BasisSet& basis,
-                            IntegralEngine* integrals, int na, int nb, const SCFConfig& conf) {
-            auto sp_int = std::shared_ptr<IntegralEngine>(integrals, [](IntegralEngine*){});
-            new (t) ROHF(mol, basis, sp_int, nullptr, nullptr, na, nb, mshqc_auto_tune::normalize_scf_config(conf, basis));
-        }, nb::arg("molecule"), nb::arg("basis"), nb::arg("integrals"),
-           nb::arg("n_alpha"), nb::arg("n_beta"), nb::arg("config") = SCFConfig())
-        .def("__init__", [](ROHF *t, const Molecule& mol, const BasisSet& basis,
-                            IntegralEngine* integrals, const SCFConfig& conf,
-                            PointGroup* pg, PetiteList* pl) {
-            int n_elec = mol.n_electrons();
-            int mult = mol.multiplicity();
-            int na = (n_elec + mult - 1) / 2;
-            int nb = n_elec - na;
-            auto sp_int = std::shared_ptr<IntegralEngine>(integrals, [](IntegralEngine*){});
-            auto sp_pg = pg ? std::shared_ptr<PointGroup>(pg, [](PointGroup*){}) : nullptr;
-            auto sp_pl = pl ? std::shared_ptr<PetiteList>(pl, [](PetiteList*){}) : nullptr;
-            new (t) ROHF(mol, basis, sp_int, sp_pg, sp_pl, na, nb, mshqc_auto_tune::normalize_scf_config(conf, basis));
-        }, nb::arg("molecule"), nb::arg("basis"), nb::arg("integrals"),
-           nb::arg("config") = SCFConfig(), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
-        .def("compute", &ROHF::compute, nb::call_guard<nb::gil_scoped_release>())
-        .def("energy", &ROHF::energy);
-
-    nb::class_<MP2Config>(m, "MP2Config")
-        .def("__init__", [](MP2Config *c, const std::string& eri_method, double threshold,
-                            double gradient_threshold, const std::string& opt_method,
-                            const std::string& aux_basis_name, const std::string& scf_type,
-                            int print_level, int max_iterations) {
-            new (c) MP2Config();
-            c->eri_method = eri_method;
-            c->scf_type = scf_type;
-            c->energy_threshold = threshold;
-            c->cholesky_threshold = threshold;
-            c->df_threshold = threshold;
-            c->gradient_threshold = gradient_threshold;
-            c->opt_method = opt_method;
-            c->aux_basis_name = aux_basis_name;
-            c->print_level = print_level;
-            c->max_iterations = max_iterations;
-            c->use_df = (eri_method == "df" || eri_method == "DF");
-        }, nb::arg("eri_method") = "exact",
-           nb::arg("threshold") = 1e-9,
-           nb::arg("gradient_threshold") = 1e-5,
-           nb::arg("opt_method") = "soscf",
-           nb::arg("aux_basis_name") = "",
-           nb::arg("scf_type") = "incore",
-           nb::arg("print_level") = 0,
-           nb::arg("max_iterations") = 50)
-        .def_rw("scf_type", &MP2Config::scf_type)
-        .def_rw("eri_method", &MP2Config::eri_method)
-        .def_rw("use_df", &MP2Config::use_df)
-        .def_rw("aux_basis_name", &MP2Config::aux_basis_name)
-        .def_rw("df_threshold", &MP2Config::df_threshold)
-        .def_rw("cholesky_threshold", &MP2Config::cholesky_threshold)
-        .def_rw("max_iterations", &MP2Config::max_iterations)
-        .def_rw("energy_threshold", &MP2Config::energy_threshold)
-        .def_rw("gradient_threshold", &MP2Config::gradient_threshold)
-        .def_rw("print_level", &MP2Config::print_level)
-        .def_rw("opt_method", &MP2Config::opt_method)
-        .def_rw("n_frozen", &MP2Config::n_frozen)
-        .def_rw("freeze_core", &MP2Config::freeze_core)
-        .def_rw("memory_limit_gb", &MP2Config::memory_limit_gb);
-
-    nb::class_<MP2Result>(m, "MP2Result")
-        .def(nb::init<>())
-        .def_rw("energy_scf", &MP2Result::energy_scf)
-        .def_rw("energy_mp2_ss", &MP2Result::energy_mp2_ss)
-        .def_rw("energy_mp2_os", &MP2Result::energy_mp2_os)
-        .def_rw("energy_mp2_corr", &MP2Result::energy_mp2_corr)
-        .def_rw("energy_total", &MP2Result::energy_total)
-        .def_prop_ro("e_total", [](const MP2Result& r) { return r.energy_total; })
-        .def_prop_ro("e_corr_total", [](const MP2Result& r) { return r.energy_mp2_corr; })
-        .def_rw("converged", &MP2Result::converged)
-        .def_rw("iterations", &MP2Result::iterations)
-        .def_rw("n_occ_alpha", &MP2Result::n_occ_alpha)
-        .def_rw("n_occ_beta", &MP2Result::n_occ_beta)
-        .def_rw("n_virt_alpha", &MP2Result::n_virt_alpha)
-        .def_rw("n_virt_beta", &MP2Result::n_virt_beta)
-        .def_rw("C_alpha", &MP2Result::C_alpha)
-        .def_rw("C_beta", &MP2Result::C_beta)
-        .def_rw("orbital_energies_alpha", &MP2Result::orbital_energies_alpha)
-        .def_rw("orbital_energies_beta", &MP2Result::orbital_energies_beta)
-        .def_rw("energy_mp2_singles", &MP2Result::energy_mp2_singles);
-
-    nb::class_<foundation::RMP2>(m, "RMP2")
-        .def("__init__", [](foundation::RMP2 *t, const Molecule& mol, const BasisSet& basis,
-                            std::shared_ptr<IntegralEngine> integrals, const SCFResult& scf_guess,
-                            const MP2Config& config, std::shared_ptr<PointGroup> pg, std::shared_ptr<PetiteList> pl) {
-            new (t) foundation::RMP2(mol, basis, integrals, scf_guess,
-                                     mshqc_auto_tune::normalize_mp2_config(config, basis, scf_guess), pg, pl);
-        }, nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
-           nb::arg("config") = MP2Config(), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
-        .def("compute", &foundation::RMP2::compute, nb::call_guard<nb::gil_scoped_release>())
-        .def("set_frozen_core", &mshqc::BaseMP2::set_frozen_core, nb::arg("n_frozen"));
-
-    nb::class_<mshqc::UMP2>(m, "UMP2")
-        .def("__init__", [](mshqc::UMP2 *t, const Molecule& mol, const BasisSet& basis,
-                            std::shared_ptr<IntegralEngine> integrals, const SCFResult& scf_guess,
-                            const MP2Config& config, std::shared_ptr<PointGroup> pg, std::shared_ptr<PetiteList> pl) {
-            new (t) mshqc::UMP2(mol, basis, integrals, scf_guess,
-                                mshqc_auto_tune::normalize_mp2_config(config, basis, scf_guess), pg, pl);
-        }, nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
-           nb::arg("config") = MP2Config(), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
-        .def("compute", &mshqc::UMP2::compute, nb::call_guard<nb::gil_scoped_release>())
-        .def("set_frozen_core", &mshqc::BaseMP2::set_frozen_core, nb::arg("n_frozen"));
-
-    nb::class_<mshqc::ROMP2, mshqc::UMP2>(m, "ROMP2")
-        .def("__init__", [](mshqc::ROMP2 *t, const Molecule& mol, const BasisSet& basis,
-                            std::shared_ptr<IntegralEngine> integrals, const SCFResult& scf_guess,
-                            const MP2Config& config, std::shared_ptr<PointGroup> pg, std::shared_ptr<PetiteList> pl) {
-            new (t) mshqc::ROMP2(mol, basis, integrals, scf_guess,
-                                 mshqc_auto_tune::normalize_mp2_config(config, basis, scf_guess), pg, pl);
-        }, nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
-           nb::arg("config") = MP2Config(), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
-        .def("compute", &mshqc::ROMP2::compute, nb::call_guard<nb::gil_scoped_release>())
-        .def("set_frozen_core", &mshqc::BaseMP2::set_frozen_core, nb::arg("n_frozen"));
-
-    nb::class_<OMP2>(m, "OMP2")
-        .def("__init__", [](OMP2 *t, const Molecule& mol, const BasisSet& basis,
-                            std::shared_ptr<IntegralEngine> integrals, const SCFResult& scf_guess,
-                            const MP2Config& config, std::shared_ptr<PointGroup> pg, std::shared_ptr<PetiteList> pl) {
-            new (t) OMP2(mol, basis, integrals, scf_guess,
-                         mshqc_auto_tune::normalize_mp2_config(config, basis, scf_guess), pg, pl);
-        }, nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
-           nb::arg("config") = MP2Config(), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
-        .def("compute", &OMP2::compute, nb::call_guard<nb::gil_scoped_release>(), "Run OMP2 optimization")
-        .def("set_frozen_core", &mshqc::BaseMP2::set_frozen_core, nb::arg("n_frozen"));
-
-    nb::class_<MP3Result>(m, "MP3Result")
-        .def(nb::init<>())
-        .def_rw("e_hf", &MP3Result::e_hf)
-        .def_rw("e_mp2", &MP3Result::e_mp2)
-        .def_rw("e_mp3", &MP3Result::e_mp3)
-        .def_rw("e3_aa", &MP3Result::e3_aa)
-        .def_rw("e3_bb", &MP3Result::e3_bb)
-        .def_rw("e3_ab", &MP3Result::e3_ab)
-        .def_rw("e_corr_total", &MP3Result::e_corr_total)
-        .def_rw("e_total", &MP3Result::e_total)
-        .def_prop_ro("energy_total", [](const MP3Result& r) { return r.e_total; })
-        .def_prop_ro("energy_scf", [](const MP3Result& r) { return r.e_hf; })
-        .def_prop_ro("energy_mp2_corr", [](const MP3Result& r) { return r.e_mp2; })
-        .def_prop_ro("energy_mp3_corr", [](const MP3Result& r) { return r.e_mp3; })
-        .def_rw("converged", &MP3Result::converged)
-        .def_rw("iterations", &MP3Result::iterations)
-        .def_rw("C_alpha", &MP3Result::C_alpha)
-        .def_rw("C_beta", &MP3Result::C_beta)
-        .def_rw("n_occ_alpha", &MP3Result::n_occ_alpha)
-        .def_rw("n_occ_beta", &MP3Result::n_occ_beta);
-
-    nb::class_<RMP3>(m, "RMP3")
-        .def(nb::init<const SCFResult&, const MP2Result&, const MP2Config&, std::shared_ptr<IntegralEngine>>(),
-             nb::arg("scf_guess"), nb::arg("mp2_guess"), nb::arg("config"), nb::arg("integrals"))
-        .def("__init__", [](RMP3 *t, const Molecule& mol, const BasisSet& basis,
-                            std::shared_ptr<IntegralEngine> integrals, const SCFResult& scf_guess,
-                            const MP2Config& config, std::shared_ptr<PointGroup> pg, std::shared_ptr<PetiteList> pl) {
-            auto norm_conf = mshqc_auto_tune::normalize_mp2_config(config, basis, scf_guess);
-      if (norm_conf.freeze_core && norm_conf.n_frozen == 0) norm_conf.n_frozen = mshqc::compute_standard_frozen_core(mol);
-            foundation::RMP2 rmp2_solver(mol, basis, integrals, scf_guess, norm_conf, pg, pl);
-            MP2Result mp2_res = rmp2_solver.compute();
-            new (t) RMP3(scf_guess, mp2_res, norm_conf, integrals);
-        }, nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
-           nb::arg("config") = MP2Config(), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
-        // [INJECTED_FINAL_OPT_BINDINGS]
-        .def("compute", &RMP3::compute, nb::call_guard<nb::gil_scoped_release>())
-        .def("set_frozen_core", &mshqc::BaseMP3::set_frozen_core, nb::arg("n_frozen"));
-
-    nb::class_<UMP3>(m, "UMP3")
-        .def(nb::init<const SCFResult&, const MP2Result&, const MP2Config&, std::shared_ptr<IntegralEngine>>(),
-             nb::arg("scf_guess"), nb::arg("mp2_guess"), nb::arg("config"), nb::arg("integrals"))
-        .def("__init__", [](UMP3 *t, const Molecule& mol, const BasisSet& basis,
-                            std::shared_ptr<IntegralEngine> integrals, const SCFResult& scf_guess,
-                            const MP2Config& config, std::shared_ptr<PointGroup> pg, std::shared_ptr<PetiteList> pl) {
-            auto norm_conf = mshqc_auto_tune::normalize_mp2_config(config, basis, scf_guess);
-      if (norm_conf.freeze_core && norm_conf.n_frozen == 0) norm_conf.n_frozen = mshqc::compute_standard_frozen_core(mol);
-            mshqc::UMP2 ump2_solver(mol, basis, integrals, scf_guess, norm_conf, pg, pl);
-            MP2Result mp2_res = ump2_solver.compute();
-            new (t) UMP3(scf_guess, mp2_res, norm_conf, integrals);
-        }, nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
-           nb::arg("config") = MP2Config(), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
-        .def("compute", &UMP3::compute, nb::call_guard<nb::gil_scoped_release>())
-        .def("set_frozen_core", &mshqc::BaseMP3::set_frozen_core, nb::arg("n_frozen"));
-        
-    nb::class_<ROMP3, UMP3>(m, "ROMP3")
-        .def(nb::init<const SCFResult&, const MP2Result&, const MP2Config&, std::shared_ptr<IntegralEngine>>(),
-             nb::arg("scf_guess"), nb::arg("mp2_guess"), nb::arg("config"), nb::arg("integrals"))
-        .def("__init__", [](ROMP3 *t, const Molecule& mol, const BasisSet& basis,
-                            std::shared_ptr<IntegralEngine> integrals, const SCFResult& scf_guess,
-                            const MP2Config& config, std::shared_ptr<PointGroup> pg, std::shared_ptr<PetiteList> pl) {
-            auto norm_conf = mshqc_auto_tune::normalize_mp2_config(config, basis, scf_guess);
-      if (norm_conf.freeze_core && norm_conf.n_frozen == 0) norm_conf.n_frozen = mshqc::compute_standard_frozen_core(mol);
-            mshqc::ROMP2 romp2_solver(mol, basis, integrals, scf_guess, norm_conf, pg, pl);
-            MP2Result mp2_res = romp2_solver.compute();
-            new (t) ROMP3(scf_guess, mp2_res, norm_conf, integrals);
-        }, nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
-           nb::arg("config") = MP2Config(), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
-        .def("compute", &ROMP3::compute, nb::call_guard<nb::gil_scoped_release>())
-        .def("set_frozen_core", &mshqc::BaseMP3::set_frozen_core, nb::arg("n_frozen"));
-
-    nb::class_<OMP3>(m, "OMP3")
-        .def("__init__", [](OMP3 *t, const Molecule& mol, const BasisSet& basis,
-                            std::shared_ptr<IntegralEngine> integrals, const SCFResult& scf_guess,
-                            const MP2Config& config, std::shared_ptr<PointGroup> pg, std::shared_ptr<PetiteList> pl) {
-            new (t) OMP3(mol, basis, integrals, scf_guess,
-                         mshqc_auto_tune::normalize_mp2_config(config, basis, scf_guess), pg, pl);
-        }, nb::arg("mol"), nb::arg("basis"), nb::arg("integrals"), nb::arg("scf_guess"),
-           nb::arg("config") = MP2Config(), nb::arg("pg") = nullptr, nb::arg("pl") = nullptr)
-        .def("compute", &OMP3::compute_omp3, nb::call_guard<nb::gil_scoped_release>(), "Run Orbital-Optimized MP3")
-        .def("set_frozen_core", &mshqc::BaseMP2::set_frozen_core, nb::arg("n_frozen"));
-#endif
+        .def("get_schwarz_val", &Screening::get_schwarz_val)
+        .def("max_schwarz", &Screening::max_schwarz);
 
     m.def("bohr_to_angstrom", [](double bohr) { return bohr * 0.529177210903; }, "Convert Bohr to Angstrom");
     m.def("angstrom_to_bohr", [](double angstrom) { return angstrom / 0.529177210903; }, "Convert Angstrom to Bohr");
     m.def("hartree_to_ev", [](double hartree) { return hartree * 27.211386245988; }, "Convert Hartree to eV");
-#ifndef MSHQC_THIN_CORE_BUILD
-    m.def("standard_frozen_core", &mshqc::compute_standard_frozen_core, nb::arg("mol"),
+    m.def("hartree_to_kcal", [](double hartree) { return hartree * 627.5094740631; }, "Convert Hartree to kcal/mol");
+    m.def("standard_frozen_core", &mshqc_auto_tune::standard_frozen_core_count, nb::arg("mol"),
           "Compute standard noble-gas frozen core orbital count (Psi4 convention)");
-#else
-    m.def("standard_frozen_core", &mshqc_auto_tune::compute_standard_frozen_core_thin, nb::arg("mol"),
-          "Compute standard noble-gas frozen core orbital count (Psi4 convention)");
-#endif
-  m.def("hartree_to_kcal", [](double hartree) { return hartree * 627.5094740631; }, "Convert Hartree to kcal/mol");
-    
-#ifndef MSHQC_THIN_CORE_BUILD
-    nb::class_<mshqc::gradient::GeomOptConfig>(m, "GeomOptConfig")
-        .def(nb::init<>())
-        .def_rw("method", &mshqc::gradient::GeomOptConfig::method)
-        .def_rw("eri_method", &mshqc::gradient::GeomOptConfig::eri_method)
-        .def_rw("basis_name", &mshqc::gradient::GeomOptConfig::basis_name)
-        .def_rw("aux_basis_name", &mshqc::gradient::GeomOptConfig::aux_basis_name)
-        .def_rw("reference", &mshqc::gradient::GeomOptConfig::reference)
-        .def_rw("opt_method", &mshqc::gradient::GeomOptConfig::opt_method)
-        .def_rw("max_iter", &mshqc::gradient::GeomOptConfig::max_iter)
-        .def_rw("energy_thresh", &mshqc::gradient::GeomOptConfig::energy_thresh)
-        .def_rw("orb_grad_thresh", &mshqc::gradient::GeomOptConfig::orb_grad_thresh)
-        .def_rw("g_rms_tol", &mshqc::gradient::GeomOptConfig::g_rms_tol)
-        .def_rw("g_max_tol", &mshqc::gradient::GeomOptConfig::g_max_tol)
-        .def_rw("dx_rms_tol", &mshqc::gradient::GeomOptConfig::dx_rms_tol)
-        .def_rw("dx_max_tol", &mshqc::gradient::GeomOptConfig::dx_max_tol)
-        .def_rw("trust_radius_init", &mshqc::gradient::GeomOptConfig::trust_radius_init)
-        .def_rw("trust_radius_max", &mshqc::gradient::GeomOptConfig::trust_radius_max)
-        .def_rw("trust_radius_min", &mshqc::gradient::GeomOptConfig::trust_radius_min)
-        .def_rw("fd_step_bohr", &mshqc::gradient::GeomOptConfig::fd_step_bohr)
-        .def_rw("use_analytic_gradient", &mshqc::gradient::GeomOptConfig::use_analytic_gradient)
-        .def_rw("project_trans_rot", &mshqc::gradient::GeomOptConfig::project_trans_rot)
-        .def_rw("verbose", &mshqc::gradient::GeomOptConfig::verbose)
-        .def_rw("xyz_traj_file", &mshqc::gradient::GeomOptConfig::xyz_traj_file)
-        .def_rw("freeze_core", &mshqc::gradient::GeomOptConfig::freeze_core)
-        .def_rw("n_frozen", &mshqc::gradient::GeomOptConfig::n_frozen)
-        .def_rw("memory_limit_gb", &mshqc::gradient::GeomOptConfig::memory_limit_gb);
 
-    nb::class_<mshqc::gradient::GeomOptResult>(m, "GeomOptResult")
-        .def_ro("converged", &mshqc::gradient::GeomOptResult::converged)
-        .def_ro("iterations", &mshqc::gradient::GeomOptResult::iterations)
-        .def_ro("method", &mshqc::gradient::GeomOptResult::method)
-        .def_ro("eri_method", &mshqc::gradient::GeomOptResult::eri_method)
-        .def_ro("basis_name", &mshqc::gradient::GeomOptResult::basis_name)
-        .def_ro("initial_energy", &mshqc::gradient::GeomOptResult::initial_energy)
-        .def_ro("final_energy", &mshqc::gradient::GeomOptResult::final_energy)
-        .def_ro("final_g_rms", &mshqc::gradient::GeomOptResult::final_g_rms)
-        .def_ro("final_g_max", &mshqc::gradient::GeomOptResult::final_g_max)
-        .def_ro("wall_time_sec", &mshqc::gradient::GeomOptResult::wall_time_sec)
-        .def_ro("coordinates_bohr", &mshqc::gradient::GeomOptResult::coordinates_bohr)
-        .def_ro("coordinates_angstrom", &mshqc::gradient::GeomOptResult::coordinates_angstrom)
-        .def_ro("gradient_ha_bohr", &mshqc::gradient::GeomOptResult::gradient_ha_bohr)
-        .def_ro("energy_history", &mshqc::gradient::GeomOptResult::energy_history)
-        .def_ro("g_rms_history", &mshqc::gradient::GeomOptResult::g_rms_history)
-        .def_ro("bond_lengths_angstrom", &mshqc::gradient::GeomOptResult::bond_lengths_angstrom);
-
-    nb::class_<mshqc::gradient::VibThermoResult>(m, "VibThermoResult")
-        .def_ro("frequencies_cm1", &mshqc::gradient::VibThermoResult::frequencies_cm1)
-        .def_ro("normal_modes", &mshqc::gradient::VibThermoResult::normal_modes)
-        .def_ro("hessian_ha_bohr2", &mshqc::gradient::VibThermoResult::hessian_ha_bohr2)
-        .def_ro("electronic_energy_ha", &mshqc::gradient::VibThermoResult::electronic_energy_ha)
-        .def_ro("zpe_hartree", &mshqc::gradient::VibThermoResult::zpe_hartree)
-        .def_ro("zpe_kcal_mol", &mshqc::gradient::VibThermoResult::zpe_kcal_mol)
-        .def_ro("thermal_energy_ha", &mshqc::gradient::VibThermoResult::thermal_energy_ha)
-        .def_ro("enthalpy_ha", &mshqc::gradient::VibThermoResult::enthalpy_ha)
-        .def_ro("gibbs_free_energy_ha", &mshqc::gradient::VibThermoResult::gibbs_free_energy_ha)
-        .def_ro("temperature_k", &mshqc::gradient::VibThermoResult::temperature_k)
-        .def_ro("n_imaginary", &mshqc::gradient::VibThermoResult::n_imaginary);
-
-    nb::class_<mshqc::gradient::PESScanPoint>(m, "PESScanPoint")
-        .def_ro("r_angstrom", &mshqc::gradient::PESScanPoint::r_angstrom)
-        .def_ro("r_bohr", &mshqc::gradient::PESScanPoint::r_bohr)
-        .def_ro("energy_ha", &mshqc::gradient::PESScanPoint::energy_ha);
-        
-    nb::class_<mshqc::gradient::HPCGeometryOptimizer>(m, "HPCGeometryOptimizer")
-        .def_static("optimize_molecule",
-                    &mshqc::gradient::HPCGeometryOptimizer::optimize_molecule,
-                    nb::arg("mol"), nb::arg("config") = mshqc::gradient::GeomOptConfig(),
-                    nb::call_guard<nb::gil_scoped_release>())
-        .def_static("compute_nuclear_gradient_cpp",
-                    &mshqc::gradient::HPCGeometryOptimizer::compute_nuclear_gradient_cpp,
-                    nb::arg("mol"), nb::arg("config") = mshqc::gradient::GeomOptConfig(),
-                    nb::call_guard<nb::gil_scoped_release>())
-        .def_static("compute_frequencies",
-                    &mshqc::gradient::HPCGeometryOptimizer::compute_frequencies,
-                    nb::arg("mol"),
-                    nb::arg("config") = mshqc::gradient::GeomOptConfig(),
-                    nb::arg("temperature_k") = 298.15,
-                    nb::arg("pressure_atm") = 1.0,
-                    nb::call_guard<nb::gil_scoped_release>())
-        .def_static("scan_bond_pes",
-                    &mshqc::gradient::HPCGeometryOptimizer::scan_bond_pes,
-                    nb::arg("mol"), nb::arg("atom_i"), nb::arg("atom_j"),
-                    nb::arg("distances_angstrom"),
-                    nb::arg("config") = mshqc::gradient::GeomOptConfig(),
-                    nb::call_guard<nb::gil_scoped_release>());
-
-#endif
-
-    // [INJECTED_HYBRID_PHASE1_BINDINGS]
     mshqc::bind_kernels_module(m);
+#ifndef MSHQC_THIN_CORE_BUILD
+    mshqc::bind_legacy_module(m, mol_cls);
+#endif
 }

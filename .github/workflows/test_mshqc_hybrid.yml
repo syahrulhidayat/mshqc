@@ -234,6 +234,14 @@ jobs:
           micromamba activate geom_env
           python -m pytest tests/test_thin_core_stage4.py -v -s 2>&1 | tee 09_test_thin_core_stage4_log.txt
 
+- name: "[10/10] Run Thin Core Stage 5 Verification (test_thin_core_stage5.py)"
+  if: steps.compile.outcome == 'success'
+  shell: bash -el {0}
+  run: |
+    set -o pipefail
+    micromamba activate geom_env
+    python -m pytest tests/test_thin_core_stage5.py -v -s 2>&1 | tee 10_test_thin_core_stage5_log.txt
+
       # =========================================================================
       # UPLOAD ALL TEST LOGS AS SINGLE COMBINED ARTIFACT (.zip)
       # =========================================================================
@@ -242,7 +250,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: mshqc-hybrid-test-logs-${{ matrix.os }}
-          path: 0*_test_*_log.txt
+          path: '*_test_*_log.txt'
           if-no-files-found: warn
 
   # [INJECTED_THIN_CORE_STAGE4_CI_JOB]
@@ -357,6 +365,14 @@ jobs:
           set -o pipefail
           micromamba activate geom_env
           python -m pytest tests/test_thin_core_stage4.py -v -s 2>&1 | tee tc_02_stage4_log.txt
+
+- name: "[THIN-CORE 3/3] Run Stage 5 Verification (No Legacy C++)"
+  if: steps.compile_thin.outcome == 'success'
+  shell: bash -el {0}
+  run: |
+    set -o pipefail
+    micromamba activate geom_env
+    python -m pytest tests/test_thin_core_stage5.py -v -s 2>&1 | tee tc_03_stage5_log.txt
 
       - name: Upload Thin-Core Test Logs
         if: always()

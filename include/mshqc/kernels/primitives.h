@@ -1,78 +1,48 @@
 // Copyright 2026 Muhamad Syahrul Hidayat
 // Licensed under the Apache License, Version 2.0
-// [INJECTED_HYBRID_PHASE2_PRIMITIVES]
+// [INJECTED_THIN_CORE_STAGE5_PRIMITIVES_H]
 #pragma once
 
 #include <Eigen/Dense>
-#include <Eigen/Eigenvalues>
-#include <algorithm>
-#include <cmath>
 #include <memory>
-#include <omp.h>
-#include <stdexcept>
+#include <string>
 #include <tuple>
 #include <utility>
-#include <vector>
 
 #include "mshqc/basis.h"
 #include "mshqc/core/molecule.h"
-#include "mshqc/integrals/df_eri.h"
-#include "mshqc/integrals/packed_ao_utils.h"
-#include "mshqc/integrals/df_metric_utils.h"
 #include "mshqc/ints/integrals.h"
-#include "mshqc/utils/blas_thread_guard.h"
 
 namespace mshqc {
+namespace integrals {
+class DensityFittingERI;
+}
+
 namespace kernels {
 
 // 0. RAII-safe Density Fitting AO 3-index factor builder (auto-combines primary + aux basis)
-inline Eigen::MatrixXd compute_df_ao_factor(
+Eigen::MatrixXd compute_df_ao_factor(
     const Molecule& mol,
     const BasisSet& primary_basis,
     const BasisSet& aux_basis,
     double cutoff = 1e-10,
     bool save_hdf5 = false,
-    bool verbose = false)
-{
-    BasisSet combined = primary_basis;
-    combined.append(aux_basis);
-    auto df_ints = std::make_shared<IntegralEngine>(mol, combined);
-    integrals::DensityFittingERI df_eng(primary_basis, aux_basis, df_ints, cutoff);
-    df_eng.set_verbose(verbose);
-    df_eng.compute(save_hdf5);
-    return std::move(df_eng.get_B_mat_mutable());
-}
+    bool verbose = false);
 
-// Safe RAII class for Python bindings (prevents dangling BasisSet/IntegralEngine references)
+// Safe RAII wrapper for Python bindings (prevents dangling BasisSet/IntegralEngine references)
 class SafeDFEngine {
 public:
     SafeDFEngine(const Molecule& mol,
                  const BasisSet& primary_basis,
                  const BasisSet& aux_basis,
-                 double cutoff = 1e-10)
-        : mol_(mol),
-          primary_(primary_basis),
-          aux_(aux_basis),
-          combined_(primary_basis),
-          cutoff_(cutoff)
-    {
-        combined_.append(aux_);
-        df_ints_ = std::make_shared<IntegralEngine>(mol_, combined_);
-        df_eng_ = std::make_unique<integrals::DensityFittingERI>(
-            primary_, aux_, df_ints_, cutoff_);
-    }
+                 double cutoff = 1e-10);
+    ~SafeDFEngine();
 
-    void compute(bool save_hdf5 = false) {
-        df_eng_->compute(save_hdf5);
-    }
-
-    const Eigen::MatrixXd& get_B_mat() const {
-        return df_eng_->get_B_mat();
-    }
-
-    void set_verbose(bool v) { df_eng_->set_verbose(v); }
-    void set_hdf5_path(const std::string& path) { df_eng_->set_hdf5_path(path); }
-    const std::string& get_hdf5_path() const { return df_eng_->get_hdf5_path(); }
+    void compute(bool save_hdf5 = false);
+    const Eigen::MatrixXd& get_B_mat() const;
+    void set_verbose(bool v);
+    void set_hdf5_path(const std::string& path);
+    const std::string& get_hdf5_path() const;
 
 private:
     Molecule mol_;
@@ -84,227 +54,47 @@ private:
     std::unique_ptr<integrals::DensityFittingERI> df_eng_;
 };
 
-// 1. Coulomb J[P_tot] dari faktor 3-indeks AO (packed atau full)
-inline Eigen::MatrixXd build_coulomb_3c(
+// 1. Coulomb & Exchange 3-index AO contractions
+Eigen::MatrixXd build_coulomb_3c(
     const Eigen::MatrixXd& L_mat,
     const Eigen::MatrixXd& P_tot,
-    int nbf)
-{
-    if (!integrals::has_valid_ao_factor(L_mat, nbf)) {
-        throw std::invalid_argument("build_coulomb_3c: dimensi L_mat tidak cocok dengan nbf");
-    }
-    return integrals::compute_coulomb_from_ao_factor(L_mat, P_tot, nbf);
-}
+    int nbf);
 
-// [INJECTED_THIN_CORE_STAGE2_PRIMITIVES]
-// 2. Exchange K[C_occ * C_occ^T] berorde O(N_aux * N_occ * N_bf^2) via adaptive batched Level-3 BLAS DGEMM
-inline Eigen::MatrixXd build_exchange_3c_occ(
+Eigen::MatrixXd build_exchange_3c_occ(
     const Eigen::MatrixXd& L_mat,
     const Eigen::MatrixXd& C_occ,
-    int nbf)
-{
-    if (!integrals::has_valid_ao_factor(L_mat, nbf)) {
-        throw std::invalid_argument("build_exchange_3c_occ: dimensi L_mat tidak cocok dengan nbf");
-    }
-    const int n_aux = static_cast<int>(L_mat.cols());
-    const int n_occ = static_cast<int>(C_occ.cols());
-    Eigen::MatrixXd K_tot = Eigen::MatrixXd::Zero(nbf, nbf);
-    if (n_occ == 0 || n_aux == 0) return K_tot;
+    int nbf);
 
-    const bool packed = integrals::is_packed_ao_matrix(L_mat, nbf);
-    const int batch_p = std::clamp(
-        static_cast<int>((8ULL * 1024ULL * 1024ULL) /
-            std::max<size_t>(1, static_cast<size_t>(nbf) * static_cast<size_t>(n_occ) * sizeof(double))),
-        1, 32);
+// Fast diagonal-density exchange K[diag(d)] for SAD Iteration-0 (avoids dense L_P * C_sad GEMM)
+Eigen::MatrixXd build_exchange_3c_diag(
+    const Eigen::MatrixXd& L_mat,
+    const Eigen::VectorXd& d_diag,
+    int nbf);
 
-    const int max_threads = omp_get_max_threads();
-    std::vector<Eigen::MatrixXd> K_tls(max_threads, Eigen::MatrixXd::Zero(nbf, nbf));
-
-    #pragma omp parallel
-    {
-        const int tid = omp_get_thread_num();
-        Eigen::MatrixXd& K_loc = K_tls[tid];
-        Eigen::MatrixXd L_P_buf;
-        if (packed) L_P_buf.resize(nbf, nbf);
-        Eigen::MatrixXd T_batch(nbf, static_cast<Eigen::Index>(n_occ) * batch_p);
-        int cnt = 0;
-
-        #pragma omp for schedule(static) nowait
-        for (int P = 0; P < n_aux; ++P) {
-            const double* col_p = L_mat.col(P).data();
-            if (packed) integrals::unpack_ao_column(col_p, nbf, true, L_P_buf);
-            Eigen::Map<const Eigen::MatrixXd> L_P(packed ? L_P_buf.data() : col_p, nbf, nbf);
-            T_batch.middleCols(static_cast<Eigen::Index>(cnt) * n_occ, n_occ).noalias() = L_P * C_occ;
-            ++cnt;
-            if (cnt == batch_p) {
-                K_loc.noalias() += T_batch * T_batch.transpose();
-                cnt = 0;
-            }
-        }
-        if (cnt > 0) {
-            auto T_rem = T_batch.leftCols(static_cast<Eigen::Index>(cnt) * n_occ);
-            K_loc.noalias() += T_rem * T_rem.transpose();
-        }
-    }
-
-    for (int t = 0; t < max_threads; ++t) {
-        K_tot.noalias() += K_tls[t];
-    }
-    return 0.5 * (K_tot + K_tot.transpose());
-}
-
-// 3. Exchange K[D_sym] untuk matriks densitas simetris umum (mis. P_corr pada OMP2/OMP3)
-inline Eigen::MatrixXd build_exchange_3c_sym(
+Eigen::MatrixXd build_exchange_3c_sym(
     const Eigen::MatrixXd& L_mat,
     const Eigen::MatrixXd& D_sym,
-    int nbf)
-{
-    if (!integrals::has_valid_ao_factor(L_mat, nbf)) {
-        throw std::invalid_argument("build_exchange_3c_sym: dimensi L_mat tidak cocok dengan nbf");
-    }
-    const int n_aux = static_cast<int>(L_mat.cols());
-    Eigen::MatrixXd K_tot = Eigen::MatrixXd::Zero(nbf, nbf);
-    if (n_aux == 0) return K_tot;
+    int nbf);
 
-    const bool packed = integrals::is_packed_ao_matrix(L_mat, nbf);
-
-    #pragma omp parallel
-    {
-        Eigen::MatrixXd K_loc = Eigen::MatrixXd::Zero(nbf, nbf);
-        Eigen::MatrixXd L_P(nbf, nbf);
-        Eigen::MatrixXd tmp(nbf, nbf);
-
-        #pragma omp for schedule(static)
-        for (int P = 0; P < n_aux; ++P) {
-            integrals::unpack_ao_column(L_mat.col(P).data(), nbf, packed, L_P);
-            tmp.noalias() = L_P * D_sym;
-            K_loc.noalias() += tmp * L_P;
-        }
-
-        #pragma omp critical
-        {
-            K_tot.noalias() += K_loc;
-        }
-    }
-    return 0.5 * (K_tot + K_tot.transpose());
-}
-
-// 4. Paket cepat (J[2*C*C^T], K[C*C^T]) untuk RHF sehingga F = H_core + J - K
-inline std::pair<Eigen::MatrixXd, Eigen::MatrixXd> build_jk_3c_rhf(
+std::pair<Eigen::MatrixXd, Eigen::MatrixXd> build_jk_3c_rhf(
     const Eigen::MatrixXd& L_mat,
     const Eigen::MatrixXd& C_occ,
-    int nbf)
-{
-    Eigen::MatrixXd P_tot = 2.0 * (C_occ * C_occ.transpose());
-    Eigen::MatrixXd J = build_coulomb_3c(L_mat, P_tot, nbf);
-    Eigen::MatrixXd K = build_exchange_3c_occ(L_mat, C_occ, nbf);
-    return {std::move(J), std::move(K)};
-}
+    int nbf);
 
-// 5. Transformasi 3-indeks AO -> MO: B(x*d2 + y, P)
-inline Eigen::MatrixXd transform_3c_mo(
+// 2. AO -> MO 3-index transforms (single-block and fused 1-pass multi-block)
+Eigen::MatrixXd transform_3c_mo(
     const Eigen::MatrixXd& L_mat,
     const Eigen::MatrixXd& C1,
     const Eigen::MatrixXd& C2,
-    int nbf)
-{
-    if (!integrals::has_valid_ao_factor(L_mat, nbf)) {
-        throw std::invalid_argument("transform_3c_mo: dimensi L_mat tidak cocok dengan nbf");
-    }
-    return integrals::transform_3c_ao_to_mo_block(L_mat, C1, C2, nbf);
-}
+    int nbf);
 
-// 5b. Transformasi 3-indeks terpadu (B_oo, B_ov, B_vv) dalam 1x AO unpack adaptif (<= 8 MB/thread)
-inline std::tuple<Eigen::MatrixXd, Eigen::MatrixXd, Eigen::MatrixXd> transform_3c_mo_blocks(
+std::tuple<Eigen::MatrixXd, Eigen::MatrixXd, Eigen::MatrixXd> transform_3c_mo_blocks(
     const Eigen::MatrixXd& L_mat,
     const Eigen::MatrixXd& C_occ,
     const Eigen::MatrixXd& C_vir,
-    int nbf)
-{
-    if (!integrals::has_valid_ao_factor(L_mat, nbf)) {
-        throw std::invalid_argument("transform_3c_mo_blocks: dimensi L_mat tidak cocok dengan nbf");
-    }
-    const int no = static_cast<int>(C_occ.cols());
-    const int nv = static_cast<int>(C_vir.cols());
-    const int n_aux = static_cast<int>(L_mat.cols());
+    int nbf);
 
-    Eigen::MatrixXd B_oo(static_cast<Eigen::Index>(no) * no, n_aux);
-    Eigen::MatrixXd B_ov(static_cast<Eigen::Index>(no) * nv, n_aux);
-    Eigen::MatrixXd B_vv(static_cast<Eigen::Index>(nv) * nv, n_aux);
-    if (n_aux == 0 || (no == 0 && nv == 0)) {
-        return {std::move(B_oo), std::move(B_ov), std::move(B_vv)};
-    }
-
-    const bool packed = integrals::is_packed_ao_matrix(L_mat, nbf);
-    const size_t bytes_per_p = std::max<size_t>(1, static_cast<size_t>(nbf) * nbf * sizeof(double));
-    const int chunk_size = std::clamp(
-        static_cast<int>((8ULL * 1024ULL * 1024ULL) / bytes_per_p), 1, 32);
-
-    #pragma omp parallel
-    {
-        Eigen::MatrixXd L_sq_buf;
-        if (packed) L_sq_buf.resize(static_cast<Eigen::Index>(nbf) * nbf, chunk_size);
-        Eigen::MatrixXd B_oo_tmp(no, no);
-        Eigen::MatrixXd B_ov_tmp(nv, no);
-        Eigen::MatrixXd B_vv_tmp(nv, nv);
-
-        #pragma omp for schedule(dynamic, 1) nowait
-        for (int P_start = 0; P_start < n_aux; P_start += chunk_size) {
-            const int P_size = std::min(chunk_size, n_aux - P_start);
-            const double* L_sq_ptr = nullptr;
-            if (packed) {
-                for (int p = 0; p < P_size; ++p) {
-                    const double* s = L_mat.col(P_start + p).data();
-                    double* d = L_sq_buf.col(p).data();
-                    for (int i = 0; i < nbf; ++i) {
-                        const int base = i * (i + 1) / 2;
-                        for (int j = 0; j < i; ++j) {
-                            const double v = s[base + j];
-                            d[i + j * nbf] = v;
-                            d[j + i * nbf] = v;
-                        }
-                        d[i + i * nbf] = s[base + i];
-                    }
-                }
-                L_sq_ptr = L_sq_buf.data();
-            } else {
-                L_sq_ptr = L_mat.col(P_start).data();
-            }
-
-            Eigen::Map<const Eigen::MatrixXd> L_res(
-                L_sq_ptr, nbf, static_cast<Eigen::Index>(nbf) * P_size);
-            Eigen::MatrixXd X_occ, X_vir;
-            if (no > 0) X_occ.noalias() = C_occ.transpose() * L_res;
-            if (nv > 0) X_vir.noalias() = C_vir.transpose() * L_res;
-
-            for (int p = 0; p < P_size; ++p) {
-                if (no > 0) {
-                    Eigen::Map<const Eigen::MatrixXd> X_Po(
-                        X_occ.data() + static_cast<size_t>(p) * no * nbf, no, nbf);
-                    B_oo_tmp.noalias() = X_Po * C_occ;
-                    B_oo.col(P_start + p) = Eigen::Map<const Eigen::VectorXd>(
-                        B_oo_tmp.data(), static_cast<Eigen::Index>(no) * no);
-                }
-                if (nv > 0) {
-                    Eigen::Map<const Eigen::MatrixXd> X_Pv(
-                        X_vir.data() + static_cast<size_t>(p) * nv * nbf, nv, nbf);
-                    if (no > 0) {
-                        B_ov_tmp.noalias() = X_Pv * C_occ;
-                        B_ov.col(P_start + p) = Eigen::Map<const Eigen::VectorXd>(
-                            B_ov_tmp.data(), static_cast<Eigen::Index>(nv) * no);
-                    }
-                    B_vv_tmp.noalias() = X_Pv * C_vir;
-                    B_vv.col(P_start + p) = Eigen::Map<const Eigen::VectorXd>(
-                        B_vv_tmp.data(), static_cast<Eigen::Index>(nv) * nv);
-                }
-            }
-        }
-    }
-    return {std::move(B_oo), std::move(B_ov), std::move(B_vv)};
-}
-
-// 5c. Transformasi 3-indeks terpadu UHF (6 blok spin dalam 1x AO unpack)
-inline std::tuple<
+std::tuple<
     Eigen::MatrixXd, Eigen::MatrixXd, Eigen::MatrixXd,
     Eigen::MatrixXd, Eigen::MatrixXd, Eigen::MatrixXd>
 transform_3c_mo_blocks_uhf(
@@ -313,275 +103,27 @@ transform_3c_mo_blocks_uhf(
     const Eigen::MatrixXd& Ca_vir,
     const Eigen::MatrixXd& Cb_occ,
     const Eigen::MatrixXd& Cb_vir,
-    int nbf)
-{
-    if (!integrals::has_valid_ao_factor(L_mat, nbf)) {
-        throw std::invalid_argument("transform_3c_mo_blocks_uhf: dimensi L_mat tidak cocok dengan nbf");
-    }
-    const int na = static_cast<int>(Ca_occ.cols());
-    const int va = static_cast<int>(Ca_vir.cols());
-    const int nb = static_cast<int>(Cb_occ.cols());
-    const int vb = static_cast<int>(Cb_vir.cols());
-    const int n_aux = static_cast<int>(L_mat.cols());
+    int nbf);
 
-    const bool has_b = (nb > 0 && vb > 0);
-    Eigen::MatrixXd B_oo_a(static_cast<Eigen::Index>(na) * na, n_aux);
-    Eigen::MatrixXd B_ov_a(static_cast<Eigen::Index>(na) * va, n_aux);
-    Eigen::MatrixXd B_vv_a(static_cast<Eigen::Index>(va) * va, n_aux);
-    Eigen::MatrixXd B_oo_b(has_b ? static_cast<Eigen::Index>(nb) * nb : 0, n_aux);
-    Eigen::MatrixXd B_ov_b(has_b ? static_cast<Eigen::Index>(nb) * vb : 0, n_aux);
-    Eigen::MatrixXd B_vv_b(has_b ? static_cast<Eigen::Index>(vb) * vb : 0, n_aux);
-    if (n_aux == 0) {
-        return {std::move(B_oo_a), std::move(B_ov_a), std::move(B_vv_a),
-                std::move(B_oo_b), std::move(B_ov_b), std::move(B_vv_b)};
-    }
-
-    const bool packed = integrals::is_packed_ao_matrix(L_mat, nbf);
-    const size_t bytes_per_p = std::max<size_t>(1, static_cast<size_t>(nbf) * nbf * sizeof(double));
-    const int chunk_size = std::clamp(
-        static_cast<int>((8ULL * 1024ULL * 1024ULL) / bytes_per_p), 1, 32);
-
-    #pragma omp parallel
-    {
-        Eigen::MatrixXd L_sq_buf;
-        if (packed) L_sq_buf.resize(static_cast<Eigen::Index>(nbf) * nbf, chunk_size);
-        Eigen::MatrixXd Boo_a(na, na), Bov_a(va, na), Bvv_a(va, va);
-        Eigen::MatrixXd Boo_b, Bov_b, Bvv_b;
-        if (has_b) {
-            Boo_b.resize(nb, nb);
-            Bov_b.resize(vb, nb);
-            Bvv_b.resize(vb, vb);
-        }
-
-        #pragma omp for schedule(dynamic, 1) nowait
-        for (int P_start = 0; P_start < n_aux; P_start += chunk_size) {
-            const int P_size = std::min(chunk_size, n_aux - P_start);
-            const double* L_sq_ptr = nullptr;
-            if (packed) {
-                for (int p = 0; p < P_size; ++p) {
-                    const double* s = L_mat.col(P_start + p).data();
-                    double* d = L_sq_buf.col(p).data();
-                    for (int i = 0; i < nbf; ++i) {
-                        const int base = i * (i + 1) / 2;
-                        for (int j = 0; j < i; ++j) {
-                            const double v = s[base + j];
-                            d[i + j * nbf] = v;
-                            d[j + i * nbf] = v;
-                        }
-                        d[i + i * nbf] = s[base + i];
-                    }
-                }
-                L_sq_ptr = L_sq_buf.data();
-            } else {
-                L_sq_ptr = L_mat.col(P_start).data();
-            }
-
-            Eigen::Map<const Eigen::MatrixXd> L_res(
-                L_sq_ptr, nbf, static_cast<Eigen::Index>(nbf) * P_size);
-            Eigen::MatrixXd Xa_o, Xa_v;
-            if (na > 0) Xa_o.noalias() = Ca_occ.transpose() * L_res;
-            if (va > 0) Xa_v.noalias() = Ca_vir.transpose() * L_res;
-
-            for (int p = 0; p < P_size; ++p) {
-                if (na > 0) {
-                    Eigen::Map<const Eigen::MatrixXd> Xpo(
-                        Xa_o.data() + static_cast<size_t>(p) * na * nbf, na, nbf);
-                    Boo_a.noalias() = Xpo * Ca_occ;
-                    B_oo_a.col(P_start + p) = Eigen::Map<const Eigen::VectorXd>(
-                        Boo_a.data(), static_cast<Eigen::Index>(na) * na);
-                }
-                if (va > 0) {
-                    Eigen::Map<const Eigen::MatrixXd> Xpv(
-                        Xa_v.data() + static_cast<size_t>(p) * va * nbf, va, nbf);
-                    if (na > 0) {
-                        Bov_a.noalias() = Xpv * Ca_occ;
-                        B_ov_a.col(P_start + p) = Eigen::Map<const Eigen::VectorXd>(
-                            Bov_a.data(), static_cast<Eigen::Index>(va) * na);
-                    }
-                    Bvv_a.noalias() = Xpv * Ca_vir;
-                    B_vv_a.col(P_start + p) = Eigen::Map<const Eigen::VectorXd>(
-                        Bvv_a.data(), static_cast<Eigen::Index>(va) * va);
-                }
-            }
-
-            if (has_b) {
-                Eigen::MatrixXd Xb_o = Cb_occ.transpose() * L_res;
-                Eigen::MatrixXd Xb_v = Cb_vir.transpose() * L_res;
-                for (int p = 0; p < P_size; ++p) {
-                    Eigen::Map<const Eigen::MatrixXd> Xpo(
-                        Xb_o.data() + static_cast<size_t>(p) * nb * nbf, nb, nbf);
-                    Eigen::Map<const Eigen::MatrixXd> Xpv(
-                        Xb_v.data() + static_cast<size_t>(p) * vb * nbf, vb, nbf);
-                    Boo_b.noalias() = Xpo * Cb_occ;
-                    Bov_b.noalias() = Xpv * Cb_occ;
-                    Bvv_b.noalias() = Xpv * Cb_vir;
-                    B_oo_b.col(P_start + p) = Eigen::Map<const Eigen::VectorXd>(
-                        Boo_b.data(), static_cast<Eigen::Index>(nb) * nb);
-                    B_ov_b.col(P_start + p) = Eigen::Map<const Eigen::VectorXd>(
-                        Bov_b.data(), static_cast<Eigen::Index>(vb) * nb);
-                    B_vv_b.col(P_start + p) = Eigen::Map<const Eigen::VectorXd>(
-                        Bvv_b.data(), static_cast<Eigen::Index>(vb) * vb);
-                }
-            }
-        }
-    }
-    return {std::move(B_oo_a), std::move(B_ov_a), std::move(B_vv_a),
-            std::move(B_oo_b), std::move(B_ov_b), std::move(B_vv_b)};
-}
-
-// 6. Semi-kanonikalisasi sub-ruang Occ-Occ dan Vir-Vir
-inline std::tuple<Eigen::MatrixXd, Eigen::VectorXd, Eigen::MatrixXd> semicanonicalize_subspaces(
+// 3. Subspace semicanonicalization & RHF DF-MP2 / DF-OMP2 kernels
+std::tuple<Eigen::MatrixXd, Eigen::VectorXd, Eigen::MatrixXd> semicanonicalize_subspaces(
     const Eigen::MatrixXd& C,
     const Eigen::MatrixXd& F_ao,
-    int n_occ)
-{
-    const int n_vir = static_cast<int>(C.cols()) - n_occ;
-    if (n_occ < 0 || n_vir < 0) {
-        throw std::invalid_argument("semicanonicalize_subspaces: n_occ di luar rentang");
-    }
+    int n_occ);
 
-    Eigen::MatrixXd C_out = C;
-    Eigen::VectorXd eps(n_occ + n_vir);
-
-    if (n_occ > 0) {
-        Eigen::MatrixXd C_o = C_out.leftCols(n_occ);
-        Eigen::MatrixXd F_oo = C_o.transpose() * F_ao * C_o;
-        F_oo = 0.5 * (F_oo + F_oo.transpose());
-        Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_o(F_oo);
-        eps.head(n_occ) = es_o.eigenvalues();
-        C_out.leftCols(n_occ) = C_o * es_o.eigenvectors();
-    }
-
-    if (n_vir > 0) {
-        Eigen::MatrixXd C_v = C_out.rightCols(n_vir);
-        Eigen::MatrixXd F_vv = C_v.transpose() * F_ao * C_v;
-        F_vv = 0.5 * (F_vv + F_vv.transpose());
-        Eigen::SelfAdjointEigenSolver<Eigen::MatrixXd> es_v(F_vv);
-        eps.tail(n_vir) = es_v.eigenvalues();
-        C_out.rightCols(n_vir) = C_v * es_v.eigenvectors();
-    }
-
-    Eigen::MatrixXd F_vo = C_out.rightCols(n_vir).transpose() * F_ao * C_out.leftCols(n_occ);
-    return {std::move(C_out), std::move(eps), std::move(F_vo)};
-}
-
-// 7. Evaluasi amplitudo T2 dan energi OS/SS RMP2 dari B_ov (no*nv x n_aux)
-inline std::tuple<double, double, Eigen::MatrixXd> eval_rmp2_df(
+std::tuple<double, double, Eigen::MatrixXd> eval_rmp2_df(
     const Eigen::MatrixXd& B_ov,
     const Eigen::VectorXd& eps_occ,
-    const Eigen::VectorXd& eps_vir)
-{
-    const int no = static_cast<int>(eps_occ.size());
-    const int nv = static_cast<int>(eps_vir.size());
-    if (B_ov.rows() != static_cast<Eigen::Index>(no) * nv) {
-        throw std::invalid_argument("eval_rmp2_df: B_ov.rows() harus sama dengan no * nv");
-    }
+    const Eigen::VectorXd& eps_vir);
 
-    Eigen::MatrixXd T2(static_cast<Eigen::Index>(nv) * nv, static_cast<Eigen::Index>(no) * no);
-    double e_os = 0.0;
-    double e_ss = 0.0;
-
-    #pragma omp parallel
-    {
-        Eigen::MatrixXd I_ij(nv, nv);
-        double loc_os = 0.0;
-        double loc_ss = 0.0;
-
-        #pragma omp for schedule(dynamic, 1)
-        for (int i = 0; i < no; ++i) {
-            auto B_i = B_ov.middleRows(static_cast<Eigen::Index>(i) * nv, nv);
-            for (int j = i; j < no; ++j) {
-                auto B_j = B_ov.middleRows(static_cast<Eigen::Index>(j) * nv, nv);
-                I_ij.noalias() = B_i * B_j.transpose();
-
-                const double eij = eps_occ(i) + eps_occ(j);
-                const double sym_w = (i == j) ? 1.0 : 2.0;
-
-                Eigen::Map<Eigen::MatrixXd> T_ij(
-                    T2.col(static_cast<Eigen::Index>(i) * no + j).data(), nv, nv);
-
-                for (int b = 0; b < nv; ++b) {
-                    const double eij_b = eij - eps_vir(b);
-                    for (int a = 0; a < nv; ++a) {
-                        const double denom = eij_b - eps_vir(a);
-                        const double v_ab = I_ij(a, b);
-                        const double t_ab = (std::abs(denom) > 1e-12) ? (v_ab / denom) : 0.0;
-                        T_ij(a, b) = t_ab;
-                        loc_os += sym_w * t_ab * v_ab;
-                        loc_ss += sym_w * t_ab * (v_ab - I_ij(b, a));
-                    }
-                }
-                if (i != j) {
-                    Eigen::Map<Eigen::MatrixXd> T_ji(
-                        T2.col(static_cast<Eigen::Index>(j) * no + i).data(), nv, nv);
-                    T_ji = T_ij.transpose();
-                }
-            }
-        }
-
-        #pragma omp atomic
-        e_os += loc_os;
-        #pragma omp atomic
-        e_ss += loc_ss;
-    }
-
-    return {e_os, e_ss, std::move(T2)};
-}
-
-// 8. 1-RDM korelasi OMP2 RHF per kanal spin alpha, mendukung spin-scaling (c_os, c_ss)
-inline std::pair<Eigen::MatrixXd, Eigen::MatrixXd> eval_omp2_1rdm_rhf(
+std::pair<Eigen::MatrixXd, Eigen::MatrixXd> eval_omp2_1rdm_rhf(
     const Eigen::MatrixXd& T2,
     int n_occ,
     int n_vir,
     double c_os = 1.0,
-    double c_ss = 1.0)
-{
-    const double c_same = c_os + c_ss;
-    Eigen::MatrixXd T_eff(T2.rows(), T2.cols());
+    double c_ss = 1.0);
 
-    #pragma omp parallel for schedule(static)
-    for (int idx = 0; idx < n_occ * n_occ; ++idx) {
-        Eigen::Map<const Eigen::MatrixXd> T_ij(T2.col(idx).data(), n_vir, n_vir);
-        Eigen::Map<Eigen::MatrixXd> Te_ij(T_eff.col(idx).data(), n_vir, n_vir);
-        Te_ij = c_same * T_ij - c_ss * T_ij.transpose();
-    }
-
-    Eigen::MatrixXd gamma_oo = Eigen::MatrixXd::Zero(n_occ, n_occ);
-    #pragma omp parallel for collapse(2) schedule(static)
-    for (int i = 0; i < n_occ; ++i) {
-        for (int j = 0; j < n_occ; ++j) {
-            double val = 0.0;
-            for (int k = 0; k < n_occ; ++k) {
-                val += T2.col(static_cast<Eigen::Index>(i) * n_occ + k)
-                           .dot(T_eff.col(static_cast<Eigen::Index>(j) * n_occ + k));
-            }
-            gamma_oo(i, j) = -val;
-        }
-    }
-
-    Eigen::MatrixXd gamma_vv = Eigen::MatrixXd::Zero(n_vir, n_vir);
-    #pragma omp parallel
-    {
-        Eigen::MatrixXd gvv_loc = Eigen::MatrixXd::Zero(n_vir, n_vir);
-        #pragma omp for schedule(static)
-        for (int idx = 0; idx < n_occ * n_occ; ++idx) {
-            Eigen::Map<const Eigen::MatrixXd> T_ij(T2.col(idx).data(), n_vir, n_vir);
-            Eigen::Map<const Eigen::MatrixXd> Te_ij(T_eff.col(idx).data(), n_vir, n_vir);
-            gvv_loc.noalias() += T_ij * Te_ij.transpose();
-        }
-        #pragma omp critical
-        {
-            gamma_vv.noalias() += gvv_loc;
-        }
-    }
-
-    gamma_oo = 0.5 * (gamma_oo + gamma_oo.transpose());
-    gamma_vv = 0.5 * (gamma_vv + gamma_vv.transpose());
-    return {std::move(gamma_oo), std::move(gamma_vv)};
-}
-
-// 9. Vektor-Z OMP2 RHF via faktor 3-indeks (Pers. 2.71g), mendukung SCS-OMP2
-inline Eigen::MatrixXd eval_omp2_zvec_rhf_df(
+Eigen::MatrixXd eval_omp2_zvec_rhf_df(
     const Eigen::MatrixXd& T2,
     const Eigen::MatrixXd& B_oo,
     const Eigen::MatrixXd& B_ov,
@@ -589,75 +131,20 @@ inline Eigen::MatrixXd eval_omp2_zvec_rhf_df(
     int n_occ,
     int n_vir,
     double c_os = 1.0,
-    double c_ss = 1.0)
-{
-    const int n_aux = static_cast<int>(B_ov.cols());
-    const double c_same = c_os + c_ss;
-    Eigen::MatrixXd X_all = Eigen::MatrixXd::Zero(
-        static_cast<Eigen::Index>(n_occ) * n_vir, n_aux);
+    double c_ss = 1.0);
 
-    #pragma omp parallel
-    {
-        Eigen::MatrixXd T_eff_ij(n_vir, n_vir);
-        #pragma omp for schedule(dynamic, 1)
-        for (int i = 0; i < n_occ; ++i) {
-            auto X_ai = X_all.middleRows(static_cast<Eigen::Index>(i) * n_vir, n_vir);
-            for (int j = 0; j < n_occ; ++j) {
-                Eigen::Map<const Eigen::MatrixXd> T_ij(
-                    T2.col(static_cast<Eigen::Index>(i) * n_occ + j).data(), n_vir, n_vir);
-                T_eff_ij = c_same * T_ij - c_ss * T_ij.transpose();
-                X_ai.noalias() += T_eff_ij * B_ov.middleRows(
-                    static_cast<Eigen::Index>(j) * n_vir, n_vir);
-            }
-        }
-    }
-
-    Eigen::MatrixXd Z_vo = Eigen::MatrixXd::Zero(n_vir, n_occ);
-    #pragma omp parallel
-    {
-        Eigen::MatrixXd Z_loc = Eigen::MatrixXd::Zero(n_vir, n_occ);
-        #pragma omp for schedule(static)
-        for (int P = 0; P < n_aux; ++P) {
-            Eigen::Map<const Eigen::MatrixXd> B_oo_P(B_oo.col(P).data(), n_occ, n_occ);
-            Eigen::Map<const Eigen::MatrixXd> B_vv_P(B_vv.col(P).data(), n_vir, n_vir);
-            Eigen::Map<const Eigen::MatrixXd> X_P(X_all.col(P).data(), n_vir, n_occ);
-            Z_loc.noalias() += B_vv_P * X_P;
-            Z_loc.noalias() -= X_P * B_oo_P;
-        }
-        #pragma omp critical
-        {
-            Z_vo.noalias() += Z_loc;
-        }
-    }
-    return Z_vo;
-}
-
-// [INJECTED_THIN_CORE_STAGE3_GRAD_KERNEL]
-// 10. Kontraksi simetris AO & gamma_2c untuk gradien analitik DF (thin wrapper ke packed_ao_utils)
-inline Eigen::VectorXd contract_ao_sym(
+// 4. Thin-Core Analytic DF Nuclear Gradient contractions (libcint ip* derivatives)
+Eigen::VectorXd contract_ao_sym(
     const Eigen::MatrixXd& L_mat,
     const Eigen::MatrixXd& M_sym,
-    int nbf)
-{
-    if (!integrals::has_valid_ao_factor(L_mat, nbf)) {
-        throw std::invalid_argument("contract_ao_sym: dimensi L_mat tidak cocok dengan nbf");
-    }
-    return integrals::contract_ao_factor_with_sym(L_mat, M_sym, nbf);
-}
+    int nbf);
 
-inline Eigen::MatrixXd compute_gamma2c(
+Eigen::MatrixXd compute_gamma2c(
     const Eigen::MatrixXd& Gamma_full,
     const Eigen::MatrixXd& L_mat,
-    int nbf)
-{
-    if (!integrals::has_valid_ao_factor(L_mat, nbf)) {
-        throw std::invalid_argument("compute_gamma2c: dimensi L_mat tidak cocok dengan nbf");
-    }
-    return integrals::compute_gamma2c_from_full_and_L(Gamma_full, L_mat, nbf);
-}
+    int nbf);
 
-// 11. Kontraksi gradien nuklir analitik DF (1e + 2e 3-pusat/2-pusat + repulsi nuklir) via libcint
-inline Eigen::MatrixXd eval_df_nuclear_gradient(
+Eigen::MatrixXd eval_df_nuclear_gradient(
     const Molecule& mol,
     const BasisSet& primary_basis,
     const BasisSet& aux_basis,
@@ -665,79 +152,7 @@ inline Eigen::MatrixXd eval_df_nuclear_gradient(
     const Eigen::MatrixXd& W_eff_ao,
     Eigen::MatrixXd Gamma_3c,
     const Eigen::MatrixXd& gamma_2c,
-    double cutoff = 1e-12)
-{
-    const int natoms = static_cast<int>(mol.n_atoms());
-    Eigen::MatrixXd g_tot = Eigen::MatrixXd::Zero(natoms, 3);
-
-    // 1. Gradien repulsi nuklir klasik dV_nn/dR
-    for (int a = 0; a < natoms; ++a) {
-        const double Za = static_cast<double>(mol.atom(a).atomic_number);
-        const Eigen::Vector3d ra(mol.atom(a).x, mol.atom(a).y, mol.atom(a).z);
-        for (int b = a + 1; b < natoms; ++b) {
-            const double Zb = static_cast<double>(mol.atom(b).atomic_number);
-            const Eigen::Vector3d rb(mol.atom(b).x, mol.atom(b).y, mol.atom(b).z);
-            const Eigen::Vector3d rab = ra - rb;
-            const double r2 = rab.squaredNorm();
-            const Eigen::Vector3d f = (-Za * Zb / (r2 * std::sqrt(r2))) * rab;
-            g_tot.row(a) += f.transpose();
-            g_tot.row(b) -= f.transpose();
-        }
-    }
-
-    // 2. Gradien 1-elektron (T + V + Pulay -W*dS)
-    IntegralEngine prim_ints(mol, primary_basis);
-    g_tot.noalias() += prim_ints.compute_1e_gradient(P_eff_ao, W_eff_ao);
-
-    // 3. Metrik 2-pusat DF & transformasi Gamma_3c -> Gamma_tilde, gamma_2c -> gamma_tilde
-    BasisSet combined = primary_basis;
-    combined.append(aux_basis);
-    IntegralEngine df_ints(mol, combined);
-
-    const int n_shells_prim = static_cast<int>(primary_basis.n_shells());
-    const int n_shells_aux = static_cast<int>(aux_basis.n_shells());
-    const int nbf = static_cast<int>(primary_basis.n_basis_functions());
-    const int n_aux = static_cast<int>(aux_basis.n_basis_functions());
-
-    std::vector<int> aux_starts(n_shells_aux), aux_sizes(n_shells_aux);
-    int off = 0, max_a = 1;
-    for (int i = 0; i < n_shells_aux; ++i) {
-        aux_starts[i] = off;
-        aux_sizes[i] = aux_basis.shell(i).n_functions();
-        max_a = std::max(max_a, aux_sizes[i]);
-        off += aux_sizes[i];
-    }
-
-    Eigen::MatrixXd J_metric = Eigen::MatrixXd::Zero(n_aux, n_aux);
-    const size_t buf_sz = std::max<size_t>(64, static_cast<size_t>(max_a) * max_a);
-    #pragma omp parallel
-    {
-        std::vector<double> buf(buf_sz);
-        #pragma omp for schedule(dynamic, 1) nowait
-        for (int R = 0; R < n_shells_aux; ++R) {
-            const int abs_R = n_shells_prim + R, dim_R = aux_sizes[R], st_R = aux_starts[R];
-            for (int S = 0; S <= R; ++S) {
-                const int abs_S = n_shells_prim + S, dim_S = aux_sizes[S], st_S = aux_starts[S];
-                if (!df_ints.compute_2c2e_block_raw(abs_R, abs_S, buf.data())) continue;
-                for (int s = 0; s < dim_S; ++s) {
-                    for (int r = 0; r < dim_R; ++r) {
-                        const double val = buf[r + dim_R * s];
-                        J_metric(st_R + r, st_S + s) = val;
-                        if (st_R + r != st_S + s) J_metric(st_S + s, st_R + r) = val;
-                    }
-                }
-            }
-        }
-    }
-
-    auto df_metric = integrals::DFMetricFactor::compute(J_metric, cutoff);
-    df_metric.apply_Gamma_to_tilde_inplace(Gamma_3c);
-    Eigen::MatrixXd gamma_tilde = df_metric.apply_gamma2c_to_tilde(gamma_2c);
-
-    g_tot.noalias() += df_ints.compute_df_2e_gradient(
-        n_shells_prim, n_shells_aux, nbf, n_aux, Gamma_3c, gamma_tilde);
-    return g_tot;
-}
+    double cutoff = 1e-12);
 
 } // namespace kernels
 } // namespace mshqc

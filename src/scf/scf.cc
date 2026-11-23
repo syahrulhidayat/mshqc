@@ -43,6 +43,8 @@
 #include "mshqc/utils/hdf5_io.h"
 #include <memory>
 #include <vector>
+#include <deque>
+#include <Eigen/SVD>
 #ifdef I
 #undef I
 #endif
@@ -317,6 +319,106 @@ Eigen::MatrixXd compute_shell_pmax(
     }
     return P_max;
 }
+
+
+class CoupledUHFDIIS {
+public:
+    explicit CoupledUHFDIIS(int max_vectors)
+        : max_vectors_(std::max(2, max_vectors)),
+          B_(Eigen::MatrixXd::Zero(max_vectors_ + 1, max_vectors_ + 1)) {}
+
+    void add(const Eigen::MatrixXd& Fa, const Eigen::MatrixXd& Fb,
+             const Eigen::MatrixXd& err_a, const Eigen::MatrixXd& err_b) {
+        Eigen::VectorXd e_vec(err_a.size() + err_b.size());
+        e_vec.head(err_a.size()) = Eigen::Map<const Eigen::VectorXd>(err_a.data(), err_a.size());
+        e_vec.tail(err_b.size()) = Eigen::Map<const Eigen::VectorXd>(err_b.data(), err_b.size());
+
+        if (static_cast<int>(fa_hist_.size()) >= max_vectors_) {
+            fa_hist_.pop_front();
+            fb_hist_.pop_front();
+            err_hist_.pop_front();
+            const int m = max_vectors_ - 1;
+            Eigen::MatrixXd tmp = B_.block(1, 1, m, m);
+            B_.topLeftCorner(m, m) = tmp;
+        }
+        fa_hist_.push_back(Fa);
+        fb_hist_.push_back(Fb);
+        err_hist_.push_back(std::move(e_vec));
+
+        const int n = static_cast<int>(err_hist_.size());
+        const int idx = n - 1;
+        for (int i = 0; i < n; ++i) {
+            const double val = err_hist_[i].dot(err_hist_[idx]);
+            B_(i, idx) = val;
+            B_(idx, i) = val;
+        }
+    }
+
+    void extrapolate(Eigen::MatrixXd& Fa_out, Eigen::MatrixXd& Fb_out) const {
+        const int n = static_cast<int>(fa_hist_.size());
+        if (n < 2) {
+            Fa_out = fa_hist_.back();
+            Fb_out = fb_hist_.back();
+            return;
+        }
+
+        Eigen::VectorXd d(n);
+        for (int i = 0; i < n; ++i) {
+            const double bii = B_(i, i);
+            if (!std::isfinite(bii) || bii <= 1.0e-30) {
+                Fa_out = fa_hist_.back();
+                Fb_out = fb_hist_.back();
+                return;
+            }
+            d(i) = std::sqrt(bii);
+        }
+
+        const double s_l = d.minCoeff();
+        Eigen::MatrixXd A = Eigen::MatrixXd::Zero(n + 1, n + 1);
+        for (int i = 0; i < n; ++i) {
+            for (int j = 0; j < n; ++j) {
+                A(i, j) = B_(i, j) / (d(i) * d(j));
+            }
+            const double lag = -s_l / d(i);
+            A(i, n) = lag;
+            A(n, i) = lag;
+        }
+
+        Eigen::JacobiSVD<Eigen::MatrixXd> svd(A, Eigen::ComputeThinU | Eigen::ComputeThinV);
+        const Eigen::VectorXd& sv = svd.singularValues();
+        const double max_sv = (sv.size() > 0) ? sv(0) : 1.0;
+        const double tol = 1.0e-13 * std::max(1.0, max_sv);
+        Eigen::MatrixXd S_inv = Eigen::MatrixXd::Zero(n + 1, n + 1);
+        for (int i = 0; i < n + 1; ++i) {
+            if (sv(i) > tol) S_inv(i, i) = 1.0 / sv(i);
+        }
+        Eigen::VectorXd rhs = Eigen::VectorXd::Zero(n + 1);
+        rhs(n) = -s_l;
+        Eigen::VectorXd y = svd.matrixV() * S_inv * svd.matrixU().transpose() * rhs;
+        Eigen::VectorXd coeffs = y.head(n).cwiseQuotient(d);
+
+        const double sum_c = coeffs.sum();
+        if (!std::isfinite(sum_c) || std::abs(sum_c - 1.0) > 1.0e-4) {
+            Fa_out = fa_hist_.back();
+            Fb_out = fb_hist_.back();
+            return;
+        }
+
+        Fa_out = Eigen::MatrixXd::Zero(fa_hist_[0].rows(), fa_hist_[0].cols());
+        Fb_out = Eigen::MatrixXd::Zero(fb_hist_[0].rows(), fb_hist_[0].cols());
+        for (int i = 0; i < n; ++i) {
+            Fa_out.noalias() += coeffs(i) * fa_hist_[i];
+            Fb_out.noalias() += coeffs(i) * fb_hist_[i];
+        }
+    }
+
+private:
+    int max_vectors_;
+    std::deque<Eigen::MatrixXd> fa_hist_;
+    std::deque<Eigen::MatrixXd> fb_hist_;
+    std::deque<Eigen::VectorXd> err_hist_;
+    Eigen::MatrixXd B_;
+};
 
 } // namespace
 
@@ -615,7 +717,7 @@ SCFResult BaseSCF::compute() {
     init_integrals();
     initial_guess();
     DIIS diis_a(config_.diis_max_vectors);
-    DIIS diis_b(config_.diis_max_vectors);
+    CoupledUHFDIIS coupled_uhf_diis(config_.diis_max_vectors);
 
     if (config_.scf_type == "direct" && !config_.use_df && config_.eri_method != "cholesky") {
         fock_engine_ = std::make_unique<FockBuilder>(integrals_, basis_, H_, schwarz_);
@@ -652,18 +754,18 @@ SCFResult BaseSCF::compute() {
 
         if (iter_scf_ > 1) {
             mshqc::utils::ScopedBlasThreads blas_diis_mt(nbasis_, 96);
-      Eigen::MatrixXd FPS_a = F_alpha_ * P_alpha_ * S_;
+            Eigen::MatrixXd FPS_a = F_alpha_ * P_alpha_ * S_;
             Eigen::MatrixXd err_a = X_.transpose() * (FPS_a - FPS_a.transpose()) * X_;
-            diis_a.add_iteration(F_alpha_, err_a);
-            F_eff_a = diis_a.extrapolate();
 
             if (is_uhf) {
                 Eigen::MatrixXd FPS_b = F_beta_ * P_beta_ * S_;
                 Eigen::MatrixXd err_b = X_.transpose() * (FPS_b - FPS_b.transpose()) * X_;
-                diis_b.add_iteration(F_beta_, err_b);
-                F_eff_b = diis_b.extrapolate();
+                coupled_uhf_diis.add(F_alpha_, F_beta_, err_a, err_b);
+                coupled_uhf_diis.extrapolate(F_eff_a, F_eff_b);
                 err_rms = std::hypot(err_a.norm(), err_b.norm()) / nbasis_;
             } else {
+                diis_a.add_iteration(F_alpha_, err_a);
+                F_eff_a = diis_a.extrapolate();
                 err_rms = err_a.norm() / nbasis_;
             }
         }

@@ -78,6 +78,8 @@ void bind_kernels_module(nb::module_& parent) {
           nb::call_guard<nb::gil_scoped_release>(), nb::arg("L_mat"), nb::arg("P_tot"), nb::arg("nbf"));
     k.def("build_exchange_3c_occ", &kernels::build_exchange_3c_occ,
           nb::call_guard<nb::gil_scoped_release>(), nb::arg("L_mat"), nb::arg("C_occ"), nb::arg("nbf"));
+    k.def("build_exchange_3c_diag", &kernels::build_exchange_3c_diag,
+          nb::call_guard<nb::gil_scoped_release>(), nb::arg("L_mat"), nb::arg("d_diag"), nb::arg("nbf"));
     k.def("build_exchange_3c_sym", &kernels::build_exchange_3c_sym,
           nb::call_guard<nb::gil_scoped_release>(), nb::arg("L_mat"), nb::arg("D_sym"), nb::arg("nbf"));
     k.def("build_jk_3c_rhf", &kernels::build_jk_3c_rhf,

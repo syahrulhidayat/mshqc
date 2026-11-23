@@ -324,10 +324,14 @@ def run_df_rhf(
         C = C_orth if C_orth is not None else np.array(C_init, dtype=np.float64, copy=True)
         eps = np.zeros(nbf, dtype=np.float64)
     elif P_init is not None:
+        # [INJECTED_THIN_CORE_STAGE5_FAST_SCF]
         P0 = np.ascontiguousarray(P_init, dtype=np.float64)
-        C_sad = _factorize_psd_density(0.5 * P0)
         J0 = K.build_coulomb_3c(B, P0, nbf)
-        K0 = K.build_exchange_3c_occ(B, C_sad, nbf)
+        diag0 = np.diag(P0)
+        if hasattr(K, 'build_exchange_3c_diag') and float(np.max(np.abs(P0 - np.diag(diag0)))) < 1.0e-13:
+            K0 = K.build_exchange_3c_diag(B, np.ascontiguousarray(0.5 * diag0), nbf)
+        else:
+            K0 = K.build_exchange_3c_occ(B, _factorize_psd_density(0.5 * P0), nbf)
         eps, C = _diagonalize_fock(H + J0 - K0, X)
     else:
         eps, C = _diagonalize_fock(H, X)
@@ -348,7 +352,8 @@ def run_df_rhf(
         P = 2.0 * (C_occ @ C_occ.T)
         e_tot = float(0.5 * np.sum(P * (H + F)) + v_nn)
 
-        grad_ao = F @ P @ S - S @ P @ F
+        fps = F @ P @ S
+        grad_ao = fps - fps.T
         grad_orth = X.T @ grad_ao @ X
         err_rms = 0.5 * float(np.linalg.norm(grad_orth)) / float(nbf)
         dE = abs(e_tot - e_prev)
@@ -433,10 +438,13 @@ def run_df_uhf(
         fa_scale = float(na) / float(n_tot)
         fb_scale = float(nb) / float(n_tot)
         J0 = K.build_coulomb_3c(B, P0, nbf)
-        Ca_fac = _factorize_psd_density(fa_scale * P0)
-        Cb_fac = _factorize_psd_density(fb_scale * P0)
-        Ka0 = K.build_exchange_3c_occ(B, Ca_fac, nbf)
-        Kb0 = K.build_exchange_3c_occ(B, Cb_fac, nbf) if nb > 0 else np.zeros((nbf, nbf), dtype=np.float64)
+        diag0 = np.diag(P0)
+        if hasattr(K, 'build_exchange_3c_diag') and float(np.max(np.abs(P0 - np.diag(diag0)))) < 1.0e-13:
+            Ka0 = K.build_exchange_3c_diag(B, np.ascontiguousarray(fa_scale * diag0), nbf)
+            Kb0 = K.build_exchange_3c_diag(B, np.ascontiguousarray(fb_scale * diag0), nbf) if nb > 0 else np.zeros((nbf, nbf), dtype=np.float64)
+        else:
+            Ka0 = K.build_exchange_3c_occ(B, _factorize_psd_density(fa_scale * P0), nbf)
+            Kb0 = K.build_exchange_3c_occ(B, _factorize_psd_density(fb_scale * P0), nbf) if nb > 0 else np.zeros((nbf, nbf), dtype=np.float64)
         eps_a, Ca = _diagonalize_fock(H + J0 - Ka0, X)
         eps_b, Cb = _diagonalize_fock(H + J0 - Kb0, X)
     else:
@@ -472,8 +480,10 @@ def run_df_uhf(
         Pb = Cb_o @ Cb_o.T if nb > 0 else np.zeros((nbf, nbf), dtype=np.float64)
         e_tot = float(0.5 * (np.sum(Pa * (H + Fa)) + np.sum(Pb * (H + Fb))) + v_nn)
 
-        ga_orth = X.T @ (Fa @ Pa @ S - S @ Pa @ Fa) @ X
-        gb_orth = X.T @ (Fb @ Pb @ S - S @ Pb @ Fb) @ X
+        fps_a = Fa @ Pa @ S
+        fps_b = Fb @ Pb @ S
+        ga_orth = X.T @ (fps_a - fps_a.T) @ X
+        gb_orth = X.T @ (fps_b - fps_b.T) @ X
         err_stack = np.concatenate((ga_orth.ravel(), gb_orth.ravel()))
         err_rms = float(np.linalg.norm(err_stack)) / float(nbf)
 
