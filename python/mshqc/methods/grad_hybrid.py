@@ -1,7 +1,7 @@
 # Copyright 2026 Muhamad Syahrul Hidayat
 # Licensed under the Apache License, Version 2.0
 """
-Gradien nuklir analitik Thin-Core di Python (mendukung All-Electron & Frozen-Core) untuk:
+Gradien nuklir analitik Thin-Core di Python (mendukung All-Electron & Strict Frozen-Core) untuk:
   - DF-RHF, DF-UHF, DF-ROHF
   - DF-OMP2, DF-SCS-OMP2, DF-SOS-OMP2, DF-LT-SOS-OMP2, dan DF-kappa-OOMP2 (RHF & UHF)
 """
@@ -161,178 +161,7 @@ def eval_df_scf_gradient_rohf(
     )
 
 
-def _solve_frozen_core_zvec_rhf(
-    B_ao: np.ndarray,
-    C: np.ndarray,
-    F_HF_mo: np.ndarray,
-    G_gamma_mo: np.ndarray,
-    eps: np.ndarray,
-    g_oo: np.ndarray,
-    g_vv: np.ndarray,
-    X_mat: np.ndarray,
-    no: int,
-    nf: int,
-) -> np.ndarray:
-    """
-    Selesaikan persamaan Z-vector CPHF terkopel (inti-aktif + inti-virtual) untuk gradien
-    analitik DF-OMP2 / DF-kappa-OOMP2 RHF frozen-core. Mengembalikan Z_pf berukuran (nbf-nf, nf).
-    """
-    nbf = C.shape[0]
-    n_act = no - nf
-    nv = nbf - no
-    if nf == 0 or (n_act == 0 and nv == 0):
-        return np.zeros((nbf - nf, nf), dtype=np.float64)
-
-    C_frz = np.ascontiguousarray(C[:, :nf])
-    C_act = np.ascontiguousarray(C[:, nf:no])
-    C_vir = np.ascontiguousarray(C[:, no:])
-    C_nonfrz = np.ascontiguousarray(C[:, nf:])
-
-    B_fa_3d = K.transform_3c_mo(B_ao, C_frz, C_vir, nbf).reshape(nf, nv, -1)
-    B_fi_3d = K.transform_3c_mo(B_ao, C_frz, C_act, nbf).reshape(nf, n_act, -1)
-    X_3d = X_mat.reshape(n_act, nv, -1)
-
-    conn_if = np.einsum("faP,iaP->if", B_fa_3d, X_3d, optimize=True)
-    conn_af = np.einsum("fiP,iaP->af", B_fi_3d, X_3d, optimize=True)
-
-    # g_nonvar = (1/4) dE_tot/dkappa_{pf} untuk C' = C exp(K), K[pf] = kappa_{pf}
-    rhs_if = (F_HF_mo[:nf, nf:no] @ g_oo).T + conn_if
-    rhs_af = -F_HF_mo[no:, :nf] - G_gamma_mo[no:, :nf] + (F_HF_mo[:nf, no:] @ g_vv).T + conn_af
-    rhs = np.vstack((rhs_if, rhs_af))
-
-    delta_pf = eps[nf:, None] - eps[None, :nf]
-    F_va = F_HF_mo[no:, nf:no]
-
-    def matvec(z_flat: np.ndarray) -> np.ndarray:
-        Z = z_flat.reshape(n_act + nv, nf)
-        Z_if = Z[:n_act, :]
-        Z_af = Z[n_act:, :]
-        out_if = delta_pf[:n_act, :] * Z_if + F_va.T @ Z_af
-        out_af = delta_pf[n_act:, :] * Z_af + F_va @ Z_if
-        if nv > 0:
-            Pz_a = C_vir @ Z_af @ C_frz.T + C_frz @ Z_af.T @ C_vir.T
-            Gz_ao = 2.0 * K.build_coulomb_3c(B_ao, Pz_a, nbf) - K.build_exchange_3c_sym(B_ao, Pz_a, nbf)
-            Gz_pf = C_nonfrz.T @ Gz_ao @ C_frz
-            out_if = out_if + Gz_pf[:n_act, :]
-            out_af = out_af + Gz_pf[n_act:, :]
-        return np.vstack((out_if, out_af)).reshape(-1)
-
-    b = rhs.reshape(-1)
-    precond = 1.0 / np.maximum(np.abs(delta_pf.reshape(-1)), 1.0e-3)
-    x = np.zeros_like(b)
-    r = b.copy()
-    z = precond * r
-    p = z.copy()
-    rz = float(np.dot(r, z))
-    for _ in range(80):
-        if float(np.linalg.norm(r)) < 1.0e-12:
-            break
-        Ap = matvec(p)
-        alpha = rz / max(float(np.dot(p, Ap)), 1.0e-30)
-        x = x + alpha * p
-        r = r - alpha * Ap
-        z = precond * r
-        rz_new = float(np.dot(r, z))
-        p = z + (rz_new / max(rz, 1.0e-30)) * p
-        rz = rz_new
-    return x.reshape(n_act + nv, nf)
-
-
-def _solve_frozen_core_zvec_uhf(
-    B_ao: np.ndarray,
-    Ca: np.ndarray,
-    Cb: np.ndarray,
-    Fa_HF_mo: np.ndarray,
-    Fb_HF_mo: np.ndarray,
-    Ga_gamma_mo: np.ndarray,
-    Gb_gamma_mo: np.ndarray,
-    eps_a: np.ndarray,
-    eps_b: np.ndarray,
-    g_oo_a: np.ndarray,
-    g_vv_a: np.ndarray,
-    g_oo_b: np.ndarray,
-    g_vv_b: np.ndarray,
-    X_a: np.ndarray,
-    X_b: np.ndarray,
-    na: int,
-    nb: int,
-    nf: int,
-) -> Tuple[np.ndarray, np.ndarray]:
-    """Persamaan Z-vector CPHF UHF terkopel (alpha + beta) untuk frozen-core OMP2/kappa-OOMP2."""
-    nbf = Ca.shape[0]
-    na_act, va = na - nf, nbf - na
-    nb_act, vb = nb - nf, nbf - nb
-    if nf == 0:
-        return np.zeros((na_act + va, nf)), np.zeros((nb_act + vb, nf))
-
-    def _spin_rhs(C_sp, F_mo, G_mo, g_oo, g_vv, X_sp, n_occ, n_act, n_vir):
-        Cf = np.ascontiguousarray(C_sp[:, :nf])
-        Ci = np.ascontiguousarray(C_sp[:, nf:n_occ])
-        Cv = np.ascontiguousarray(C_sp[:, n_occ:])
-        B_fa = K.transform_3c_mo(B_ao, Cf, Cv, nbf).reshape(nf, n_vir, -1)
-        B_fi = K.transform_3c_mo(B_ao, Cf, Ci, nbf).reshape(nf, n_act, -1)
-        X_3d = X_sp.reshape(n_act, n_vir, -1)
-        c_if = np.einsum("faP,iaP->if", B_fa, X_3d, optimize=True)
-        c_af = np.einsum("fiP,iaP->af", B_fi, X_3d, optimize=True)
-        r_if = (F_mo[:nf, nf:n_occ] @ g_oo).T + c_if
-        r_af = -F_mo[n_occ:, :nf] - G_mo[n_occ:, :nf] + (F_mo[:nf, n_occ:] @ g_vv).T + c_af
-        return np.vstack((r_if, r_af))
-
-    rhs_a = _spin_rhs(Ca, Fa_HF_mo, Ga_gamma_mo, g_oo_a, g_vv_a, X_a, na, na_act, va)
-    rhs_b = _spin_rhs(Cb, Fb_HF_mo, Gb_gamma_mo, g_oo_b, g_vv_b, X_b, nb, nb_act, vb)
-    dim_a = (na_act + va) * nf
-    b = np.concatenate((rhs_a.reshape(-1), rhs_b.reshape(-1)))
-
-    da_pf = eps_a[nf:, None] - eps_a[None, :nf]
-    db_pf = eps_b[nf:, None] - eps_b[None, :nf]
-    Fva_a = Fa_HF_mo[na:, nf:na]
-    Fva_b = Fb_HF_mo[nb:, nf:nb]
-
-    Ca_f, Ca_v, Ca_nf = Ca[:, :nf], Ca[:, na:], Ca[:, nf:]
-    Cb_f, Cb_v, Cb_nf = Cb[:, :nf], Cb[:, nb:], Cb[:, nf:]
-
-    def matvec(vec: np.ndarray) -> np.ndarray:
-        Za = vec[:dim_a].reshape(na_act + va, nf)
-        Zb = vec[dim_a:].reshape(nb_act + vb, nf)
-        Za_if, Za_af = Za[:na_act, :], Za[na_act:, :]
-        Zb_if, Zb_af = Zb[:nb_act, :], Zb[nb_act:, :]
-
-        oa_if = da_pf[:na_act, :] * Za_if + Fva_a.T @ Za_af
-        oa_af = da_pf[na_act:, :] * Za_af + Fva_a @ Za_if
-        ob_if = db_pf[:nb_act, :] * Zb_if + Fva_b.T @ Zb_af
-        ob_af = db_pf[nb_act:, :] * Zb_af + Fva_b @ Zb_if
-
-        Pza = Ca_v @ Za_af @ Ca_f.T + Ca_f @ Za_af.T @ Ca_v.T if va > 0 else np.zeros((nbf, nbf))
-        Pzb = Cb_v @ Zb_af @ Cb_f.T + Cb_f @ Zb_af.T @ Cb_v.T if vb > 0 else np.zeros((nbf, nbf))
-        Jz = K.build_coulomb_3c(B_ao, Pza + Pzb, nbf)
-        Gza_pf = Ca_nf.T @ (Jz - K.build_exchange_3c_sym(B_ao, Pza, nbf)) @ Ca_f
-        Gzb_pf = Cb_nf.T @ (Jz - K.build_exchange_3c_sym(B_ao, Pzb, nbf)) @ Cb_f
-
-        oa = np.vstack((oa_if + Gza_pf[:na_act, :], oa_af + Gza_pf[na_act:, :]))
-        ob = np.vstack((ob_if + Gzb_pf[:nb_act, :], ob_af + Gzb_pf[nb_act:, :]))
-        return np.concatenate((oa.reshape(-1), ob.reshape(-1)))
-
-    precond = 1.0 / np.maximum(np.abs(np.concatenate((da_pf.reshape(-1), db_pf.reshape(-1)))), 1.0e-3)
-    x = np.zeros_like(b)
-    r = b.copy()
-    z = precond * r
-    p = z.copy()
-    rz = float(np.dot(r, z))
-    for _ in range(80):
-        if float(np.linalg.norm(r)) < 1.0e-12:
-            break
-        Ap = matvec(p)
-        alpha = rz / max(float(np.dot(p, Ap)), 1.0e-30)
-        x = x + alpha * p
-        r = r - alpha * Ap
-        z = precond * r
-        rz_new = float(np.dot(r, z))
-        p = z + (rz_new / max(rz, 1.0e-30)) * p
-        rz = rz_new
-    return x[:dim_a].reshape(na_act + va, nf), x[dim_a:].reshape(nb_act + vb, nf)
-
-
-def _build_omp2_f_blocks(
+def _build_omp2_f_raw(
     F_HF_mo: np.ndarray,
     G_gamma_mo: np.ndarray,
     g_oo: np.ndarray,
@@ -343,8 +172,13 @@ def _build_omp2_f_blocks(
     X_3d: np.ndarray,
     no: int,
     nf: int = 0,
+    B_fa_3d: Optional[np.ndarray] = None,
+    B_fi_3d: Optional[np.ndarray] = None,
 ) -> np.ndarray:
-    """Bangun matriks Lagrangian MO tergeneralisasi simetris (mendukung frozen core nf)."""
+    """
+    Bangun matriks Lagrangian MO mentah F_raw[p, q] = (1/4) dE/dU_{pq} (RHF) atau (1/2) dE/dU_{pq} (UHF),
+    termasuk blok frozen-core F_conn[:nf, nf:no] dan F_conn[:nf, no:].
+    """
     nbf = F_HF_mo.shape[0]
     F_sep = np.zeros((nbf, nbf), dtype=np.float64)
     F_sep[:no, :no] = F_HF_mo[:no, :no] + G_gamma_mo[:no, :no]
@@ -359,20 +193,212 @@ def _build_omp2_f_blocks(
     F_conn[no:, no:] = np.einsum("Pia,Pib->ab", B_ov_3d, X_3d, optimize=True)
     F_conn[no:, nf:no] = np.einsum("Pab,Pib->ai", B_vv_3d, X_3d, optimize=True)
     F_conn[nf:no, no:] = np.einsum("Pij,Pja->ia", B_oo_3d, X_3d, optimize=True)
+    if nf > 0 and B_fa_3d is not None and B_fi_3d is not None:
+        F_conn[:nf, nf:no] = np.einsum("Pfa,Pia->fi", B_fa_3d, X_3d, optimize=True)
+        F_conn[:nf, no:] = np.einsum("Pfi,Pia->fa", B_fi_3d, X_3d, optimize=True)
 
-    F_sep = 0.5 * (F_sep + F_sep.T)
-    F_conn = 0.5 * (F_conn + F_conn.T)
     return F_sep + F_conn
+
+
+def _solve_rhf_fc_zvec(
+    B_ao: np.ndarray,
+    S_ovlp: np.ndarray,
+    C0: np.ndarray,
+    eps0: np.ndarray,
+    C_omp: np.ndarray,
+    g_pf_omp: np.ndarray,
+    no: int,
+    nf: int,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Handy-Schaefer Z-vector eksak untuk Strict Frozen-Core RHF-OMP2 / kappa-OOMP2:
+      1. Transformasi gradien non-variasional ke basis kanonik RHF: b0 = Q_nf @ g_pf @ Q_f^T.
+      2. Solusi closed-form inti-aktif: Z0_{i0, f} = -b0_{i0, f} / (eps0_{i0} - eps0_f).
+      3. Solusi CPHF RHF penuh (A_RHF * Z0_{vo} = -(b0_{vo} + G[P_ca]_{vo})).
+    Mengembalikan (Z0_sym_mo, Pz_alpha_ao, dF0_sym_mo).
+    """
+    nbf = C0.shape[0]
+    n_act = no - nf
+    nv = nbf - no
+
+    Q_f = C0[:, :nf].T @ S_ovlp @ C_omp[:, :nf]
+    Q_nf = C0[:, nf:].T @ S_ovlp @ C_omp[:, nf:]
+    b0 = Q_nf @ g_pf_omp @ Q_f.T  # shape: (n_act + nv, nf)
+
+    # 1. Closed-form core-active Z-vector (P_RHF invarian thd rotasi core-active)
+    Z0_ca = -b0[:n_act, :] / (eps0[nf:no, None] - eps0[None, :nf])
+    P_ca_a = C0[:, nf:no] @ Z0_ca @ C0[:, :nf].T + C0[:, :nf] @ Z0_ca.T @ C0[:, nf:no].T
+    G_ca_ao = 2.0 * K.build_coulomb_3c(B_ao, P_ca_a, nbf) - K.build_exchange_3c_sym(B_ao, P_ca_a, nbf)
+
+    # 2. RHS CPHF RHF pada seluruh ruang virtual x occupied (nv x no)
+    rhs_vo = -(C0[:, no:].T @ G_ca_ao @ C0[:, :no])
+    rhs_vo[:, :nf] -= b0[n_act:, :]
+
+    delta_vo = eps0[no:, None] - eps0[None, :no]
+    C0_o, C0_v = np.ascontiguousarray(C0[:, :no]), np.ascontiguousarray(C0[:, no:])
+
+    def matvec(z_flat: np.ndarray) -> np.ndarray:
+        Z = z_flat.reshape(nv, no)
+        Pz = C0_v @ Z @ C0_o.T + C0_o @ Z.T @ C0_v.T
+        Gz = 2.0 * K.build_coulomb_3c(B_ao, Pz, nbf) - K.build_exchange_3c_sym(B_ao, Pz, nbf)
+        return (delta_vo * Z + C0_v.T @ Gz @ C0_o).reshape(-1)
+
+    b = rhs_vo.reshape(-1)
+    precond = 1.0 / np.maximum(np.abs(delta_vo.reshape(-1)), 1.0e-3)
+    x = np.zeros_like(b)
+    r = b.copy()
+    z = precond * r
+    p = z.copy()
+    rz = float(np.dot(r, z))
+    for _ in range(100):
+        if float(np.linalg.norm(r)) < 1.0e-13:
+            break
+        Ap = matvec(p)
+        alpha = rz / max(float(np.dot(p, Ap)), 1.0e-30)
+        x = x + alpha * p
+        r = r - alpha * Ap
+        z = precond * r
+        rz_new = float(np.dot(r, z))
+        p = z + (rz_new / max(rz, 1.0e-30)) * p
+        rz = rz_new
+    Z0_vo = x.reshape(nv, no)
+
+    # 3. Rakit Z0_sym (nbf x nbf), Pz_alpha_ao, dan dF0_sym (kontribusi ke W_eff)
+    Z0_sym = np.zeros((nbf, nbf), dtype=np.float64)
+    Z0_sym[no:, :no] = Z0_vo
+    Z0_sym[:no, no:] = Z0_vo.T
+    Z0_sym[nf:no, :nf] = Z0_ca
+    Z0_sym[:nf, nf:no] = Z0_ca.T
+    Pz_a = np.ascontiguousarray(C0 @ Z0_sym @ C0.T, dtype=np.float64)
+
+    dF_orb = 0.5 * (eps0[:, None] + eps0[None, :]) * Z0_sym
+    Gz_tot_ao = 2.0 * K.build_coulomb_3c(B_ao, Pz_a, nbf) - K.build_exchange_3c_sym(B_ao, Pz_a, nbf)
+    dF_dens_raw = np.zeros((nbf, nbf), dtype=np.float64)
+    dF_dens_raw[:, :no] = C0.T @ Gz_tot_ao @ C0_o
+    dF0_sym = dF_orb + 0.5 * (dF_dens_raw + dF_dens_raw.T)
+    return Z0_sym, Pz_a, dF0_sym
+
+
+def _solve_uhf_fc_zvec(
+    B_ao: np.ndarray,
+    S_ovlp: np.ndarray,
+    Ca0: np.ndarray,
+    Cb0: np.ndarray,
+    ea0: np.ndarray,
+    eb0: np.ndarray,
+    Ca_omp: np.ndarray,
+    Cb_omp: np.ndarray,
+    ga_pf_omp: np.ndarray,
+    gb_pf_omp: np.ndarray,
+    na: int,
+    nb: int,
+    nf: int,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Handy-Schaefer Z-vector terkopel (alpha + beta) untuk Strict Frozen-Core UHF-OMP2 / kappa-OOMP2."""
+    nbf = Ca0.shape[0]
+    na_act, nb_act = na - nf, nb - nf
+    va, vb = nbf - na, nbf - nb
+
+    Qa_f = Ca0[:, :nf].T @ S_ovlp @ Ca_omp[:, :nf]
+    Qa_nf = Ca0[:, nf:].T @ S_ovlp @ Ca_omp[:, nf:]
+    ba0 = Qa_nf @ ga_pf_omp @ Qa_f.T
+
+    Qb_f = Cb0[:, :nf].T @ S_ovlp @ Cb_omp[:, :nf]
+    Qb_nf = Cb0[:, nf:].T @ S_ovlp @ Cb_omp[:, nf:]
+    bb0 = Qb_nf @ gb_pf_omp @ Qb_f.T
+
+    Za0_ca = -ba0[:na_act, :] / (ea0[nf:na, None] - ea0[None, :nf]) if na_act > 0 else np.zeros((0, nf))
+    Zb0_ca = -bb0[:nb_act, :] / (eb0[nf:nb, None] - eb0[None, :nf]) if nb_act > 0 else np.zeros((0, nf))
+
+    Pca_a = Ca0[:, nf:na] @ Za0_ca @ Ca0[:, :nf].T + Ca0[:, :nf] @ Za0_ca.T @ Ca0[:, nf:na].T if na_act > 0 else np.zeros((nbf, nbf))
+    Pca_b = Cb0[:, nf:nb] @ Zb0_ca @ Cb0[:, :nf].T + Cb0[:, :nf] @ Zb0_ca.T @ Cb0[:, nf:nb].T if nb_act > 0 else np.zeros((nbf, nbf))
+    J_ca = K.build_coulomb_3c(B_ao, Pca_a + Pca_b, nbf)
+    Ga_ca = J_ca - K.build_exchange_3c_sym(B_ao, Pca_a, nbf)
+    Gb_ca = J_ca - K.build_exchange_3c_sym(B_ao, Pca_b, nbf)
+
+    Ca0_o, Ca0_v = np.ascontiguousarray(Ca0[:, :na]), np.ascontiguousarray(Ca0[:, na:])
+    Cb0_o, Cb0_v = np.ascontiguousarray(Cb0[:, :nb]), np.ascontiguousarray(Cb0[:, nb:])
+
+    rhs_a = -(Ca0_v.T @ Ga_ca @ Ca0_o)
+    rhs_a[:, :nf] -= ba0[na_act:, :]
+    rhs_b = -(Cb0_v.T @ Gb_ca @ Cb0_o)
+    rhs_b[:, :nf] -= bb0[nb_act:, :]
+
+    da_vo = ea0[na:, None] - ea0[None, :na]
+    db_vo = eb0[nb:, None] - eb0[None, :nb]
+    dim_a = va * na
+
+    def matvec(vec: np.ndarray) -> np.ndarray:
+        Za = vec[:dim_a].reshape(va, na)
+        Zb = vec[dim_a:].reshape(vb, nb)
+        Pza = Ca0_v @ Za @ Ca0_o.T + Ca0_o @ Za.T @ Ca0_v.T
+        Pzb = Cb0_v @ Zb @ Cb0_o.T + Cb0_o @ Zb.T @ Cb0_v.T
+        Jz = K.build_coulomb_3c(B_ao, Pza + Pzb, nbf)
+        Gza = Jz - K.build_exchange_3c_sym(B_ao, Pza, nbf)
+        Gzb = Jz - K.build_exchange_3c_sym(B_ao, Pzb, nbf)
+        oa = da_vo * Za + Ca0_v.T @ Gza @ Ca0_o
+        ob = db_vo * Zb + Cb0_v.T @ Gzb @ Cb0_o
+        return np.concatenate((oa.reshape(-1), ob.reshape(-1)))
+
+    b = np.concatenate((rhs_a.reshape(-1), rhs_b.reshape(-1)))
+    precond = 1.0 / np.maximum(np.abs(np.concatenate((da_vo.reshape(-1), db_vo.reshape(-1)))), 1.0e-3)
+    x = np.zeros_like(b)
+    r = b.copy()
+    z = precond * r
+    p = z.copy()
+    rz = float(np.dot(r, z))
+    for _ in range(100):
+        if float(np.linalg.norm(r)) < 1.0e-13:
+            break
+        Ap = matvec(p)
+        alpha = rz / max(float(np.dot(p, Ap)), 1.0e-30)
+        x = x + alpha * p
+        r = r - alpha * Ap
+        z = precond * r
+        rz_new = float(np.dot(r, z))
+        p = z + (rz_new / max(rz, 1.0e-30)) * p
+        rz = rz_new
+
+    Za0_vo = x[:dim_a].reshape(va, na)
+    Zb0_vo = x[dim_a:].reshape(vb, nb)
+
+    Za0_sym = np.zeros((nbf, nbf), dtype=np.float64)
+    Za0_sym[na:, :na] = Za0_vo
+    Za0_sym[:na, na:] = Za0_vo.T
+    Za0_sym[nf:na, :nf] = Za0_ca
+    Za0_sym[:nf, nf:na] = Za0_ca.T
+
+    Zb0_sym = np.zeros((nbf, nbf), dtype=np.float64)
+    Zb0_sym[nb:, :nb] = Zb0_vo
+    Zb0_sym[:nb, nb:] = Zb0_vo.T
+    Zb0_sym[nf:nb, :nf] = Zb0_ca
+    Zb0_sym[:nf, nf:nb] = Zb0_ca.T
+
+    Pz_a = np.ascontiguousarray(Ca0 @ Za0_sym @ Ca0.T, dtype=np.float64)
+    Pz_b = np.ascontiguousarray(Cb0 @ Zb0_sym @ Cb0.T, dtype=np.float64)
+
+    Jz_tot = K.build_coulomb_3c(B_ao, Pz_a + Pz_b, nbf)
+    Gza_tot = Jz_tot - K.build_exchange_3c_sym(B_ao, Pz_a, nbf)
+    Gzb_tot = Jz_tot - K.build_exchange_3c_sym(B_ao, Pz_b, nbf)
+
+    dFa_dens = np.zeros((nbf, nbf), dtype=np.float64)
+    dFa_dens[:, :na] = Ca0.T @ Gza_tot @ Ca0_o
+    dFa0_sym = 0.5 * (ea0[:, None] + ea0[None, :]) * Za0_sym + 0.5 * (dFa_dens + dFa_dens.T)
+
+    dFb_dens = np.zeros((nbf, nbf), dtype=np.float64)
+    dFb_dens[:, :nb] = Cb0.T @ Gzb_tot @ Cb0_o
+    dFb0_sym = 0.5 * (eb0[:, None] + eb0[None, :]) * Zb0_sym + 0.5 * (dFb_dens + dFb_dens.T)
+    return Za0_sym, Zb0_sym, Pz_a, Pz_b, dFa0_sym, dFb0_sym
 
 
 def _finalize_omp2_family_grad_rhf(
     mol,
     primary_basis,
     aux_basis,
+    H_core: np.ndarray,
     B_ao: np.ndarray,
     C: np.ndarray,
     F_ao: np.ndarray,
-    eps: np.ndarray,
     B_oo: np.ndarray,
     B_ov: np.ndarray,
     B_vv: np.ndarray,
@@ -382,6 +408,8 @@ def _finalize_omp2_family_grad_rhf(
     no: int,
     nf: int,
     cutoff: float,
+    scf_res: Optional[HybridSCFResult] = None,
+    S_ovlp: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """Perakitan (P_eff, W_eff, Gamma_3c, gamma_2c) -> gradien nuklir RHF (AE & Frozen-Core)."""
     nbf = C.shape[0]
@@ -400,67 +428,82 @@ def _finalize_omp2_family_grad_rhf(
     X_3d = X_mat.T.reshape(n_aux, n_act, nv)
     X_vo_3d = X_3d.transpose(0, 2, 1)
 
+    B_fa_3d = K.transform_3c_mo(B_ao, C_frz, C_v, nbf).T.reshape(n_aux, nf, nv) if (nf > 0 and nv > 0) else None
+    B_fi_3d = K.transform_3c_mo(B_ao, C_frz, C_act, nbf).T.reshape(n_aux, nf, n_act) if (nf > 0 and n_act > 0) else None
+
     P_ref_a = C_o @ C_o.T
     P_corr_a = C_act @ g_oo @ C_act.T + C_v @ g_vv @ C_v.T
     F_HF_mo = C.T @ F_ao @ C
     G_gamma_ao = 2.0 * K.build_coulomb_3c(B_ao, P_corr_a, nbf) - K.build_exchange_3c_sym(B_ao, P_corr_a, nbf)
     G_gamma_mo = C.T @ G_gamma_ao @ C
 
-    Z_pf = _solve_frozen_core_zvec_rhf(
-        B_ao, C, F_HF_mo, G_gamma_mo, eps, g_oo, g_vv, X_mat, no, nf
+    F_raw = _build_omp2_f_raw(
+        F_HF_mo, G_gamma_mo, g_oo, g_vv, B_oo_3d, B_ov_3d, B_vv_3d, X_3d, no, nf=nf,
+        B_fa_3d=B_fa_3d, B_fi_3d=B_fi_3d,
     )
-    Pz_a = (
-        C_v @ Z_pf[n_act:, :] @ C_frz.T + C_frz @ Z_pf[n_act:, :].T @ C_v.T
-        if (nf > 0 and nv > 0)
-        else np.zeros((nbf, nbf), dtype=np.float64)
-    )
+    F_tot_mo = 0.5 * (F_raw + F_raw.T)
 
     P_ref_tot = 2.0 * P_ref_a
     P_corr_tot = 2.0 * P_corr_a
-    Pz_tot = 2.0 * Pz_a
-    P_eff_ao = np.ascontiguousarray(P_ref_tot + P_corr_tot + Pz_tot, dtype=np.float64)
+    P_eff_ao = P_ref_tot + P_corr_tot
+    W_eff_ao = 2.0 * (C @ F_tot_mo @ C.T)
 
-    F_tot_mo = _build_omp2_f_blocks(
-        F_HF_mo, G_gamma_mo, g_oo, g_vv, B_oo_3d, B_ov_3d, B_vv_3d, X_3d, no, nf=nf
-    )
-    if nf > 0:
-        F_tot_mo[nf:, :nf] += Z_pf
-        F_tot_mo[:nf, nf:] += Z_pf.T
-        Gz_ao = 2.0 * K.build_coulomb_3c(B_ao, Pz_a, nbf) - K.build_exchange_3c_sym(B_ao, Pz_a, nbf)
-        F_tot_mo[:no, :no] += C_o.T @ Gz_ao @ C_o
+    # Frozen-core Z-vector relaxation in canonical RHF basis C0
+    has_fc = nf > 0
+    C0 = C0_o = Z0_sym = P0_ref_tot = Pz_tot = B0_all_o_3d = None
+    if has_fc:
+        import mshqc
+        if S_ovlp is None:
+            S_ovlp = mshqc.IntegralEngine(mol, primary_basis).compute_overlap()
+        if scf_res is None:
+            scf_res = run_df_rhf(
+                H_core, S_ovlp, float(mol.nuclear_repulsion_energy()), B_ao, no,
+                energy_tol=cutoff, density_tol=cutoff, C_init=C,
+            )
+        C0 = np.ascontiguousarray(scf_res.C_alpha, dtype=np.float64)
+        C0_o = np.ascontiguousarray(C0[:, :no])
+        eps0 = np.asarray(scf_res.orbital_energies_alpha, dtype=np.float64)
+        g_pf_omp = F_raw[nf:, :nf] - F_raw[:nf, nf:].T
+        Z0_sym, Pz_a, dF0_sym = _solve_rhf_fc_zvec(B_ao, S_ovlp, C0, eps0, C, g_pf_omp, no, nf)
+        Pz_tot = 2.0 * Pz_a
+        P0_ref_tot = 2.0 * (C0_o @ C0_o.T)
+        P_eff_ao = P_eff_ao + Pz_tot
+        W_eff_ao = W_eff_ao + 2.0 * (C0 @ dF0_sym @ C0.T)
+        B0_all_o_3d = K.transform_3c_mo(B_ao, C0, C0_o, nbf).T.reshape(n_aux, nbf, no)
 
-    W_eff_ao = np.ascontiguousarray(2.0 * (C @ F_tot_mo @ C.T), dtype=np.float64)
+    P_eff_ao = np.ascontiguousarray(P_eff_ao, dtype=np.float64)
+    W_eff_ao = np.ascontiguousarray(W_eff_ao, dtype=np.float64)
 
-    P_1e_tot = np.ascontiguousarray(P_corr_tot + Pz_tot, dtype=np.float64)
     c_ref = K.contract_ao_sym(B_ao, P_ref_tot, nbf)
-    c_1e = K.contract_ao_sym(B_ao, P_1e_tot, nbf)
-    Gamma_3c = np.empty((nbf * nbf, n_aux), dtype=np.float64)
+    c_corr = K.contract_ao_sym(B_ao, P_corr_tot, nbf)
+    c_rhf0 = K.contract_ao_sym(B_ao, P0_ref_tot, nbf) if has_fc else None
+    c_pz = K.contract_ao_sym(B_ao, Pz_tot, nbf) if has_fc else None
 
     B_oo_all_3d = K.transform_3c_mo(B_ao, C_o, C_o, nbf).T.reshape(n_aux, no, no)
-    B_oa_3d = (
-        K.transform_3c_mo(B_ao, C_o, C_v, nbf).T.reshape(n_aux, no, nv)
-        if (nf > 0 and nv > 0)
-        else None
-    )
+    Gamma_3c = np.empty((nbf * nbf, n_aux), dtype=np.float64)
 
     chunk = 64
     for p0 in range(0, n_aux, chunk):
         p1 = min(n_aux, p0 + chunk)
         bs = p1 - p0
         G_blk = (
-            P_eff_ao[None, :, :] * c_ref[p0:p1, None, None]
-            + P_ref_tot[None, :, :] * c_1e[p0:p1, None, None]
+            (P_ref_tot + P_corr_tot)[None, :, :] * c_ref[p0:p1, None, None]
+            + P_ref_tot[None, :, :] * c_corr[p0:p1, None, None]
         )
         M_ref = (C_o @ B_oo_all_3d[p0:p1]) @ C_o.T
         M_corr = (C_act @ (g_oo @ B_oo_3d[p0:p1])) @ C_act.T + (C_v @ (g_vv @ B_vo_3d[p0:p1])) @ C_act.T
         G_blk -= 2.0 * (M_ref + M_corr + M_corr.swapaxes(1, 2))
-        if B_oa_3d is not None:
-            B_of_z = np.einsum("Poa,af->Pof", B_oa_3d[p0:p1], Z_pf[n_act:, :], optimize=True)
-            M_z = (C_o @ B_of_z) @ C_frz.T
-            G_blk -= 2.0 * (M_z + M_z.swapaxes(1, 2))
-
         Conn = (C_v @ X_vo_3d[p0:p1]) @ C_act.T
         G_blk += 2.0 * (Conn + Conn.swapaxes(1, 2))
+
+        if has_fc:
+            G_blk += (
+                Pz_tot[None, :, :] * c_rhf0[p0:p1, None, None]
+                + P0_ref_tot[None, :, :] * c_pz[p0:p1, None, None]
+            )
+            M_z = (C0 @ (Z0_sym @ B0_all_o_3d[p0:p1])) @ C0_o.T
+            G_blk -= 2.0 * (M_z + M_z.swapaxes(1, 2))
+
         Gamma_3c[:, p0:p1] = G_blk.reshape(bs, nbf * nbf).T
 
     gamma_2c = K.compute_gamma2c(Gamma_3c, B_ao, nbf)
@@ -473,13 +516,12 @@ def _finalize_omp2_family_grad_uhf(
     mol,
     primary_basis,
     aux_basis,
+    H_core: np.ndarray,
     B_ao: np.ndarray,
     Ca: np.ndarray,
     Cb: np.ndarray,
     Fa_ao: np.ndarray,
     Fb_ao: np.ndarray,
-    eps_a: np.ndarray,
-    eps_b: np.ndarray,
     Boo_a: np.ndarray,
     Bov_a: np.ndarray,
     Bvv_a: np.ndarray,
@@ -496,6 +538,8 @@ def _finalize_omp2_family_grad_uhf(
     nb: int,
     nf: int,
     cutoff: float,
+    scf_res: Optional[HybridSCFResult] = None,
+    S_ovlp: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """Perakitan (P_eff, W_eff, Gamma_3c, gamma_2c) -> gradien nuklir UHF (AE & Frozen-Core)."""
     nbf = Ca.shape[0]
@@ -523,6 +567,9 @@ def _finalize_omp2_family_grad_uhf(
     Xa_3d = X_a.T.reshape(n_aux, na_act, va)
     Xa_vo_3d = Xa_3d.transpose(0, 2, 1)
 
+    Bfa_a_3d = K.transform_3c_mo(B_ao, Ca_frz, Ca_v, nbf).T.reshape(n_aux, nf, va) if (nf > 0 and va > 0) else None
+    Bfi_a_3d = K.transform_3c_mo(B_ao, Ca_frz, Ca_act, nbf).T.reshape(n_aux, nf, na_act) if (nf > 0 and na_act > 0) else None
+
     P_ref_a = Ca_o @ Ca_o.T if na > 0 else np.zeros((nbf, nbf), dtype=np.float64)
     P_ref_b = Cb_o @ Cb_o.T if nb > 0 else np.zeros((nbf, nbf), dtype=np.float64)
     P_corr_a = Ca_act @ g_oo_a @ Ca_act.T + Ca_v @ g_vv_a @ Ca_v.T if (na_act > 0 and va > 0) else np.zeros((nbf, nbf))
@@ -534,35 +581,13 @@ def _finalize_omp2_family_grad_uhf(
     Ga_gamma_mo = Ca.T @ (J_corr - K.build_exchange_3c_sym(B_ao, P_corr_a, nbf)) @ Ca
     Gb_gamma_mo = Cb.T @ (J_corr - K.build_exchange_3c_sym(B_ao, P_corr_b, nbf)) @ Cb
 
-    Za_pf, Zb_pf = _solve_frozen_core_zvec_uhf(
-        B_ao, Ca, Cb, Fa_HF_mo, Fb_HF_mo, Ga_gamma_mo, Gb_gamma_mo, eps_a, eps_b,
-        g_oo_a, g_vv_a, g_oo_b, g_vv_b, X_a, X_b, na, nb, nf,
+    Fa_raw = _build_omp2_f_raw(
+        Fa_HF_mo, Ga_gamma_mo, g_oo_a, g_vv_a, Boo_a_3d, Bov_a_3d, Bvv_a_3d, Xa_3d, na, nf=nf,
+        B_fa_3d=Bfa_a_3d, B_fi_3d=Bfi_a_3d,
     )
-    Pz_a = (
-        Ca_v @ Za_pf[na_act:, :] @ Ca_frz.T + Ca_frz @ Za_pf[na_act:, :].T @ Ca_v.T
-        if (nf > 0 and va > 0)
-        else np.zeros((nbf, nbf), dtype=np.float64)
-    )
-    Pz_b = (
-        Cb_v @ Zb_pf[nb_act:, :] @ Cb_frz.T + Cb_frz @ Zb_pf[nb_act:, :].T @ Cb_v.T
-        if (nf > 0 and vb > 0)
-        else np.zeros((nbf, nbf), dtype=np.float64)
-    )
+    W_eff_ao = Ca @ (0.5 * (Fa_raw + Fa_raw.T)) @ Ca.T
 
-    P_ref_tot = P_ref_a + P_ref_b
-    P_1e_tot = P_corr_a + P_corr_b + Pz_a + Pz_b
-    P_eff_ao = np.ascontiguousarray(P_ref_tot + P_1e_tot, dtype=np.float64)
-
-    Fa_tot_mo = _build_omp2_f_blocks(
-        Fa_HF_mo, Ga_gamma_mo, g_oo_a, g_vv_a, Boo_a_3d, Bov_a_3d, Bvv_a_3d, Xa_3d, na, nf=nf
-    )
-    if nf > 0:
-        Fa_tot_mo[nf:, :nf] += Za_pf
-        Fa_tot_mo[:nf, nf:] += Za_pf.T
-        Jz_ao = K.build_coulomb_3c(B_ao, Pz_a + Pz_b, nbf)
-        Fa_tot_mo[:na, :na] += Ca_o.T @ (Jz_ao - K.build_exchange_3c_sym(B_ao, Pz_a, nbf)) @ Ca_o
-    W_eff_ao = Ca @ Fa_tot_mo @ Ca.T
-
+    Fb_raw = np.zeros((nbf, nbf), dtype=np.float64)
     if nb > 0:
         if has_b:
             Boo_b_3d = Boo_b.T.reshape(n_aux, nb_act, nb_act)
@@ -571,55 +596,71 @@ def _finalize_omp2_family_grad_uhf(
             Bvv_b_3d = Bvv_b.T.reshape(n_aux, vb, vb)
             Xb_3d = X_b.T.reshape(n_aux, nb_act, vb)
             Xb_vo_3d = Xb_3d.transpose(0, 2, 1)
-            Fb_tot_mo = _build_omp2_f_blocks(
-                Fb_HF_mo, Gb_gamma_mo, g_oo_b, g_vv_b, Boo_b_3d, Bov_b_3d, Bvv_b_3d, Xb_3d, nb, nf=nf
+            Bfa_b_3d = K.transform_3c_mo(B_ao, Cb_frz, Cb_v, nbf).T.reshape(n_aux, nf, vb) if (nf > 0 and vb > 0) else None
+            Bfi_b_3d = K.transform_3c_mo(B_ao, Cb_frz, Cb_act, nbf).T.reshape(n_aux, nf, nb_act) if (nf > 0 and nb_act > 0) else None
+            Fb_raw = _build_omp2_f_raw(
+                Fb_HF_mo, Gb_gamma_mo, g_oo_b, g_vv_b, Boo_b_3d, Bov_b_3d, Bvv_b_3d, Xb_3d, nb, nf=nf,
+                B_fa_3d=Bfa_b_3d, B_fi_3d=Bfi_b_3d,
             )
         else:
-            Fb_tot_mo = Fb_HF_mo.copy()
-            Fb_tot_mo[nb:, :nb] = 0.0
-            Fb_tot_mo[:nb, nb:] = 0.0
-            Fb_tot_mo[nb:, nb:] = 0.0
-        if nf > 0:
-            Fb_tot_mo[nf:, :nf] += Zb_pf
-            Fb_tot_mo[:nf, nf:] += Zb_pf.T
-            Jz_ao = K.build_coulomb_3c(B_ao, Pz_a + Pz_b, nbf)
-            Fb_tot_mo[:nb, :nb] += Cb_o.T @ (Jz_ao - K.build_exchange_3c_sym(B_ao, Pz_b, nbf)) @ Cb_o
-        W_eff_ao = W_eff_ao + (Cb @ Fb_tot_mo @ Cb.T)
+            Fb_raw[:, :nb] = Fb_HF_mo[:, :nb] + Gb_gamma_mo[:, :nb]
+        W_eff_ao = W_eff_ao + Cb @ (0.5 * (Fb_raw + Fb_raw.T)) @ Cb.T
 
+    P_ref_tot = P_ref_a + P_ref_b
+    P_corr_tot = P_corr_a + P_corr_b
+    P_eff_ao = P_ref_tot + P_corr_tot
+
+    has_fc = nf > 0
+    Ca0 = Cb0 = Ca0_o = Cb0_o = Za0_sym = Zb0_sym = P0_ref_tot = Pz_tot = B0_a_3d = B0_b_3d = None
+    if has_fc:
+        import mshqc
+        if S_ovlp is None:
+            S_ovlp = mshqc.IntegralEngine(mol, primary_basis).compute_overlap()
+        if scf_res is None:
+            scf_res = run_df_uhf(
+                H_core, S_ovlp, float(mol.nuclear_repulsion_energy()), B_ao, na, nb,
+                energy_tol=cutoff, density_tol=cutoff, C_init_a=Ca, C_init_b=Cb,
+            )
+        Ca0 = np.ascontiguousarray(scf_res.C_alpha, dtype=np.float64)
+        Cb0 = np.ascontiguousarray(scf_res.C_beta, dtype=np.float64)
+        Ca0_o, Cb0_o = np.ascontiguousarray(Ca0[:, :na]), np.ascontiguousarray(Cb0[:, :nb])
+        ea0 = np.asarray(scf_res.orbital_energies_alpha, dtype=np.float64)
+        eb0 = np.asarray(scf_res.orbital_energies_beta, dtype=np.float64)
+        ga_pf = Fa_raw[nf:, :nf] - Fa_raw[:nf, nf:].T
+        gb_pf = Fb_raw[nf:, :nf] - Fb_raw[:nf, nf:].T
+        Za0_sym, Zb0_sym, Pz_a, Pz_b, dFa0_sym, dFb0_sym = _solve_uhf_fc_zvec(
+            B_ao, S_ovlp, Ca0, Cb0, ea0, eb0, Ca, Cb, ga_pf, gb_pf, na, nb, nf
+        )
+        Pz_tot = Pz_a + Pz_b
+        P0_ref_tot = (Ca0_o @ Ca0_o.T) + (Cb0_o @ Cb0_o.T)
+        P_eff_ao = P_eff_ao + Pz_tot
+        W_eff_ao = W_eff_ao + (Ca0 @ dFa0_sym @ Ca0.T) + (Cb0 @ dFb0_sym @ Cb0.T)
+        B0_a_3d = K.transform_3c_mo(B_ao, Ca0, Ca0_o, nbf).T.reshape(n_aux, nbf, na)
+        B0_b_3d = K.transform_3c_mo(B_ao, Cb0, Cb0_o, nbf).T.reshape(n_aux, nbf, nb)
+
+    P_eff_ao = np.ascontiguousarray(P_eff_ao, dtype=np.float64)
     W_eff_ao = np.ascontiguousarray(W_eff_ao, dtype=np.float64)
 
     c_ref = K.contract_ao_sym(B_ao, P_ref_tot, nbf)
-    c_1e = K.contract_ao_sym(B_ao, P_1e_tot, nbf)
-    Gamma_3c = np.empty((nbf * nbf, n_aux), dtype=np.float64)
+    c_corr = K.contract_ao_sym(B_ao, P_corr_tot, nbf)
+    c_uhf0 = K.contract_ao_sym(B_ao, P0_ref_tot, nbf) if has_fc else None
+    c_pz = K.contract_ao_sym(B_ao, Pz_tot, nbf) if has_fc else None
 
     Boo_a_all_3d = K.transform_3c_mo(B_ao, Ca_o, Ca_o, nbf).T.reshape(n_aux, na, na)
     Boo_b_all_3d = K.transform_3c_mo(B_ao, Cb_o, Cb_o, nbf).T.reshape(n_aux, nb, nb) if nb > 0 else None
-    Boa_a_3d = (
-        K.transform_3c_mo(B_ao, Ca_o, Ca_v, nbf).T.reshape(n_aux, na, va)
-        if (nf > 0 and va > 0)
-        else None
-    )
-    Boa_b_3d = (
-        K.transform_3c_mo(B_ao, Cb_o, Cb_v, nbf).T.reshape(n_aux, nb, vb)
-        if (nf > 0 and vb > 0)
-        else None
-    )
+    Gamma_3c = np.empty((nbf * nbf, n_aux), dtype=np.float64)
 
     chunk = 64
     for p0 in range(0, n_aux, chunk):
         p1 = min(n_aux, p0 + chunk)
         bs = p1 - p0
         G_blk = (
-            P_eff_ao[None, :, :] * c_ref[p0:p1, None, None]
-            + P_ref_tot[None, :, :] * c_1e[p0:p1, None, None]
+            (P_ref_tot + P_corr_tot)[None, :, :] * c_ref[p0:p1, None, None]
+            + P_ref_tot[None, :, :] * c_corr[p0:p1, None, None]
         )
         M_ref_a = (Ca_o @ Boo_a_all_3d[p0:p1]) @ Ca_o.T
         M_corr_a = (Ca_act @ (g_oo_a @ Boo_a_3d[p0:p1])) @ Ca_act.T + (Ca_v @ (g_vv_a @ Bvo_a_3d[p0:p1])) @ Ca_act.T
         G_blk -= M_ref_a + M_corr_a + M_corr_a.swapaxes(1, 2)
-        if Boa_a_3d is not None:
-            B_of_za = np.einsum("Poa,af->Pof", Boa_a_3d[p0:p1], Za_pf[na_act:, :], optimize=True)
-            M_za = (Ca_o @ B_of_za) @ Ca_frz.T
-            G_blk -= M_za + M_za.swapaxes(1, 2)
         Conn_a = (Ca_v @ Xa_vo_3d[p0:p1]) @ Ca_act.T
         G_blk += Conn_a + Conn_a.swapaxes(1, 2)
 
@@ -631,10 +672,15 @@ def _finalize_omp2_family_grad_uhf(
                 G_blk -= M_corr_b + M_corr_b.swapaxes(1, 2)
                 Conn_b = (Cb_v @ Xb_vo_3d[p0:p1]) @ Cb_act.T
                 G_blk += Conn_b + Conn_b.swapaxes(1, 2)
-            if Boa_b_3d is not None:
-                B_of_zb = np.einsum("Poa,af->Pof", Boa_b_3d[p0:p1], Zb_pf[nb_act:, :], optimize=True)
-                M_zb = (Cb_o @ B_of_zb) @ Cb_frz.T
-                G_blk -= M_zb + M_zb.swapaxes(1, 2)
+
+        if has_fc:
+            G_blk += (
+                Pz_tot[None, :, :] * c_uhf0[p0:p1, None, None]
+                + P0_ref_tot[None, :, :] * c_pz[p0:p1, None, None]
+            )
+            M_za = (Ca0 @ (Za0_sym @ B0_a_3d[p0:p1])) @ Ca0_o.T
+            M_zb = (Cb0 @ (Zb0_sym @ B0_b_3d[p0:p1])) @ Cb0_o.T
+            G_blk -= (M_za + M_za.swapaxes(1, 2)) + (M_zb + M_zb.swapaxes(1, 2))
 
         Gamma_3c[:, p0:p1] = G_blk.reshape(bs, nbf * nbf).T
 
@@ -654,6 +700,8 @@ def eval_df_omp2_gradient_rhf(
     c_os: float = 1.0,
     c_ss: float = 1.0,
     cutoff: float = 1.0e-12,
+    scf_res: Optional[HybridSCFResult] = None,
+    S_ovlp: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """Evaluasi gradien nuklir analitik DF-OMP2 / SCS-OMP2 / SOS-OMP2 (RHF, AE & Frozen-Core)."""
     nbf = int(primary_basis.n_basis_functions())
@@ -677,7 +725,8 @@ def eval_df_omp2_gradient_rhf(
     X_mat = T_eff.transpose(0, 2, 1, 3).reshape(n_act * nv, n_act * nv) @ B_ov
 
     return _finalize_omp2_family_grad_rhf(
-        mol, primary_basis, aux_basis, B_ao, C, F_ao, eps, B_oo, B_ov, B_vv, g_oo, g_vv, X_mat, no, nf, cutoff
+        mol, primary_basis, aux_basis, H_core, B_ao, C, F_ao, B_oo, B_ov, B_vv,
+        g_oo, g_vv, X_mat, no, nf, cutoff, scf_res=scf_res, S_ovlp=S_ovlp,
     )
 
 
@@ -691,6 +740,8 @@ def eval_df_omp2_gradient_uhf(
     c_os: float = 1.0,
     c_ss: float = 1.0,
     cutoff: float = 1.0e-12,
+    scf_res: Optional[HybridSCFResult] = None,
+    S_ovlp: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """Evaluasi gradien nuklir analitik DF-OMP2 / SCS-OMP2 / SOS-OMP2 (UHF, AE & Frozen-Core)."""
     nbf = int(primary_basis.n_basis_functions())
@@ -738,9 +789,10 @@ def eval_df_omp2_gradient_uhf(
             X_b += c_os * (Tab_4d.transpose(1, 3, 0, 2).reshape(nb_act * vb, na_act * va) @ Bov_a)
 
     return _finalize_omp2_family_grad_uhf(
-        mol, primary_basis, aux_basis, B_ao, Ca, Cb, Fa_ao, Fb_ao, eps_a, eps_b,
+        mol, primary_basis, aux_basis, H_core, B_ao, Ca, Cb, Fa_ao, Fb_ao,
         Boo_a, Bov_a, Bvv_a, Boo_b, Bov_b, Bvv_b,
         g_oo_a, g_vv_a, g_oo_b, g_vv_b, X_a, X_b, na, nb, nf, cutoff,
+        scf_res=scf_res, S_ovlp=S_ovlp,
     )
 
 
@@ -755,6 +807,8 @@ def eval_df_kappa_omp2_gradient_rhf(
     c_os: float = 1.0,
     c_ss: float = 1.0,
     cutoff: float = 1.0e-12,
+    scf_res: Optional[HybridSCFResult] = None,
+    S_ovlp: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """Evaluasi gradien nuklir analitik eksak DF-kappa-OOMP2 (RHF, AE & Frozen-Core)."""
     nbf = int(primary_basis.n_basis_functions())
@@ -776,7 +830,8 @@ def eval_df_kappa_omp2_gradient_rhf(
     )
     X_mat = T_tilde_eff.transpose(0, 2, 1, 3).reshape(n_act * nv, n_act * nv) @ B_ov
     return _finalize_omp2_family_grad_rhf(
-        mol, primary_basis, aux_basis, B_ao, C, F_ao, eps, B_oo, B_ov, B_vv, g_oo, g_vv, X_mat, no, nf, cutoff
+        mol, primary_basis, aux_basis, H_core, B_ao, C, F_ao, B_oo, B_ov, B_vv,
+        g_oo, g_vv, X_mat, no, nf, cutoff, scf_res=scf_res, S_ovlp=S_ovlp,
     )
 
 
@@ -791,6 +846,8 @@ def eval_df_kappa_omp2_gradient_uhf(
     c_os: float = 1.0,
     c_ss: float = 1.0,
     cutoff: float = 1.0e-12,
+    scf_res: Optional[HybridSCFResult] = None,
+    S_ovlp: Optional[np.ndarray] = None,
 ) -> np.ndarray:
     """Evaluasi gradien nuklir analitik eksak DF-kappa-OOMP2 (UHF, AE & Frozen-Core)."""
     nbf = int(primary_basis.n_basis_functions())
@@ -833,9 +890,10 @@ def eval_df_kappa_omp2_gradient_uhf(
             X_b += c_os * (Tab_4d.transpose(1, 3, 0, 2).reshape(nb_act * vb, na_act * va) @ Bov_a)
 
     return _finalize_omp2_family_grad_uhf(
-        mol, primary_basis, aux_basis, B_ao, Ca, Cb, Fa_ao, Fb_ao, eps_a, eps_b,
+        mol, primary_basis, aux_basis, H_core, B_ao, Ca, Cb, Fa_ao, Fb_ao,
         Boo_a, Bov_a, Bvv_a, Boo_b, Bov_b, Bvv_b,
         g_oo_a, g_vv_a, g_oo_b, g_vv_b, X_a, X_b, na, nb, nf, cutoff,
+        scf_res=scf_res, S_ovlp=S_ovlp,
     )
 
 
@@ -925,7 +983,8 @@ def compute_df_gradient(
                 grad_tol=orb_grad_tol, energy_tol=threshold, max_iter=80, n_frozen=nf,
             )
             grad = eval_df_kappa_omp2_gradient_rhf(
-                mol, basis, aux_basis, H_core, B_ao, omp_res, kappa=kappa, cutoff=threshold
+                mol, basis, aux_basis, H_core, B_ao, omp_res, kappa=kappa,
+                cutoff=threshold, scf_res=scf_res, S_ovlp=S_ovlp,
             )
             return omp_res.energy_total, grad
         omp_res = run_df_kappa_omp2_uhf(
@@ -933,7 +992,8 @@ def compute_df_gradient(
             grad_tol=orb_grad_tol, energy_tol=threshold, max_iter=80, n_frozen=nf,
         )
         grad = eval_df_kappa_omp2_gradient_uhf(
-            mol, basis, aux_basis, H_core, B_ao, omp_res, kappa=kappa, cutoff=threshold
+            mol, basis, aux_basis, H_core, B_ao, omp_res, kappa=kappa,
+            cutoff=threshold, scf_res=scf_res, S_ovlp=S_ovlp,
         )
         return omp_res.energy_total, grad
 
@@ -954,7 +1014,8 @@ def compute_df_gradient(
             grad_tol=orb_grad_tol, energy_tol=threshold, max_iter=80, n_frozen=nf,
         )
         grad = eval_df_omp2_gradient_rhf(
-            mol, basis, aux_basis, H_core, B_ao, omp_res, c_os=c_os, c_ss=c_ss, cutoff=threshold
+            mol, basis, aux_basis, H_core, B_ao, omp_res, c_os=c_os, c_ss=c_ss,
+            cutoff=threshold, scf_res=scf_res, S_ovlp=S_ovlp,
         )
         return omp_res.energy_total, grad
 
@@ -964,7 +1025,8 @@ def compute_df_gradient(
         grad_tol=orb_grad_tol, energy_tol=threshold, max_iter=80, n_frozen=nf,
     )
     grad = eval_df_omp2_gradient_uhf(
-        mol, basis, aux_basis, H_core, B_ao, omp_res, c_os=c_os, c_ss=c_ss, cutoff=threshold
+        mol, basis, aux_basis, H_core, B_ao, omp_res, c_os=c_os, c_ss=c_ss,
+        cutoff=threshold, scf_res=scf_res, S_ovlp=S_ovlp,
     )
     return omp_res.energy_total, grad
 
