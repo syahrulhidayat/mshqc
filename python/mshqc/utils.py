@@ -41,7 +41,7 @@ def _parse_method_and_eri(method: str, default_eri: str = "exact") -> Tuple[str,
 def quick_calculation(element_or_mol: Union[str, int, List[Tuple], mshqc.Molecule],
                       basis: str = "cc-pVTZ",
                       method: str = "omp2",
-                      eri_method: str = "exact",
+                      eri_method: Optional[str] = None,
                       aux_basis: Optional[str] = None,
                       charge: int = 0,
                       multiplicity: Optional[int] = None,
@@ -56,7 +56,8 @@ def quick_calculation(element_or_mol: Union[str, int, List[Tuple], mshqc.Molecul
         >>> res = quick_calculation("Ne", basis="cc-pVTZ", method="df-omp3")
         >>> print(res.energy_total)
     """
-    clean_method, resolved_eri = _parse_method_and_eri(method, default_eri=eri_method)
+    def_eri = ("df" if getattr(mshqc, "THIN_CORE_ONLY", False) else "exact") if eri_method is None else eri_method
+    clean_method, resolved_eri = _parse_method_and_eri(method, default_eri=def_eri)
 
     if isinstance(element_or_mol, int) or (
         isinstance(element_or_mol, str) and len(element_or_mol.split()) == 1
@@ -109,6 +110,10 @@ def quick_calculation(element_or_mol: Union[str, int, List[Tuple], mshqc.Molecul
         return calc.run_sos_omp2(scf_res)
     if clean_method in ("omp2.5", "omp25", "omp2_5"):
         return calc.run_omp25(scf_res)
+    if clean_method in ("lt-sos-omp2", "lt_sos_omp2"):
+        return calc.run_lt_sos_omp2(scf_res)
+    if clean_method in ("kappa-omp2", "kappa_omp2", "k-omp2", "kappa-oomp2"):
+        return calc.run_kappa_omp2(scf_res)
 
     raise ValueError(f"Metode tidak dikenali: {method}")
 
@@ -116,7 +121,7 @@ def quick_calculation(element_or_mol: Union[str, int, List[Tuple], mshqc.Molecul
 def benchmark_basis_sets(element_or_mol: Union[str, int, List[Tuple], mshqc.Molecule],
                          basis_list: List[str],
                          method: str = "omp2",
-                         eri_method: str = "exact",
+                         eri_method: Optional[str] = None,
                          charge: int = 0,
                          multiplicity: Optional[int] = None) -> Dict[str, Any]:
     """Benchmark satu metode pada berbagai basis set."""
@@ -153,7 +158,7 @@ def benchmark_basis_sets(element_or_mol: Union[str, int, List[Tuple], mshqc.Mole
 def compare_methods(molecule: Union[mshqc.Molecule, str, List[Tuple]],
                     basis: str = "cc-pVTZ",
                     methods: Optional[List[str]] = None,
-                    eri_method: str = "exact",
+                    eri_method: Optional[str] = None,
                     aux_basis: Optional[str] = None,
                     charge: int = 0,
                     multiplicity: Optional[int] = None,

@@ -291,7 +291,7 @@ endif()
 # ==============================================================================
 
 
-# [INJECTED_THIN_CORE_STAGE7_IRREDUCIBLE]
+# [INJECTED_THIN_CORE_STAGE9_LEGACY_DIR]
 set(SRC_CORE_MINIMAL
     "${CMAKE_SOURCE_DIR}/src/core/molecule.cc"
     "${CMAKE_SOURCE_DIR}/src/core/basis.cc"
@@ -300,7 +300,6 @@ set(SRC_CORE_MINIMAL
     "${CMAKE_SOURCE_DIR}/src/integrals/cholesky_eri.cc"
 )
 file(GLOB_RECURSE SRC_KERNELS CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/kernels/*.cc")
-file(GLOB_RECURSE SRC_UTILS CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/utils/*.cc")
 
 set(ALL_SOURCES
     ${SRC_CORE_MINIMAL}
@@ -308,22 +307,9 @@ set(ALL_SOURCES
 )
 
 if(NOT MSHQC_THIN_CORE)
-    file(GLOB_RECURSE SRC_SCF CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/scf/*.cc")
-    file(GLOB_RECURSE SRC_MP CONFIGURE_DEPENDS
-        "${CMAKE_SOURCE_DIR}/src/mp/*.cc"
-        "${CMAKE_SOURCE_DIR}/src/mp2/*.cc"
-        "${CMAKE_SOURCE_DIR}/src/mp3/*.cc"
-    )
-    file(GLOB_RECURSE SRC_GRADIENT CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/gradient/*.cc")
-    file(GLOB_RECURSE SRC_SYMMETRY CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/symmetry/*.cc")
-    list(APPEND ALL_SOURCES
-        "${CMAKE_SOURCE_DIR}/src/core/fock_builder.cc"
-        "${CMAKE_SOURCE_DIR}/src/ints/screening.cc"
-        "${CMAKE_SOURCE_DIR}/src/integrals/eri_transformer.cc"
-        ${SRC_UTILS}
-        ${SRC_SCF} ${SRC_MP} ${SRC_GRADIENT} ${SRC_SYMMETRY}
-    )
-    message(STATUS "mshqc build profile: FULL (Thin-Core + Legacy C++ Solvers)")
+    file(GLOB_RECURSE SRC_LEGACY CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/legacy/*.cc")
+    list(APPEND ALL_SOURCES ${SRC_LEGACY})
+    message(STATUS "mshqc build profile: FULL (8 Core C++20 Files + src/legacy/ Solvers)")
 else()
     message(STATUS "mshqc build profile: THIN-CORE ONLY (Irreducible 8 C++20 Core Files + Python Orchestration)")
 endif()

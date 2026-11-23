@@ -307,6 +307,7 @@ if "THIN_CORE_ONLY" not in __all__:
 if THIN_CORE_ONLY:
     from .methods.geom_hybrid import optimize_geometry_thin_core as _tc_opt_geom
     from .methods.geom_hybrid import compute_frequencies_thin_core as _tc_freq
+    from .methods.geom_hybrid import scan_bond_pes_thin_core as _tc_scan_pes
     from .methods.grad_hybrid import compute_df_gradient as _tc_grad
 
     def _tc_mol_opt(self, method="omp2", eri_mode="df", eri_method="", basis="cc-pVDZ",
@@ -340,4 +341,12 @@ if THIN_CORE_ONLY:
 
     Molecule.optimize_geometry = _tc_mol_opt
     Molecule.frequencies = _tc_mol_freq
+    def _tc_mol_scan_pes(self, atom_i, atom_j, distances_angstrom,
+                         method="omp2", eri_mode="df", basis="cc-pVDZ", **_kw):
+        return _tc_scan_pes(
+            self, int(atom_i), int(atom_j), list(distances_angstrom),
+            method=method, eri_mode=eri_mode, basis=basis,
+        )
+
     Molecule.gradient = _tc_mol_grad
+    Molecule.scan_pes = _tc_mol_scan_pes

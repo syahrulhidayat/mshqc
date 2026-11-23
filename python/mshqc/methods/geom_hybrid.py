@@ -409,3 +409,49 @@ def compute_frequencies_thin_core(
         temperature_k=temperature_k,
         n_imaginary=n_imag,
     )
+
+
+# [INJECTED_THIN_CORE_STAGE9_PES_SCAN]
+@dataclass
+class ThinCorePESPoint:
+    r_angstrom: float
+    r_bohr: float
+    energy_ha: float
+
+
+def scan_bond_pes_thin_core(
+    mol,
+    atom_i: int,
+    atom_j: int,
+    distances_angstrom: List[float],
+    method: str = "omp2",
+    eri_mode: str = "df",
+    basis: str = "cc-pVDZ",
+    aux_basis: Optional[str] = None,
+    reference: str = "auto",
+    energy_thresh: float = 1.0e-10,
+    orb_grad_thresh: float = 1.0e-7,
+    basis_dir: str = "data/basis",
+) -> List[ThinCorePESPoint]:
+    """Pemindaian 1D Potential Energy Surface (PES) antar-ikatan di mode Thin-Core."""
+    nat = int(mol.n_atoms())
+    if not (0 <= atom_i < nat and 0 <= atom_j < nat and atom_i != atom_j):
+        raise ValueError(f"Indeks atom tidak valid: atom_i={atom_i}, atom_j={atom_j}, nat={nat}")
+
+    x0 = np.array([[mol.atom(k).x, mol.atom(k).y, mol.atom(k).z] for k in range(nat)], dtype=np.float64)
+    vec = x0[atom_j] - x0[atom_i]
+    norm = float(np.linalg.norm(vec))
+    axis = (vec / norm) if norm > 1.0e-12 else np.array([0.0, 0.0, 1.0], dtype=np.float64)
+
+    pts: List[ThinCorePESPoint] = []
+    for r_ang in distances_angstrom:
+        r_bohr = float(r_ang) / BOHR_TO_ANGSTROM
+        coords = x0.copy()
+        coords[atom_j] = coords[atom_i] + r_bohr * axis
+        m_cur = _clone_mol_at(mol, coords)
+        e_val = _eval_single_point_thin(
+            m_cur, method, eri_mode, basis, aux_basis, reference,
+            energy_thresh, orb_grad_thresh, basis_dir,
+        )
+        pts.append(ThinCorePESPoint(r_angstrom=float(r_ang), r_bohr=r_bohr, energy_ha=float(e_val)))
+    return pts

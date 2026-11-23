@@ -78,7 +78,7 @@ class MSHQCCalculator:
     def __init__(self,
                  molecule: Union[mshqc.Molecule, str, List[Tuple]],
                  basis_name: str = "cc-pVTZ",
-                 eri_method: str = "exact",
+                 eri_method: Optional[str] = None,
                  aux_basis_name: Optional[str] = None,
                  charge: int = 0,
                  multiplicity: Optional[int] = None,
@@ -95,7 +95,16 @@ class MSHQCCalculator:
                  level_shift: float = 0.0):  # [INJECTED_PROD_V6_LEVEL_SHIFT]
 
         raw_mol = build_molecule(molecule, charge=charge, multiplicity=multiplicity, units=units)
-        self.eri_method = eri_method.lower()
+        # [INJECTED_THIN_CORE_STAGE9_DEFAULT_ERI]
+        if eri_method is None:
+            self.eri_method = "df" if getattr(mshqc, "THIN_CORE_ONLY", False) else "exact"
+        else:
+            self.eri_method = eri_method.lower()
+        if getattr(mshqc, "THIN_CORE_ONLY", False) and self.eri_method == "exact":
+            raise RuntimeError(
+                "eri_method='exact' memerlukan build FULL (-DMSHQC_THIN_CORE=OFF). "
+                "Pada build Thin-Core gunakan eri_method='df' atau 'cholesky'."
+            )
         self.use_symmetry = use_symmetry
 
         # [INJECTED_THIN_CORE_STAGE3_CALC]

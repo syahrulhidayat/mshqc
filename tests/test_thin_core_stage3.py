@@ -123,14 +123,7 @@ def test_report_thin_core_vs_legacy_profile():
         + list((root / "src" / "kernels").glob("*.cc"))
         + list((root / "include" / "mshqc" / "kernels").glob("*.h"))
     )
-    legacy_dirs = ("scf", "mp", "mp2", "mp3", "gradient", "symmetry", "utils")
-    legacy_files = [
-        root / "src" / "core" / "fock_builder.cc",
-        root / "src" / "ints" / "screening.cc",
-        root / "src" / "integrals" / "eri_transformer.cc",
-    ]
-    for d in legacy_dirs:
-        legacy_files.extend((root / "src" / d).glob("*.cc"))
+    legacy_files = list((root / "src" / "legacy").rglob("*.cc"))
 
     def stats(files):
         loc, kb = 0, 0.0

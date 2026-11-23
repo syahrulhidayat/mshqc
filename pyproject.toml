@@ -55,7 +55,7 @@ Homepage = "https://github.com/syahrulhidayat/mshqc"
 
 [tool.setuptools]
 package-dir = {"" = "python"}
-packages = ["mshqc"]
+packages = ["mshqc", "mshqc.basis"]
 
 [tool.setuptools.package-data]
 mshqc = ["*.so", "*.pyd", "*.dylib", "*.dll", "*.pyi", "py.typed", "basis/*.gbs"]

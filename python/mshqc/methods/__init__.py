@@ -48,7 +48,9 @@ from .geom_hybrid import (
     ThinCoreGeomResult,
     ThinCoreVibResult,
     optimize_geometry_thin_core,
+    ThinCorePESPoint,
     compute_frequencies_thin_core,
+    scan_bond_pes_thin_core,
 )
 from .kappa_omp2 import run_df_kappa_omp2_rhf, run_df_kappa_omp2_uhf
 from .lt_sos_omp2 import build_laplace_quadrature, run_df_lt_sos_omp2_rhf, run_df_lt_sos_omp2_uhf
@@ -72,7 +74,7 @@ __all__ = [
     "eval_df_kappa_omp2_gradient_rhf", "eval_df_kappa_omp2_gradient_uhf",
     "compute_df_scf_gradient", "compute_df_gradient",
     "ThinCoreGeomResult", "ThinCoreVibResult",
-    "optimize_geometry_thin_core", "compute_frequencies_thin_core",
+    "ThinCorePESPoint", "optimize_geometry_thin_core", "compute_frequencies_thin_core", "scan_bond_pes_thin_core",
     "run_df_kappa_omp2_rhf", "run_df_kappa_omp2_uhf",
     "build_laplace_quadrature", "run_df_lt_sos_omp2_rhf", "run_df_lt_sos_omp2_uhf",
     "save_orbital_checkpoint", "load_orbital_checkpoint",

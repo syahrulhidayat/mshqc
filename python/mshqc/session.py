@@ -29,7 +29,7 @@ class MSHQCSession:
     def __init__(self,
                  molecule: Union[mshqc.Molecule, str, List[Tuple]],
                  basis_name: str = "cc-pVTZ",
-                 eri_method: str = "exact",
+                 eri_method: Optional[str] = None,
                  aux_basis_name: Optional[str] = None,
                  charge: int = 0,
                  multiplicity: Optional[int] = None,
@@ -44,7 +44,7 @@ class MSHQCSession:
                  use_symmetry: bool = True,
                  level_shift: float = 0.0):  
         self.basis_name = basis_name
-        self.eri_method = eri_method.lower()
+        self.eri_method = ("df" if getattr(mshqc, "THIN_CORE_ONLY", False) else "exact") if eri_method is None else eri_method.lower()
         self.aux_basis_name = aux_basis_name or f"{basis_name}-RI"
         self.threshold = threshold
         self.print_level = print_level
@@ -156,6 +156,20 @@ class MSHQCSession:
                 t0 = time.perf_counter()
                 self.results["OMP2.5"] = self.calc.run_omp25(scf_res, grad_thresh=grad_thresh)
                 self.timings["OMP2.5"] = time.perf_counter() - t0
+
+            elif m in ("lt-sos-omp2", "lt_sos_omp2"):
+                if scf_res is None:
+                    scf_res = self.calc.run_scf()
+                t0 = time.perf_counter()
+                self.results["LT-SOS-OMP2"] = self.calc.run_lt_sos_omp2(scf_res, grad_thresh=grad_thresh)
+                self.timings["LT-SOS-OMP2"] = time.perf_counter() - t0
+
+            elif m in ("kappa-omp2", "kappa_omp2", "k-omp2", "kappa-oomp2"):
+                if scf_res is None:
+                    scf_res = self.calc.run_scf()
+                t0 = time.perf_counter()
+                self.results["KAPPA-OMP2"] = self.calc.run_kappa_omp2(scf_res, grad_thresh=grad_thresh)
+                self.timings["KAPPA-OMP2"] = time.perf_counter() - t0
 
             else:
                 raise ValueError(f"Metode tidak dikenali dalam MSHQCSession: {m}")
