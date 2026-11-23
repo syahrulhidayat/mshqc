@@ -160,28 +160,32 @@ def _update_trust_radius(trust_radius: float, it: int, e_tot: float, e_prev: flo
 
 
 def _assemble_orbital_grad_rhf(
-    B_ao: np.ndarray,
-    C_act: np.ndarray,
-    C_vir: np.ndarray,
+    B_oo: np.ndarray,
+    B_ov: np.ndarray,
+    B_vv: np.ndarray,
     F_vo: np.ndarray,
     g_oo: np.ndarray,
     g_vv: np.ndarray,
     Z_vo: np.ndarray,
 ) -> np.ndarray:
-    nbf = C_act.shape[0]
-    P_corr_a = C_act @ g_oo @ C_act.T + C_vir @ g_vv @ C_vir.T
-    G_ao = 2.0 * K.build_coulomb_3c(B_ao, P_corr_a, nbf) - K.build_exchange_3c_sym(B_ao, P_corr_a, nbf)
-    G_vo = C_vir.T @ G_ao @ C_act
+    n_vir, n_act = F_vo.shape
+    G_vo = K.eval_mo_gcorr_rhf_df(
+        B_oo, B_ov, B_vv,
+        np.ascontiguousarray(g_oo, dtype=np.float64),
+        np.ascontiguousarray(g_vv, dtype=np.float64),
+        n_act, n_vir,
+    )
     L_sep = F_vo @ g_oo - g_vv @ F_vo
     return 4.0 * (F_vo + G_vo + L_sep + Z_vo)
 
 
 def _assemble_orbital_grad_uhf(
-    B_ao: np.ndarray,
-    Ca_act: np.ndarray,
-    Ca_v: np.ndarray,
-    Cb_act: np.ndarray,
-    Cb_v: np.ndarray,
+    B_oo_a: np.ndarray,
+    B_ov_a: np.ndarray,
+    B_vv_a: np.ndarray,
+    B_oo_b: np.ndarray,
+    B_ov_b: np.ndarray,
+    B_vv_b: np.ndarray,
     Fvo_a: np.ndarray,
     Fvo_b: np.ndarray,
     g_oo_a: np.ndarray,
@@ -191,31 +195,24 @@ def _assemble_orbital_grad_uhf(
     Za: np.ndarray,
     Zb: np.ndarray,
 ) -> Tuple[np.ndarray, np.ndarray]:
-    nbf = Ca_act.shape[0]
-    na_act, nb_act = Ca_act.shape[1], Cb_act.shape[1]
-
-    P_corr_a = (
-        Ca_act @ g_oo_a @ Ca_act.T + Ca_v @ g_vv_a @ Ca_v.T
-        if (na_act > 0 and Ca_v.shape[1] > 0)
-        else np.zeros((nbf, nbf), dtype=np.float64)
+    va, na_act = Fvo_a.shape
+    vb, nb_act = Fvo_b.shape
+    Ga_vo, Gb_vo = K.eval_mo_gcorr_uhf_df(
+        B_oo_a, B_ov_a, B_vv_a, B_oo_b, B_ov_b, B_vv_b,
+        np.ascontiguousarray(g_oo_a, dtype=np.float64),
+        np.ascontiguousarray(g_vv_a, dtype=np.float64),
+        np.ascontiguousarray(g_oo_b, dtype=np.float64),
+        np.ascontiguousarray(g_vv_b, dtype=np.float64),
+        na_act, va, nb_act, vb,
     )
-    P_corr_b = (
-        Cb_act @ g_oo_b @ Cb_act.T + Cb_v @ g_vv_b @ Cb_v.T
-        if (nb_act > 0 and Cb_v.shape[1] > 0)
-        else np.zeros((nbf, nbf), dtype=np.float64)
-    )
-    J_corr = K.build_coulomb_3c(B_ao, P_corr_a + P_corr_b, nbf)
-    Ga_ao = J_corr - K.build_exchange_3c_sym(B_ao, P_corr_a, nbf)
-    Gb_ao = J_corr - K.build_exchange_3c_sym(B_ao, P_corr_b, nbf)
-
     wa_vo = (
-        2.0 * (Fvo_a + Ca_v.T @ Ga_ao @ Ca_act + (Fvo_a @ g_oo_a - g_vv_a @ Fvo_a) + Za)
-        if na_act > 0
+        2.0 * (Fvo_a + Ga_vo + (Fvo_a @ g_oo_a - g_vv_a @ Fvo_a) + Za)
+        if (na_act > 0 and va > 0)
         else np.zeros_like(Fvo_a)
     )
     wb_vo = (
-        2.0 * (Fvo_b + Cb_v.T @ Gb_ao @ Cb_act + (Fvo_b @ g_oo_b - g_vv_b @ Fvo_b) + Zb)
-        if nb_act > 0
+        2.0 * (Fvo_b + Gb_vo + (Fvo_b @ g_oo_b - g_vv_b @ Fvo_b) + Zb)
+        if (nb_act > 0 and vb > 0)
         else np.zeros_like(Fvo_b)
     )
     return wa_vo, wb_vo
@@ -356,7 +353,7 @@ def eval_omp_rhf_point(
     e_mp2, e_mp3, g_oo, g_vv, Z_vo = _omp_rhf_corr_kernel(c_os, c_ss, lam_mp3)(
         B_oo, B_ov, B_vv, eps_o, eps_v
     )
-    w_vo = _assemble_orbital_grad_rhf(B_ao, C_act, C_vir, F_vo, g_oo, g_vv, Z_vo)
+    w_vo = _assemble_orbital_grad_rhf(B_oo, B_ov, B_vv, F_vo, g_oo, g_vv, Z_vo)
     return e_ref + e_mp2 + e_mp3, e_ref, e_mp2, e_mp3, C_sc, eps, w_vo, (eps_o, eps_v, B_oo, B_ov, B_vv)
 
 
@@ -419,7 +416,8 @@ def eval_omp_uhf_point(
     )(B_oo_a, B_ov_a, B_vv_a, B_oo_b, B_ov_b, B_vv_b, eps_oa, eps_va, eps_ob, eps_vb)
 
     wa_vo, wb_vo = _assemble_orbital_grad_uhf(
-        B_ao, Ca_act, Ca_v, Cb_act, Cb_v, Fvo_a, Fvo_b, g_oo_a, g_vv_a, g_oo_b, g_vv_b, Za, Zb
+        B_oo_a, B_ov_a, B_vv_a, B_oo_b, B_ov_b, B_vv_b,
+        Fvo_a, Fvo_b, g_oo_a, g_vv_a, g_oo_b, g_vv_b, Za, Zb,
     )
     aux = (eps_oa, eps_va, eps_ob, eps_vb, B_oo_a, B_ov_a, B_vv_a, B_oo_b, B_ov_b, B_vv_b)
     return e_ref + e_mp2 + e_mp3, e_ref, e_mp2, e_mp3, Ca_sc, Cb_sc, eps_a, eps_b, wa_vo, wb_vo, aux
@@ -468,7 +466,7 @@ def optimize_orbitals_rhf(
             e_mp3 = 0.0
 
         e_tot = e_ref + float(e_mp2) + float(e_mp3)
-        w_vo = _assemble_orbital_grad_rhf(B, C_act, C_vir, F_vo, g_oo, g_vv, Z_vo)
+        w_vo = _assemble_orbital_grad_rhf(B_oo, B_ov, B_vv, F_vo, g_oo, g_vv, Z_vo)
         w_rms = float(np.sqrt(np.mean(w_vo ** 2))) if w_vo.size > 0 else 0.0
         if callback is not None:
             callback({
@@ -577,7 +575,8 @@ def optimize_orbitals_uhf(
 
         e_tot = e_ref + float(e_mp2) + float(e_mp3)
         wa_vo, wb_vo = _assemble_orbital_grad_uhf(
-            B, Ca_act, Ca_v, Cb_act, Cb_v, Fvo_a, Fvo_b, g_oo_a, g_vv_a, g_oo_b, g_vv_b, Za, Zb
+            B_oo_a, B_ov_a, B_vv_a, B_oo_b, B_ov_b, B_vv_b,
+            Fvo_a, Fvo_b, g_oo_a, g_vv_a, g_oo_b, g_vv_b, Za, Zb,
         )
         w_rms = float(np.sqrt((np.sum(wa_vo ** 2) + np.sum(wb_vo ** 2)) / n_params))
         if callback is not None:

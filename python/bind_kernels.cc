@@ -191,6 +191,20 @@ k.def("eval_ump2_exact", &integrals::eval_ump2_exact,
 k.def("factorize_eri_4d_exact", &integrals::factorize_eri_4d_exact,
       nb::call_guard<nb::gil_scoped_release>(),
       nb::arg("eri_ao"), nb::arg("threshold") = 1e-12);
+
+// --- MO-Space Correlated Orbital Gradient Primitives ---
+k.def("eval_mo_gcorr_rhf_df", &kernels::eval_mo_gcorr_rhf_df,
+      nb::call_guard<nb::gil_scoped_release>(),
+      nb::arg("B_oo"), nb::arg("B_ov"), nb::arg("B_vv"),
+      nb::arg("g_oo"), nb::arg("g_vv"),
+      nb::arg("n_occ"), nb::arg("n_vir"));
+k.def("eval_mo_gcorr_uhf_df", &kernels::eval_mo_gcorr_uhf_df,
+      nb::call_guard<nb::gil_scoped_release>(),
+      nb::arg("B_oo_a"), nb::arg("B_ov_a"), nb::arg("B_vv_a"),
+      nb::arg("B_oo_b"), nb::arg("B_ov_b"), nb::arg("B_vv_b"),
+      nb::arg("g_oo_a"), nb::arg("g_vv_a"),
+      nb::arg("g_oo_b"), nb::arg("g_vv_b"),
+      nb::arg("na"), nb::arg("va"), nb::arg("nb"), nb::arg("vb"));
 }
 
 } // namespace mshqc

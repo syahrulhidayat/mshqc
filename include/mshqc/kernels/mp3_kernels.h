@@ -60,5 +60,28 @@ Eigen::MatrixXd apply_mo_df_hessian_rhf(
     const Eigen::MatrixXd& B_ov,
     const Eigen::MatrixXd& B_vv);
 
+// MO-space correlated 1-RDM G[P_corr]_vo contractions (zero AO unpacking)
+Eigen::MatrixXd eval_mo_gcorr_rhf_df(
+    const Eigen::MatrixXd& B_oo,
+    const Eigen::MatrixXd& B_ov,
+    const Eigen::MatrixXd& B_vv,
+    const Eigen::MatrixXd& g_oo,
+    const Eigen::MatrixXd& g_vv,
+    int n_occ,
+    int n_vir);
+
+std::pair<Eigen::MatrixXd, Eigen::MatrixXd> eval_mo_gcorr_uhf_df(
+    const Eigen::MatrixXd& B_oo_a,
+    const Eigen::MatrixXd& B_ov_a,
+    const Eigen::MatrixXd& B_vv_a,
+    const Eigen::MatrixXd& B_oo_b,
+    const Eigen::MatrixXd& B_ov_b,
+    const Eigen::MatrixXd& B_vv_b,
+    const Eigen::MatrixXd& g_oo_a,
+    const Eigen::MatrixXd& g_vv_a,
+    const Eigen::MatrixXd& g_oo_b,
+    const Eigen::MatrixXd& g_vv_b,
+    int na, int va, int nb, int vb);
+
 } // namespace kernels
 } // namespace mshqc

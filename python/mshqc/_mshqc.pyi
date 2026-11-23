@@ -425,3 +425,30 @@ class kernels:
     ) -> Tuple[float, float, float]: ...
     @staticmethod
     def factorize_eri_4d_exact(eri_ao: ERITensor, threshold: float = 1e-12) -> np.ndarray: ...
+    @staticmethod
+    def eval_mo_gcorr_rhf_df(
+        B_oo: np.ndarray,
+        B_ov: np.ndarray,
+        B_vv: np.ndarray,
+        g_oo: np.ndarray,
+        g_vv: np.ndarray,
+        n_occ: int,
+        n_vir: int,
+    ) -> np.ndarray: ...
+    @staticmethod
+    def eval_mo_gcorr_uhf_df(
+        B_oo_a: np.ndarray,
+        B_ov_a: np.ndarray,
+        B_vv_a: np.ndarray,
+        B_oo_b: np.ndarray,
+        B_ov_b: np.ndarray,
+        B_vv_b: np.ndarray,
+        g_oo_a: np.ndarray,
+        g_vv_a: np.ndarray,
+        g_oo_b: np.ndarray,
+        g_vv_b: np.ndarray,
+        na: int,
+        va: int,
+        nb: int,
+        vb: int,
+    ) -> Tuple[np.ndarray, np.ndarray]: ...

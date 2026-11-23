@@ -1187,16 +1187,16 @@ std::pair<Eigen::MatrixXd, Eigen::MatrixXd> apply_mo_df_hessian_uhf(
     #pragma omp parallel
     {
         const int tid = omp_get_thread_num();
-        Eigen::MatrixXd Ta1(na, va), Ta2(na, na);
-        Eigen::MatrixXd Tb1(nb, vb), Tb2(nb, nb);
+        Eigen::MatrixXd Ta_vo(va, na), Ta2(na, na);
+        Eigen::MatrixXd Tb_vo(vb, nb), Tb2(nb, nb);
         #pragma omp for schedule(static) nowait
         for (int P = 0; P < n_aux; ++P) {
             if (na > 0 && va > 0) {
                 Eigen::Map<const Eigen::MatrixXd> Boo(B_oo_a.col(P).data(), na, na);
                 Eigen::Map<const Eigen::MatrixXd> Bvo(B_ov_a.col(P).data(), va, na);
                 Eigen::Map<const Eigen::MatrixXd> Bvv(B_vv_a.col(P).data(), va, va);
-                Ta1.noalias() = Boo * ka_ov;
-                Ka_tls[tid].noalias() += (Ta1 * Bvv).transpose();
+                Ta_vo.noalias() = kappa_vo_a * Boo;
+                Ka_tls[tid].noalias() += Bvv * Ta_vo;
                 Ta2.noalias() = ka_ov * Bvo;
                 Ka_tls[tid].noalias() += Bvo * Ta2;
             }
@@ -1204,8 +1204,8 @@ std::pair<Eigen::MatrixXd, Eigen::MatrixXd> apply_mo_df_hessian_uhf(
                 Eigen::Map<const Eigen::MatrixXd> Boo(B_oo_b.col(P).data(), nb, nb);
                 Eigen::Map<const Eigen::MatrixXd> Bvo(B_ov_b.col(P).data(), vb, nb);
                 Eigen::Map<const Eigen::MatrixXd> Bvv(B_vv_b.col(P).data(), vb, vb);
-                Tb1.noalias() = Boo * kb_ov;
-                Kb_tls[tid].noalias() += (Tb1 * Bvv).transpose();
+                Tb_vo.noalias() = kappa_vo_b * Boo;
+                Kb_tls[tid].noalias() += Bvv * Tb_vo;
                 Tb2.noalias() = kb_ov * Bvo;
                 Kb_tls[tid].noalias() += Bvo * Tb2;
             }
@@ -1220,6 +1220,88 @@ std::pair<Eigen::MatrixXd, Eigen::MatrixXd> apply_mo_df_hessian_uhf(
     Hp_a.noalias() += 2.0 * Hk_a;
     Hp_b.noalias() += 2.0 * Hk_b;
     return {std::move(Hp_a), std::move(Hp_b)};
+}
+
+
+std::pair<Eigen::MatrixXd, Eigen::MatrixXd> eval_mo_gcorr_uhf_df(
+    const Eigen::MatrixXd& B_oo_a,
+    const Eigen::MatrixXd& B_ov_a,
+    const Eigen::MatrixXd& B_vv_a,
+    const Eigen::MatrixXd& B_oo_b,
+    const Eigen::MatrixXd& B_ov_b,
+    const Eigen::MatrixXd& B_vv_b,
+    const Eigen::MatrixXd& g_oo_a,
+    const Eigen::MatrixXd& g_vv_a,
+    const Eigen::MatrixXd& g_oo_b,
+    const Eigen::MatrixXd& g_vv_b,
+    int na, int va, int nb, int vb)
+{
+    const bool has_a = (na > 0 && va > 0);
+    const bool has_b = (nb > 0 && vb > 0);
+    const int n_aux = has_a ? static_cast<int>(B_ov_a.cols()) : (has_b ? static_cast<int>(B_ov_b.cols()) : 0);
+    Eigen::MatrixXd Ga_vo = Eigen::MatrixXd::Zero(va, na);
+    Eigen::MatrixXd Gb_vo = Eigen::MatrixXd::Zero(vb, nb);
+    if (n_aux <= 0 || (!has_a && !has_b)) return {std::move(Ga_vo), std::move(Gb_vo)};
+
+    // 1. Coulomb terkopel alpha + beta di ruang MO
+    Eigen::VectorXd c_aux = Eigen::VectorXd::Zero(n_aux);
+    if (has_a) {
+        Eigen::Map<const Eigen::VectorXd> goa(g_oo_a.data(), static_cast<Eigen::Index>(na) * na);
+        Eigen::Map<const Eigen::VectorXd> gva(g_vv_a.data(), static_cast<Eigen::Index>(va) * va);
+        c_aux.noalias() += B_oo_a.transpose() * goa + B_vv_a.transpose() * gva;
+    }
+    if (has_b) {
+        Eigen::Map<const Eigen::VectorXd> gob(g_oo_b.data(), static_cast<Eigen::Index>(nb) * nb);
+        Eigen::Map<const Eigen::VectorXd> gvb(g_vv_b.data(), static_cast<Eigen::Index>(vb) * vb);
+        c_aux.noalias() += B_oo_b.transpose() * gob + B_vv_b.transpose() * gvb;
+    }
+    if (has_a) {
+        Eigen::VectorXd ja = B_ov_a * c_aux;
+        Ga_vo = Eigen::Map<const Eigen::MatrixXd>(ja.data(), va, na);
+    }
+    if (has_b) {
+        Eigen::VectorXd jb = B_ov_b * c_aux;
+        Gb_vo = Eigen::Map<const Eigen::MatrixXd>(jb.data(), vb, nb);
+    }
+
+    // 2. Exchange terpisah spin di ruang MO (zero AO unpacking)
+    const int max_t = omp_get_max_threads();
+    std::vector<Eigen::MatrixXd> Ka_tls(has_a ? max_t : 0, Eigen::MatrixXd::Zero(va, na));
+    std::vector<Eigen::MatrixXd> Kb_tls(has_b ? max_t : 0, Eigen::MatrixXd::Zero(vb, nb));
+
+    #pragma omp parallel
+    {
+        const int tid = omp_get_thread_num();
+        Eigen::MatrixXd Ta_oo, Ta_vo, Tb_oo, Tb_vo;
+        if (has_a) { Ta_oo.resize(na, na); Ta_vo.resize(va, na); }
+        if (has_b) { Tb_oo.resize(nb, nb); Tb_vo.resize(vb, nb); }
+        #pragma omp for schedule(static) nowait
+        for (int P = 0; P < n_aux; ++P) {
+            if (has_a) {
+                Eigen::Map<const Eigen::MatrixXd> Boo(B_oo_a.col(P).data(), na, na);
+                Eigen::Map<const Eigen::MatrixXd> Bvo(B_ov_a.col(P).data(), va, na);
+                Eigen::Map<const Eigen::MatrixXd> Bvv(B_vv_a.col(P).data(), va, va);
+                Ta_oo.noalias() = g_oo_a * Boo;
+                Ka_tls[tid].noalias() += Bvo * Ta_oo;
+                Ta_vo.noalias() = g_vv_a * Bvo;
+                Ka_tls[tid].noalias() += Bvv * Ta_vo;
+            }
+            if (has_b) {
+                Eigen::Map<const Eigen::MatrixXd> Boo(B_oo_b.col(P).data(), nb, nb);
+                Eigen::Map<const Eigen::MatrixXd> Bvo(B_ov_b.col(P).data(), vb, nb);
+                Eigen::Map<const Eigen::MatrixXd> Bvv(B_vv_b.col(P).data(), vb, vb);
+                Tb_oo.noalias() = g_oo_b * Boo;
+                Kb_tls[tid].noalias() += Bvo * Tb_oo;
+                Tb_vo.noalias() = g_vv_b * Bvo;
+                Kb_tls[tid].noalias() += Bvv * Tb_vo;
+            }
+        }
+    }
+    for (int t = 0; t < max_t; ++t) {
+        if (has_a) Ga_vo.noalias() -= Ka_tls[t];
+        if (has_b) Gb_vo.noalias() -= Kb_tls[t];
+    }
+    return {std::move(Ga_vo), std::move(Gb_vo)};
 }
 
 } // namespace kernels

@@ -31,7 +31,7 @@ void contract_vvvv_pairs_df(
     const bool same_B = (&B_vv_left == &B_vv_right) && (nv_l == nv_r);
     const double flops_loop_p = 4.0 * static_cast<double>(n_pairs) * nv_l * nv_r * std::max(nv_l, nv_r) * n_aux;
 
-    // Jalur 1: Adaptive Batched T+/T- BLAS-3 DGEMM (hemat 6-15x FLOPs, RAM <= 64 MB)
+    // Jalur 1: Adaptive Batched T+/T- BLAS-3 DGEMM dengan pre-packed B_blocks (RAM <= 64 MB)
     if (same_B && nv_l >= 8) {
         const int V = nv_l;
         bool is_antisym = true;
@@ -43,9 +43,16 @@ void contract_vvvv_pairs_df(
         const double V4 = static_cast<double>(V) * V * V * V;
         const double flops_batched = V4 * n_aux + (is_antisym ? 0.5 : 1.0) * V4 * n_pairs;
 
-        if (flops_batched < 0.85 * flops_loop_p) {
+        if (flops_batched < 1.15 * flops_loop_p) {
             const int n_tri = V * (V + 1) / 2;
             const int n_strict = V * (V - 1) / 2;
+
+            // Pre-pack V blok kontigu (V x n_aux) 1x untuk menghilangkan ratusan MB strided copy
+            std::vector<Eigen::MatrixXd> B_blocks(V);
+            #pragma omp parallel for schedule(static)
+            for (int a = 0; a < V; ++a) {
+                B_blocks[a] = B_vv_left.middleRows(static_cast<Eigen::Index>(a) * V, V);
+            }
 
             Eigen::MatrixXd T_plus;
             if (!is_antisym) {
@@ -97,22 +104,12 @@ void contract_vvvv_pairs_df(
 
                 #pragma omp parallel
                 {
-                    Eigen::MatrixXd Ba_loc(V, n_aux), Bb_loc(V, n_aux), M_ab(V, V);
-                    int last_a = -1;
+                    Eigen::MatrixXd M_ab(V, V);
                     #pragma omp for schedule(static) nowait
                     for (int r = 0; r < bsz; ++r) {
                         const int a = pair_a[p0 + r];
                         const int b = pair_b[p0 + r];
-                        if (a != last_a) {
-                            Ba_loc = B_vv_left.middleRows(static_cast<Eigen::Index>(a) * V, V);
-                            last_a = a;
-                        }
-                        if (b == a) {
-                            M_ab.noalias() = Ba_loc * Ba_loc.transpose();
-                        } else {
-                            Bb_loc = B_vv_left.middleRows(static_cast<Eigen::Index>(b) * V, V);
-                            M_ab.noalias() = Ba_loc * Bb_loc.transpose();
-                        }
+                        M_ab.noalias() = B_blocks[a] * B_blocks[b].transpose();
                         if (!is_antisym) {
                             double* vp = V_plus_T.col(r).data();
                             for (int e = 0; e < V; ++e) {
@@ -175,11 +172,21 @@ void contract_vvvv_pairs_df(
         }
     }
 
-    // Jalur 2: Adaptive Batched AB DGEMM
+    // Jalur 2: Adaptive Batched AB DGEMM dengan pre-packed B_blocks_l & B_blocks_r
     if (!same_B && nv_l >= 8 && nv_r >= 8) {
         const double n_ab = static_cast<double>(nv_l) * nv_r;
         const double flops_batched_ab = 2.0 * n_ab * n_ab * n_aux + 2.0 * n_ab * n_ab * n_pairs;
-        if (flops_batched_ab < 0.85 * flops_loop_p) {
+        if (flops_batched_ab < 1.10 * flops_loop_p) {
+            std::vector<Eigen::MatrixXd> B_blocks_l(nv_l), B_blocks_r(nv_r);
+            #pragma omp parallel for schedule(static)
+            for (int a = 0; a < nv_l; ++a) {
+                B_blocks_l[a] = B_vv_left.middleRows(static_cast<Eigen::Index>(a) * nv_l, nv_l);
+            }
+            #pragma omp parallel for schedule(static)
+            for (int b = 0; b < nv_r; ++b) {
+                B_blocks_r[b] = B_vv_right.middleRows(static_cast<Eigen::Index>(b) * nv_r, nv_r);
+            }
+
             const int n_ef = nv_l * nv_r;
             Eigen::MatrixXd T_pack(n_ef, n_pairs);
             #pragma omp parallel for schedule(static)
@@ -198,19 +205,13 @@ void contract_vvvv_pairs_df(
 
                 #pragma omp parallel
                 {
-                    Eigen::MatrixXd Ba_loc(nv_l, n_aux), Bb_loc(nv_r, n_aux), M_ab(nv_l, nv_r);
-                    int last_a = -1;
+                    Eigen::MatrixXd M_ab(nv_l, nv_r);
                     #pragma omp for schedule(static) nowait
                     for (int r = 0; r < bsz; ++r) {
                         const int idx = p0 + r;
                         const int a = idx / nv_r;
                         const int b = idx % nv_r;
-                        if (a != last_a) {
-                            Ba_loc = B_vv_left.middleRows(static_cast<Eigen::Index>(a) * nv_l, nv_l);
-                            last_a = a;
-                        }
-                        Bb_loc = B_vv_right.middleRows(static_cast<Eigen::Index>(b) * nv_r, nv_r);
-                        M_ab.noalias() = Ba_loc * Bb_loc.transpose();
+                        M_ab.noalias() = B_blocks_l[a] * B_blocks_r[b].transpose();
                         std::copy(M_ab.data(), M_ab.data() + n_ef, V_b_T.col(r).data());
                     }
                 }
@@ -236,19 +237,9 @@ void contract_vvvv_pairs_df(
         }
     }
 
-    // Jalur 3: Loop-P (optimal untuk jumlah pasangan kecil)
-    if (n_pairs >= omp_get_max_threads()) {
-        #pragma omp parallel for schedule(static)
-        for (int k = 0; k < n_pairs; ++k) {
-            Eigen::MatrixXd X_tmp(nv_l, nv_r);
-            for (int P = 0; P < n_aux; ++P) {
-                Eigen::Map<const Eigen::MatrixXd> B_Pl(B_vv_left.col(P).data(), nv_l, nv_l);
-                Eigen::Map<const Eigen::MatrixXd> B_Pr(B_vv_right.col(P).data(), nv_r, nv_r);
-                X_tmp.noalias() = T_pairs[k] * B_Pr;
-                W_pairs[k].noalias() += B_Pl.transpose() * X_tmp;
-            }
-        }
-    } else {
+    // Jalur 3: P-parallel loop (baca B_vv 1x per thread, beban seimbang, batas TLS <= 64 MB)
+    const size_t tls_bytes = static_cast<size_t>(omp_get_max_threads()) * n_pairs * nv_l * nv_r * sizeof(double);
+    if (n_aux >= omp_get_max_threads() && tls_bytes <= 64ULL * 1024ULL * 1024ULL) {
         #pragma omp parallel
         {
             std::vector<Eigen::MatrixXd> W_loc(n_pairs, Eigen::MatrixXd::Zero(nv_l, nv_r));
@@ -265,6 +256,17 @@ void contract_vvvv_pairs_df(
             #pragma omp critical
             {
                 for (int k = 0; k < n_pairs; ++k) W_pairs[k].noalias() += W_loc[k];
+            }
+        }
+    } else {
+        #pragma omp parallel for schedule(static)
+        for (int k = 0; k < n_pairs; ++k) {
+            Eigen::MatrixXd X_tmp(nv_l, nv_r);
+            for (int P = 0; P < n_aux; ++P) {
+                Eigen::Map<const Eigen::MatrixXd> B_Pl(B_vv_left.col(P).data(), nv_l, nv_l);
+                Eigen::Map<const Eigen::MatrixXd> B_Pr(B_vv_right.col(P).data(), nv_r, nv_r);
+                X_tmp.noalias() = T_pairs[k] * B_Pr;
+                W_pairs[k].noalias() += B_Pl.transpose() * X_tmp;
             }
         }
     }
@@ -675,14 +677,14 @@ Eigen::MatrixXd apply_mo_df_hessian_rhf(
     #pragma omp parallel
     {
         const int tid = omp_get_thread_num();
-        Eigen::MatrixXd T_oo(no, nv), T_oo2(no, no);
+        Eigen::MatrixXd T_vo(nv, no), T_oo2(no, no);
         #pragma omp for schedule(static) nowait
         for (int P = 0; P < n_aux; ++P) {
             Eigen::Map<const Eigen::MatrixXd> Boo(B_oo.col(P).data(), no, no);
             Eigen::Map<const Eigen::MatrixXd> Bvo(B_ov.col(P).data(), nv, no);
             Eigen::Map<const Eigen::MatrixXd> Bvv(B_vv.col(P).data(), nv, nv);
-            T_oo.noalias() = Boo * kappa_ov;
-            K_tls[tid].noalias() += (T_oo * Bvv).transpose();
+            T_vo.noalias() = kappa_vo * Boo;
+            K_tls[tid].noalias() += Bvv * T_vo;
             T_oo2.noalias() = kappa_ov * Bvo;
             K_tls[tid].noalias() += Bvo * T_oo2;
         }
@@ -691,6 +693,51 @@ Eigen::MatrixXd apply_mo_df_hessian_rhf(
 
     Hp_vo.noalias() += 4.0 * H_kappa_vo;
     return Hp_vo;
+}
+
+
+Eigen::MatrixXd eval_mo_gcorr_rhf_df(
+    const Eigen::MatrixXd& B_oo,
+    const Eigen::MatrixXd& B_ov,
+    const Eigen::MatrixXd& B_vv,
+    const Eigen::MatrixXd& g_oo,
+    const Eigen::MatrixXd& g_vv,
+    int n_occ,
+    int n_vir)
+{
+    const int n_aux = static_cast<int>(B_ov.cols());
+    Eigen::MatrixXd G_vo = Eigen::MatrixXd::Zero(n_vir, n_occ);
+    if (n_occ <= 0 || n_vir <= 0 || n_aux <= 0) return G_vo;
+
+    // 1. Coulomb ruang MO: 2 * sum_P B^P_vo * [Tr(B^P_oo g_oo) + Tr(B^P_vv g_vv)]
+    Eigen::Map<const Eigen::VectorXd> goo_v(g_oo.data(), static_cast<Eigen::Index>(n_occ) * n_occ);
+    Eigen::Map<const Eigen::VectorXd> gvv_v(g_vv.data(), static_cast<Eigen::Index>(n_vir) * n_vir);
+    Eigen::VectorXd c_aux = B_oo.transpose() * goo_v + B_vv.transpose() * gvv_v;
+    Eigen::VectorXd j_flat = 2.0 * (B_ov * c_aux);
+    G_vo = Eigen::Map<const Eigen::MatrixXd>(j_flat.data(), n_vir, n_occ);
+
+    // 2. Exchange ruang MO: -sum_P [B^P_vo (g_oo B^P_oo) + B^P_vv (g_vv B^P_vo)]
+    const int max_t = omp_get_max_threads();
+    std::vector<Eigen::MatrixXd> K_tls(max_t, Eigen::MatrixXd::Zero(n_vir, n_occ));
+
+    #pragma omp parallel
+    {
+        const int tid = omp_get_thread_num();
+        Eigen::MatrixXd& K_loc = K_tls[tid];
+        Eigen::MatrixXd T_oo(n_occ, n_occ), T_vo(n_vir, n_occ);
+        #pragma omp for schedule(static) nowait
+        for (int P = 0; P < n_aux; ++P) {
+            Eigen::Map<const Eigen::MatrixXd> Boo(B_oo.col(P).data(), n_occ, n_occ);
+            Eigen::Map<const Eigen::MatrixXd> Bvo(B_ov.col(P).data(), n_vir, n_occ);
+            Eigen::Map<const Eigen::MatrixXd> Bvv(B_vv.col(P).data(), n_vir, n_vir);
+            T_oo.noalias() = g_oo * Boo;
+            K_loc.noalias() += Bvo * T_oo;
+            T_vo.noalias() = g_vv * Bvo;
+            K_loc.noalias() += Bvv * T_vo;
+        }
+    }
+    for (int t = 0; t < max_t; ++t) G_vo.noalias() -= K_tls[t];
+    return G_vo;
 }
 
 } // namespace kernels
