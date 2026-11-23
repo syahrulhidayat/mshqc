@@ -2,9 +2,7 @@
 """
 .modal/gpu_benchmark.py
 Serverless NVIDIA CUDA GPU CI & Benchmark Runner untuk mshqc v2.0 di Modal.com.
-Jalankan lokal atau dari GitHub Actions:
-  MODAL_GPU=T4   modal run .modal/gpu_benchmark.py
-  MODAL_GPU=A100 modal run .modal/gpu_benchmark.py --heavy
+Menguji RHF, LT-SOS-OMP2, dan OMP3 (CPU C++20 vs CUDA FP64).
 """
 from __future__ import annotations
 
@@ -16,7 +14,6 @@ GPU_TYPE = os.environ.get("MODAL_GPU", "T4")
 
 app = modal.App("mshqc-v2-cuda-ci")
 
-# Bangun image Linux + CUDA + PyTorch + deps mshqc (di-cache otomatis oleh Modal setelah build ke-1)
 image = (
     modal.Image.from_registry("nvidia/cuda:12.4.1-devel-ubuntu22.04", add_python="3.11")
     .apt_install(
@@ -24,16 +21,10 @@ image = (
         "libopenblas-dev", "liblapacke-dev", "libeigen3-dev", "libomp-dev",
     )
     .pip_install(
-        "torch",
-        "numpy",
-        "scipy",
-        "pytest",
-        "nanobind>=1.9.0",
-        "setuptools>=77.0.0",
-        "wheel",
+        "torch", "numpy", "scipy", "pytest",
+        "nanobind>=1.9.0", "setuptools>=77.0.0", "wheel",
     )
     .run_commands(
-        # Compile & install libcint v6.1.2 + TBLIS v1.2.0 ke /usr/local (ter-cache di layer image Modal)
         "git clone --depth 1 -b v6.1.2 https://github.com/sunqm/libcint.git /tmp/libcint",
         "cmake -S /tmp/libcint -B /tmp/libcint/build -GNinja "
         "-DCMAKE_INSTALL_PREFIX=/usr/local -DCMAKE_POSITION_INDEPENDENT_CODE=ON "
@@ -50,14 +41,13 @@ image = (
         "make -j4 bin_PROGRAMS= noinst_PROGRAMS= check_PROGRAMS= && "
         "make install bin_PROGRAMS= noinst_PROGRAMS= check_PROGRAMS=",
         "rm -rf /tmp/libcint /tmp/tblis",
-        # Ambil basis sets mshqc-basis
         "git clone --depth 1 https://github.com/syahrulhidayat/mshqc-basis.git /opt/mshqc-basis",
     )
     .add_local_dir(".", remote_path="/workspace", ignore=[".git", "build", "dist", "__pycache__", ".cache*"])
 )
 
 
-@app.function(image=image, gpu=GPU_TYPE, cpu=4.0, memory=16384, timeout=900)
+@app.function(image=image, gpu=GPU_TYPE, cpu=4.0, memory=16384, timeout=1200)
 def run_cuda_suite(heavy: bool = False) -> str:
     import subprocess
     import time
@@ -70,55 +60,76 @@ def run_cuda_suite(heavy: bool = False) -> str:
     os.environ["OPENBLAS_NUM_THREADS"] = "1"
     os.environ["CMAKE_BUILD_PARALLEL_LEVEL"] = "4"
 
-    print(f"=== Modal GPU Info: {torch.cuda.get_device_name(0)} (CUDA {torch.version.cuda}) ===", flush=True)
+    gpu_name = torch.cuda.get_device_name(0)
+    print(f"=== Modal GPU Info: {gpu_name} (CUDA {torch.version.cuda}) ===", flush=True)
     subprocess.run(["python", "-m", "pip", "install", "--no-build-isolation", "--no-deps", "-e", "."], check=True)
     subprocess.run(["python", "-m", "pytest", "tests/test_thin_core_stage12_polish.py", "-v", "-s"], check=True)
 
     import mshqc
     from mshqc.backends import enable_torch_backend, use_backend
 
-    enable_torch_backend(device="cuda", name="cuda", fallback_to_cpp=True)
+    cuda_backend = enable_torch_backend(device="cuda", name="cuda", fallback_to_cpp=True)
+
+    naphthalene = [
+        ("C", 0.0000, 0.7100, 0.0), ("C", 0.0000, -0.7100, 0.0),
+        ("C", 1.2430, 1.4040, 0.0), ("C", 2.4310, 0.7080, 0.0),
+        ("C", 2.4310, -0.7080, 0.0), ("C", 1.2430, -1.4040, 0.0),
+        ("C", -1.2430, 1.4040, 0.0), ("C", -2.4310, 0.7080, 0.0),
+        ("C", -2.4310, -0.7080, 0.0), ("C", -1.2430, -1.4040, 0.0),
+        ("H", 1.2450, 2.4900, 0.0), ("H", 3.3740, 1.2460, 0.0),
+        ("H", 3.3740, -1.2460, 0.0), ("H", 1.2450, -2.4900, 0.0),
+        ("H", -1.2450, 2.4900, 0.0), ("H", -3.3740, 1.2460, 0.0),
+        ("H", -3.3740, -1.2460, 0.0), ("H", -1.2450, -2.4900, 0.0),
+    ]
 
     systems = [
-        ("C6H6 (114 BF, FC)", mshqc.molecule("C6H6"), "cc-pVDZ", True),
+        ("C6H6 (114 BF, FC)", mshqc.molecule("C6H6"), "cc-pVDZ", True, True),
     ]
     if heavy:
-        systems.append(("C6H6 (264 BF, FC)", mshqc.molecule("C6H6"), "cc-pVTZ", True))
+        systems.append(("C10H8 (180 BF, FC)", mshqc.build_molecule(naphthalene, units="angstrom"), "cc-pVDZ", True, True))
+        systems.append(("C6H6 (264 BF, FC)", mshqc.molecule("C6H6"), "cc-pVTZ", True, False))
 
     lines = [
-        f"GPU: {torch.cuda.get_device_name(0)}",
-        "| System | Basis | t_RHF CPU | t_RHF GPU | t_LT-SOS CPU | t_LT-SOS GPU | Speedup LT-SOS | |dE| (Ha) |",
-        "|---|---|---:|---:|---:|---:|---:|---:|",
+        f"### mshqc v2.0 CUDA FP64 Benchmark ({gpu_name})",
+        "",
+        "| System | Basis | t_RHF (CPU/GPU) | t_LT-SOS (CPU/GPU) | t_OMP3 (CPU/GPU) | Speedup OMP3 | |dE_OMP3| |",
+        "|---|---|---:|---:|---:|---:|---:|",
     ]
-    for label, mol, basis, fc in systems:
-        calc_cpu = mshqc.MSHQCCalculator(mol, basis_name=basis, eri_method="df", freeze_core=fc)
-        t0 = time.perf_counter()
-        scf_c = calc_cpu.run_scf()
-        t_rhf_c = time.perf_counter() - t0
-        t0 = time.perf_counter()
-        lt_c = calc_cpu.run_lt_sos_omp2(scf_c, grad_thresh=1e-5)
-        t_lt_c = time.perf_counter() - t0
 
-        calc_gpu = mshqc.MSHQCCalculator(mol, basis_name=basis, eri_method="df", freeze_core=fc)
-        # Warm-up CUDA context
-        _ = torch.eye(4, dtype=torch.float64, device="cuda") @ torch.eye(4, dtype=torch.float64, device="cuda")
-        torch.cuda.synchronize()
+    _ = torch.eye(4, dtype=torch.float64, device="cuda") @ torch.eye(4, dtype=torch.float64, device="cuda")
+    torch.cuda.synchronize()
+
+    for label, mol, basis, fc, do_omp3 in systems:
+        calc_c = mshqc.MSHQCCalculator(mol, basis_name=basis, eri_method="df", freeze_core=fc)
+        t0 = time.perf_counter(); scf_c = calc_c.run_scf(); t_rhf_c = time.perf_counter() - t0
+        t0 = time.perf_counter(); lt_c = calc_c.run_lt_sos_omp2(scf_c, grad_thresh=1e-5); t_lt_c = time.perf_counter() - t0
+        o3_c, t_o3_c = None, None
+        if do_omp3:
+            t0 = time.perf_counter(); o3_c = calc_c.run_omp3(scf_c, grad_thresh=1e-5); t_o3_c = time.perf_counter() - t0
+
+        calc_g = mshqc.MSHQCCalculator(mol, basis_name=basis, eri_method="df", freeze_core=fc)
         with use_backend("cuda"):
-            t0 = time.perf_counter()
-            scf_g = calc_gpu.run_scf()
-            torch.cuda.synchronize()
-            t_rhf_g = time.perf_counter() - t0
-            t0 = time.perf_counter()
-            lt_g = calc_gpu.run_lt_sos_omp2(scf_g, grad_thresh=1e-5)
-            torch.cuda.synchronize()
-            t_lt_g = time.perf_counter() - t0
+            t0 = time.perf_counter(); scf_g = calc_g.run_scf(); torch.cuda.synchronize(); t_rhf_g = time.perf_counter() - t0
+            t0 = time.perf_counter(); lt_g = calc_g.run_lt_sos_omp2(scf_g, grad_thresh=1e-5); torch.cuda.synchronize(); t_lt_g = time.perf_counter() - t0
+            o3_g, t_o3_g = None, None
+            if do_omp3:
+                t0 = time.perf_counter(); o3_g = calc_g.run_omp3(scf_g, grad_thresh=1e-5); torch.cuda.synchronize(); t_o3_g = time.perf_counter() - t0
 
-        de = abs(lt_c.energy_total - lt_g.energy_total)
-        sp = t_lt_c / max(t_lt_g, 1e-6)
-        assert de < 1e-9, f"CUDA parity mismatch: {de}"
+        assert abs(lt_c.energy_total - lt_g.energy_total) < 1e-9
+        if do_omp3 and o3_c is not None and o3_g is not None:
+            de_o3 = abs(o3_c.energy_total - o3_g.energy_total)
+            assert de_o3 < 1e-9, f"OMP3 CUDA parity mismatch: {de_o3}"
+            o3_col = f"{t_o3_c:.2f}s / {t_o3_g:.2f}s"
+            sp_col = f"{t_o3_c / max(t_o3_g, 1e-6):.2f}x"
+            de_col = f"{de_o3:.2e}"
+        else:
+            o3_col, sp_col, de_col = "skip", "-", "-"
+
         lines.append(
-            f"| {label} | {basis} | {t_rhf_c:.2f}s | {t_rhf_g:.2f}s | {t_lt_c:.2f}s | {t_lt_g:.2f}s | {sp:.2f}x | {de:.2e} |"
+            f"| {label} | {basis} | {t_rhf_c:.2f}s / {t_rhf_g:.2f}s | "
+            f"{t_lt_c:.2f}s / {t_lt_g:.2f}s | {o3_col} | {sp_col} | {de_col} |"
         )
+        cuda_backend.clear_cache()
 
     report = "\n".join(lines)
     print("\n" + report, flush=True)

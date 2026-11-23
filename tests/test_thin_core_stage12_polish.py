@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Validasi Stage 12 (Hybrid-v2 Engine Polish, Dynamic Backends, Pure-Python Abelian Symmetry,
-Frozen-Core Frequencies & Optional PyTorch/CUDA Kernel Backend).
+Frozen-Core Frequencies & PyTorch/CUDA Kernel Backend termasuk OMP3).
 """
 from __future__ import annotations
 
@@ -31,7 +31,6 @@ def test_dynamic_backend_numpy_end_to_end_scf_and_mp2():
     assert d_scf < 1.0e-11, f"Selisih SCF cpp vs numpy terlalu besar: {d_scf}"
     assert d_mp2 < 1.0e-11, f"Selisih MP2 cpp vs numpy terlalu besar: {d_mp2}"
 
-    # Pastikan lazy cache H_core & S_ovlp mengembalikan objek array identik
     assert calc._get_h_core() is calc._get_h_core()
     assert calc._get_s_ovlp() is calc._get_s_ovlp()
     print(f"[BACKEND E2E] C++ vs NumPy: dE_SCF={d_scf:.2e} | dE_MP2={d_mp2:.2e}")
@@ -53,7 +52,6 @@ def test_pure_python_abelian_symmetry_h2o_and_benzene():
     labels = M.label_mo_irreps(h2o, calc.basis, scf_res.C_alpha, S, sym_h2o)
     occ_labels = labels[:5]
     assert "mix" not in occ_labels
-    # 5 orbital terisi H2O di C2v terdiri atas: 3 A1, 1 B1, 1 B2 (urutan B1/B2 bergantung konvensi sumbu x/y)
     assert occ_labels.count("A1") == 3
     assert occ_labels.count("B1") + occ_labels.count("B2") == 2
 
@@ -64,13 +62,12 @@ def test_pure_python_abelian_symmetry_h2o_and_benzene():
 
 
 def test_frozen_core_frequencies_and_scan_pes_consistency():
-    """Pastikan fix freeze_core pada scan_pes & compute_frequencies_thin_core konsisten (bebas NameError)."""
+    """Pastikan fix freeze_core pada scan_pes & compute_frequencies_thin_core konsisten."""
     h2o = mshqc.molecule("H2O")
     pts = h2o.scan_pes(0, 1, [0.90, 0.96, 1.05], method="omp2", basis="cc-pVDZ", freeze_core=True)
     assert len(pts) == 3
     assert pts[1].energy_ha < pts[0].energy_ha and pts[1].energy_ha < pts[2].energy_ha
 
-    # Uji frekuensi frozen-core pada molekul diatomik kecil (HF) agar cepat & presisi
     hf = mshqc.molecule("HF")
     opt = hf.optimize_geometry(method="omp2", basis="cc-pVDZ", freeze_core=True, g_convergence="gau_tight")
     assert opt.converged
@@ -83,21 +80,30 @@ def test_frozen_core_frequencies_and_scan_pes_consistency():
 
 @pytest.mark.skipif(importlib.util.find_spec("torch") is None, reason="PyTorch tidak terpasang di lingkungan ini")
 def test_torch_kernel_backend_parity_and_fallback():
-    """Verifikasi TorchKernelBackend (CUDA jika ada, atau CPU FP64) cocok < 1e-11 Ha pada RHF & LT-SOS-OMP2."""
+    """Verifikasi TorchKernelBackend (CUDA/CPU FP64) cocok < 1e-10 Ha pada RHF, LT-SOS-OMP2, dan OMP3."""
     backend = enable_torch_backend(device="auto", name="torch_test", fallback_to_cpp=True)
     h2o = mshqc.molecule("H2O")
     calc = mshqc.MSHQCCalculator(h2o, basis_name="cc-pVDZ", eri_method="df")
 
     scf_cpp = calc.run_scf()
     lt_cpp = calc.run_lt_sos_omp2(scf_cpp, grad_thresh=1e-6)
+    omp3_cpp = calc.run_omp3(scf_cpp, grad_thresh=1e-6)
 
     with use_backend("torch_test"):
         scf_t = calc.run_scf()
         lt_t = calc.run_lt_sos_omp2(scf_t, grad_thresh=1e-6)
+        omp3_t = calc.run_omp3(scf_t, grad_thresh=1e-6)
 
-    assert abs(scf_cpp.energy_total - scf_t.energy_total) < 1.0e-11
-    assert abs(lt_cpp.energy_total - lt_t.energy_total) < 1.0e-10
-    print(f"[TORCH BACK ] Device={backend.device} | dE_LT-SOS={abs(lt_cpp.energy_total - lt_t.energy_total):.2e}")
+    d_scf = abs(scf_cpp.energy_total - scf_t.energy_total)
+    d_lt = abs(lt_cpp.energy_total - lt_t.energy_total)
+    d_o3 = abs(omp3_cpp.energy_total - omp3_t.energy_total)
+    assert d_scf < 1.0e-11
+    assert d_lt < 1.0e-10
+    assert d_o3 < 1.0e-10
+    print(
+        f"[TORCH BACK ] Device={backend.device} | dE_SCF={d_scf:.2e} | "
+        f"dE_LT-SOS={d_lt:.2e} | dE_OMP3={d_o3:.2e}"
+    )
 
 
 if __name__ == "__main__":
