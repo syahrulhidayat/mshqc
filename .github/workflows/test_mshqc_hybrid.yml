@@ -101,30 +101,7 @@ jobs:
             cd /tmp/tblis
             git submodule update --init --recursive
 
-            python - << 'EOF'
-            import pathlib
-            p = pathlib.Path('src/external/catch/catch.hpp')
-            p.write_text(p.read_text().replace('SIGSTKSZ', '8192'))
-            for f in ('src/external/marray/include/short_vector.hpp', 'src/external/marray/include/range.hpp', 'src/util/thread.h'):
-                fp = pathlib.Path(f)
-                fp.write_text('#include <limits>\n' + fp.read_text())
-            tp = pathlib.Path('src/external/tci/tci/task_set.c')
-            tp.write_text('#include <stdlib.h>\n' + tp.read_text())
-            ep = pathlib.Path('src/external/marray/include/expression.hpp')
-            ep.write_text(ep.read_text().replace(
-                '#include <x86intrin.h>',
-                '#if defined(__GNUC__) && (defined(__x86_64__) || defined(__i386__))\n#include <x86intrin.h>\n#else\n#undef __AVX512F__\n#undef __AVX__\n#undef __SSE2__\n#endif'
-            ))
-            cp = pathlib.Path('src/util/cpuid.hpp')
-            if cp.exists():
-                txt = cp.read_text()
-                txt = txt.replace('enum {VENDOR_ARM, VENDOR_UNKNOWN}', 'enum {VENDOR_ARM, VENDOR_UNKNOWN};')
-                txt = txt.replace('enum {MODEL_ARMV7, MODEL_ARMV8, MODEL_UNKNOWN}', 'enum {MODEL_ARMV7, MODEL_ARMV8, MODEL_UNKNOWN};')
-                cp.write_text(txt)
-            cx = pathlib.Path('src/util/cpuid.cxx')
-            if cx.exists():
-                cx.write_text(cx.read_text().replace('strtoi(ptno, pos, 16)', '((void)pos, (int)strtol(ptno.c_str(), NULL, 16))'))
-            EOF
+            python "$GITHUB_WORKSPACE/cmake/patch_tblis.py"
 
             CFG_ARCH="reference"
             if [ "$(uname -m)" = "x86_64" ]; then
