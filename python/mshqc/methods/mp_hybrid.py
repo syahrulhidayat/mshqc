@@ -445,3 +445,99 @@ def run_df_romp3(
         H_core, v_nn, B_ao, C_rohf, C_rohf, na, nb,
         n_frozen=n_frozen, include_singles=True, reference="rohf",
     )
+
+
+def run_exact_mp2_rhf(
+    H_core: np.ndarray,
+    v_nn: float,
+    eri4,
+    C0: np.ndarray,
+    n_occ: int,
+    n_frozen: int = 0,
+    c_os: float = 1.0,
+    c_ss: float = 1.0,
+) -> HybridMP2Result:
+    """Direct Exact 4-Index RMP2 menggunakan TBLIS O(O N^4) `eval_rmp2_exact`."""
+    H = np.ascontiguousarray(H_core, dtype=np.float64)
+    C = np.ascontiguousarray(C0, dtype=np.float64)
+    nbf = H.shape[0]
+    n_vir = nbf - n_occ
+    nf = _clamp_frozen(n_frozen, n_occ)
+
+    C_occ_all = np.ascontiguousarray(C[:, :n_occ])
+    J, K_mat = K.build_jk_4d_rhf(eri4, C_occ_all)
+    F_ao = H + J - K_mat
+    e_scf = float(np.sum((C_occ_all @ C_occ_all.T) * (H + F_ao)) + v_nn)
+
+    C_sc, eps, _ = semicanonicalize_subspaces_frozen(C, F_ao, n_occ, nf)
+    n_act = n_occ - nf
+    if n_act <= 0 or n_vir <= 0:
+        e_os, e_ss = 0.0, 0.0
+    else:
+        e_os, e_ss = K.eval_rmp2_exact(
+            eri4,
+            np.ascontiguousarray(C_sc[:, nf:n_occ]),
+            np.ascontiguousarray(C_sc[:, n_occ:]),
+            eps[nf:n_occ], eps[n_occ:],
+        )
+    e_corr = c_os * e_os + c_ss * e_ss
+    return HybridMP2Result(
+        reference="rhf", energy_scf=e_scf,
+        energy_mp2_ss=c_ss * e_ss, energy_mp2_os=c_os * e_os,
+        energy_mp2_corr=e_corr, energy_total=e_scf + e_corr,
+        converged=True, iterations=1,
+        C_alpha=C_sc, C_beta=C_sc.copy(),
+        orbital_energies_alpha=eps, orbital_energies_beta=eps.copy(),
+        n_occ_alpha=n_occ, n_occ_beta=n_occ,
+        n_virt_alpha=n_vir, n_virt_beta=n_vir, n_frozen=nf,
+    )
+
+
+def run_exact_mp2_uhf(
+    H_core: np.ndarray,
+    v_nn: float,
+    eri4,
+    C0_a: np.ndarray,
+    C0_b: np.ndarray,
+    na: int,
+    nb: int,
+    n_frozen: int = 0,
+    c_os: float = 1.0,
+    c_ss: float = 1.0,
+) -> HybridMP2Result:
+    """Direct Exact 4-Index UMP2 menggunakan TBLIS O(O N^4) `eval_ump2_exact`."""
+    H = np.ascontiguousarray(H_core, dtype=np.float64)
+    Ca = np.ascontiguousarray(C0_a, dtype=np.float64)
+    Cb = np.ascontiguousarray(C0_b, dtype=np.float64)
+    nbf = H.shape[0]
+    va, vb = nbf - na, nbf - nb
+    nf_a, nf_b = _clamp_frozen(n_frozen, na), _clamp_frozen(n_frozen, nb)
+
+    Ca_o, Cb_o = np.ascontiguousarray(Ca[:, :na]), np.ascontiguousarray(Cb[:, :nb])
+    J, Ka, Kb = K.build_jk_4d_uhf(eri4, Ca_o, Cb_o)
+    Fa, Fb = H + J - Ka, H + J - Kb
+    Pa = Ca_o @ Ca_o.T if na > 0 else np.zeros((nbf, nbf))
+    Pb = Cb_o @ Cb_o.T if nb > 0 else np.zeros((nbf, nbf))
+    e_scf = float(0.5 * (np.sum(Pa * (H + Fa)) + np.sum(Pb * (H + Fb))) + v_nn)
+
+    Ca_sc, ea, _ = semicanonicalize_subspaces_frozen(Ca, Fa, na, nf_a)
+    Cb_sc, eb, _ = semicanonicalize_subspaces_frozen(Cb, Fb, nb, nf_b)
+    e_aa, e_bb, e_ab = K.eval_ump2_exact(
+        eri4,
+        np.ascontiguousarray(Ca_sc[:, nf_a:na]), np.ascontiguousarray(Ca_sc[:, na:]),
+        np.ascontiguousarray(Cb_sc[:, nf_b:nb]), np.ascontiguousarray(Cb_sc[:, nb:]),
+        ea[nf_a:na], ea[na:], eb[nf_b:nb], eb[nb:],
+    )
+    e_ss = c_ss * (e_aa + e_bb)
+    e_os = c_os * e_ab
+    e_corr = e_os + e_ss
+    return HybridMP2Result(
+        reference="uhf", energy_scf=e_scf,
+        energy_mp2_ss=e_ss, energy_mp2_os=e_os,
+        energy_mp2_corr=e_corr, energy_total=e_scf + e_corr,
+        converged=True, iterations=1,
+        C_alpha=Ca_sc, C_beta=Cb_sc,
+        orbital_energies_alpha=ea, orbital_energies_beta=eb,
+        n_occ_alpha=na, n_occ_beta=nb,
+        n_virt_alpha=va, n_virt_beta=vb, n_frozen=nf_a,
+    )

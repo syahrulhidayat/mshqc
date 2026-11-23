@@ -96,7 +96,7 @@ class MSHQCCalculator:
         self.eri_method = "df" if eri_method is None else eri_method.lower()
         if self.eri_method not in ("df", "cholesky", "exact"):
             raise ValueError(
-                f"eri_method harus \'exact\', \'cholesky\', atau \'df\' (diterima: {self.eri_method!r})."
+                f"eri_method harus 'exact', 'cholesky', atau 'df' (diterima: {self.eri_method!r})."
             )
 
         self.use_symmetry = bool(use_symmetry)
@@ -129,6 +129,12 @@ class MSHQCCalculator:
         self.scf_res = None
         self.mp2_res = None
         self._ao_factor_cache: Optional[np.ndarray] = None
+        self._eri4_cache = None
+
+    def _get_eri4(self):
+        if self._eri4_cache is None:
+            self._eri4_cache = self.integrals.compute_eri()
+        return self._eri4_cache
 
     def _get_ao_3index_factor(self, scf_res: Optional[Any] = None) -> np.ndarray:
         if scf_res is not None and hasattr(scf_res, "L_mat") and scf_res.L_mat.shape[0] > 0 and scf_res.L_mat.shape[1] > 0:
@@ -142,11 +148,9 @@ class MSHQCCalculator:
             )
             return self._ao_factor_cache
         if self.eri_method == "exact":
-            eri4 = self.integrals.compute_eri()
-            chol = mshqc.CholeskyERI(min(self.threshold * 1.0e-3, 1.0e-12))
-            chol.set_print_level(0)
-            chol.decompose(eri4)
-            self._ao_factor_cache = chol.get_L_mat().copy()
+            self._ao_factor_cache = mshqc.kernels.factorize_eri_4d_exact(
+                self._get_eri4(), min(self.threshold * 1.0e-3, 1.0e-12)
+            )
             return self._ao_factor_cache
         chol = mshqc.CholeskyERI(self.basis, self.integrals)
         chol.set_threshold(self.threshold)
@@ -161,7 +165,8 @@ class MSHQCCalculator:
 
         ref_mode = (ref or self.reference).lower()
         P_sad = build_sad_guess(self.molecule, self.basis)
-        B_ao = self._get_ao_3index_factor(None)
+        eri4_arg = self._get_eri4() if self.eri_method == "exact" else None
+        B_ao = None if eri4_arg is not None else self._get_ao_3index_factor(None)
         H_core = self.integrals.compute_kinetic() + self.integrals.compute_nuclear()
         S_ovlp = self.integrals.compute_overlap()
         v_nn = float(self.molecule.nuclear_repulsion_energy())
@@ -170,19 +175,19 @@ class MSHQCCalculator:
             self.scf_res = run_df_rhf(
                 H_core, S_ovlp, v_nn, B_ao, self.n_alpha,
                 energy_tol=self.threshold, density_tol=self.threshold,
-                level_shift=self.level_shift, P_init=P_sad,
+                level_shift=self.level_shift, P_init=P_sad, eri4=eri4_arg,
             )
         elif ref_mode == "rohf":
             self.scf_res = run_df_rohf(
                 H_core, S_ovlp, v_nn, B_ao, self.n_alpha, self.n_beta,
                 energy_tol=self.threshold, density_tol=self.threshold,
-                P_init=P_sad,
+                P_init=P_sad, eri4=eri4_arg,
             )
         elif ref_mode == "uhf":
             self.scf_res = run_df_uhf(
                 H_core, S_ovlp, v_nn, B_ao, self.n_alpha, self.n_beta,
                 energy_tol=self.threshold, density_tol=self.threshold,
-                level_shift=self.level_shift, P_init=P_sad,
+                level_shift=self.level_shift, P_init=P_sad, eri4=eri4_arg,
             )
         else:
             raise ValueError(f"Referensi SCF tidak dikenali: {ref_mode}")
@@ -220,6 +225,23 @@ class MSHQCCalculator:
 
     def run_mp2(self, scf_res: Optional[Any] = None, use_hybrid: Optional[bool] = None):
         del use_hybrid
+        if self.eri_method == "exact" and self.reference != "rohf":
+            from .methods.mp_hybrid import run_exact_mp2_rhf, run_exact_mp2_uhf
+            if scf_res is None:
+                scf_res = self.scf_res or self.run_scf()
+            H_core = self.integrals.compute_kinetic() + self.integrals.compute_nuclear()
+            v_nn = float(self.molecule.nuclear_repulsion_energy())
+            eri4 = self._get_eri4()
+            if self.reference == "rhf":
+                self.mp2_res = run_exact_mp2_rhf(
+                    H_core, v_nn, eri4, scf_res.C_alpha, scf_res.n_occ_alpha, n_frozen=self.n_frozen
+                )
+            else:
+                self.mp2_res = run_exact_mp2_uhf(
+                    H_core, v_nn, eri4, scf_res.C_alpha, scf_res.C_beta,
+                    scf_res.n_occ_alpha, scf_res.n_occ_beta, n_frozen=self.n_frozen
+                )
+            return self.mp2_res
         key = "romp2" if self.reference == "rohf" else "mp2"
         self.mp2_res = self._dispatch_correlated(key, scf_res=scf_res)
         return self.mp2_res

@@ -16,6 +16,7 @@ def test_pure_v2_zero_legacy_repository_layout():
         "src/ints/integrals.cc",
         "src/integrals/df_eri.cc",
         "src/integrals/cholesky_eri.cc",
+        "src/integrals/eri_transformer.cc",
         "src/kernels/primitives.cc",
         "src/kernels/mp3_kernels.cc",
         "src/kernels/uhf_kernels.cc",

@@ -385,3 +385,43 @@ class kernels:
         nodes: np.ndarray,
         c_os: float = 1.3,
     ) -> Tuple[float, np.ndarray, np.ndarray, np.ndarray, np.ndarray]: ...
+@staticmethod
+def build_jk_4d_rhf(eri_ao: ERITensor, C_occ: np.ndarray) -> Tuple[np.ndarray, np.ndarray]: ...
+@staticmethod
+def build_jk_4d_uhf(
+    eri_ao: ERITensor, C_occ_a: np.ndarray, C_occ_b: np.ndarray
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]: ...
+@staticmethod
+def build_jk_4d_density_uhf(
+    eri_ao: ERITensor, P_alpha: np.ndarray, P_beta: np.ndarray
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]: ...
+@staticmethod
+def transform_eri_4d(
+    eri_ao: ERITensor,
+    C1: np.ndarray,
+    C2: np.ndarray,
+    C3: np.ndarray,
+    C4: np.ndarray,
+) -> np.ndarray: ...
+@staticmethod
+def eval_rmp2_exact(
+    eri_ao: ERITensor,
+    C_occ: np.ndarray,
+    C_vir: np.ndarray,
+    eps_occ: np.ndarray,
+    eps_vir: np.ndarray,
+) -> Tuple[float, float]: ...
+@staticmethod
+def eval_ump2_exact(
+    eri_ao: ERITensor,
+    Ca_occ: np.ndarray,
+    Ca_vir: np.ndarray,
+    Cb_occ: np.ndarray,
+    Cb_vir: np.ndarray,
+    eps_oa: np.ndarray,
+    eps_va: np.ndarray,
+    eps_ob: np.ndarray,
+    eps_vb: np.ndarray,
+) -> Tuple[float, float, float]: ...
+@staticmethod
+def factorize_eri_4d_exact(eri_ao: ERITensor, threshold: float = 1e-12) -> np.ndarray: ...

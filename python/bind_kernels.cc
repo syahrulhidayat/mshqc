@@ -10,6 +10,7 @@
 
 #include "mshqc/basis.h"
 #include "mshqc/core/molecule.h"
+#include "mshqc/integrals/eri_transformer.h"
 #include "mshqc/integrals/packed_ao_utils.h"
 #include "mshqc/ints/integrals.h"
 #include "mshqc/kernels/mp3_kernels.h"
@@ -164,6 +165,32 @@ void bind_kernels_module(nb::module_& parent) {
           nb::call_guard<nb::gil_scoped_release>(),
           nb::arg("B_ov_a"), nb::arg("B_ov_b"), nb::arg("da"), nb::arg("db"),
           nb::arg("weights"), nb::arg("nodes"), nb::arg("c_os") = 1.3);
+
+// --- Exact 4-Index TBLIS & Blocked Level-3 BLAS Primitives ---
+k.def("build_jk_4d_rhf", &integrals::build_jk_4d_rhf,
+      nb::call_guard<nb::gil_scoped_release>(),
+      nb::arg("eri_ao"), nb::arg("C_occ"));
+k.def("build_jk_4d_uhf", &integrals::build_jk_4d_uhf,
+      nb::call_guard<nb::gil_scoped_release>(),
+      nb::arg("eri_ao"), nb::arg("C_occ_a"), nb::arg("C_occ_b"));
+k.def("build_jk_4d_density_uhf", &integrals::build_jk_4d_density_uhf,
+      nb::call_guard<nb::gil_scoped_release>(),
+      nb::arg("eri_ao"), nb::arg("P_alpha"), nb::arg("P_beta"));
+k.def("transform_eri_4d", &integrals::transform_eri_4d,
+      nb::call_guard<nb::gil_scoped_release>(),
+      nb::arg("eri_ao"), nb::arg("C1"), nb::arg("C2"), nb::arg("C3"), nb::arg("C4"));
+k.def("eval_rmp2_exact", &integrals::eval_rmp2_exact,
+      nb::call_guard<nb::gil_scoped_release>(),
+      nb::arg("eri_ao"), nb::arg("C_occ"), nb::arg("C_vir"),
+      nb::arg("eps_occ"), nb::arg("eps_vir"));
+k.def("eval_ump2_exact", &integrals::eval_ump2_exact,
+      nb::call_guard<nb::gil_scoped_release>(),
+      nb::arg("eri_ao"), nb::arg("Ca_occ"), nb::arg("Ca_vir"),
+      nb::arg("Cb_occ"), nb::arg("Cb_vir"),
+      nb::arg("eps_oa"), nb::arg("eps_va"), nb::arg("eps_ob"), nb::arg("eps_vb"));
+k.def("factorize_eri_4d_exact", &integrals::factorize_eri_4d_exact,
+      nb::call_guard<nb::gil_scoped_release>(),
+      nb::arg("eri_ao"), nb::arg("threshold") = 1e-12);
 }
 
 } // namespace mshqc

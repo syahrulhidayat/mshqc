@@ -22,6 +22,8 @@ from .mp_hybrid import (
     run_df_mp3_rhf,
     run_df_mp3_uhf,
     run_df_romp3,
+    run_exact_mp2_rhf,
+    run_exact_mp2_uhf,
 )
 from .omp_hybrid import (
     HybridOMPResult,
@@ -81,7 +83,7 @@ __all__ = [
     "run_df_rhf", "run_df_uhf", "run_df_rohf",
     "HybridMP2Result", "HybridMP3Result",
     "run_df_mp2_rhf", "run_df_mp2_uhf", "run_df_romp2",
-    "run_df_mp3_rhf", "run_df_mp3_uhf", "run_df_romp3",
+    "run_df_mp3_rhf", "run_df_mp3_uhf", "run_df_romp3", "run_exact_mp2_rhf", "run_exact_mp2_uhf",
     "HybridOMPResult", "semicanonicalize_subspaces_frozen",
     "eval_omp_rhf_point", "eval_omp_uhf_point",
     "run_df_omp_rhf", "run_df_omp_uhf",

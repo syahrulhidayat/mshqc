@@ -256,12 +256,13 @@ set(MSHQC_CORE_SOURCES
     "${CMAKE_SOURCE_DIR}/src/ints/integrals.cc"
     "${CMAKE_SOURCE_DIR}/src/integrals/df_eri.cc"
     "${CMAKE_SOURCE_DIR}/src/integrals/cholesky_eri.cc"
+    "${CMAKE_SOURCE_DIR}/src/integrals/eri_transformer.cc"
     "${CMAKE_SOURCE_DIR}/src/kernels/primitives.cc"
     "${CMAKE_SOURCE_DIR}/src/kernels/mp3_kernels.cc"
     "${CMAKE_SOURCE_DIR}/src/kernels/uhf_kernels.cc"
 )
 
-message(STATUS "mshqc v${PROJECT_VERSION} build profile: PURE THIN-CORE (8 C++20 Core Files, Zero-HDF5)")
+message(STATUS "mshqc v${PROJECT_VERSION} build profile: PURE THIN-CORE (9 C++20 Core Files, Zero-HDF5)")
 
 add_library(mshqc STATIC ${MSHQC_CORE_SOURCES})
 

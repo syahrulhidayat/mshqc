@@ -319,11 +319,12 @@ def run_df_rhf(
     C_init: Optional[np.ndarray] = None,
     P_init: Optional[np.ndarray] = None,
     callback: Optional[Callable[[dict], None]] = None,
+    eri4=None,
 ) -> HybridSCFResult:
-    """Menjalankan DF/Cholesky-RHF di Python menggunakan kernel C++20 `build_jk_3c_rhf`."""
+    """Menjalankan DF/Cholesky/Exact-4D RHF di Python menggunakan kernel C++20."""
     H = np.ascontiguousarray(H_core, dtype=np.float64)
     S = np.ascontiguousarray(S_ovlp, dtype=np.float64)
-    B = np.ascontiguousarray(B_ao, dtype=np.float64)
+    B = np.ascontiguousarray(B_ao, dtype=np.float64) if B_ao is not None else np.zeros((0, 0), dtype=np.float64)
     nbf = H.shape[0]
     X = _symmetric_orthogonalizer(S)
 
@@ -334,12 +335,15 @@ def run_df_rhf(
     elif P_init is not None:
         # [INJECTED_THIN_CORE_STAGE5_FAST_SCF]
         P0 = np.ascontiguousarray(P_init, dtype=np.float64)
-        J0 = K.build_coulomb_3c(B, P0, nbf)
-        diag0 = np.diag(P0)
-        if hasattr(K, 'build_exchange_3c_diag') and float(np.max(np.abs(P0 - np.diag(diag0)))) < 1.0e-13:
-            K0 = K.build_exchange_3c_diag(B, np.ascontiguousarray(0.5 * diag0), nbf)
+        if eri4 is not None:
+            J0, K0, _ = K.build_jk_4d_density_uhf(eri4, 0.5 * P0, 0.5 * P0)
         else:
-            K0 = K.build_exchange_3c_occ(B, _factorize_psd_density(0.5 * P0), nbf)
+            J0 = K.build_coulomb_3c(B, P0, nbf)
+            diag0 = np.diag(P0)
+            if hasattr(K, 'build_exchange_3c_diag') and float(np.max(np.abs(P0 - np.diag(diag0)))) < 1.0e-13:
+                K0 = K.build_exchange_3c_diag(B, np.ascontiguousarray(0.5 * diag0), nbf)
+            else:
+                K0 = K.build_exchange_3c_occ(B, _factorize_psd_density(0.5 * P0), nbf)
         eps, C = _diagonalize_fock(H + J0 - K0, X)
     else:
         eps, C = _diagonalize_fock(H, X)
@@ -355,7 +359,7 @@ def run_df_rhf(
     for it in range(1, max_iter + 1):
         it_used = it
         C_occ = np.ascontiguousarray(C[:, :n_occ])
-        J, K_mat = K.build_jk_3c_rhf(B, C_occ, nbf)
+        J, K_mat = K.build_jk_4d_rhf(eri4, C_occ) if eri4 is not None else K.build_jk_3c_rhf(B, C_occ, nbf)
         F = H + J - K_mat
         P = 2.0 * (C_occ @ C_occ.T)
         e_tot = float(0.5 * np.sum(P * (H + F)) + v_nn)
@@ -379,7 +383,7 @@ def run_df_rhf(
         if it > 2 and (strict_conv or plateau_conv):
             eps, C = _diagonalize_fock(F, X)
             C_occ = np.ascontiguousarray(C[:, :n_occ])
-            J, K_mat = K.build_jk_3c_rhf(B, C_occ, nbf)
+            J, K_mat = K.build_jk_4d_rhf(eri4, C_occ) if eri4 is not None else K.build_jk_3c_rhf(B, C_occ, nbf)
             F = H + J - K_mat
             P = 2.0 * (C_occ @ C_occ.T)
             e_tot = float(0.5 * np.sum(P * (H + F)) + v_nn)
@@ -428,11 +432,12 @@ def run_df_uhf(
     P_init: Optional[np.ndarray] = None,
     mix_homo_lumo: bool = False,
     callback: Optional[Callable[[dict], None]] = None,
+    eri4=None,
 ) -> HybridSCFResult:
-    """Menjalankan DF/Cholesky-UHF di Python menggunakan kernel C++20 `build_jk_3c_uhf`."""
+    """Menjalankan DF/Cholesky/Exact-4D UHF di Python menggunakan kernel C++20."""
     H = np.ascontiguousarray(H_core, dtype=np.float64)
     S = np.ascontiguousarray(S_ovlp, dtype=np.float64)
-    B = np.ascontiguousarray(B_ao, dtype=np.float64)
+    B = np.ascontiguousarray(B_ao, dtype=np.float64) if B_ao is not None else np.zeros((0, 0), dtype=np.float64)
     nbf = H.shape[0]
     X = _symmetric_orthogonalizer(S)
 
@@ -448,14 +453,17 @@ def run_df_uhf(
         n_tot = max(1, na + nb)
         fa_scale = float(na) / float(n_tot)
         fb_scale = float(nb) / float(n_tot)
-        J0 = K.build_coulomb_3c(B, P0, nbf)
-        diag0 = np.diag(P0)
-        if hasattr(K, 'build_exchange_3c_diag') and float(np.max(np.abs(P0 - np.diag(diag0)))) < 1.0e-13:
-            Ka0 = K.build_exchange_3c_diag(B, np.ascontiguousarray(fa_scale * diag0), nbf)
-            Kb0 = K.build_exchange_3c_diag(B, np.ascontiguousarray(fb_scale * diag0), nbf) if nb > 0 else np.zeros((nbf, nbf), dtype=np.float64)
+        if eri4 is not None:
+            J0, Ka0, Kb0 = K.build_jk_4d_density_uhf(eri4, fa_scale * P0, fb_scale * P0)
         else:
-            Ka0 = K.build_exchange_3c_occ(B, _factorize_psd_density(fa_scale * P0), nbf)
-            Kb0 = K.build_exchange_3c_occ(B, _factorize_psd_density(fb_scale * P0), nbf) if nb > 0 else np.zeros((nbf, nbf), dtype=np.float64)
+            J0 = K.build_coulomb_3c(B, P0, nbf)
+            diag0 = np.diag(P0)
+            if hasattr(K, 'build_exchange_3c_diag') and float(np.max(np.abs(P0 - np.diag(diag0)))) < 1.0e-13:
+                Ka0 = K.build_exchange_3c_diag(B, np.ascontiguousarray(fa_scale * diag0), nbf)
+                Kb0 = K.build_exchange_3c_diag(B, np.ascontiguousarray(fb_scale * diag0), nbf) if nb > 0 else np.zeros((nbf, nbf), dtype=np.float64)
+            else:
+                Ka0 = K.build_exchange_3c_occ(B, _factorize_psd_density(fa_scale * P0), nbf)
+                Kb0 = K.build_exchange_3c_occ(B, _factorize_psd_density(fb_scale * P0), nbf) if nb > 0 else np.zeros((nbf, nbf), dtype=np.float64)
         eps_a, Ca = _diagonalize_fock(H + J0 - Ka0, X)
         eps_b, Cb = _diagonalize_fock(H + J0 - Kb0, X)
     else:
@@ -483,7 +491,7 @@ def run_df_uhf(
         it_used = it
         Ca_o = np.ascontiguousarray(Ca[:, :na])
         Cb_o = np.ascontiguousarray(Cb[:, :nb])
-        J, Ka, Kb = K.build_jk_3c_uhf(B, Ca_o, Cb_o, nbf)
+        J, Ka, Kb = K.build_jk_4d_uhf(eri4, Ca_o, Cb_o) if eri4 is not None else K.build_jk_3c_uhf(B, Ca_o, Cb_o, nbf)
         Fa = H + J - Ka
         Fb = H + J - Kb
 
@@ -517,7 +525,7 @@ def run_df_uhf(
             eps_b, Cb = _diagonalize_fock(Fb, X)
             Ca_o = np.ascontiguousarray(Ca[:, :na])
             Cb_o = np.ascontiguousarray(Cb[:, :nb])
-            J, Ka, Kb = K.build_jk_3c_uhf(B, Ca_o, Cb_o, nbf)
+            J, Ka, Kb = K.build_jk_4d_uhf(eri4, Ca_o, Cb_o) if eri4 is not None else K.build_jk_3c_uhf(B, Ca_o, Cb_o, nbf)
             Fa = H + J - Ka
             Fb = H + J - Kb
             Pa = Ca_o @ Ca_o.T if na > 0 else np.zeros((nbf, nbf), dtype=np.float64)
@@ -574,9 +582,10 @@ def run_df_rohf(
     C_init: Optional[np.ndarray] = None,
     P_init: Optional[np.ndarray] = None,
     callback: Optional[Callable[[dict], None]] = None,
+    eri4=None,
 ) -> HybridSCFResult:
     """
-    Menjalankan DF/Cholesky-ROHF (Guest-Saunders / Roothaan unified Fock F_uni)
+    Menjalankan DF/Cholesky/Exact-4D ROHF (Guest-Saunders / Roothaan unified Fock F_uni)
     di atas kernel C++20 `build_jk_3c_uhf` (identik secara matematis dengan src/scf/scf.cc).
     """
     if na < nb:
@@ -586,12 +595,12 @@ def run_df_rohf(
             H_core, S_ovlp, v_nn, B_ao, na,
             energy_tol=energy_tol, density_tol=density_tol,
             max_iter=max_iter, diis_space=diis_space,
-            C_init=C_init, P_init=P_init,
+            C_init=C_init, P_init=P_init, callback=callback, eri4=eri4,
         )
 
     H = np.ascontiguousarray(H_core, dtype=np.float64)
     S = np.ascontiguousarray(S_ovlp, dtype=np.float64)
-    B = np.ascontiguousarray(B_ao, dtype=np.float64)
+    B = np.ascontiguousarray(B_ao, dtype=np.float64) if B_ao is not None else np.zeros((0, 0), dtype=np.float64)
     nbf = H.shape[0]
     X = _symmetric_orthogonalizer(S)
 
@@ -640,7 +649,7 @@ def run_df_rohf(
             Ca_fac = _factorize_psd_density(Pa)
             Cb_fac = _factorize_psd_density(Pb) if nb > 0 else np.zeros((nbf, 0), dtype=np.float64)
 
-        J, Ka, Kb = K.build_jk_3c_uhf(B, Ca_fac, Cb_fac, nbf)
+        J, Ka, Kb = K.build_jk_4d_density_uhf(eri4, Pa, Pb) if eri4 is not None else K.build_jk_3c_uhf(B, Ca_fac, Cb_fac, nbf)
         Fa = 0.5 * ((H + J - Ka) + (H + J - Ka).T)
         Fb = 0.5 * ((H + J - Kb) + (H + J - Kb).T)
         e_tot = float(0.5 * (np.sum(Pa * (H + Fa)) + np.sum(Pb * (H + Fb))) + v_nn)

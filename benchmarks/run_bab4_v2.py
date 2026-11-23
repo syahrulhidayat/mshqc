@@ -223,7 +223,8 @@ def compute_solver_suite(
                     mol, basis_name=basis_name, eri_method=mode.lower(),
                     aux_basis_name=aux_name, reference="rohf", threshold=1e-9,
                 )
-                calc_ro._ao_factor_cache = calc._get_ao_3index_factor(scf_res)
+                calc_ro._eri4_cache = calc._eri4_cache
+                calc_ro._ao_factor_cache = calc._ao_factor_cache
                 for lbl, fn in (
                     ("ROHF", lambda: calc_ro.run_scf()),
                     ("ROMP2", lambda: calc_ro.run_mp2()),
@@ -240,6 +241,8 @@ def compute_solver_suite(
                         flush=True,
                     )
                     entry[lbl] = {"e": float(r.energy_total), "t": dt}
+                if calc._ao_factor_cache is None and calc_ro._ao_factor_cache is not None:
+                    calc._ao_factor_cache = calc_ro._ao_factor_cache
 
             # Canonical MP2 / MP3 + Orbital-Optimized family
             corr_plan: List[Tuple[str, Any]] = [

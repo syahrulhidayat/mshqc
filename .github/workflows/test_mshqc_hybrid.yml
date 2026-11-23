@@ -119,7 +119,7 @@ jobs:
             cp -rf "$CONDA_PREFIX/lib/libcint.a" "$CONDA_PREFIX/lib/libtblis.a" "$CONDA_PREFIX/lib/libtci.a" .cache_local_deps/lib/
           fi
 
-      - name: Compile mshqc v2.0 Pure Thin-Core (8 C++20 Files, Zero-HDF5)
+      - name: Compile mshqc v2.0 Pure Thin-Core (9 C++20 Files, Zero-HDF5)
         id: compile
         shell: bash -el {0}
         run: |
