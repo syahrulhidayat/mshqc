@@ -45,7 +45,7 @@ def quick_calculation(element_or_mol: Union[str, int, List[Tuple], mshqc.Molecul
                       method: str = "omp2",
                       eri_method: Optional[str] = None,
                       aux_basis: Optional[str] = None,
-                      charge: int = 0,
+                      charge: Optional[int] = None,
                       multiplicity: Optional[int] = None,
                       units: str = "bohr",
                       threshold: float = 1e-9,
@@ -61,12 +61,7 @@ def quick_calculation(element_or_mol: Union[str, int, List[Tuple], mshqc.Molecul
     def_eri = ("df" if getattr(mshqc, "THIN_CORE_ONLY", False) else "exact") if eri_method is None else eri_method
     clean_method, resolved_eri = _parse_method_and_eri(method, default_eri=def_eri)
 
-    if isinstance(element_or_mol, int) or (
-        isinstance(element_or_mol, str) and len(element_or_mol.split()) == 1
-    ):
-        mol_input = [(element_or_mol, 0.0, 0.0, 0.0)]
-    else:
-        mol_input = element_or_mol
+    mol_input = element_or_mol
 
     mol = build_molecule(mol_input, charge=charge, multiplicity=multiplicity, units=units)
     mult = mol.multiplicity()
@@ -124,7 +119,7 @@ def benchmark_basis_sets(element_or_mol: Union[str, int, List[Tuple], mshqc.Mole
                          basis_list: List[str],
                          method: str = "omp2",
                          eri_method: Optional[str] = None,
-                         charge: int = 0,
+                         charge: Optional[int] = None,
                          multiplicity: Optional[int] = None) -> Dict[str, Any]:
     """Benchmark satu metode pada berbagai basis set."""
     results: Dict[str, Any] = {}
@@ -162,7 +157,7 @@ def compare_methods(molecule: Union[mshqc.Molecule, str, List[Tuple]],
                     methods: Optional[List[str]] = None,
                     eri_method: Optional[str] = None,
                     aux_basis: Optional[str] = None,
-                    charge: int = 0,
+                    charge: Optional[int] = None,
                     multiplicity: Optional[int] = None,
                     units: str = "bohr") -> Dict[str, Any]:
     """Bandingkan beberapa metode pada molekul dan basis set yang sama."""

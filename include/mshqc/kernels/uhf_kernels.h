@@ -28,10 +28,7 @@ std::tuple<double, double, double, Eigen::MatrixXd, Eigen::MatrixXd, Eigen::Matr
     const Eigen::VectorXd& eps_oa,
     const Eigen::VectorXd& eps_va,
     const Eigen::VectorXd& eps_ob,
-    const Eigen::VectorXd& eps_vb,
-    const Eigen::MatrixXd& Waa_override = Eigen::MatrixXd(),
-    const Eigen::MatrixXd& Wbb_override = Eigen::MatrixXd(),
-    const Eigen::MatrixXd& Wab_override = Eigen::MatrixXd());
+    const Eigen::VectorXd& eps_vb);
 
 // 3. 1-RDM korelasi UHF OMP2 (g_oo_a, g_vv_a, g_oo_b, g_vv_b), mendukung spin-scaling
 std::tuple<Eigen::MatrixXd, Eigen::MatrixXd, Eigen::MatrixXd, Eigen::MatrixXd> eval_omp2_1rdm_uhf(
@@ -71,7 +68,10 @@ std::tuple<double, double, double, Eigen::MatrixXd, Eigen::MatrixXd, Eigen::Matr
     const Eigen::VectorXd& eps_oa,
     const Eigen::VectorXd& eps_va,
     const Eigen::VectorXd& eps_ob,
-    const Eigen::VectorXd& eps_vb);
+    const Eigen::VectorXd& eps_vb,
+    const Eigen::MatrixXd& Waa_override = Eigen::MatrixXd(),
+    const Eigen::MatrixXd& Wbb_override = Eigen::MatrixXd(),
+    const Eigen::MatrixXd& Wab_override = Eigen::MatrixXd());
 
 // 6. 1-RDM korelasi UHF OMP3 (g_oo_a, g_vv_a, g_oo_b, g_vv_b)
 std::tuple<Eigen::MatrixXd, Eigen::MatrixXd, Eigen::MatrixXd, Eigen::MatrixXd> eval_omp3_1rdm_uhf(

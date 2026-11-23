@@ -23,8 +23,7 @@ Eigen::MatrixXd eval_pp_ladder_rhf_df(
     const Eigen::MatrixXd& T2,
     const Eigen::MatrixXd& B_vv,
     int n_occ,
-    int n_vir,
-    bool include_vvvv = true);
+    int n_vir);
 
 // Complete RHF DF/Cholesky MP3 energy E^(3) and second-order amplitude L2 = W / D
 std::pair<double, Eigen::MatrixXd> eval_rmp3_df(
@@ -51,7 +50,8 @@ Eigen::MatrixXd eval_omp3_zvec_rhf_df(
     const Eigen::MatrixXd& B_ov,
     const Eigen::MatrixXd& B_vv,
     int n_occ,
-    int n_vir);
+    int n_vir,
+    bool include_vvvv = true);
 
 // MO-space DF approximate orbital Hessian-vector product H * kappa for RHF TR-SOSCF
 Eigen::MatrixXd apply_mo_df_hessian_rhf(

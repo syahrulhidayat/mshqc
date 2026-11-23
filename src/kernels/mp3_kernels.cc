@@ -276,8 +276,7 @@ Eigen::MatrixXd eval_pp_ladder_rhf_df(
     const Eigen::MatrixXd& T2,
     const Eigen::MatrixXd& B_vv,
     int n_occ,
-    int n_vir,
-    bool include_vvvv)
+    int n_vir)
 {
     const int n_aux = static_cast<int>(B_vv.cols());
     Eigen::MatrixXd W_pp = Eigen::MatrixXd::Zero(
@@ -476,7 +475,8 @@ Eigen::MatrixXd eval_omp3_zvec_rhf_df(
     const Eigen::MatrixXd& B_ov,
     const Eigen::MatrixXd& B_vv,
     int n_occ,
-    int n_vir)
+    int n_vir,
+    bool include_vvvv)
 {
     const int n_aux = static_cast<int>(B_ov.cols());
     Eigen::MatrixXd Z_vo = Eigen::MatrixXd::Zero(n_vir, n_occ);

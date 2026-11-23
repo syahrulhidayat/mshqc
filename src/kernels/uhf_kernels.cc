@@ -207,10 +207,7 @@ std::tuple<double, double, double, Eigen::MatrixXd, Eigen::MatrixXd, Eigen::Matr
     const Eigen::VectorXd& eps_oa,
     const Eigen::VectorXd& eps_va,
     const Eigen::VectorXd& eps_ob,
-    const Eigen::VectorXd& eps_vb,
-    const Eigen::MatrixXd& Waa_override,
-    const Eigen::MatrixXd& Wbb_override,
-    const Eigen::MatrixXd& Wab_override)
+    const Eigen::VectorXd& eps_vb)
 {
     const int na = static_cast<int>(eps_oa.size());
     const int va = static_cast<int>(eps_va.size());
@@ -517,7 +514,10 @@ std::tuple<double, double, double, Eigen::MatrixXd, Eigen::MatrixXd, Eigen::Matr
     const Eigen::VectorXd& eps_oa,
     const Eigen::VectorXd& eps_va,
     const Eigen::VectorXd& eps_ob,
-    const Eigen::VectorXd& eps_vb)
+    const Eigen::VectorXd& eps_vb,
+    const Eigen::MatrixXd& Waa_override,
+    const Eigen::MatrixXd& Wbb_override,
+    const Eigen::MatrixXd& Wab_override)
 {
     const int na = static_cast<int>(eps_oa.size());
     const int va = static_cast<int>(eps_va.size());
@@ -1011,9 +1011,11 @@ std::pair<Eigen::MatrixXd, Eigen::MatrixXd> eval_omp3_zvec_uhf_df(
         }
 
         // VVVV ladders (BB, AB->a, AB->b)
-        accum_vvvv_ladder_uhf_chunked(-0.5, T2_bb, nb, nb, vb, vb, T2_bb, B_ov_b, nb, vb, B_vv_b, vb, false, Z_b);
-        accum_vvvv_ladder_uhf_chunked(-1.0, T2_ab, na, nb, va, vb, T2_ab, B_ov_a, na, va, B_vv_b, vb, false, Z_a);
-        accum_vvvv_ladder_uhf_chunked(-1.0, T2_ab, na, nb, va, vb, T2_ab, B_ov_b, nb, vb, B_vv_a, va, true,  Z_b);
+        if (include_vvvv) {
+            accum_vvvv_ladder_uhf_chunked(-0.5, T2_bb, nb, nb, vb, vb, T2_bb, B_ov_b, nb, vb, B_vv_b, vb, false, Z_b);
+            accum_vvvv_ladder_uhf_chunked(-1.0, T2_ab, na, nb, va, vb, T2_ab, B_ov_a, na, va, B_vv_b, vb, false, Z_a);
+            accum_vvvv_ladder_uhf_chunked(-1.0, T2_ab, na, nb, va, vb, T2_ab, B_ov_b, nb, vb, B_vv_a, va, true,  Z_b);
+        }
 
         // OOOO ladders (BB & AB)
         {

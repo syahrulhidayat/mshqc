@@ -31,7 +31,7 @@ class MSHQCSession:
                  basis_name: str = "cc-pVTZ",
                  eri_method: Optional[str] = None,
                  aux_basis_name: Optional[str] = None,
-                 charge: int = 0,
+                 charge: Optional[int] = None,
                  multiplicity: Optional[int] = None,
                  units: str = "bohr",
                  reference: Optional[str] = None,

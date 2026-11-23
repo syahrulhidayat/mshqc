@@ -102,6 +102,19 @@ def test_exact_eri_parity_and_human_str():
     print(f"[EXACT 4D  ] {s_omp} | OH OMP3={u_ex['omp3']['energy']:.8f} Ha")
 
 
+
+def test_simple_molecule_and_atom_presets():
+    o_atom = mshqc.atom("O")
+    assert o_atom.n_atoms() == 1 and o_atom.multiplicity() == 3
+    oh_minus = mshqc.molecule("OH-")
+    assert oh_minus.charge() == -1 and oh_minus.multiplicity() == 1
+    h2_inline = mshqc.molecule("H 0 0 0; H 0 0 0.74")
+    assert h2_inline.n_atoms() == 2 and h2_inline.multiplicity() == 1
+    r_h2o = mshqc.run("H2O", method="omp2", basis="cc-pVDZ")
+    assert r_h2o.converged and abs(r_h2o.energy_total - (-76.23271837)) < 1e-6
+    assert "H2O" in mshqc.list_molecules()
+    print(f"[MOLECULES ] Simple API OK: {r_h2o}")
+
 if __name__ == "__main__":
     test_core5_systems_df_and_cholesky()
     test_bab4_v2_and_universal_v2_runners_execute_cleanly()

@@ -11,59 +11,17 @@ import numpy as np
 
 import mshqc
 from .geom_opt import ANGSTROM_TO_BOHR, GeomOptResult, UniversalGeomOptimizer
-
-
-_SYMBOL_TO_Z: Dict[str, int] = {
-    "H": 1, "He": 2, "Li": 3, "Be": 4, "B": 5, "C": 6, "N": 7, "O": 8, "F": 9, "Ne": 10,
-    "Na": 11, "Mg": 12, "Al": 13, "Si": 14, "P": 15, "S": 16, "Cl": 17, "Ar": 18,
-    "K": 19, "Ca": 20, "Sc": 21, "Ti": 22, "V": 23, "Cr": 24, "Mn": 25, "Fe": 26,
-    "Co": 27, "Ni": 28, "Cu": 29, "Zn": 30, "Ga": 31, "Ge": 32, "As": 33, "Se": 34,
-    "Br": 35, "Kr": 36, "Rb": 37, "Sr": 38, "Y": 39, "Zr": 40, "Nb": 41, "Mo": 42,
-    "Tc": 43, "Ru": 44, "Rh": 45, "Pd": 46, "Ag": 47, "Cd": 48, "In": 49, "Sn": 50,
-    "Sb": 51, "Te": 52, "I": 53, "Xe": 54,
-    "Cs": 55, "Ba": 56, "La": 57, "Ce": 58, "Pr": 59, "Nd": 60, "Pm": 61, "Sm": 62, "Eu": 63, "Gd": 64,
-    "Tb": 65, "Dy": 66, "Ho": 67, "Er": 68, "Tm": 69, "Yb": 70, "Lu": 71,
-    "Hf": 72, "Ta": 73, "W": 74, "Re": 75, "Os": 76, "Ir": 77, "Pt": 78, "Au": 79, "Hg": 80,
-    "Tl": 81, "Pb": 82, "Bi": 83, "Po": 84, "At": 85, "Rn": 86,
-    "Fr": 87, "Ra": 88, "Ac": 89, "Th": 90, "Pa": 91, "U": 92, "Np": 93, "Pu": 94,
-    "Am": 95, "Cm": 96, "Bk": 97, "Cf": 98, "Es": 99, "Fm": 100, "Md": 101, "No": 102,
-    "Lr": 103, "Rf": 104, "Db": 105, "Sg": 106, "Bh": 107, "Hs": 108, "Mt": 109, "Ds": 110,
-    "Rg": 111, "Cn": 112, "Nh": 113, "Fl": 114, "Mc": 115, "Lv": 116, "Ts": 117, "Og": 118,
-}
+from .molecules import SYMBOL_TO_Z as _SYMBOL_TO_Z, molecule as _build_mol_spec
 
 
 def build_molecule(
-    atoms: Union[mshqc.Molecule, str, List[Tuple]],
-    charge: int = 0,
+    atoms: Union[mshqc.Molecule, str, int, List[Tuple]],
+    charge: Optional[int] = None,
     multiplicity: Optional[int] = None,
     units: str = "bohr",
 ) -> mshqc.Molecule:
-    """Bangun objek mshqc.Molecule dari list tuple [(Z/sym, x, y, z)] atau string XYZ."""
-    if isinstance(atoms, mshqc.Molecule):
-        return atoms
-
-    scale = mshqc.angstrom_to_bohr(1.0) if units.lower().startswith("ang") else 1.0
-    mol = mshqc.Molecule()
-
-    if isinstance(atoms, str):
-        for line in atoms.strip().splitlines():
-            parts = line.split()
-            if len(parts) == 4:
-                sym, x, y, z = parts[0], float(parts[1]), float(parts[2]), float(parts[3])
-                z_num = _SYMBOL_TO_Z[sym.capitalize()] if not sym.isdigit() else int(sym)
-                mol.add_atom(z_num, x * scale, y * scale, z * scale)
-    else:
-        for item in atoms:
-            sym, x, y, z = item[0], float(item[1]), float(item[2]), float(item[3])
-            z_num = _SYMBOL_TO_Z[sym.capitalize()] if isinstance(sym, str) else int(sym)
-            mol.add_atom(z_num, x * scale, y * scale, z * scale)
-
-    mol.set_charge(charge)
-    n_elec = int(mol.total_nuclear_charge()) - charge
-    if multiplicity is None:
-        multiplicity = 2 if (n_elec % 2 == 1) else 1
-    mol.set_multiplicity(multiplicity)
-    return mol
+    """Bangun objek mshqc.Molecule dari nama atom/preset, file .xyz, string XYZ, atau list tuple."""
+    return _build_mol_spec(atoms, charge=charge, multiplicity=multiplicity, units=units)
 
 
 class MSHQCCalculator:
@@ -78,7 +36,7 @@ class MSHQCCalculator:
         basis_name: str = "cc-pVTZ",
         eri_method: Optional[str] = None,
         aux_basis_name: Optional[str] = None,
-        charge: int = 0,
+        charge: Optional[int] = None,
         multiplicity: Optional[int] = None,
         units: str = "bohr",
         reference: Optional[str] = None,
@@ -282,7 +240,7 @@ def run(
     basis: str = "cc-pVTZ",
     eri_method: str = "df",
     aux_basis: Optional[str] = None,
-    charge: int = 0,
+    charge: Optional[int] = None,
     multiplicity: Optional[int] = None,
     units: str = "bohr",
     reference: Optional[str] = None,
@@ -404,7 +362,7 @@ def recommend_hpc_settings(
     molecule: Union[mshqc.Molecule, str, List[Tuple]],
     basis_name: str = "cc-pVTZ",
     method: str = "omp2",
-    charge: int = 0,
+    charge: Optional[int] = None,
     multiplicity: Optional[int] = None,
     units: str = "angstrom",
     memory_limit_gb: float = 8.0,

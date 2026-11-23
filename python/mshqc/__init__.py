@@ -153,6 +153,7 @@ from ._mshqc import (
 )
 from . import methods
 from .calculators import MSHQCCalculator, build_molecule, optimize_geometry_universal, recommend_hpc_settings, run
+from .molecules import atom, list_molecules, molecule
 from .geom_opt import GeomOptResult, UniversalGeomOptimizer, project_translation_rotation
 from .methods.geom_hybrid import (
     ThinCoreGeomResult,
@@ -318,7 +319,7 @@ __all__ = [
     "bohr_to_angstrom", "angstrom_to_bohr", "hartree_to_ev", "hartree_to_kcal",
     "standard_frozen_core",
     "kernels", "methods",
-    "MSHQCCalculator", "MSHQCSession", "build_molecule", "run",
+    "MSHQCCalculator", "MSHQCSession", "atom", "molecule", "list_molecules", "build_molecule", "run",
     "optimize_geometry_universal", "recommend_hpc_settings",
     "UniversalGeomOptimizer", "GeomOptResult", "project_translation_rotation",
     "ThinCoreGeomResult", "ThinCoreVibResult", "ThinCorePESPoint",
