@@ -469,6 +469,8 @@ def scan_bond_pes_thin_core(
     energy_thresh: float = 1.0e-10,
     orb_grad_thresh: float = 1.0e-7,
     basis_dir: str = "data/basis",
+    freeze_core: bool = False,  # [INJECTED_V2_FIX_SCAN_PES_FC]
+    n_frozen: int = 0,
 ) -> List[ThinCorePESPoint]:
     """Pemindaian 1D Potential Energy Surface (PES) antar-ikatan di mode Thin-Core."""
     nat = int(mol.n_atoms())

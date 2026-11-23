@@ -61,14 +61,16 @@ def use_backend(name: str) -> Iterator[Any]:
 
 class _ActiveKernelProxy:
     """Proxy zero-boilerplate yang meneruskan pemanggilan kernel ke backend aktif."""
+    # [INJECTED_V2_ENGINE_FALLBACK_PROXY]
 
     def __getattr__(self, name: str) -> Any:
         backend = _REGISTRY[_ACTIVE_BACKEND]
         if hasattr(backend, name):
             return getattr(backend, name)
-        raise NotImplementedError(
-            f"Kernel {name!r} belum diimplementasikan di backend {_ACTIVE_BACKEND!r}. "
-            "Gunakan backend 'cpp' atau daftarkan implementasinya."
+        if getattr(backend, "_fallback_to_cpp", False) and hasattr(_cpp_kernels, name):
+            return getattr(_cpp_kernels, name)
+        raise AttributeError(
+            f"Kernel {name!r} tidak tersedia di backend {_ACTIVE_BACKEND!r}."
         )
 
     def __repr__(self) -> str:
@@ -76,6 +78,15 @@ class _ActiveKernelProxy:
 
 
 active_kernels = _ActiveKernelProxy()
+
+
+def enable_torch_backend(device: str = "auto", name: str = "torch", fallback_to_cpp: bool = True):
+    """Daftarkan TorchKernelBackend (CUDA FP64 / CPU) ke registry tanpa mengganggu default."""
+    from .torch_backend import TorchKernelBackend
+    backend = TorchKernelBackend(device=device, fallback_to_cpp=fallback_to_cpp)
+    register_backend(name, backend)
+    return backend
+
 
 __all__ = [
     "NumpyKernelBackend",
@@ -85,4 +96,5 @@ __all__ = [
     "get_backend",
     "use_backend",
     "active_kernels",
+    "enable_torch_backend",
 ]

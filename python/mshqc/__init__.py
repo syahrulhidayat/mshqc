@@ -237,6 +237,8 @@ def _mol_optimize_geometry(
         orb_grad_thresh=orb_grad_thresh,
         fd_step_bohr=fd_step_bohr,
         use_analytic_gradient=use_analytic_gradient,
+        freeze_core=bool(_kw.get('freeze_core', False)),  # [INJECTED_V2_MOL_FORWARD_FC]
+        n_frozen=int(_kw.get('n_frozen', 0)),
     )
 
 
@@ -259,6 +261,8 @@ def _mol_frequencies(
         basis=basis,
         reference=reference,
         temperature_k=temperature_k,
+        freeze_core=bool(_kw.get('freeze_core', False)),
+        n_frozen=int(_kw.get('n_frozen', 0)),
     )
 
 
@@ -302,6 +306,8 @@ def _mol_scan_pes(
         method=method,
         eri_mode=eri_mode,
         basis=basis,
+        freeze_core=bool(_kw.get('freeze_core', False)),
+        n_frozen=int(_kw.get('n_frozen', 0)),
     )
 
 
