@@ -248,7 +248,7 @@ if(NOT TBLIS_LIBRARY OR NOT TBLIS_INCLUDE_DIR)
 endif()
 
 # ==============================================================================
-# 4. IRREDUCIBLE C++20 THIN-CORE SOURCES (8 Core Files + 2 Binding Files)
+# 4. IRREDUCIBLE C++20 THIN-CORE SOURCES (9 Core Files + 2 Binding Files)
 # ==============================================================================
 set(MSHQC_CORE_SOURCES
     "${CMAKE_SOURCE_DIR}/src/core/molecule.cc"

@@ -11,7 +11,7 @@
 
 ## Overview
 
-`mshqc` v2.0 is a lean, high-performance electronic structure library built on an **irreducible 8-file C++20 kernel core** (~5,500 LOC, zero HDF5 dependency) paired with clean, modular Python method orchestration:
+`mshqc` v2.0 is a lean, high-performance electronic structure library built on an **irreducible 9-file C++20 kernel core** (~5,500 LOC, zero HDF5 dependency) paired with clean, modular Python method orchestration:
 
 - **SCF References:** `RHF`, `UHF`, `ROHF` (Density Fitting `"df"` and full-pivoted `"cholesky"`), featuring Pure-Python SAD guess + zero-GEMM diagonal Iter-0 exchange, diagonal-equilibrated Pulay DIIS, level-shifting, `.npz` orbital checkpoints, and zero-overhead telemetry callbacks.
 - **Canonical / Semicanonical MP:** `RMP2`, `UMP2`, `ROMP2`, `RMP3`, `UMP3`, `ROMP3` (all-electron & strict frozen-core).

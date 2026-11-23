@@ -4,7 +4,7 @@
 
 from typing import Tuple
 import numpy as np
-from .._mshqc import kernels as K
+from ..backends import active_kernels as K  # 
 
 
 def _steihaug_boundary_tau(x_sq: float, xp_dot: float, p_sq: float, radius: float) -> float:

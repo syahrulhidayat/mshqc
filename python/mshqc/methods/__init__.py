@@ -75,6 +75,15 @@ from .properties import (
 from .excited import ExcitedStateResult, run_df_cis_rhf, run_df_tdhf_rhf
 from .oo_dh_dft import OODoubleHybridResult, run_oo_double_hybrid_rhf
 from .interop import run_from_arrays, run_from_pyscf
+# [INJECTED_V2_POLISH_SYMMETRY_EXPORT]
+from .symmetry import (
+    AbelianSymmetryInfo,
+    align_principal_axes,
+    detect_abelian_symmetry,
+    build_ao_symmetry_operators,
+    symmetrize_ao_matrix,
+    label_mo_irreps,
+)
 
 __all__ = [
     "t2_to_4d", "t2_from_4d", "b3c_to_3d", "b3c_from_3d",
@@ -102,4 +111,6 @@ __all__ = [
     "ExcitedStateResult", "run_df_cis_rhf", "run_df_tdhf_rhf",
     "OODoubleHybridResult", "run_oo_double_hybrid_rhf",
     "run_from_arrays", "run_from_pyscf",
+    "AbelianSymmetryInfo", "align_principal_axes", "detect_abelian_symmetry",
+    "build_ao_symmetry_operators", "symmetrize_ao_matrix", "label_mo_irreps",
 ]

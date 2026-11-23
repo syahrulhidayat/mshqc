@@ -12,7 +12,7 @@ from __future__ import annotations
 from typing import Callable, Optional, Tuple
 import numpy as np
 
-from .._mshqc import kernels as K
+from ..backends import active_kernels as K  
 from .omp_hybrid import HybridOMPResult, optimize_orbitals_rhf, optimize_orbitals_uhf
 from .tensors import t2_from_4d
 

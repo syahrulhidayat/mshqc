@@ -11,7 +11,7 @@ from typing import Callable, Optional, Tuple
 import numpy as np
 from scipy.optimize import nnls
 
-from .._mshqc import kernels as K
+from ..backends import active_kernels as K  
 from .kappa_omp2 import _assemble_subspace_1rdm
 from .omp_hybrid import HybridOMPResult, optimize_orbitals_rhf, optimize_orbitals_uhf
 

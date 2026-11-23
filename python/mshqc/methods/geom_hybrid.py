@@ -28,14 +28,38 @@ _C_CMS = 2.99792458e10
 _PLANCK_SI = 6.62607015e-34
 _KB_SI = 1.380649e-23
 
+# [INJECTED_V2_POLISH_GEOM_FC_AND_MASSES]
 _EXACT_MASSES: Dict[int, float] = {
     1: 1.007825032, 2: 4.002603254, 3: 7.016003437, 4: 9.01218307,
     5: 11.00930536, 6: 12.00000000, 7: 14.003074004, 8: 15.994914619,
     9: 18.998403163, 10: 19.99244018, 11: 22.98976928, 12: 23.98504170,
     13: 26.98153853, 14: 27.976926535, 15: 30.973761998, 16: 31.972071174,
     17: 34.96885268, 18: 39.96238312, 19: 38.96370649, 20: 39.96259086,
-    25: 54.93804391, 26: 55.93493633, 29: 62.92959772, 30: 63.92914201,
-    35: 78.9183376, 36: 83.91149773,
+    21: 44.95590828, 22: 47.94794198, 23: 50.94395704, 24: 51.94050623,
+    25: 54.93804391, 26: 55.93493633, 27: 58.93319429, 28: 57.93534241,
+    29: 62.92959772, 30: 63.92914201, 31: 68.9255735, 32: 73.92117776,
+    33: 74.92159457, 34: 79.9165218, 35: 78.9183376, 36: 83.91149773,
+    37: 84.91178974, 38: 87.9056125, 39: 88.9058403, 40: 89.9046977,
+    41: 92.9063730, 42: 97.9054048, 43: 97.9072124, 44: 101.9043441,
+    45: 102.9054980, 46: 105.9034804, 47: 106.9050916, 48: 113.9033650,
+    49: 114.9038788, 50: 119.9022016, 51: 120.9038120, 52: 129.9062227,
+    53: 126.9044719, 54: 131.9041551, 55: 132.9054519, 56: 137.9052470,
+    57: 138.9063563, 58: 139.9054431, 59: 140.9076576, 60: 141.9077290,
+    61: 144.9127559, 62: 151.9197397, 63: 152.9212380, 64: 157.9241123,
+    65: 158.9253547, 66: 163.9291819, 67: 164.9303288, 68: 165.9302995,
+    69: 168.9342179, 70: 173.9388664, 71: 174.9407752, 72: 179.9465570,
+    73: 180.9479958, 74: 183.9509309, 75: 186.9557501, 76: 191.9614770,
+    77: 192.9629216, 78: 194.9647917, 79: 196.9665687, 80: 201.9706434,
+    81: 204.9744278, 82: 207.9766525, 83: 208.9803991, 84: 208.9824308,
+    85: 209.9871479, 86: 222.0175782, 87: 223.0197360, 88: 226.0254103,
+    89: 227.0277523, 90: 232.0380558, 91: 231.0358842, 92: 238.0507884,
+    93: 237.0481736, 94: 244.0642053, 95: 243.0613813, 96: 247.0703541,
+    97: 247.0703073, 98: 251.0795886, 99: 252.0829800, 100: 257.0951061,
+    101: 258.0984315, 102: 259.1010300, 103: 262.1096100, 104: 267.1217900,
+    105: 268.1256700, 106: 269.1286300, 107: 270.1333600, 108: 269.1337500,
+    109: 278.1563100, 110: 281.1645100, 111: 282.1691200, 112: 285.1771200,
+    113: 286.1822100, 114: 289.1904200, 115: 290.1959800, 116: 293.2044900,
+    117: 294.2104600, 118: 294.2139200,
 }
 
 _Z_TO_SYM: Dict[int, str] = {
@@ -118,6 +142,8 @@ def _eval_single_point_thin(
     energy_thresh: float,
     orb_grad_thresh: float,
     basis_dir: str,
+    freeze_core: bool = False,
+    n_frozen: int = 0,
 ) -> float:
     import mshqc
 
@@ -132,6 +158,7 @@ def _eval_single_point_thin(
         mol, basis_name=basis_name, eri_method=eri_method,
         aux_basis_name=aux_basis_name, reference=ref,
         threshold=energy_thresh, basis_dir=basis_dir, use_symmetry=False,
+        freeze_core=freeze_core, n_frozen=n_frozen,
     )
     scf_res = calc.run_scf(use_hybrid=True)
     if m in ("scf", "hf", "rhf", "uhf", "rohf"):
@@ -199,6 +226,7 @@ def optimize_geometry_thin_core(
         return _eval_single_point_thin(
             m_cur, method, eri_mode, basis, aux_basis, reference,
             energy_thresh, orb_grad_thresh, basis_dir,
+            freeze_core=freeze_core, n_frozen=n_frozen,
         )
 
     reg_method = method.strip().lower().replace("_", "-")
@@ -300,19 +328,22 @@ def compute_frequencies_thin_core(
                 method=method, basis_name=basis, aux_basis_name=aux_basis,
                 reference=reference, threshold=energy_thresh, orb_grad_tol=orb_grad_thresh,
                 basis_dir=basis_dir, warm_start=dict(ws),
+                freeze_core=freeze_core, n_frozen=n_frozen,
             )
             _, gm = compute_df_gradient(
                 _clone_mol_at(mol, xm.reshape(natoms, 3)),
                 method=method, basis_name=basis, aux_basis_name=aux_basis,
                 reference=reference, threshold=energy_thresh, orb_grad_tol=orb_grad_thresh,
                 basis_dir=basis_dir, warm_start=dict(ws),
+                freeze_core=freeze_core, n_frozen=n_frozen,
             )
             hess[:, k] = (gp.reshape(-1) - gm.reshape(-1)) * inv_2h
         for xyz in range(3):
             hess[:, n_indep + xyz] = -np.sum(hess[:, xyz:n_indep:3], axis=1)
     else:
         e0 = _eval_single_point_thin(
-            mol, method, eri_mode, basis, aux_basis, reference, energy_thresh, orb_grad_thresh, basis_dir
+            mol, method, eri_mode, basis, aux_basis, reference, energy_thresh, orb_grad_thresh, basis_dir,
+            freeze_core=freeze_core, n_frozen=n_frozen,
         )
         inv_h2 = 1.0 / (step_bohr * step_bohr)
         ep_1d = np.zeros(n_indep)
@@ -324,10 +355,12 @@ def compute_frequencies_thin_core(
             ep_1d[k] = _eval_single_point_thin(
                 _clone_mol_at(mol, xp.reshape(natoms, 3)), method, eri_mode, basis, aux_basis,
                 reference, energy_thresh, orb_grad_thresh, basis_dir,
+                freeze_core=freeze_core, n_frozen=n_frozen,
             )
             em_1d[k] = _eval_single_point_thin(
                 _clone_mol_at(mol, xm.reshape(natoms, 3)), method, eri_mode, basis, aux_basis,
                 reference, energy_thresh, orb_grad_thresh, basis_dir,
+                freeze_core=freeze_core, n_frozen=n_frozen,
             )
             hess[k, k] = (ep_1d[k] - 2.0 * e0 + em_1d[k]) * inv_h2
         for k in range(n_indep):
@@ -456,6 +489,7 @@ def scan_bond_pes_thin_core(
         e_val = _eval_single_point_thin(
             m_cur, method, eri_mode, basis, aux_basis, reference,
             energy_thresh, orb_grad_thresh, basis_dir,
+            freeze_core=freeze_core, n_frozen=n_frozen,
         )
         pts.append(ThinCorePESPoint(r_angstrom=float(r_ang), r_bohr=r_bohr, energy_ha=float(e_val)))
     return pts

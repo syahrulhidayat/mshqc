@@ -12,7 +12,7 @@ from typing import Tuple
 import numpy as np
 from scipy.linalg import eigh
 
-from .._mshqc import kernels as K
+from ..backends import active_kernels as K  
 from .omp_hybrid import semicanonicalize_subspaces_frozen
 
 _HARTREE_TO_EV = 27.211386245988

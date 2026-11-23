@@ -88,6 +88,25 @@ class MSHQCCalculator:
         self.mp2_res = None
         self._ao_factor_cache: Optional[np.ndarray] = None
         self._eri4_cache = None
+      
+        self._h_core_cache: Optional[np.ndarray] = None
+        self._s_ovlp_cache: Optional[np.ndarray] = None
+
+    def _get_h_core(self) -> np.ndarray:
+        if self._h_core_cache is None:
+            self._h_core_cache = np.ascontiguousarray(
+                self.integrals.compute_kinetic() + self.integrals.compute_nuclear(),
+                dtype=np.float64,
+            )
+        return self._h_core_cache
+
+    def _get_s_ovlp(self) -> np.ndarray:
+        if self._s_ovlp_cache is None:
+            self._s_ovlp_cache = np.ascontiguousarray(
+                self.integrals.compute_overlap(),
+                dtype=np.float64,
+            )
+        return self._s_ovlp_cache
 
     def _get_eri4(self):
         if self._eri4_cache is None:
@@ -125,8 +144,8 @@ class MSHQCCalculator:
         P_sad = build_sad_guess(self.molecule, self.basis)
         eri4_arg = self._get_eri4() if self.eri_method == "exact" else None
         B_ao = None if eri4_arg is not None else self._get_ao_3index_factor(None)
-        H_core = self.integrals.compute_kinetic() + self.integrals.compute_nuclear()
-        S_ovlp = self.integrals.compute_overlap()
+        H_core = self._get_h_core()
+        S_ovlp = self._get_s_ovlp()
         v_nn = float(self.molecule.nuclear_repulsion_energy())
 
         if ref_mode == "rhf":
@@ -165,8 +184,8 @@ class MSHQCCalculator:
             scf_res = self.scf_res or self.run_scf()
         B_ao = self._get_ao_3index_factor(scf_res)
         eri4_arg = self._get_eri4() if self.eri_method == "exact" else None
-        H_core = self.integrals.compute_kinetic() + self.integrals.compute_nuclear()
-        S_ovlp = self.integrals.compute_overlap()
+        H_core = self._get_h_core()
+        S_ovlp = self._get_s_ovlp()
         v_nn = float(self.molecule.nuclear_repulsion_energy())
 
         if self.reference == "rhf" and method_name not in ("romp2", "romp3"):
@@ -188,7 +207,7 @@ class MSHQCCalculator:
             from .methods.mp_hybrid import run_exact_mp2_rhf, run_exact_mp2_uhf
             if scf_res is None:
                 scf_res = self.scf_res or self.run_scf()
-            H_core = self.integrals.compute_kinetic() + self.integrals.compute_nuclear()
+            H_core = self._get_h_core()
             v_nn = float(self.molecule.nuclear_repulsion_energy())
             eri4 = self._get_eri4()
             if self.reference == "rhf":
@@ -389,6 +408,11 @@ def recommend_hpc_settings(
     tier = "light" if nbf <= 60 else ("medium" if nbf <= 250 else "heavy")
     fc_rec = nbf > 60
     warnings: List[str] = []
+    if method.lower().replace("_", "-") in ("lt-sos-omp2", "lt-sos-oomp2") and nbf < 60:
+        warnings.append(
+            "LT-SOS-OMP2 berskala O(n_q * O * V * N_aux^2); paling efisien pada mode DF "
+            "dengan sistem menengah-besar (N_bf >= 60). Hindari mode exact/cholesky ber-rank besar."
+        )
     if max_z > 36:
         warnings.append(
             f"Terdeteksi atom berat Z={max_z} (>36). mshqc all-electron non-relativistik tanpa ECP/X2C."

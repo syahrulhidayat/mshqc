@@ -14,7 +14,7 @@ from typing import Callable, Optional, Tuple
 import numpy as np
 from scipy.linalg import eigh, expm
 
-from .._mshqc import kernels as K
+from ..backends import active_kernels as K  
 from .tr_soscf import solve_tr_soscf_rhf, solve_tr_soscf_uhf
 
 CorrCallbackRHF = Callable[

@@ -57,6 +57,26 @@ def use_backend(name: str) -> Iterator[Any]:
         set_backend(prev)
 
 
+
+
+class _ActiveKernelProxy:
+    """Proxy zero-boilerplate yang meneruskan pemanggilan kernel ke backend aktif."""
+
+    def __getattr__(self, name: str) -> Any:
+        backend = _REGISTRY[_ACTIVE_BACKEND]
+        if hasattr(backend, name):
+            return getattr(backend, name)
+        raise NotImplementedError(
+            f"Kernel {name!r} belum diimplementasikan di backend {_ACTIVE_BACKEND!r}. "
+            "Gunakan backend 'cpp' atau daftarkan implementasinya."
+        )
+
+    def __repr__(self) -> str:
+        return f"<mshqc.ActiveKernelProxy active={_ACTIVE_BACKEND!r}>"
+
+
+active_kernels = _ActiveKernelProxy()
+
 __all__ = [
     "NumpyKernelBackend",
     "available_backends",
@@ -64,4 +84,5 @@ __all__ = [
     "set_backend",
     "get_backend",
     "use_backend",
+    "active_kernels",
 ]

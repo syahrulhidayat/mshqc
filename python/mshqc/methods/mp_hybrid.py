@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import numpy as np
 
-from .._mshqc import kernels as K
+from ..backends import active_kernels as K 
 from .omp_hybrid import semicanonicalize_subspaces_frozen
 
 

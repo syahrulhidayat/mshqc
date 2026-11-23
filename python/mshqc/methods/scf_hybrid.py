@@ -14,8 +14,7 @@ from typing import Callable, Deque, Dict, List, Optional, Tuple
 import numpy as np
 from scipy.linalg import eigh
 
-from .._mshqc import kernels as K
-
+from ..backends import active_kernels as K 
 
 @dataclass
 class HybridSCFResult:

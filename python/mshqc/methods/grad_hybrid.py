@@ -11,7 +11,7 @@ from __future__ import annotations
 from typing import Optional, Tuple
 import numpy as np
 
-from .._mshqc import kernels as K
+from ..backends import active_kernels as K  
 from .kappa_omp2 import (
     _eval_kappa_omp2_rhf_data,
     _eval_kappa_omp2_uhf_data,

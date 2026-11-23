@@ -11,7 +11,7 @@ from dataclasses import dataclass
 from typing import Dict, Optional, Tuple
 import numpy as np
 
-from .._mshqc import kernels as K
+from ..backends import active_kernels as K  
 from .omp_hybrid import semicanonicalize_subspaces_frozen, _rotate_orbitals, _update_trust_radius
 from .tr_soscf import solve_tr_soscf_rhf
 
