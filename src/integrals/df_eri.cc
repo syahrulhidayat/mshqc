@@ -24,7 +24,6 @@
 #include <algorithm>
 #include <cmath>
 #include <iostream>
-#include <numeric>
 #include <vector>
 #include <omp.h>
 
@@ -43,62 +42,6 @@ DensityFittingERI::DensityFittingERI(const BasisSet& primary_basis,
 {
     n_primary_ = primary_basis_->n_basis_functions();
     n_aux_     = aux_basis_->n_basis_functions();
-}
-
-struct CholeskyResult {
-    Eigen::MatrixXd L;
-    std::vector<int> pivot_map;
-    int rank;
-};
-
-CholeskyResult compute_pivoted_cholesky(Eigen::MatrixXd& J, double tol = 1e-10) {
-    int n = J.rows();
-    std::vector<int> p(n);
-    std::iota(p.begin(), p.end(), 0); 
-    
-    Eigen::VectorXd diag = J.diagonal();
-    Eigen::MatrixXd L = Eigen::MatrixXd::Zero(n, n);
-    
-    int rank = 0;
-    for (int i = 0; i < n; ++i) {
-        int max_idx = i;
-        double max_val = diag(i);
-        for (int j = i + 1; j < n; ++j) {
-            if (diag(j) > max_val) {
-                max_val = diag(j);
-                max_idx = j;
-            }
-        }
-        
-        if (max_val < tol) break; 
-        
-        if (max_idx != i) {
-            std::swap(p[i], p[max_idx]);
-            std::swap(diag(i), diag(max_idx));
-            J.row(i).swap(J.row(max_idx));
-            J.col(i).swap(J.col(max_idx));
-            L.row(i).swap(L.row(max_idx)); 
-        }
-        
-        L(i, i) = std::sqrt(diag(i));
-        double L_ii_inv = 1.0 / L(i, i);
-        
-        int rem = n - i - 1;
-        if (rem > 0) {
-            if (i > 0) {
-                L.col(i).tail(rem).noalias() = J.col(i).tail(rem)
-                    - L.bottomLeftCorner(rem, i) * L.row(i).head(i).transpose();
-            } else {
-                L.col(i).tail(rem) = J.col(i).tail(rem);
-            }
-            L.col(i).tail(rem) *= L_ii_inv;
-            diag.tail(rem).array() -= L.col(i).tail(rem).array().square();
-        }
-        rank++;
-    }
-
-    L.conservativeResize(n, rank);
-    return {L, p, rank};
 }
 
 // [INJECTED_PRIORITAS_2D_PACKED_AO]

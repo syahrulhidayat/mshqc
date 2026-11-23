@@ -6,6 +6,7 @@
 #include "mshqc/kernels/mp3_kernels.h"
 #include "mshqc/kernels/primitives.h"
 #include "mshqc/kernels/tblis_safe.h"
+#include "mshqc/integrals/packed_ao_utils.h"
 
 #include <unsupported/Eigen/CXX11/Tensor>
 #include <algorithm>
