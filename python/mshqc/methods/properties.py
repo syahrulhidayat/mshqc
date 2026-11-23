@@ -96,6 +96,29 @@ def scf_density_ao(res: Any) -> np.ndarray:
     return build_1rdm_ao(res.C_alpha, int(res.n_occ_alpha), res.C_beta, int(res.n_occ_beta))
 
 
+def correlated_density_ao(res: Any) -> np.ndarray:
+    """
+    Ekstrak matriks densitas total AO P_tot langsung dari HybridSCFResult maupun
+    HybridOMPResult (memakai g_oo_*, g_vv_*, dan n_frozen tersimpan tanpa hitung ulang).
+    """
+    ref = str(getattr(res, "reference", "rhf")).lower()
+    na = int(getattr(res, "n_occ_alpha", 0))
+    nb = int(getattr(res, "n_occ_beta", na))
+    nf = int(getattr(res, "n_frozen", 0))
+    g_oo_a = getattr(res, "g_oo_alpha", None)
+    g_vv_a = getattr(res, "g_vv_alpha", None)
+    g_oo_b = getattr(res, "g_oo_beta", None)
+    g_vv_b = getattr(res, "g_vv_beta", None)
+    if ref == "rhf":
+        return build_1rdm_ao(res.C_alpha, na, g_oo_alpha=g_oo_a, g_vv_alpha=g_vv_a, n_frozen=nf)
+    return build_1rdm_ao(
+        res.C_alpha, na, res.C_beta, nb,
+        g_oo_alpha=g_oo_a, g_vv_alpha=g_vv_a,
+        g_oo_beta=g_oo_b, g_vv_beta=g_vv_b,
+        n_frozen=nf,
+    )
+
+
 def compute_natural_orbitals(P_ao: np.ndarray, S_ovlp: np.ndarray) -> NaturalOrbitalResult:
     """Menghitung Natural Orbitals, NOONs, indeks elektron tak berpasangan Head-Gordon, dan y_0."""
     P = 0.5 * (np.asarray(P_ao, dtype=np.float64) + np.asarray(P_ao, dtype=np.float64).T)

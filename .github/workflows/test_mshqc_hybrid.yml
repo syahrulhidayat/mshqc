@@ -189,13 +189,16 @@ jobs:
           micromamba activate geom_env
           python -m pytest tests/test_thin_core_stage9_v21.py -v -s 2>&1 | tee 07_stage9_v21_log.txt
 
-      - name: "[8/8] Stage 11 (Fase A): Full Clean pytest Discovery (Incl. Universal Geom & v2.0 Benchmark Smoke)"
+      - name: "[8/8] Stage 11 (Fase B + Full Suite): Auto-Discover ALL tests/ & Benchmark Runners"
         if: always() && steps.compile.outcome == 'success'
         shell: bash -el {0}
         run: |
           set -o pipefail
           micromamba activate geom_env
-          python -m pytest tests/test_universal_geom_opt.py tests/test_v2_benchmarks_smoke.py -v -s 2>&1 | tee 08_fase_a_benchmarks_log.txt
+          python -m pytest tests/test_thin_core_stage10_fase_b.py tests/test_universal_geom_opt.py tests/test_v2_benchmarks_smoke.py -v -s 2>&1 | tee 08_fase_b_and_benchmarks_log.txt
+          python benchmarks/run_geom_v2.py --quick --out /tmp/geom_quick.json
+          python benchmarks/run_heavy_large_v2.py --quick --out /tmp/heavy_quick.json
+          python -m pytest tests/ -q 2>&1 | tee 09_full_pytest_discovery_log.txt
 
       - name: Upload v2.0 Test Logs
         if: always()

@@ -174,6 +174,8 @@ def optimize_geometry_thin_core(
     fd_step_bohr: float = 5.0e-4,
     use_analytic_gradient: bool = True,
     basis_dir: str = "data/basis",
+    freeze_core: bool = False,
+    n_frozen: int = 0,
 ) -> ThinCoreGeomResult:
     """Optimisasi geometri molekul in-place memakai Thin-Core Python + C++20 kernels."""
     t0 = time.perf_counter()
@@ -189,7 +191,7 @@ def optimize_geometry_thin_core(
             return compute_df_gradient(
                 m_cur, method=method, basis_name=basis, aux_basis_name=aux_basis,
                 reference=reference, threshold=energy_thresh, orb_grad_tol=orb_grad_thresh,
-                basis_dir=basis_dir, warm_start=ws,
+                basis_dir=basis_dir, warm_start=ws, freeze_core=freeze_core, n_frozen=n_frozen,
             )
 
     def energy_fn(coords_bohr: np.ndarray) -> float:
@@ -268,6 +270,8 @@ def compute_frequencies_thin_core(
     energy_thresh: float = 1.0e-12,
     orb_grad_thresh: float = 1.0e-10,
     basis_dir: str = "data/basis",
+    freeze_core: bool = False,
+    n_frozen: int = 0,
 ) -> ThinCoreVibResult:
     """Frekuensi vibrasi harmonik O(N) via FD gradien analitik + termokimia RRHO."""
     natoms = int(mol.n_atoms())
@@ -283,7 +287,7 @@ def compute_frequencies_thin_core(
         e0, _ = compute_df_gradient(
             mol, method=method, basis_name=basis, aux_basis_name=aux_basis,
             reference=reference, threshold=energy_thresh, orb_grad_tol=orb_grad_thresh,
-            basis_dir=basis_dir, warm_start=ws,
+            basis_dir=basis_dir, warm_start=ws, freeze_core=freeze_core, n_frozen=n_frozen,
         )
         inv_2h = 1.0 / (2.0 * step_bohr)
         for k in range(n_indep):

@@ -50,6 +50,10 @@ class HybridOMPResult:
     n_occ_alpha: int
     n_occ_beta: int
     n_frozen: int = 0
+    g_oo_alpha: Optional[np.ndarray] = None
+    g_vv_alpha: Optional[np.ndarray] = None
+    g_oo_beta: Optional[np.ndarray] = None
+    g_vv_beta: Optional[np.ndarray] = None
 
     @property
     def e_total(self) -> float:
@@ -459,9 +463,20 @@ def optimize_orbitals_rhf(
         w_vo = _assemble_orbital_grad_rhf(B, C_act, C_vir, F_vo, g_oo, g_vv, Z_vo)
         w_rms = float(np.sqrt(np.mean(w_vo ** 2))) if w_vo.size > 0 else 0.0
         if callback is not None:
-            callback({'iter': it, 'energy': e_tot, 'e_ref': e_ref, 'e_mp2': float(e_mp2), 'e_mp3': float(e_mp3), 'grad_rms': w_rms, 'method': method_name})
+            callback({
+                "iter": it,
+                "energy": e_tot,
+                "energy_total": e_tot,
+                "e_ref": e_ref,
+                "e_mp2": float(e_mp2),
+                "e_mp3": float(e_mp3),
+                "grad_rms": w_rms,
+                "method": method_name,
+            })
 
         if w_rms <= grad_tol and (it == 0 or abs(e_tot - e_prev) <= energy_tol):
+            g_oo_c = np.ascontiguousarray(g_oo, dtype=np.float64)
+            g_vv_c = np.ascontiguousarray(g_vv, dtype=np.float64)
             return HybridOMPResult(
                 method=method_name, reference="rhf",
                 energy_scf=e_ref, energy_mp2_corr=float(e_mp2), energy_mp3_corr=float(e_mp3),
@@ -469,6 +484,8 @@ def optimize_orbitals_rhf(
                 C_alpha=C, C_beta=C.copy(),
                 orbital_energies_alpha=eps, orbital_energies_beta=eps.copy(),
                 n_occ_alpha=n_occ, n_occ_beta=n_occ, n_frozen=nf,
+                g_oo_alpha=g_oo_c, g_vv_alpha=g_vv_c,
+                g_oo_beta=g_oo_c.copy(), g_vv_beta=g_vv_c.copy(),
             )
 
         trust_radius = _update_trust_radius(trust_radius, it, e_tot, e_prev)
@@ -476,6 +493,8 @@ def optimize_orbitals_rhf(
         kappa = solve_tr_soscf_rhf(w_vo, eps_o, eps_v, B_oo, B_ov, B_vv, trust_radius=trust_radius)
         C = _rotate_orbitals(C, kappa, n_occ, n_frozen=nf)
 
+    g_oo_c = np.ascontiguousarray(g_oo, dtype=np.float64)
+    g_vv_c = np.ascontiguousarray(g_vv, dtype=np.float64)
     return HybridOMPResult(
         method=method_name, reference="rhf",
         energy_scf=e_ref, energy_mp2_corr=float(e_mp2), energy_mp3_corr=float(e_mp3),
@@ -483,6 +502,8 @@ def optimize_orbitals_rhf(
         C_alpha=C, C_beta=C.copy(),
         orbital_energies_alpha=eps, orbital_energies_beta=eps.copy(),
         n_occ_alpha=n_occ, n_occ_beta=n_occ, n_frozen=nf,
+        g_oo_alpha=g_oo_c, g_vv_alpha=g_vv_c,
+        g_oo_beta=g_oo_c.copy(), g_vv_beta=g_vv_c.copy(),
     )
 
 
@@ -552,7 +573,16 @@ def optimize_orbitals_uhf(
         )
         w_rms = float(np.sqrt((np.sum(wa_vo ** 2) + np.sum(wb_vo ** 2)) / n_params))
         if callback is not None:
-            callback({'iter': it, 'energy': e_tot, 'e_ref': e_ref, 'e_mp2': float(e_mp2), 'e_mp3': float(e_mp3), 'grad_rms': w_rms, 'method': method_name})
+            callback({
+                "iter": it,
+                "energy": e_tot,
+                "energy_total": e_tot,
+                "e_ref": e_ref,
+                "e_mp2": float(e_mp2),
+                "e_mp3": float(e_mp3),
+                "grad_rms": w_rms,
+                "method": method_name,
+            })
 
         if w_rms <= grad_tol and (it == 0 or abs(e_tot - e_prev) <= energy_tol):
             s2 = _compute_s2_uhf(Ca, Cb, S, na, nb)
@@ -563,6 +593,10 @@ def optimize_orbitals_uhf(
                 C_alpha=Ca, C_beta=Cb,
                 orbital_energies_alpha=eps_a, orbital_energies_beta=eps_b,
                 n_occ_alpha=na, n_occ_beta=nb, n_frozen=nf_a,
+                g_oo_alpha=np.ascontiguousarray(g_oo_a, dtype=np.float64),
+                g_vv_alpha=np.ascontiguousarray(g_vv_a, dtype=np.float64),
+                g_oo_beta=np.ascontiguousarray(g_oo_b, dtype=np.float64),
+                g_vv_beta=np.ascontiguousarray(g_vv_b, dtype=np.float64),
             )
 
         trust_radius = _update_trust_radius(trust_radius, it, e_tot, e_prev)
@@ -584,6 +618,10 @@ def optimize_orbitals_uhf(
         C_alpha=Ca, C_beta=Cb,
         orbital_energies_alpha=eps_a, orbital_energies_beta=eps_b,
         n_occ_alpha=na, n_occ_beta=nb, n_frozen=nf_a,
+        g_oo_alpha=np.ascontiguousarray(g_oo_a, dtype=np.float64),
+        g_vv_alpha=np.ascontiguousarray(g_vv_a, dtype=np.float64),
+        g_oo_beta=np.ascontiguousarray(g_oo_b, dtype=np.float64),
+        g_vv_beta=np.ascontiguousarray(g_vv_b, dtype=np.float64),
     )
 
 
@@ -601,13 +639,14 @@ def run_df_omp_rhf(
     energy_tol: float = 1e-9,
     max_iter: int = 40,
     n_frozen: int = 0,
+    callback: Optional[Callable[[dict], None]] = None,
 ) -> HybridOMPResult:
     """Jalankan optimisasi orbital DF-OMP RHF (OMP2, SCS-OMP2, SOS-OMP2, OMP2.5, OMP3)."""
     return optimize_orbitals_rhf(
         H_core, v_nn, B_ao, C0, n_occ,
         corr_fn=_omp_rhf_corr_kernel(c_os, c_ss, lam_mp3),
         method_name=method_name, grad_tol=grad_tol, energy_tol=energy_tol,
-        max_iter=max_iter, n_frozen=n_frozen,
+        max_iter=max_iter, n_frozen=n_frozen, callback=callback,
     )
 
 
@@ -628,11 +667,12 @@ def run_df_omp_uhf(
     energy_tol: float = 1e-9,
     max_iter: int = 40,
     n_frozen: int = 0,
+    callback: Optional[Callable[[dict], None]] = None,
 ) -> HybridOMPResult:
     """Jalankan optimisasi orbital DF-OMP UHF (radikal kulit terbuka) + evaluasi <S^2>."""
     return optimize_orbitals_uhf(
         H_core, S_ovlp, v_nn, B_ao, C0_a, C0_b, na, nb,
         corr_fn=_omp_uhf_corr_kernel(c_os, c_ss, lam_mp3),
         method_name=method_name, grad_tol=grad_tol, energy_tol=energy_tol,
-        max_iter=max_iter, n_frozen=n_frozen,
+        max_iter=max_iter, n_frozen=n_frozen, callback=callback,
     )

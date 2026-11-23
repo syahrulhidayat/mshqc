@@ -60,10 +60,12 @@ from .properties import (
     PopulationResult,
     build_1rdm_ao,
     scf_density_ao,
+    correlated_density_ao,
     compute_natural_orbitals,
     mulliken_and_lowdin_charges,
     write_molden,
 )
+from .excited import ExcitedStateResult, run_df_cis_rhf, run_df_tdhf_rhf
 from .interop import run_from_arrays, run_from_pyscf
 
 __all__ = [
@@ -87,7 +89,8 @@ __all__ = [
     "run_df_kappa_omp2_rhf", "run_df_kappa_omp2_uhf",
     "build_laplace_quadrature", "run_df_lt_sos_omp2_rhf", "run_df_lt_sos_omp2_uhf",
     "save_orbital_checkpoint", "load_orbital_checkpoint",
-    "NaturalOrbitalResult", "PopulationResult", "build_1rdm_ao", "scf_density_ao",
+    "NaturalOrbitalResult", "PopulationResult", "build_1rdm_ao", "scf_density_ao", "correlated_density_ao",
     "compute_natural_orbitals", "mulliken_and_lowdin_charges", "write_molden",
+    "ExcitedStateResult", "run_df_cis_rhf", "run_df_tdhf_rhf",
     "run_from_arrays", "run_from_pyscf",
 ]
