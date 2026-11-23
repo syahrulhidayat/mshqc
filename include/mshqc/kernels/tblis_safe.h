@@ -281,5 +281,35 @@ inline double t2_at(const Eigen::MatrixXd& M, int no, int nv, int i, int j, int 
              static_cast<Eigen::Index>(i) * no + j);
 }
 
+
+inline tblis::varray_view<double> make_view_2d(double* ptr, int d1, int d2) {
+    return tblis::varray_view<double>(
+        {static_cast<tblis::len_type>(d1), static_cast<tblis::len_type>(d2)},
+        ptr,
+        {1, static_cast<tblis::stride_type>(d1)});
+}
+
+inline tblis::varray_view<double> make_view_3d_colmajor(double* ptr, int d1, int d2, int d3) {
+    const ptrdiff_t s2 = static_cast<ptrdiff_t>(d1);
+    const ptrdiff_t s3 = s2 * static_cast<ptrdiff_t>(d2);
+    return tblis::varray_view<double>(
+        {static_cast<tblis::len_type>(d1), static_cast<tblis::len_type>(d2),
+         static_cast<tblis::len_type>(d3)},
+        ptr,
+        {1, static_cast<tblis::stride_type>(s2), static_cast<tblis::stride_type>(s3)});
+}
+
+inline tblis::varray_view<double> make_view_4d_colmajor(double* ptr, int d1, int d2, int d3, int d4) {
+    const ptrdiff_t s2 = static_cast<ptrdiff_t>(d1);
+    const ptrdiff_t s3 = s2 * static_cast<ptrdiff_t>(d2);
+    const ptrdiff_t s4 = s3 * static_cast<ptrdiff_t>(d3);
+    return tblis::varray_view<double>(
+        {static_cast<tblis::len_type>(d1), static_cast<tblis::len_type>(d2),
+         static_cast<tblis::len_type>(d3), static_cast<tblis::len_type>(d4)},
+        ptr,
+        {1, static_cast<tblis::stride_type>(s2),
+         static_cast<tblis::stride_type>(s3), static_cast<tblis::stride_type>(s4)});
+}
+
 } // namespace kernels
 } // namespace mshqc

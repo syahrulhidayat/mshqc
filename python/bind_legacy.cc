@@ -9,6 +9,7 @@
 #include <nanobind/stl/pair.h>
 #include <nanobind/stl/shared_ptr.h>
 #include <nanobind/stl/string.h>
+#include <nanobind/stl/tuple.h>
 #include <nanobind/stl/vector.h>
 
 #include <algorithm>
@@ -18,6 +19,7 @@
 #include "mshqc/core/molecule.h"
 #include "mshqc/gradient/hpc_geom_opt.h"
 #include "mshqc/ints/integrals.h"
+#include "mshqc/integrals/screening.h"
 #include "mshqc/mp2/mp2.h"
 #include "mshqc/mp3/mp3.h"
 #include "mshqc/mp3/omp3.h"
@@ -61,6 +63,30 @@ MP2Config normalize_mp2_config(const MP2Config& conf, const BasisSet& basis, con
 } // namespace
 
 void bind_legacy_module(nb::module_& m, nb::class_<Molecule>& mol_cls) {
+
+    nb::class_<integrals::ShellPair>(m, "ShellPair")
+        .def_rw("sh_a", &integrals::ShellPair::sh_a)
+        .def_rw("sh_b", &integrals::ShellPair::sh_b)
+        .def_rw("max_val", &integrals::ShellPair::max_val)
+        .def_prop_rw(
+            "center",
+            [](const integrals::ShellPair& sp) { return std::make_tuple(sp.center(0), sp.center(1), sp.center(2)); },
+            [](integrals::ShellPair& sp, const std::tuple<double, double, double>& t) {
+                sp.center = Eigen::Vector3d(std::get<0>(t), std::get<1>(t), std::get<2>(t));
+            });
+
+    nb::class_<integrals::Screening>(m, "Screening")
+        .def(nb::init<const BasisSet&>(), nb::arg("basis"))
+        .def("reset", &integrals::Screening::reset)
+        .def("compute", &integrals::Screening::compute, nb::call_guard<nb::gil_scoped_release>(), nb::arg("integrals"))
+        .def("print_stats", &integrals::Screening::print_stats, nb::arg("threshold"))
+        .def("get_significant_pairs", &integrals::Screening::get_significant_pairs, nb::arg("threshold"))
+        .def("is_significant",
+             static_cast<bool (integrals::Screening::*)(int, int, int, int, double) const>(&integrals::Screening::is_significant),
+             nb::arg("sh_a"), nb::arg("sh_b"), nb::arg("sh_c"), nb::arg("sh_d"), nb::arg("threshold"))
+        .def("get_schwarz_val", &integrals::Screening::get_schwarz_val)
+        .def("max_schwarz", &integrals::Screening::max_schwarz);
+
     mol_cls
         .def("optimize_geometry", [](Molecule& mol,
                                      const std::string& method,

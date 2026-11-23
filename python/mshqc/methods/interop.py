@@ -16,6 +16,7 @@ from .mp_hybrid import (
 )
 from .omp_hybrid import HybridOMPResult, run_df_omp_rhf, run_df_omp_uhf
 from .kappa_omp2 import run_df_kappa_omp2_rhf, run_df_kappa_omp2_uhf
+from .lt_sos_omp2 import run_df_lt_sos_omp2_rhf, run_df_lt_sos_omp2_uhf
 
 
 def _resolve_omp_params(method: str) -> Tuple[str, float, float, float]:
@@ -82,6 +83,19 @@ def run_from_arrays(
         Cb = np.ascontiguousarray(C_beta, dtype=np.float64)
         nb = int(na if n_occ_beta is None else n_occ_beta)
         return run_df_mp3_uhf(H, float(v_nn), B, Ca, Cb, na, nb, n_frozen=nf)
+
+    if m_low in ("lt-sos-omp2", "lt-sos-oomp2"):
+        if C_beta is None:
+            return run_df_lt_sos_omp2_rhf(
+                H, float(v_nn), B, Ca, na,
+                grad_tol=grad_tol, energy_tol=energy_tol, max_iter=max_iter, n_frozen=nf,
+            )
+        Cb = np.ascontiguousarray(C_beta, dtype=np.float64)
+        nb = int(na if n_occ_beta is None else n_occ_beta)
+        return run_df_lt_sos_omp2_uhf(
+            H, S, float(v_nn), B, Ca, Cb, na, nb,
+            grad_tol=grad_tol, energy_tol=energy_tol, max_iter=max_iter, n_frozen=nf,
+        )
 
     if m_low in ("kappa-omp2", "k-omp2", "kappa-oomp2", "koomp2"):
         if C_beta is None:

@@ -105,7 +105,7 @@ def _supports_analytic_grad(method: str, eri_method: str) -> bool:
         eri = "df"
     else:
         eri = eri_method.strip().lower()
-    return eri in ("df", "ri") and m in ("scf", "hf", "rhf", "uhf", "rohf", "omp2", "scs-omp2", "sos-omp2")
+    return eri in ("df", "ri") and m in ("scf", "hf", "rhf", "uhf", "rohf", "omp2", "scs-omp2", "sos-omp2", "lt-sos-omp2", "kappa-omp2", "k-omp2", "kappa-oomp2")
 
 
 def _eval_single_point_thin(
@@ -150,6 +150,10 @@ def _eval_single_point_thin(
         return float(calc.run_sos_omp2(scf_res, grad_thresh=orb_grad_thresh, max_iter=80).energy_total)
     if m in ("omp2.5", "omp25"):
         return float(calc.run_omp25(scf_res, grad_thresh=orb_grad_thresh, max_iter=80).energy_total)
+    if m in ("kappa-omp2", "k-omp2", "kappa-oomp2"):
+        return float(calc.run_kappa_omp2(scf_res, grad_thresh=orb_grad_thresh, max_iter=80).energy_total)
+    if m == "lt-sos-omp2":
+        return float(calc.run_lt_sos_omp2(scf_res, grad_thresh=orb_grad_thresh, max_iter=80).energy_total)
     raise ValueError(f"Metode tidak dikenali di Thin-Core optimizer: {method}")
 
 

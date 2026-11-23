@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 """
-Validasi Tahap 6 (Zero-HDF5 Thin-Core + kappa-OOMP2 + Telemetry Callback + Orbital Checkpoint):
-1. Gradien orbital analitik kappa-OOMP2 (kappa=1.45) cocok < 1e-8 Ha/rad vs Central FD
-   pada H2O (RHF) dan radikal OH (UHF), termasuk verifikasi limit kappa -> inf == DF-OMP2.
-2. Integrasi `mshqc.run(..., method="kappa-omp2")` dan `M.run_from_arrays(..., method="kappa-omp2")`.
-3. Telemetry `callback` (SCF & OMP) mencatat iterasi secara terstruktur dengan 0 overhead saat None.
-4. Orbital checkpoint `.npz` (save/load -> warm-start) menyusutkan iterasi SCF menjadi <= 3 iterasi.
+Validasi Tahap 6 (Hardened):
+1. Gradien orbital analitik NON-TRIVIAL kappa-OOMP2 (argmax |w_ana| > 1e-3, kappa=1.45)
+   cocok < 1e-8 Ha/rad vs Central FD pada H2O (RHF) & OH (UHF), + limit kappa -> inf == DF-OMP2.
+2. Kontinuitas cabang L'Hopital pada molekul tetrahedral CH4 (Td, HOMO t2 degenerasi lipat-3).
+3. Telemetry callback (SCF & OMP) + orbital checkpoint `.npz` (warm-start <= 3 iterasi).
 """
 from pathlib import Path
 import tempfile
@@ -53,7 +52,10 @@ def test_kappa_omp2_analytic_grad_and_large_kappa_limit():
         return e_ref + e_c, w_vo, C_sc
 
     _, w_ana, C_base = eval_r_energy_and_grad(C0)
-    i_t, a_t = no - 1, 0
+    a_t, i_t = np.unravel_index(int(np.argmax(np.abs(w_ana))), w_ana.shape)
+    g_ana = float(w_ana[a_t, i_t])
+    assert abs(g_ana) > 1.0e-3, f"Gradien RHF uji terlalu kecil: {g_ana}"
+
     h = 1.0e-5
     K_rot = np.zeros((nbf, nbf))
     K_rot[no + a_t, i_t] = 1.0
@@ -61,9 +63,8 @@ def test_kappa_omp2_analytic_grad_and_large_kappa_limit():
     e_p, _, _ = eval_r_energy_and_grad(C_base @ expm(h * K_rot))
     e_m, _, _ = eval_r_energy_and_grad(C_base @ expm(-h * K_rot))
     g_fd = (e_p - e_m) / (2.0 * h)
-    g_ana = float(w_ana[a_t, i_t])
     dw_r = abs(g_fd - g_ana)
-    print(f"[k-OOMP2 RHF FD] kappa={kappa_val} | FD={g_fd:.10e} | Ana={g_ana:.10e} | |dw|={dw_r:.2e}")
+    print(f"[k-OOMP2 RHF FD] (a={a_t},i={i_t}) | FD={g_fd:.10e} | Ana={g_ana:.10e} | |dw|={dw_r:.2e}")
     assert dw_r < 1.0e-8
 
     res_k145 = M.run_df_kappa_omp2_rhf(H, v_nn, B_ao, C0, no, kappa=1.45, grad_tol=1e-7, energy_tol=1e-11)
@@ -79,6 +80,7 @@ def test_kappa_omp2_analytic_grad_and_large_kappa_limit():
     assert res_omp2.energy_total < res_k145.energy_total < scf_r.energy_total
     assert d_lim < 1.0e-10
 
+    # Open-shell OH radical (UHF, non-trivial beta gradient pair)
     oh = mshqc.Molecule(0, 2)
     oh.add_atom("O", 0.0, 0.0, 0.0, units="angstrom")
     oh.add_atom("H", 0.0, 0.0, 0.9697, units="angstrom")
@@ -112,15 +114,18 @@ def test_kappa_omp2_analytic_grad_and_large_kappa_limit():
         return e_ref + e_c, wa, wb, Ca_sc, Cb_sc
 
     _, _, wb_ana, Ca_b, Cb_b = eval_u_energy_and_grad(scf_u.C_alpha, scf_u.C_beta)
+    ab_t, ib_t = np.unravel_index(int(np.argmax(np.abs(wb_ana))), wb_ana.shape)
+    g_ana_u = float(wb_ana[ab_t, ib_t])
+    assert abs(g_ana_u) > 1.0e-3, f"Gradien UHF uji terlalu kecil: {g_ana_u}"
+
     K_b = np.zeros((nbf_u, nbf_u))
-    K_b[nb + 0, nb - 1] = 1.0
-    K_b[nb - 1, nb + 0] = -1.0
+    K_b[nb + ab_t, ib_t] = 1.0
+    K_b[ib_t, nb + ab_t] = -1.0
     ep_u, _, _, _, _ = eval_u_energy_and_grad(Ca_b, Cb_b @ expm(h * K_b))
     em_u, _, _, _, _ = eval_u_energy_and_grad(Ca_b, Cb_b @ expm(-h * K_b))
     g_fd_u = (ep_u - em_u) / (2.0 * h)
-    g_ana_u = float(wb_ana[0, nb - 1])
     dw_u = abs(g_fd_u - g_ana_u)
-    print(f"[k-OOMP2 UHF FD] kappa=1.45 | FD={g_fd_u:.10e} | Ana={g_ana_u:.10e} | |dw|={dw_u:.2e}")
+    print(f"[k-OOMP2 UHF FD] (a={ab_t},i={ib_t}) | FD={g_fd_u:.10e} | Ana={g_ana_u:.10e} | |dw|={dw_u:.2e}")
     assert dw_u < 1.0e-8
 
     res_u_k = M.run_df_kappa_omp2_uhf(H_u, S_u, v_u, B_u, scf_u.C_alpha, scf_u.C_beta, na, nb, kappa=1.45, grad_tol=1e-6)
@@ -132,6 +137,27 @@ def test_kappa_omp2_analytic_grad_and_large_kappa_limit():
         f"|E(k=200)-E(OMP2)|={d_u_lim:.2e}"
     )
     assert res_u_k.converged and res_u_inf.converged and d_u_lim < 1.0e-9
+
+    # Uji kontinuitas cabang L'Hopital pada CH4 (Td, HOMO t2 degenerasi lipat-3)
+    d = 0.629118
+    ch4 = mshqc.Molecule(0, 1)
+    ch4.add_atom("C", 0.0, 0.0, 0.0, units="angstrom")
+    ch4.add_atom("H", d, d, d, units="angstrom")
+    ch4.add_atom("H", d, -d, -d, units="angstrom")
+    ch4.add_atom("H", -d, d, -d, units="angstrom")
+    ch4.add_atom("H", -d, -d, d, units="angstrom")
+    b_c = mshqc.BasisSet("cc-pVDZ", ch4)
+    a_c = mshqc.BasisSet("cc-pVDZ-RI", ch4)
+    i_c = mshqc.IntegralEngine(ch4, b_c)
+    Hc = i_c.compute_kinetic() + i_c.compute_nuclear()
+    Sc = i_c.compute_overlap()
+    vc = float(ch4.nuclear_repulsion_energy())
+    Bc = K.compute_df_ao_factor(ch4, b_c, a_c, 1e-10, False, False)
+    scf_c = M.run_df_rhf(Hc, Sc, vc, Bc, 5, energy_tol=1e-11, density_tol=1e-11)
+    assert abs(scf_c.orbital_energies_alpha[4] - scf_c.orbital_energies_alpha[2]) < 1e-8
+    res_ch4 = M.run_df_kappa_omp2_rhf(Hc, vc, Bc, scf_c.C_alpha, 5, kappa=1.45, grad_tol=1e-7)
+    assert res_ch4.converged and np.isfinite(res_ch4.energy_total)
+    print(f"[k-OOMP2 CH4 Td] Triply-degenerate HOMO converged: E={res_ch4.energy_total:.10f} ({res_ch4.iterations} it)")
 
 
 def test_telemetry_callback_checkpoint_and_run_api():
@@ -164,7 +190,7 @@ def test_telemetry_callback_checkpoint_and_run_api():
         H, S, v_nn, B_ao, no, energy_tol=1e-10, density_tol=1e-10,
         callback=lambda rec: scf_trace.append(rec),
     )
-    omp_res = M.run_df_kappa_omp2_rhf(
+    M.run_df_kappa_omp2_rhf(
         H, v_nn, B_ao, scf_res.C_alpha, no, kappa=1.45, grad_tol=1e-6,
         callback=lambda rec: omp_trace.append(rec),
     )
@@ -189,4 +215,4 @@ def test_telemetry_callback_checkpoint_and_run_api():
 if __name__ == "__main__":
     test_kappa_omp2_analytic_grad_and_large_kappa_limit()
     test_telemetry_callback_checkpoint_and_run_api()
-    print("[PASS] Semua validasi Tahap 6 Thin-Core lulus!")
+    print("[PASS] Semua validasi Tahap 6 (Hardened) lulus!")

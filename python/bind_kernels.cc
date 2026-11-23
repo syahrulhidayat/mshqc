@@ -10,7 +10,9 @@
 #include <nanobind/stl/tuple.h>
 
 #include "mshqc/basis.h"
+#ifndef MSHQC_THIN_CORE_BUILD
 #include "mshqc/core/fock_builder.h"
+#endif
 #include "mshqc/core/molecule.h"
 #include "mshqc/integrals/packed_ao_utils.h"
 #include "mshqc/ints/integrals.h"
@@ -48,6 +50,7 @@ void bind_kernels_module(nb::module_& parent) {
           nb::arg("mol"), nb::arg("primary_basis"), nb::arg("aux_basis"),
           nb::arg("cutoff") = 1e-10, nb::arg("save_hdf5") = false, nb::arg("verbose") = false);
 
+#ifndef MSHQC_THIN_CORE_BUILD
     nb::class_<FockBuilder>(k, "FockBuilder")
         .def("__init__",
              [](FockBuilder* self,
@@ -71,6 +74,7 @@ void bind_kernels_module(nb::module_& parent) {
                  return std::make_pair(std::move(F_alpha), std::move(F_beta));
              },
              nb::arg("P_alpha"), nb::arg("P_beta"));
+#endif
 
     // --- Shared AO/MO & RHF Primitives ---
     k.def("is_packed_ao", &integrals::is_packed_ao_matrix, nb::arg("L_mat"), nb::arg("nbf"));

@@ -3,7 +3,7 @@
 """
 Gradien nuklir analitik Thin-Core di Python untuk:
   - DF-RHF, DF-UHF, DF-ROHF
-  - DF-OMP2, DF-SCS-OMP2, DF-SOS-OMP2 (RHF & UHF)
+  - DF-OMP2, DF-SCS-OMP2, DF-SOS-OMP2, dan DF-kappa-OOMP2 (RHF & UHF)
 Seluruh logika densitas 1-RDM/2-RDM ditulis bersih di NumPy/BLAS, sedangkan kontraksi
 turunan integral `libcint` didelegasikan langsung ke C++20 `K.eval_df_nuclear_gradient`.
 """
@@ -14,6 +14,12 @@ from typing import Optional, Tuple
 import numpy as np
 
 from .._mshqc import kernels as K
+from .kappa_omp2 import (
+    _eval_kappa_omp2_rhf_data,
+    _eval_kappa_omp2_uhf_data,
+    run_df_kappa_omp2_rhf,
+    run_df_kappa_omp2_uhf,
+)
 from .omp_hybrid import HybridOMPResult, run_df_omp_rhf, run_df_omp_uhf
 from .scf_hybrid import HybridSCFResult, build_sad_guess, run_df_rhf, run_df_rohf, run_df_uhf
 from .tensors import t2_to_4d
@@ -168,7 +174,7 @@ def _build_omp2_f_blocks(
     X_3d: np.ndarray,
     no: int,
 ) -> np.ndarray:
-    """Bangun matriks Lagrangian MO tergeneralisasi simetris (F_1e_sep + F_conn) untuk DF-OMP2."""
+    """Bangun matriks Lagrangian MO tergeneralisasi simetris (F_1e_sep + F_conn)."""
     nbf = F_HF_mo.shape[0]
     F_sep = np.zeros((nbf, nbf), dtype=np.float64)
     F_sep[:no, :no] = F_HF_mo[:no, :no] + F_HF_mo[:no, :no] @ g_oo + G_gamma_mo[:no, :no]
@@ -187,46 +193,28 @@ def _build_omp2_f_blocks(
     return F_sep + F_conn
 
 
-def eval_df_omp2_gradient_rhf(
+def _finalize_omp2_family_grad_rhf(
     mol,
     primary_basis,
     aux_basis,
-    H_core: np.ndarray,
     B_ao: np.ndarray,
-    omp_res: HybridOMPResult,
-    c_os: float = 1.0,
-    c_ss: float = 1.0,
-    cutoff: float = 1.0e-12,
+    C: np.ndarray,
+    F_ao: np.ndarray,
+    B_oo: np.ndarray,
+    B_ov: np.ndarray,
+    B_vv: np.ndarray,
+    g_oo: np.ndarray,
+    g_vv: np.ndarray,
+    X_mat: np.ndarray,
+    no: int,
+    cutoff: float,
 ) -> np.ndarray:
-    """
-    Evaluasi gradien nuklir analitik DF-OMP2 / SCS-OMP2 / SOS-OMP2 (RHF, all-electron).
-    Identik secara matematis dengan `OMP2::build_df_gradient_data()` di C++.
-    """
-    if getattr(omp_res, "n_frozen", 0) > 0:
-        raise ValueError("Gradien analitik DF-OMP2 mensyaratkan all-electron (n_frozen == 0).")
-
-    nbf = int(primary_basis.n_basis_functions())
-    no = int(omp_res.n_occ_alpha)
+    """Perakitan bersama (P_eff, W_eff, Gamma_3c, gamma_2c) -> gradien nuklir RHF OMP2/SCS/SOS/kappa."""
+    nbf = C.shape[0]
     nv = nbf - no
     n_aux = B_ao.shape[1]
-
-    C_in = np.ascontiguousarray(omp_res.C_alpha, dtype=np.float64)
-    C_occ_in = np.ascontiguousarray(C_in[:, :no])
-    J, K_mat = K.build_jk_3c_rhf(B_ao, C_occ_in, nbf)
-    F_ao = H_core + J - K_mat
-
-    C, eps, _ = K.semicanonicalize_subspaces(C_in, F_ao, no)
     C_o = np.ascontiguousarray(C[:, :no])
     C_v = np.ascontiguousarray(C[:, no:])
-    B_oo, B_ov, B_vv = K.transform_3c_mo_blocks(B_ao, C_o, C_v, nbf)
-
-    _, _, T2 = K.eval_rmp2_df(B_ov, eps[:no], eps[no:])
-    g_oo, g_vv = K.eval_omp2_1rdm_rhf(T2, no, nv, c_os=c_os, c_ss=c_ss)
-
-    # Amplitudo efektif T_eff -> X_a (no*nv x n_aux) dalam 1 BLAS DGEMM
-    T2_4d = t2_to_4d(T2, no, no, nv, nv)
-    T_eff = (c_os + c_ss) * T2_4d - c_ss * T2_4d.transpose(0, 1, 3, 2)
-    X_mat = T_eff.transpose(0, 2, 1, 3).reshape(no * nv, no * nv) @ B_ov
 
     B_oo_3d = B_oo.T.reshape(n_aux, no, no)
     B_ov_3d = B_ov.T.reshape(n_aux, no, nv)
@@ -247,7 +235,6 @@ def eval_df_omp2_gradient_rhf(
     )
     W_eff_ao = np.ascontiguousarray(2.0 * (C @ F_tot_mo @ C.T), dtype=np.float64)
 
-    # Perakitan Gamma_3c secara chunked (ramah RAM)
     c_ref = K.contract_ao_sym(B_ao, P_ref_tot, nbf)
     c_corr = K.contract_ao_sym(B_ao, P_corr_tot, nbf)
     Gamma_3c = np.empty((nbf * nbf, n_aux), dtype=np.float64)
@@ -273,67 +260,38 @@ def eval_df_omp2_gradient_rhf(
     )
 
 
-def eval_df_omp2_gradient_uhf(
+def _finalize_omp2_family_grad_uhf(
     mol,
     primary_basis,
     aux_basis,
-    H_core: np.ndarray,
     B_ao: np.ndarray,
-    omp_res: HybridOMPResult,
-    c_os: float = 1.0,
-    c_ss: float = 1.0,
-    cutoff: float = 1.0e-12,
+    Ca: np.ndarray,
+    Cb: np.ndarray,
+    Fa_ao: np.ndarray,
+    Fb_ao: np.ndarray,
+    Boo_a: np.ndarray,
+    Bov_a: np.ndarray,
+    Bvv_a: np.ndarray,
+    Boo_b: np.ndarray,
+    Bov_b: np.ndarray,
+    Bvv_b: np.ndarray,
+    g_oo_a: np.ndarray,
+    g_vv_a: np.ndarray,
+    g_oo_b: np.ndarray,
+    g_vv_b: np.ndarray,
+    X_a: np.ndarray,
+    X_b: np.ndarray,
+    na: int,
+    nb: int,
+    cutoff: float,
 ) -> np.ndarray:
-    """
-    Evaluasi gradien nuklir analitik DF-OMP2 / SCS-OMP2 / SOS-OMP2 (UHF, all-electron).
-    Identik secara matematis dengan `OMP2::build_df_gradient_data()` di C++.
-    """
-    if getattr(omp_res, "n_frozen", 0) > 0:
-        raise ValueError("Gradien analitik DF-OMP2 mensyaratkan all-electron (n_frozen == 0).")
-
-    nbf = int(primary_basis.n_basis_functions())
-    na, nb = int(omp_res.n_occ_alpha), int(omp_res.n_occ_beta)
+    """Perakitan bersama (P_eff, W_eff, Gamma_3c, gamma_2c) -> gradien nuklir UHF OMP2/SCS/SOS/kappa."""
+    nbf = Ca.shape[0]
     va, vb = nbf - na, nbf - nb
     n_aux = B_ao.shape[1]
     has_b = (nb > 0 and vb > 0)
-
-    Ca_in = np.ascontiguousarray(omp_res.C_alpha, dtype=np.float64)
-    Cb_in = np.ascontiguousarray(omp_res.C_beta, dtype=np.float64)
-    J, Ka, Kb = K.build_jk_3c_uhf(B_ao, np.ascontiguousarray(Ca_in[:, :na]), np.ascontiguousarray(Cb_in[:, :nb]), nbf)
-    Fa_ao = H_core + J - Ka
-    Fb_ao = H_core + J - Kb
-
-    Ca, eps_a, _ = K.semicanonicalize_subspaces(Ca_in, Fa_ao, na)
-    Cb, eps_b, _ = K.semicanonicalize_subspaces(Cb_in, Fb_ao, nb)
     Ca_o, Ca_v = np.ascontiguousarray(Ca[:, :na]), np.ascontiguousarray(Ca[:, na:])
     Cb_o, Cb_v = np.ascontiguousarray(Cb[:, :nb]), np.ascontiguousarray(Cb[:, nb:])
-
-    Boo_a, Bov_a, Bvv_a, Boo_b, Bov_b, Bvv_b = K.transform_3c_mo_blocks_uhf(
-        B_ao, Ca_o, Ca_v, Cb_o, Cb_v, nbf
-    )
-    _, _, _, T2_aa, T2_bb, T2_ab = K.eval_ump2_df(
-        Bov_a, Bov_b, eps_a[:na], eps_a[na:], eps_b[:nb], eps_b[nb:]
-    )
-    g_oo_a, g_vv_a, g_oo_b, g_vv_b = K.eval_omp2_1rdm_uhf(
-        T2_aa, T2_bb, T2_ab, na, va, nb, vb, c_os=c_os, c_ss=c_ss
-    )
-
-    # Kontraksi 2-RDM terhubung X_a & X_b via BLAS DGEMM
-    X_a = np.zeros((na * va, n_aux), dtype=np.float64)
-    if na > 1 and va > 0:
-        Taa_4d = t2_to_4d(T2_aa, na, na, va, va)
-        X_a += c_ss * (Taa_4d.transpose(0, 2, 1, 3).reshape(na * va, na * va) @ Bov_a)
-    if has_b and na > 0 and va > 0:
-        Tab_4d = t2_to_4d(T2_ab, na, nb, va, vb)
-        X_a += c_os * (Tab_4d.transpose(0, 2, 1, 3).reshape(na * va, nb * vb) @ Bov_b)
-
-    X_b = np.zeros((nb * vb, n_aux), dtype=np.float64)
-    if has_b:
-        if nb > 1:
-            Tbb_4d = t2_to_4d(T2_bb, nb, nb, vb, vb)
-            X_b += c_ss * (Tbb_4d.transpose(0, 2, 1, 3).reshape(nb * vb, nb * vb) @ Bov_b)
-        if na > 0 and va > 0:
-            X_b += c_os * (Tab_4d.transpose(1, 3, 0, 2).reshape(nb * vb, na * va) @ Bov_a)
 
     Boo_a_3d = Boo_a.T.reshape(n_aux, na, na)
     Bov_a_3d = Bov_a.T.reshape(n_aux, na, va)
@@ -407,6 +365,205 @@ def eval_df_omp2_gradient_uhf(
     )
 
 
+def eval_df_omp2_gradient_rhf(
+    mol,
+    primary_basis,
+    aux_basis,
+    H_core: np.ndarray,
+    B_ao: np.ndarray,
+    omp_res: HybridOMPResult,
+    c_os: float = 1.0,
+    c_ss: float = 1.0,
+    cutoff: float = 1.0e-12,
+) -> np.ndarray:
+    """Evaluasi gradien nuklir analitik DF-OMP2 / SCS-OMP2 / SOS-OMP2 (RHF, all-electron)."""
+    if getattr(omp_res, "n_frozen", 0) > 0:
+        raise ValueError("Gradien analitik DF-OMP2 mensyaratkan all-electron (n_frozen == 0).")
+
+    nbf = int(primary_basis.n_basis_functions())
+    no = int(omp_res.n_occ_alpha)
+    nv = nbf - no
+
+    C_in = np.ascontiguousarray(omp_res.C_alpha, dtype=np.float64)
+    J, K_mat = K.build_jk_3c_rhf(B_ao, np.ascontiguousarray(C_in[:, :no]), nbf)
+    F_ao = H_core + J - K_mat
+    C, eps, _ = K.semicanonicalize_subspaces(C_in, F_ao, no)
+    B_oo, B_ov, B_vv = K.transform_3c_mo_blocks(
+        B_ao, np.ascontiguousarray(C[:, :no]), np.ascontiguousarray(C[:, no:]), nbf
+    )
+
+    _, _, T2 = K.eval_rmp2_df(B_ov, eps[:no], eps[no:])
+    g_oo, g_vv = K.eval_omp2_1rdm_rhf(T2, no, nv, c_os=c_os, c_ss=c_ss)
+    T2_4d = t2_to_4d(T2, no, no, nv, nv)
+    T_eff = (c_os + c_ss) * T2_4d - c_ss * T2_4d.transpose(0, 1, 3, 2)
+    X_mat = T_eff.transpose(0, 2, 1, 3).reshape(no * nv, no * nv) @ B_ov
+
+    return _finalize_omp2_family_grad_rhf(
+        mol, primary_basis, aux_basis, B_ao, C, F_ao, B_oo, B_ov, B_vv, g_oo, g_vv, X_mat, no, cutoff
+    )
+
+
+def eval_df_omp2_gradient_uhf(
+    mol,
+    primary_basis,
+    aux_basis,
+    H_core: np.ndarray,
+    B_ao: np.ndarray,
+    omp_res: HybridOMPResult,
+    c_os: float = 1.0,
+    c_ss: float = 1.0,
+    cutoff: float = 1.0e-12,
+) -> np.ndarray:
+    """Evaluasi gradien nuklir analitik DF-OMP2 / SCS-OMP2 / SOS-OMP2 (UHF, all-electron)."""
+    if getattr(omp_res, "n_frozen", 0) > 0:
+        raise ValueError("Gradien analitik DF-OMP2 mensyaratkan all-electron (n_frozen == 0).")
+
+    nbf = int(primary_basis.n_basis_functions())
+    na, nb = int(omp_res.n_occ_alpha), int(omp_res.n_occ_beta)
+    va, vb = nbf - na, nbf - nb
+    n_aux = B_ao.shape[1]
+    has_b = (nb > 0 and vb > 0)
+
+    Ca_in = np.ascontiguousarray(omp_res.C_alpha, dtype=np.float64)
+    Cb_in = np.ascontiguousarray(omp_res.C_beta, dtype=np.float64)
+    J, Ka, Kb = K.build_jk_3c_uhf(B_ao, np.ascontiguousarray(Ca_in[:, :na]), np.ascontiguousarray(Cb_in[:, :nb]), nbf)
+    Fa_ao, Fb_ao = H_core + J - Ka, H_core + J - Kb
+
+    Ca, eps_a, _ = K.semicanonicalize_subspaces(Ca_in, Fa_ao, na)
+    Cb, eps_b, _ = K.semicanonicalize_subspaces(Cb_in, Fb_ao, nb)
+    Boo_a, Bov_a, Bvv_a, Boo_b, Bov_b, Bvv_b = K.transform_3c_mo_blocks_uhf(
+        B_ao,
+        np.ascontiguousarray(Ca[:, :na]), np.ascontiguousarray(Ca[:, na:]),
+        np.ascontiguousarray(Cb[:, :nb]), np.ascontiguousarray(Cb[:, nb:]),
+        nbf,
+    )
+    _, _, _, T2_aa, T2_bb, T2_ab = K.eval_ump2_df(
+        Bov_a, Bov_b, eps_a[:na], eps_a[na:], eps_b[:nb], eps_b[nb:]
+    )
+    g_oo_a, g_vv_a, g_oo_b, g_vv_b = K.eval_omp2_1rdm_uhf(
+        T2_aa, T2_bb, T2_ab, na, va, nb, vb, c_os=c_os, c_ss=c_ss
+    )
+
+    X_a = np.zeros((na * va, n_aux), dtype=np.float64)
+    if na > 1 and va > 0:
+        Taa_4d = t2_to_4d(T2_aa, na, na, va, va)
+        X_a += c_ss * (Taa_4d.transpose(0, 2, 1, 3).reshape(na * va, na * va) @ Bov_a)
+    if has_b and na > 0 and va > 0:
+        Tab_4d = t2_to_4d(T2_ab, na, nb, va, vb)
+        X_a += c_os * (Tab_4d.transpose(0, 2, 1, 3).reshape(na * va, nb * vb) @ Bov_b)
+
+    X_b = np.zeros((nb * vb, n_aux), dtype=np.float64)
+    if has_b:
+        if nb > 1:
+            Tbb_4d = t2_to_4d(T2_bb, nb, nb, vb, vb)
+            X_b += c_ss * (Tbb_4d.transpose(0, 2, 1, 3).reshape(nb * vb, nb * vb) @ Bov_b)
+        if na > 0 and va > 0:
+            X_b += c_os * (Tab_4d.transpose(1, 3, 0, 2).reshape(nb * vb, na * va) @ Bov_a)
+
+    return _finalize_omp2_family_grad_uhf(
+        mol, primary_basis, aux_basis, B_ao, Ca, Cb, Fa_ao, Fb_ao,
+        Boo_a, Bov_a, Bvv_a, Boo_b, Bov_b, Bvv_b,
+        g_oo_a, g_vv_a, g_oo_b, g_vv_b, X_a, X_b, na, nb, cutoff,
+    )
+
+
+def eval_df_kappa_omp2_gradient_rhf(
+    mol,
+    primary_basis,
+    aux_basis,
+    H_core: np.ndarray,
+    B_ao: np.ndarray,
+    omp_res: HybridOMPResult,
+    kappa: float = 1.45,
+    c_os: float = 1.0,
+    c_ss: float = 1.0,
+    cutoff: float = 1.0e-12,
+) -> np.ndarray:
+    """Evaluasi gradien nuklir analitik eksak DF-kappa-OOMP2 (RHF, all-electron, 0 C++ baru)."""
+    if getattr(omp_res, "n_frozen", 0) > 0:
+        raise ValueError("Gradien analitik DF-kappa-OOMP2 mensyaratkan all-electron (n_frozen == 0).")
+
+    nbf = int(primary_basis.n_basis_functions())
+    no = int(omp_res.n_occ_alpha)
+    nv = nbf - no
+
+    C_in = np.ascontiguousarray(omp_res.C_alpha, dtype=np.float64)
+    J, K_mat = K.build_jk_3c_rhf(B_ao, np.ascontiguousarray(C_in[:, :no]), nbf)
+    F_ao = H_core + J - K_mat
+    C, eps, _ = K.semicanonicalize_subspaces(C_in, F_ao, no)
+    B_oo, B_ov, B_vv = K.transform_3c_mo_blocks(
+        B_ao, np.ascontiguousarray(C[:, :no]), np.ascontiguousarray(C[:, no:]), nbf
+    )
+
+    _, g_oo, g_vv, _, T_tilde_eff = _eval_kappa_omp2_rhf_data(
+        B_ov, eps[:no], eps[no:], kappa=kappa, c_os=c_os, c_ss=c_ss
+    )
+    X_mat = T_tilde_eff.transpose(0, 2, 1, 3).reshape(no * nv, no * nv) @ B_ov
+    return _finalize_omp2_family_grad_rhf(
+        mol, primary_basis, aux_basis, B_ao, C, F_ao, B_oo, B_ov, B_vv, g_oo, g_vv, X_mat, no, cutoff
+    )
+
+
+def eval_df_kappa_omp2_gradient_uhf(
+    mol,
+    primary_basis,
+    aux_basis,
+    H_core: np.ndarray,
+    B_ao: np.ndarray,
+    omp_res: HybridOMPResult,
+    kappa: float = 1.45,
+    c_os: float = 1.0,
+    c_ss: float = 1.0,
+    cutoff: float = 1.0e-12,
+) -> np.ndarray:
+    """Evaluasi gradien nuklir analitik eksak DF-kappa-OOMP2 (UHF, all-electron, 0 C++ baru)."""
+    if getattr(omp_res, "n_frozen", 0) > 0:
+        raise ValueError("Gradien analitik DF-kappa-OOMP2 mensyaratkan all-electron (n_frozen == 0).")
+
+    nbf = int(primary_basis.n_basis_functions())
+    na, nb = int(omp_res.n_occ_alpha), int(omp_res.n_occ_beta)
+    va, vb = nbf - na, nbf - nb
+    n_aux = B_ao.shape[1]
+    has_b = (nb > 0 and vb > 0)
+
+    Ca_in = np.ascontiguousarray(omp_res.C_alpha, dtype=np.float64)
+    Cb_in = np.ascontiguousarray(omp_res.C_beta, dtype=np.float64)
+    J, Ka, Kb = K.build_jk_3c_uhf(B_ao, np.ascontiguousarray(Ca_in[:, :na]), np.ascontiguousarray(Cb_in[:, :nb]), nbf)
+    Fa_ao, Fb_ao = H_core + J - Ka, H_core + J - Kb
+
+    Ca, eps_a, _ = K.semicanonicalize_subspaces(Ca_in, Fa_ao, na)
+    Cb, eps_b, _ = K.semicanonicalize_subspaces(Cb_in, Fb_ao, nb)
+    Boo_a, Bov_a, Bvv_a, Boo_b, Bov_b, Bvv_b = K.transform_3c_mo_blocks_uhf(
+        B_ao,
+        np.ascontiguousarray(Ca[:, :na]), np.ascontiguousarray(Ca[:, na:]),
+        np.ascontiguousarray(Cb[:, :nb]), np.ascontiguousarray(Cb[:, nb:]),
+        nbf,
+    )
+
+    _, g_oo_a, g_vv_a, g_oo_b, g_vv_b, Taa_4d, Tbb_4d, Tab_4d = _eval_kappa_omp2_uhf_data(
+        Bov_a, Bov_b, eps_a[:na], eps_a[na:], eps_b[:nb], eps_b[nb:], kappa=kappa, c_os=c_os, c_ss=c_ss
+    )
+
+    X_a = np.zeros((na * va, n_aux), dtype=np.float64)
+    if na > 1 and va > 0 and c_ss != 0.0:
+        X_a += c_ss * (Taa_4d.transpose(0, 2, 1, 3).reshape(na * va, na * va) @ Bov_a)
+    if has_b and na > 0 and va > 0 and c_os != 0.0:
+        X_a += c_os * (Tab_4d.transpose(0, 2, 1, 3).reshape(na * va, nb * vb) @ Bov_b)
+
+    X_b = np.zeros((nb * vb, n_aux), dtype=np.float64)
+    if has_b:
+        if nb > 1 and c_ss != 0.0:
+            X_b += c_ss * (Tbb_4d.transpose(0, 2, 1, 3).reshape(nb * vb, nb * vb) @ Bov_b)
+        if na > 0 and va > 0 and c_os != 0.0:
+            X_b += c_os * (Tab_4d.transpose(1, 3, 0, 2).reshape(nb * vb, na * va) @ Bov_a)
+
+    return _finalize_omp2_family_grad_uhf(
+        mol, primary_basis, aux_basis, B_ao, Ca, Cb, Fa_ao, Fb_ao,
+        Boo_a, Bov_a, Bvv_a, Boo_b, Bov_b, Bvv_b,
+        g_oo_a, g_vv_a, g_oo_b, g_vv_b, X_a, X_b, na, nb, cutoff,
+    )
+
+
 def compute_df_gradient(
     mol,
     method: str = "omp2",
@@ -417,10 +574,11 @@ def compute_df_gradient(
     orb_grad_tol: float = 1.0e-10,
     basis_dir: str = "data/basis",
     warm_start: Optional[dict] = None,
+    kappa: float = 1.45,
 ) -> Tuple[float, np.ndarray]:
     """
     One-liner Thin-Core gradien nuklir analitik untuk DF-RHF, DF-UHF, DF-ROHF,
-    DF-OMP2, DF-SCS-OMP2, dan DF-SOS-OMP2 (100% bebas legacy C++).
+    DF-OMP2, DF-SCS-OMP2, DF-SOS-OMP2, dan DF-kappa-OOMP2 (100% bebas legacy C++).
     """
     import mshqc
 
@@ -445,10 +603,7 @@ def compute_df_gradient(
 
     ref = reference.lower()
     if ref in ("", "auto"):
-        if m in ("rhf", "uhf", "rohf"):
-            ref = m
-        else:
-            ref = "rhf" if mult == 1 else "uhf"
+        ref = m if m in ("rhf", "uhf", "rohf") else ("rhf" if mult == 1 else "uhf")
 
     P_sad = build_sad_guess(mol, basis)
     ws = warm_start if warm_start is not None else {}
@@ -488,10 +643,30 @@ def compute_df_gradient(
             )
         return scf_res.energy_total, eval_df_scf_gradient_uhf(mol, basis, aux_basis, scf_res, cutoff=threshold)
 
+    if m in ("kappa-omp2", "k-omp2", "kappa-oomp2", "koomp2"):
+        if ref == "rhf":
+            omp_res = run_df_kappa_omp2_rhf(
+                H_core, v_nn, B_ao, scf_res.C_alpha, na, kappa=kappa,
+                grad_tol=orb_grad_tol, energy_tol=threshold, max_iter=80,
+            )
+            grad = eval_df_kappa_omp2_gradient_rhf(
+                mol, basis, aux_basis, H_core, B_ao, omp_res, kappa=kappa, cutoff=threshold
+            )
+            return omp_res.energy_total, grad
+        omp_res = run_df_kappa_omp2_uhf(
+            H_core, S_ovlp, v_nn, B_ao, scf_res.C_alpha, scf_res.C_beta, na, nb, kappa=kappa,
+            grad_tol=orb_grad_tol, energy_tol=threshold, max_iter=80,
+        )
+        grad = eval_df_kappa_omp2_gradient_uhf(
+            mol, basis, aux_basis, H_core, B_ao, omp_res, kappa=kappa, cutoff=threshold
+        )
+        return omp_res.energy_total, grad
+
     omp_params = {
         "omp2": (1.0, 1.0),
         "scs-omp2": (1.2, 1.0 / 3.0),
         "sos-omp2": (1.3, 0.0),
+        "lt-sos-omp2": (1.3, 0.0),
     }
     if m not in omp_params:
         raise ValueError(f"Gradien analitik DF belum mendukung metode: {method}")

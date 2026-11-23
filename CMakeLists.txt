@@ -291,19 +291,19 @@ endif()
 # ==============================================================================
 
 
-file(GLOB_RECURSE SRC_CORE CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/core/*.cc")
-file(GLOB_RECURSE SRC_INTS CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/ints/*.cc")
-file(GLOB_RECURSE SRC_UTILS CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/utils/*.cc")
-file(GLOB_RECURSE SRC_KERNELS CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/kernels/*.cc")
-set(SRC_INTEGRALS_CORE
+# [INJECTED_THIN_CORE_STAGE7_IRREDUCIBLE]
+set(SRC_CORE_MINIMAL
+    "${CMAKE_SOURCE_DIR}/src/core/molecule.cc"
+    "${CMAKE_SOURCE_DIR}/src/core/basis.cc"
+    "${CMAKE_SOURCE_DIR}/src/ints/integrals.cc"
     "${CMAKE_SOURCE_DIR}/src/integrals/df_eri.cc"
     "${CMAKE_SOURCE_DIR}/src/integrals/cholesky_eri.cc"
 )
+file(GLOB_RECURSE SRC_KERNELS CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/kernels/*.cc")
+file(GLOB_RECURSE SRC_UTILS CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/utils/*.cc")
 
 set(ALL_SOURCES
-    ${SRC_CORE}
-    ${SRC_INTS}
-    ${SRC_INTEGRALS_CORE}
+    ${SRC_CORE_MINIMAL}
     ${SRC_KERNELS}
 )
 
@@ -317,13 +317,15 @@ if(NOT MSHQC_THIN_CORE)
     file(GLOB_RECURSE SRC_GRADIENT CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/gradient/*.cc")
     file(GLOB_RECURSE SRC_SYMMETRY CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/symmetry/*.cc")
     list(APPEND ALL_SOURCES
-        ${SRC_UTILS}
+        "${CMAKE_SOURCE_DIR}/src/core/fock_builder.cc"
+        "${CMAKE_SOURCE_DIR}/src/ints/screening.cc"
         "${CMAKE_SOURCE_DIR}/src/integrals/eri_transformer.cc"
+        ${SRC_UTILS}
         ${SRC_SCF} ${SRC_MP} ${SRC_GRADIENT} ${SRC_SYMMETRY}
     )
     message(STATUS "mshqc build profile: FULL (Thin-Core + Legacy C++ Solvers)")
 else()
-    message(STATUS "mshqc build profile: THIN-CORE ONLY (Minimal C++20 Kernels + Python Orchestration)")
+    message(STATUS "mshqc build profile: THIN-CORE ONLY (Irreducible 8 C++20 Core Files + Python Orchestration)")
 endif()
 
 add_library(mshqc STATIC ${ALL_SOURCES})

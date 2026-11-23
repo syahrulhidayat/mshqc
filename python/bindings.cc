@@ -1,16 +1,8 @@
 // Copyright 2026 Muhamad Syahrul Hidayat
-//
-// Licensed under the Apache License, Version 2.0 (the "License");
-// you may not use this file except in compliance with the License.
-// You may obtain a copy of the License at
-//
-//     http://www.apache.org/licenses/LICENSE-2.0
-//
-// Unless required by applicable law or agreed to in writing, software
-// distributed under the License is distributed on an "AS IS" BASIS,
-// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-// See the License for the specific language governing permissions and
-// limitations under the License.#include <nanobind/nanobind.h>
+// Licensed under the Apache License, Version 2.0
+// [INJECTED_THIN_CORE_STAGE7_IRREDUCIBLE_BINDINGS]
+
+#include <nanobind/nanobind.h>
 #include <nanobind/eigen/dense.h>
 #include <nanobind/stl/array.h>
 #include <nanobind/stl/shared_ptr.h>
@@ -19,10 +11,8 @@
 #include <nanobind/stl/vector.h>
 
 #include "mshqc/basis.h"
-#include "mshqc/core/fock_builder.h"
 #include "mshqc/core/molecule.h"
 #include "mshqc/integrals/cholesky_eri.h"
-#include "mshqc/integrals/screening.h"
 #include "mshqc/ints/integrals.h"
 #include "mshqc/utils/runtime_env.h"
 
@@ -39,7 +29,7 @@ void bind_legacy_module(nanobind::module_& m, nanobind::class_<Molecule>& mol_cl
 
 NB_MODULE(_mshqc, m) {
     mshqc_auto_tune::initialize_hpc_environment();
-    m.doc() = "MSHQC: Thin-Core C++20 / Python Quantum Chemistry Engine";
+    m.doc() = "MSHQC: Irreducible Thin-Core C++20 / Python Quantum Chemistry Engine";
 
     nb::class_<ERITensor>(m, "ERITensor")
         .def("size", &ERITensor::size)
@@ -164,29 +154,6 @@ NB_MODULE(_mshqc, m) {
         .def("reconstruct_full", &CholeskyERI::reconstruct_full)
         .def("is_decomposed", &CholeskyERI::is_decomposed)
         .def("decomposed", &CholeskyERI::decomposed);
-
-    nb::class_<ShellPair>(m, "ShellPair")
-        .def_rw("sh_a", &ShellPair::sh_a)
-        .def_rw("sh_b", &ShellPair::sh_b)
-        .def_rw("max_val", &ShellPair::max_val)
-        .def_prop_rw(
-            "center",
-            [](const ShellPair& sp) { return std::make_tuple(sp.center(0), sp.center(1), sp.center(2)); },
-            [](ShellPair& sp, const std::tuple<double, double, double>& t) {
-                sp.center = Eigen::Vector3d(std::get<0>(t), std::get<1>(t), std::get<2>(t));
-            });
-
-    nb::class_<Screening>(m, "Screening")
-        .def(nb::init<const BasisSet&>(), nb::arg("basis"))
-        .def("reset", &Screening::reset)
-        .def("compute", &Screening::compute, nb::call_guard<nb::gil_scoped_release>(), nb::arg("integrals"))
-        .def("print_stats", &Screening::print_stats, nb::arg("threshold"))
-        .def("get_significant_pairs", &Screening::get_significant_pairs, nb::arg("threshold"))
-        .def("is_significant",
-             static_cast<bool (Screening::*)(int, int, int, int, double) const>(&Screening::is_significant),
-             nb::arg("sh_a"), nb::arg("sh_b"), nb::arg("sh_c"), nb::arg("sh_d"), nb::arg("threshold"))
-        .def("get_schwarz_val", &Screening::get_schwarz_val)
-        .def("max_schwarz", &Screening::max_schwarz);
 
     m.def("bohr_to_angstrom", [](double bohr) { return bohr * 0.529177210903; }, "Convert Bohr to Angstrom");
     m.def("angstrom_to_bohr", [](double angstrom) { return angstrom / 0.529177210903; }, "Convert Angstrom to Bohr");

@@ -379,6 +379,9 @@ class MSHQCCalculator:
     def run_sos_omp2(self, scf_res: Optional[mshqc.SCFResult] = None, grad_thresh: float = 1e-5, max_iter: int = 50):
         return self._run_hybrid_omp_method("sos-omp2", scf_res=scf_res, grad_thresh=grad_thresh, max_iter=max_iter)
 
+    def run_lt_sos_omp2(self, scf_res: Optional[mshqc.SCFResult] = None, grad_thresh: float = 1e-5, max_iter: int = 50):
+        return self._run_hybrid_omp_method("lt-sos-omp2", scf_res=scf_res, grad_thresh=grad_thresh, max_iter=max_iter)
+
     def run_omp25(self, scf_res: Optional[mshqc.SCFResult] = None, grad_thresh: float = 1e-5, max_iter: int = 50):
         return self._run_hybrid_omp_method("omp2.5", scf_res=scf_res, grad_thresh=grad_thresh, max_iter=max_iter)
 
@@ -459,6 +462,8 @@ def run(molecule: Union[mshqc.Molecule, str, List[Tuple]],
             res = calc.run_scs_omp2(grad_thresh=grad_thresh)
         elif m_low in ("sos-omp2", "sos_omp2"):
             res = calc.run_sos_omp2(grad_thresh=grad_thresh)
+        elif m_low in ("lt-sos-omp2", "lt_sos_omp2"):
+            res = calc.run_lt_sos_omp2(grad_thresh=grad_thresh)
         elif m_low in ("omp2.5", "omp25", "omp2_5"):
             res = calc.run_omp25(grad_thresh=grad_thresh)
         elif m_low in ("kappa-omp2", "kappa_omp2", "k-omp2", "kappa-oomp2"):

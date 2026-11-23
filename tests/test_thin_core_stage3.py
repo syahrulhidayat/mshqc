@@ -113,15 +113,22 @@ def test_thin_core_analytic_df_gradients():
 def test_report_thin_core_vs_legacy_profile():
     root = Path(__file__).resolve().parent.parent
     core_files = (
-        list((root / "src" / "core").glob("*.cc"))
-        + list((root / "src" / "ints").glob("*.cc"))
-        + [root / "src" / "integrals" / "df_eri.cc", root / "src" / "integrals" / "cholesky_eri.cc"]
+        [
+            root / "src" / "core" / "molecule.cc",
+            root / "src" / "core" / "basis.cc",
+            root / "src" / "ints" / "integrals.cc",
+            root / "src" / "integrals" / "df_eri.cc",
+            root / "src" / "integrals" / "cholesky_eri.cc",
+        ]
         + list((root / "src" / "kernels").glob("*.cc"))
-        + list((root / "src" / "utils").glob("*.cc"))
         + list((root / "include" / "mshqc" / "kernels").glob("*.h"))
     )
-    legacy_dirs = ("scf", "mp", "mp2", "mp3", "gradient", "symmetry")
-    legacy_files = [root / "src" / "integrals" / "eri_transformer.cc"]
+    legacy_dirs = ("scf", "mp", "mp2", "mp3", "gradient", "symmetry", "utils")
+    legacy_files = [
+        root / "src" / "core" / "fock_builder.cc",
+        root / "src" / "ints" / "screening.cc",
+        root / "src" / "integrals" / "eri_transformer.cc",
+    ]
     for d in legacy_dirs:
         legacy_files.extend((root / "src" / d).glob("*.cc"))
 

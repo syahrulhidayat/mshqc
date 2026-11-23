@@ -39,6 +39,8 @@ from .grad_hybrid import (
     eval_df_scf_gradient_rohf,
     eval_df_omp2_gradient_rhf,
     eval_df_omp2_gradient_uhf,
+    eval_df_kappa_omp2_gradient_rhf,
+    eval_df_kappa_omp2_gradient_uhf,
     compute_df_scf_gradient,
     compute_df_gradient,
 )
@@ -49,6 +51,7 @@ from .geom_hybrid import (
     compute_frequencies_thin_core,
 )
 from .kappa_omp2 import run_df_kappa_omp2_rhf, run_df_kappa_omp2_uhf
+from .lt_sos_omp2 import build_laplace_quadrature, run_df_lt_sos_omp2_rhf, run_df_lt_sos_omp2_uhf
 from .checkpoint import save_orbital_checkpoint, load_orbital_checkpoint
 from .interop import run_from_arrays, run_from_pyscf
 
@@ -66,10 +69,12 @@ __all__ = [
     "optimize_orbitals_rhf", "optimize_orbitals_uhf",
     "eval_df_scf_gradient_rhf", "eval_df_scf_gradient_uhf", "eval_df_scf_gradient_rohf",
     "eval_df_omp2_gradient_rhf", "eval_df_omp2_gradient_uhf",
+    "eval_df_kappa_omp2_gradient_rhf", "eval_df_kappa_omp2_gradient_uhf",
     "compute_df_scf_gradient", "compute_df_gradient",
     "ThinCoreGeomResult", "ThinCoreVibResult",
     "optimize_geometry_thin_core", "compute_frequencies_thin_core",
     "run_df_kappa_omp2_rhf", "run_df_kappa_omp2_uhf",
+    "build_laplace_quadrature", "run_df_lt_sos_omp2_rhf", "run_df_lt_sos_omp2_uhf",
     "save_orbital_checkpoint", "load_orbital_checkpoint",
     "run_from_arrays", "run_from_pyscf",
 ]
