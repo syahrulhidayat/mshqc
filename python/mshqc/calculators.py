@@ -94,10 +94,9 @@ class MSHQCCalculator:
     ):
         self.molecule = build_molecule(molecule, charge=charge, multiplicity=multiplicity, units=units)
         self.eri_method = "df" if eri_method is None else eri_method.lower()
-        if self.eri_method not in ("df", "cholesky"):
+        if self.eri_method not in ("df", "cholesky", "exact"):
             raise ValueError(
-                f"mshqc v2.0 Thin-Core mendukung eri_method='df' atau 'cholesky' (diterima: {self.eri_method!r}). "
-                "Untuk mode exact 4D legacy, gunakan tag v1.0.5-thesis-archive atau branch test."
+                f"eri_method harus \'exact\', \'cholesky\', atau \'df\' (diterima: {self.eri_method!r})."
             )
 
         self.use_symmetry = bool(use_symmetry)
@@ -141,6 +140,13 @@ class MSHQCCalculator:
             self._ao_factor_cache = mshqc.kernels.compute_df_ao_factor(
                 self.molecule, self.basis, aux_basis, self.threshold, False, self.print_level > 0
             )
+            return self._ao_factor_cache
+        if self.eri_method == "exact":
+            eri4 = self.integrals.compute_eri()
+            chol = mshqc.CholeskyERI(min(self.threshold * 1.0e-3, 1.0e-12))
+            chol.set_print_level(0)
+            chol.decompose(eri4)
+            self._ao_factor_cache = chol.get_L_mat().copy()
             return self._ao_factor_cache
         chol = mshqc.CholeskyERI(self.basis, self.integrals)
         chol.set_threshold(self.threshold)

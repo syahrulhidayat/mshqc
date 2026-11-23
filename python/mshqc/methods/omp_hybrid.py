@@ -75,6 +75,14 @@ class HybridOMPResult:
     def e_corr_total(self) -> float:
         return self.energy_mp2_corr + self.energy_mp3_corr
 
+    def __str__(self) -> str:
+        st = 'CONVERGED' if self.converged else 'NOT CONVERGED'
+        return (
+            f"<{self.method.upper()} ({self.reference.upper()}) | E_total = {self.energy_total:.10f} Ha | "
+            f"E_corr = {self.e_corr_total:+.10f} Ha | <S^2> = {self.s2:.6f} | "
+            f"grad_rms = {self.grad_rms:.2e} | {self.iterations} iter ({st})>"
+        )
+
 
 def semicanonicalize_subspaces_frozen(
     C: np.ndarray,

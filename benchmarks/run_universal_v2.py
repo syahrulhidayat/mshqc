@@ -192,7 +192,7 @@ def main() -> None:
                 json.dump(res, f)
         sys.exit(0)
 
-    modes = args.modes or (["DF"] if args.tier == "quick" else ["CHOLESKY", "DF"])
+    modes = args.modes or (["DF"] if args.tier == "quick" else ["EXACT", "CHOLESKY", "DF"])
     if args.tier == "quick":
         selected = {k: SYSTEMS[k] for k in QUICK_SUBSET}
     elif args.tier == "standard":

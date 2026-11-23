@@ -200,7 +200,7 @@ jobs:
           python benchmarks/run_heavy_large_v2.py --quick --out /tmp/heavy_quick.json
           python -m pytest tests/ -q 2>&1 | tee 09_full_pytest_discovery_log.txt
 
-      - name: "[9/10] Full Universal Validation v2.0 (26 Standard Systems, cc-pVDZ, CHOLESKY & DF)"
+      - name: "[9/10] Full Universal Validation v2.0 (26 Standard Systems, cc-pVDZ, EXACT, CHOLESKY & DF)"
         if: always() && steps.compile.outcome == 'success'
         shell: bash -el {0}
         run: |
@@ -208,7 +208,7 @@ jobs:
           micromamba activate geom_env
           python benchmarks/run_universal_v2.py --tier standard --basis cc-pVDZ --out mshqc_universal_v2_raw.json 2>&1 | tee 10_universal_v2_standard_log.txt
 
-      - name: "[10/10] Full Bab IV Benchmark Suite v2.0 (7 Systems, cc-pVTZ, Tables 1-5 + RAM)"
+      - name: "[10/10] Full Bab IV Benchmark Suite v2.0 (7 Systems, cc-pVTZ, EXACT/CHOLESKY/DF, Tables 1-5 + RAM)"
         if: always() && steps.compile.outcome == 'success'
         shell: bash -el {0}
         run: |

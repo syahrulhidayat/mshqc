@@ -66,13 +66,17 @@ TABLE1_CASES = [
 ]
 
 RAM_CASES = [
+    ("Neon", "cc-pvtz", "cc-pvtz-ri", "EXACT", "OMP3"),
     ("Neon", "cc-pvtz", "cc-pvtz-ri", "CHOLESKY", "OMP3"),
     ("Neon", "cc-pvtz", "cc-pvtz-ri", "DF", "OMP3"),
     ("Neon", "cc-pvqz", "cc-pvqz-ri", "DF", "OMP3"),
+    ("H2O", "cc-pvdz", "cc-pvdz-ri", "EXACT", "OMP3"),
+    ("H2O", "cc-pvtz", "cc-pvtz-ri", "EXACT", "OMP3"),
     ("H2O", "cc-pvtz", "cc-pvtz-ri", "CHOLESKY", "OMP3"),
     ("H2O", "cc-pvtz", "cc-pvtz-ri", "DF", "OMP2"),
     ("H2O", "cc-pvtz", "cc-pvtz-ri", "DF", "OMP3"),
     ("H2O", "cc-pvqz", "cc-pvqz-ri", "DF", "OMP3"),
+    ("Oxygen", "cc-pvtz", "cc-pvtz-ri", "EXACT", "OMP3"),
     ("Oxygen", "cc-pvtz", "cc-pvtz-ri", "CHOLESKY", "OMP3"),
     ("Oxygen", "cc-pvtz", "cc-pvtz-ri", "DF", "OMP3"),
     ("O2", "cc-pvtz", "cc-pvtz-ri", "DF", "OMP3"),
@@ -484,7 +488,7 @@ def main() -> None:
         sys.exit(0)
 
     sys_list = ["H2O", "OH"] if args.quick else (CORE5_ORDER if args.core5 else ALL_SYSTEM_ORDER)
-    modes = ["DF"] if args.quick else ["CHOLESKY", "DF"]
+    modes = ["DF"] if args.quick else ["EXACT", "CHOLESKY", "DF"]
     basis_name = "cc-pVDZ" if args.quick else "cc-pVTZ"
     t1_cases = [("H2O", "cc-pvdz", "cc-pvdz-ri"), ("OH", "cc-pvdz", "cc-pvdz-ri")] if args.quick else TABLE1_CASES
     fd_systems = ["H2O", "OH"] if args.quick else ["H2O", "Carbon"]

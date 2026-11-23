@@ -480,6 +480,8 @@ def _finalize_omp2_family_grad_rhf(
     c_pz = K.contract_ao_sym(B_ao, Pz_tot, nbf) if has_fc else None
 
     B_oo_all_3d = K.transform_3c_mo(B_ao, C_o, C_o, nbf).T.reshape(n_aux, no, no)
+    B_ao_all_3d = B_oo_all_3d[:, nf:no, :]
+    B_vo_all_3d = K.transform_3c_mo(B_ao, C_v, C_o, nbf).T.reshape(n_aux, nv, no)
     Gamma_3c = np.empty((nbf * nbf, n_aux), dtype=np.float64)
 
     chunk = 64
@@ -491,7 +493,7 @@ def _finalize_omp2_family_grad_rhf(
             + P_ref_tot[None, :, :] * c_corr[p0:p1, None, None]
         )
         M_ref = (C_o @ B_oo_all_3d[p0:p1]) @ C_o.T
-        M_corr = (C_act @ (g_oo @ B_oo_3d[p0:p1])) @ C_act.T + (C_v @ (g_vv @ B_vo_3d[p0:p1])) @ C_act.T
+        M_corr = (C_act @ (g_oo @ B_ao_all_3d[p0:p1])) @ C_o.T + (C_v @ (g_vv @ B_vo_all_3d[p0:p1])) @ C_o.T
         G_blk -= 2.0 * (M_ref + M_corr + M_corr.swapaxes(1, 2))
         Conn = (C_v @ X_vo_3d[p0:p1]) @ C_act.T
         G_blk += 2.0 * (Conn + Conn.swapaxes(1, 2))
@@ -647,7 +649,11 @@ def _finalize_omp2_family_grad_uhf(
     c_pz = K.contract_ao_sym(B_ao, Pz_tot, nbf) if has_fc else None
 
     Boo_a_all_3d = K.transform_3c_mo(B_ao, Ca_o, Ca_o, nbf).T.reshape(n_aux, na, na)
+    Bao_a_all_3d = Boo_a_all_3d[:, nf:na, :]
+    Bvo_a_all_3d = K.transform_3c_mo(B_ao, Ca_v, Ca_o, nbf).T.reshape(n_aux, va, na)
     Boo_b_all_3d = K.transform_3c_mo(B_ao, Cb_o, Cb_o, nbf).T.reshape(n_aux, nb, nb) if nb > 0 else None
+    Bao_b_all_3d = Boo_b_all_3d[:, nf:nb, :] if has_b else None
+    Bvo_b_all_3d = K.transform_3c_mo(B_ao, Cb_v, Cb_o, nbf).T.reshape(n_aux, vb, nb) if has_b else None
     Gamma_3c = np.empty((nbf * nbf, n_aux), dtype=np.float64)
 
     chunk = 64
@@ -659,7 +665,7 @@ def _finalize_omp2_family_grad_uhf(
             + P_ref_tot[None, :, :] * c_corr[p0:p1, None, None]
         )
         M_ref_a = (Ca_o @ Boo_a_all_3d[p0:p1]) @ Ca_o.T
-        M_corr_a = (Ca_act @ (g_oo_a @ Boo_a_3d[p0:p1])) @ Ca_act.T + (Ca_v @ (g_vv_a @ Bvo_a_3d[p0:p1])) @ Ca_act.T
+        M_corr_a = (Ca_act @ (g_oo_a @ Bao_a_all_3d[p0:p1])) @ Ca_o.T + (Ca_v @ (g_vv_a @ Bvo_a_all_3d[p0:p1])) @ Ca_o.T
         G_blk -= M_ref_a + M_corr_a + M_corr_a.swapaxes(1, 2)
         Conn_a = (Ca_v @ Xa_vo_3d[p0:p1]) @ Ca_act.T
         G_blk += Conn_a + Conn_a.swapaxes(1, 2)
@@ -668,7 +674,7 @@ def _finalize_omp2_family_grad_uhf(
             M_ref_b = (Cb_o @ Boo_b_all_3d[p0:p1]) @ Cb_o.T
             G_blk -= M_ref_b
             if has_b:
-                M_corr_b = (Cb_act @ (g_oo_b @ Boo_b_3d[p0:p1])) @ Cb_act.T + (Cb_v @ (g_vv_b @ Bvo_b_3d[p0:p1])) @ Cb_act.T
+                M_corr_b = (Cb_act @ (g_oo_b @ Bao_b_all_3d[p0:p1])) @ Cb_o.T + (Cb_v @ (g_vv_b @ Bvo_b_all_3d[p0:p1])) @ Cb_o.T
                 G_blk -= M_corr_b + M_corr_b.swapaxes(1, 2)
                 Conn_b = (Cb_v @ Xb_vo_3d[p0:p1]) @ Cb_act.T
                 G_blk += Conn_b + Conn_b.swapaxes(1, 2)

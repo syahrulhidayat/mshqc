@@ -206,6 +206,10 @@ class MSHQCSession:
             self.calc.reference = scf_type.lower()
         return self.run_complete_analysis(methods=methods or ["scf", "mp2", "omp2", "omp3"])
 
+    def summary(self) -> None:
+        """Cetak tabel ringkasan energi & waktu komputasi sesi ke stdout."""
+        self._print_summary()
+
     def _print_summary(self) -> None:
         print("\n" + "=" * 72)
         print(f"MSHQC SESSION SUMMARY | Basis: {self.basis_name} | ERI: {self.eri_method.upper()}")

@@ -27,6 +27,8 @@ from .session import MSHQCSession
 def _parse_method_and_eri(method: str, default_eri: str = "exact") -> Tuple[str, str]:
     """Deteksi awalan df-/cholesky- pada nama metode (misal 'df-omp3' atau 'chomp2')."""
     m = method.lower().strip()
+    if m.startswith("exact-") or m.startswith("exact_"):
+        return m[6:], "exact"
     if m.startswith("df-") or m.startswith("df_"):
         return m[3:], "df"
     if m.startswith("ch-") or m.startswith("ch_"):

@@ -51,6 +51,12 @@ class HybridMP2Result:
     def e_corr_total(self) -> float:
         return self.energy_mp2_corr
 
+    def __str__(self) -> str:
+        return (
+            f"<MP2 ({self.reference.upper()}) | E_total = {self.energy_total:.10f} Ha | "
+            f"E_corr = {self.energy_mp2_corr:+.10f} Ha>"
+        )
+
 
 @dataclass
 class HybridMP3Result:
@@ -86,6 +92,12 @@ class HybridMP3Result:
     @property
     def energy_mp3_corr(self) -> float:
         return self.e_mp3
+
+    def __str__(self) -> str:
+        return (
+            f"<MP3 ({self.reference.upper()}) | E_total = {self.e_total:.10f} Ha | "
+            f"E_corr = {self.e_corr_total:+.10f} Ha>"
+        )
 
 
 def _clamp_frozen(n_frozen: int, n_occ: int) -> int:

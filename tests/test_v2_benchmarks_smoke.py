@@ -73,6 +73,20 @@ def test_bab4_v2_and_universal_v2_runners_execute_cleanly():
         )
 
 
+
+def test_exact_eri_parity_and_human_str():
+    h2o = "O 0 0 0.1173\nH 0 0.7572 -0.4692\nH 0 -0.7572 -0.4692"
+    r_ex = mshqc.run(h2o, method=["scf", "omp2"], basis="cc-pVDZ", eri_method="exact", units="angstrom", threshold=1e-9)
+    r_cd = mshqc.run(h2o, method=["scf", "omp2"], basis="cc-pVDZ", eri_method="cholesky", units="angstrom", threshold=1e-9)
+    assert abs(r_ex["scf"]["energy"] - r_cd["scf"]["energy"]) < 1.0e-8
+    assert abs(r_ex["omp2"]["energy"] - r_cd["omp2"]["energy"]) < 1.0e-8
+    assert abs(r_ex["omp2"]["energy"] - (-76.231670)) < 2.0e-6
+    s_scf = str(r_ex["scf"]["result"])
+    s_omp = str(r_ex["omp2"]["result"])
+    assert len(s_scf) < 160 and "E_total" in s_scf
+    assert len(s_omp) < 200 and "OMP2" in s_omp
+    print(f"[EXACT+UX  ] {s_omp}")
+
 if __name__ == "__main__":
     test_core5_systems_df_and_cholesky()
     test_bab4_v2_and_universal_v2_runners_execute_cleanly()

@@ -38,6 +38,13 @@ class HybridSCFResult:
     def e_total(self) -> float:
         return self.energy_total
 
+    def __str__(self) -> str:
+        st = 'CONVERGED' if self.converged else 'NOT CONVERGED'
+        return (
+            f"<{self.reference.upper()} | E_total = {self.energy_total:.10f} Ha | "
+            f"<S^2> = {self.s2:.6f} | {self.iterations} iter ({st})>"
+        )
+
 
 _SAD_ANOMALIES: Dict[int, Tuple[Tuple[float, ...], Tuple[float, ...], Tuple[float, ...], Tuple[float, ...]]] = {
     24: ((2, 2, 2, 1), (6, 6), (5,), ()),
