@@ -34,42 +34,139 @@ inline varray_view<double> make_eri_view(const ERITensor& eri_ao, int nbf) {
         {1, n, n * n, n * n * n});
 }
 
-Eigen::MatrixXd build_coulomb_4d(const ERITensor& eri_ao, const Eigen::MatrixXd& P_tot, int nbf) {
-    const Eigen::Index n2 = static_cast<Eigen::Index>(nbf) * nbf;
-    Eigen::Map<const Eigen::MatrixXd> V_mat(eri_ao.data(), n2, n2);
-    Eigen::Map<const Eigen::VectorXd> p_vec(P_tot.data(), n2);
+void build_jk_4d_fused_rhf_impl(
+    const ERITensor& eri_ao,
+    const Eigen::MatrixXd& P_a,
+    int nbf,
+    Eigen::MatrixXd& J_out,
+    Eigen::MatrixXd& K_out)
+{
+    const Eigen::Index n = static_cast<Eigen::Index>(nbf);
+    const Eigen::Index n2 = n * n;
+    const int n_tri = nbf * (nbf + 1) / 2;
+    std::vector<int> pair_s(n_tri), pair_n(n_tri);
+    int idx = 0;
+    for (int s = 0; s < nbf; ++s) {
+        for (int col_n = s; col_n < nbf; ++col_n) {
+            pair_s[idx] = s;
+            pair_n[idx] = col_n;
+            ++idx;
+        }
+    }
 
     const int max_t = omp_get_max_threads();
-    std::vector<Eigen::VectorXd> j_tls(max_t, Eigen::VectorXd::Zero(n2));
-    constexpr Eigen::Index kColTile = 64;
+    std::vector<Eigen::MatrixXd> J_tls(max_t, Eigen::MatrixXd::Zero(nbf, nbf));
+    std::vector<Eigen::MatrixXd> K_tls(max_t, Eigen::MatrixXd::Zero(nbf, nbf));
+    const double* eri_ptr = eri_ao.data();
 
     #pragma omp parallel
     {
         const int tid = omp_get_thread_num();
-        Eigen::VectorXd& j_loc = j_tls[tid];
+        Eigen::MatrixXd& J_loc = J_tls[tid];
+        Eigen::MatrixXd& K_loc = K_tls[tid];
         #pragma omp for schedule(static) nowait
-        for (Eigen::Index c = 0; c < n2; c += kColTile) {
-            const Eigen::Index clen = std::min(kColTile, n2 - c);
-            j_loc.noalias() += V_mat.middleCols(c, clen) * p_vec.segment(c, clen);
+        for (int k = 0; k < n_tri; ++k) {
+            const int s = pair_s[k];
+            const int col_n = pair_n[k];
+            const Eigen::Index off = (static_cast<Eigen::Index>(s) * n + col_n) * n2;
+            Eigen::Map<const Eigen::MatrixXd> V_ns(eri_ptr + off, nbf, nbf);
+            const double p_ns = P_a(col_n, s);
+            if (col_n == s) {
+                if (std::abs(p_ns) > 1.0e-16) {
+                    J_loc.noalias() += (2.0 * p_ns) * V_ns;
+                }
+                K_loc.col(s).noalias() += V_ns * P_a.col(s);
+            } else {
+                if (std::abs(p_ns) > 1.0e-16) {
+                    J_loc.noalias() += (4.0 * p_ns) * V_ns;
+                }
+                K_loc.col(col_n).noalias() += V_ns * P_a.col(s);
+                K_loc.col(s).noalias() += V_ns * P_a.col(col_n);
+            }
         }
     }
 
-    Eigen::MatrixXd J = Eigen::MatrixXd::Zero(nbf, nbf);
-    Eigen::Map<Eigen::VectorXd> j_out(J.data(), n2);
+    J_out = Eigen::MatrixXd::Zero(nbf, nbf);
+    K_out = Eigen::MatrixXd::Zero(nbf, nbf);
     for (int t = 0; t < max_t; ++t) {
-        j_out.noalias() += j_tls[t];
+        J_out.noalias() += J_tls[t];
+        K_out.noalias() += K_tls[t];
     }
-    return 0.5 * (J + J.transpose());
+    J_out = 0.5 * (J_out + J_out.transpose());
+    K_out = 0.5 * (K_out + K_out.transpose());
 }
 
-Eigen::MatrixXd build_exchange_4d(const ERITensor& eri_ao, const Eigen::MatrixXd& P_spin, int nbf) {
-    Eigen::MatrixXd K_mat = Eigen::MatrixXd::Zero(nbf, nbf);
-    if (nbf <= 0) return K_mat;
-    auto t_eri = make_eri_view(eri_ao, nbf);
-    auto t_P = make_mat_view(P_spin);
-    auto t_K = make_mat_view(K_mat);
-    safe_tblis_mult(1.0, t_eri, "mlns", t_P, "ls", 0.0, t_K, "mn");
-    return 0.5 * (K_mat + K_mat.transpose());
+void build_jk_4d_fused_uhf_impl(
+    const ERITensor& eri_ao,
+    const Eigen::MatrixXd& P_a,
+    const Eigen::MatrixXd& P_b,
+    int nbf,
+    Eigen::MatrixXd& J_out,
+    Eigen::MatrixXd& Ka_out,
+    Eigen::MatrixXd& Kb_out)
+{
+    const Eigen::Index n = static_cast<Eigen::Index>(nbf);
+    const Eigen::Index n2 = n * n;
+    const int n_tri = nbf * (nbf + 1) / 2;
+    std::vector<int> pair_s(n_tri), pair_n(n_tri);
+    int idx = 0;
+    for (int s = 0; s < nbf; ++s) {
+        for (int col_n = s; col_n < nbf; ++col_n) {
+            pair_s[idx] = s;
+            pair_n[idx] = col_n;
+            ++idx;
+        }
+    }
+
+    const Eigen::MatrixXd P_tot = P_a + P_b;
+    const int max_t = omp_get_max_threads();
+    std::vector<Eigen::MatrixXd> J_tls(max_t, Eigen::MatrixXd::Zero(nbf, nbf));
+    std::vector<Eigen::MatrixXd> Ka_tls(max_t, Eigen::MatrixXd::Zero(nbf, nbf));
+    std::vector<Eigen::MatrixXd> Kb_tls(max_t, Eigen::MatrixXd::Zero(nbf, nbf));
+    const double* eri_ptr = eri_ao.data();
+
+    #pragma omp parallel
+    {
+        const int tid = omp_get_thread_num();
+        Eigen::MatrixXd& J_loc = J_tls[tid];
+        Eigen::MatrixXd& Ka_loc = Ka_tls[tid];
+        Eigen::MatrixXd& Kb_loc = Kb_tls[tid];
+        #pragma omp for schedule(static) nowait
+        for (int k = 0; k < n_tri; ++k) {
+            const int s = pair_s[k];
+            const int col_n = pair_n[k];
+            const Eigen::Index off = (static_cast<Eigen::Index>(s) * n + col_n) * n2;
+            Eigen::Map<const Eigen::MatrixXd> V_ns(eri_ptr + off, nbf, nbf);
+            const double pt = P_tot(col_n, s);
+            if (col_n == s) {
+                if (std::abs(pt) > 1.0e-16) {
+                    J_loc.noalias() += pt * V_ns;
+                }
+                Ka_loc.col(s).noalias() += V_ns * P_a.col(s);
+                Kb_loc.col(s).noalias() += V_ns * P_b.col(s);
+            } else {
+                if (std::abs(pt) > 1.0e-16) {
+                    J_loc.noalias() += (2.0 * pt) * V_ns;
+                }
+                Ka_loc.col(col_n).noalias() += V_ns * P_a.col(s);
+                Ka_loc.col(s).noalias() += V_ns * P_a.col(col_n);
+                Kb_loc.col(col_n).noalias() += V_ns * P_b.col(s);
+                Kb_loc.col(s).noalias() += V_ns * P_b.col(col_n);
+            }
+        }
+    }
+
+    J_out = Eigen::MatrixXd::Zero(nbf, nbf);
+    Ka_out = Eigen::MatrixXd::Zero(nbf, nbf);
+    Kb_out = Eigen::MatrixXd::Zero(nbf, nbf);
+    for (int t = 0; t < max_t; ++t) {
+        J_out.noalias() += J_tls[t];
+        Ka_out.noalias() += Ka_tls[t];
+        Kb_out.noalias() += Kb_tls[t];
+    }
+    J_out = 0.5 * (J_out + J_out.transpose());
+    Ka_out = 0.5 * (Ka_out + Ka_out.transpose());
+    Kb_out = 0.5 * (Kb_out + Kb_out.transpose());
 }
 
 Eigen::Tensor<double, 4> smart_transform_kernel(
@@ -171,10 +268,8 @@ std::tuple<Eigen::MatrixXd, Eigen::MatrixXd, Eigen::MatrixXd> build_jk_4d_densit
         P_beta.rows() != nbf || P_beta.cols() != nbf) {
         throw std::invalid_argument("build_jk_4d_density_uhf: dimensi P tidak cocok dengan eri_ao");
     }
-    Eigen::MatrixXd P_tot = P_alpha + P_beta;
-    Eigen::MatrixXd J = build_coulomb_4d(eri_ao, P_tot, nbf);
-    Eigen::MatrixXd Ka = build_exchange_4d(eri_ao, P_alpha, nbf);
-    Eigen::MatrixXd Kb = build_exchange_4d(eri_ao, P_beta, nbf);
+    Eigen::MatrixXd J, Ka, Kb;
+    build_jk_4d_fused_uhf_impl(eri_ao, P_alpha, P_beta, nbf, J, Ka, Kb);
     return {std::move(J), std::move(Ka), std::move(Kb)};
 }
 
@@ -189,9 +284,8 @@ std::pair<Eigen::MatrixXd, Eigen::MatrixXd> build_jk_4d_rhf(
     Eigen::MatrixXd P_a = (C_occ.cols() > 0)
         ? Eigen::MatrixXd(C_occ * C_occ.transpose())
         : Eigen::MatrixXd::Zero(nbf, nbf);
-    Eigen::MatrixXd P_tot = 2.0 * P_a;
-    Eigen::MatrixXd J = build_coulomb_4d(eri_ao, P_tot, nbf);
-    Eigen::MatrixXd K_mat = build_exchange_4d(eri_ao, P_a, nbf);
+    Eigen::MatrixXd J, K_mat;
+    build_jk_4d_fused_rhf_impl(eri_ao, P_a, nbf, J, K_mat);
     return {std::move(J), std::move(K_mat)};
 }
 

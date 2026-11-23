@@ -116,7 +116,7 @@ NB_MODULE(_mshqc, m) {
         .def("compute_overlap", &IntegralEngine::compute_overlap, nb::call_guard<nb::gil_scoped_release>())
         .def("compute_kinetic", &IntegralEngine::compute_kinetic, nb::call_guard<nb::gil_scoped_release>())
         .def("compute_nuclear", &IntegralEngine::compute_nuclear, nb::call_guard<nb::gil_scoped_release>())
-        .def("compute_eri", &IntegralEngine::compute_eri, nb::call_guard<nb::gil_scoped_release>())
+        .def("compute_eri", &IntegralEngine::compute_eri, nb::rv_policy::reference_internal, nb::call_guard<nb::gil_scoped_release>())
         .def("compute_eri_diagonal", &IntegralEngine::compute_eri_diagonal)
         .def("compute_eri_column", &IntegralEngine::compute_eri_column, nb::arg("pivot_index"));
 

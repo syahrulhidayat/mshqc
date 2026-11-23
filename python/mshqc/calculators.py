@@ -149,7 +149,7 @@ class MSHQCCalculator:
             return self._ao_factor_cache
         if self.eri_method == "exact":
             self._ao_factor_cache = mshqc.kernels.factorize_eri_4d_exact(
-                self._get_eri4(), min(self.threshold * 1.0e-3, 1.0e-12)
+                self._get_eri4(), min(self.threshold * 0.1, 1.0e-10)
             )
             return self._ao_factor_cache
         chol = mshqc.CholeskyERI(self.basis, self.integrals)
