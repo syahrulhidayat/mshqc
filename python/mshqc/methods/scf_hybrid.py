@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass
-from typing import Deque, Dict, List, Optional, Tuple
+from typing import Callable, Deque, Dict, List, Optional, Tuple
 import numpy as np
 from scipy.linalg import eigh
 
@@ -311,6 +311,7 @@ def run_df_rhf(
     level_shift: float = 0.0,
     C_init: Optional[np.ndarray] = None,
     P_init: Optional[np.ndarray] = None,
+    callback: Optional[Callable[[dict], None]] = None,
 ) -> HybridSCFResult:
     """Menjalankan DF/Cholesky-RHF di Python menggunakan kernel C++20 `build_jk_3c_rhf`."""
     H = np.ascontiguousarray(H_core, dtype=np.float64)
@@ -358,6 +359,8 @@ def run_df_rhf(
         err_rms = 0.5 * float(np.linalg.norm(grad_orth)) / float(nbf)
         dE = abs(e_tot - e_prev)
         dP_rms = float(np.sqrt(np.mean((P - P_prev) ** 2)))
+        if callback is not None:
+            callback({'iter': it, 'energy': e_tot, 'dE': dE, 'dP_rms': dP_rms, 'err_rms': err_rms, 'ref': 'rhf'})
 
         strict_conv = (dE <= energy_tol and dP_rms <= density_tol and err_rms <= density_tol)
         plateau_conv = (
@@ -417,6 +420,7 @@ def run_df_uhf(
     C_init_b: Optional[np.ndarray] = None,
     P_init: Optional[np.ndarray] = None,
     mix_homo_lumo: bool = False,
+    callback: Optional[Callable[[dict], None]] = None,
 ) -> HybridSCFResult:
     """Menjalankan DF/Cholesky-UHF di Python menggunakan kernel C++20 `build_jk_3c_uhf`."""
     H = np.ascontiguousarray(H_core, dtype=np.float64)
@@ -491,6 +495,8 @@ def run_df_uhf(
         dP_rms = float(
             np.sqrt(0.5 * (np.mean((Pa - Pa_prev) ** 2) + np.mean((Pb - Pb_prev) ** 2)))
         )
+        if callback is not None:
+            callback({'iter': it, 'energy': e_tot, 'dE': dE, 'dP_rms': dP_rms, 'err_rms': err_rms, 'ref': 'uhf'})
 
         strict_conv = (dE <= energy_tol and dP_rms <= density_tol and err_rms <= density_tol)
         plateau_conv = (
@@ -560,6 +566,7 @@ def run_df_rohf(
     diis_space: int = 8,
     C_init: Optional[np.ndarray] = None,
     P_init: Optional[np.ndarray] = None,
+    callback: Optional[Callable[[dict], None]] = None,
 ) -> HybridSCFResult:
     """
     Menjalankan DF/Cholesky-ROHF (Guest-Saunders / Roothaan unified Fock F_uni)
@@ -666,6 +673,8 @@ def run_df_rohf(
         P_tot = Pa + Pb
         dE = abs(e_tot - e_prev)
         dP_rms = float(np.linalg.norm(P_tot - P_tot_prev)) / float(nbf)
+        if callback is not None:
+            callback({'iter': it, 'energy': e_tot, 'dE': dE, 'dP_rms': dP_rms, 'err_rms': err_rms, 'ref': 'rohf'})
 
         if it > 2 and dE <= energy_tol and dP_rms <= density_tol and err_rms <= max(density_tol * 10.0, 1.0e-11):
             converged = True

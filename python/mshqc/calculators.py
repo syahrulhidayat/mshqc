@@ -382,6 +382,29 @@ class MSHQCCalculator:
     def run_omp25(self, scf_res: Optional[mshqc.SCFResult] = None, grad_thresh: float = 1e-5, max_iter: int = 50):
         return self._run_hybrid_omp_method("omp2.5", scf_res=scf_res, grad_thresh=grad_thresh, max_iter=max_iter)
 
+    def run_kappa_omp2(self, scf_res: Optional[mshqc.SCFResult] = None, kappa: float = 1.45, grad_thresh: float = 1e-5, max_iter: int = 50):
+        from .methods.interop import run_from_arrays
+        if self.eri_method not in ("df", "cholesky"):
+            raise ValueError("kappa-OMP2 mendukung eri_method='df' atau 'cholesky'.")
+        if scf_res is None:
+            scf_res = self.scf_res or self.run_scf()
+        B_ao = self._get_ao_3index_factor(scf_res)
+        H_core = self.integrals.compute_kinetic() + self.integrals.compute_nuclear()
+        S_ovlp = self.integrals.compute_overlap()
+        v_nn = self.molecule.nuclear_repulsion_energy()
+        if self.reference == "rhf":
+            return run_from_arrays(
+                H_core, S_ovlp, v_nn, B_ao, scf_res.C_alpha, scf_res.n_occ_alpha,
+                method="kappa-omp2", grad_tol=grad_thresh, energy_tol=self.threshold,
+                max_iter=max_iter, n_frozen=self.n_frozen, kappa=kappa,
+            )
+        return run_from_arrays(
+            H_core, S_ovlp, v_nn, B_ao, scf_res.C_alpha, scf_res.n_occ_alpha,
+            C_beta=scf_res.C_beta, n_occ_beta=scf_res.n_occ_beta,
+            method="kappa-omp2", grad_tol=grad_thresh, energy_tol=self.threshold,
+            max_iter=max_iter, n_frozen=self.n_frozen, kappa=kappa,
+        )
+
 
 def run(molecule: Union[mshqc.Molecule, str, List[Tuple]],
         method: Union[str, List[str]] = "omp2",
@@ -438,6 +461,8 @@ def run(molecule: Union[mshqc.Molecule, str, List[Tuple]],
             res = calc.run_sos_omp2(grad_thresh=grad_thresh)
         elif m_low in ("omp2.5", "omp25", "omp2_5"):
             res = calc.run_omp25(grad_thresh=grad_thresh)
+        elif m_low in ("kappa-omp2", "kappa_omp2", "k-omp2", "kappa-oomp2"):
+            res = calc.run_kappa_omp2(grad_thresh=grad_thresh)
         else:
             raise ValueError(f"Metode tidak dikenali: {m}")
         elapsed = time.perf_counter() - t0

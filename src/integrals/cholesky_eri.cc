@@ -23,11 +23,14 @@
 
 #include "mshqc/integrals/cholesky_eri.h"
 #include "mshqc/integrals/packed_ao_utils.h"
+#ifndef MSHQC_NO_HDF5
 #include "mshqc/utils/hdf5_io.h"
+#endif
 #include <iostream>
 #include <iomanip>
 #include <cmath>
 #include <vector>
+#include <stdexcept>
 #include <algorithm>
 #include <omp.h>
 #ifdef I
@@ -486,6 +489,7 @@ size_t CholeskyERI::storage_bytes() const {
 }
 
 void CholeskyERI::save_to_hdf5(const std::string& filename, const std::string& dataset_name) const {
+#ifndef MSHQC_NO_HDF5
     if (!decomposed_ || n_vectors_ == 0) return;
 
     utils::HDF5TensorIO io(filename, utils::HDF5TensorIO::Mode::WRITE_TRUNCATE);
@@ -501,10 +505,16 @@ void CholeskyERI::save_to_hdf5(const std::string& filename, const std::string& d
         unpack_ao_column(L_mat_.col(k).data(), n_basis_, packed, slice_sq);
         io.write_slice_4d(dataset_name, offset, slice_dims, slice_sq.data());
     }
+
+#else
+    (void)filename; (void)dataset_name;
+    throw std::runtime_error("HDF5 I/O is disabled in MSHQC_THIN_CORE build; use Python np.savez/memmap.");
+#endif
 }
 
 // [INJECTED_AUDIT_FIX_CHOL_HDF5_LOAD]
 void CholeskyERI::load_from_hdf5(const std::string& filename, const std::string& dataset_name) {
+#ifndef MSHQC_NO_HDF5
   utils::HDF5TensorIO io(filename, utils::HDF5TensorIO::Mode::READ_ONLY);
   Eigen::Tensor<double, 4> tensor_in = io.read_tensor_4d(dataset_name);
 
@@ -525,6 +535,11 @@ void CholeskyERI::load_from_hdf5(const std::string& filename, const std::string&
     }
   }
   decomposed_ = true;
+
+#else
+    (void)filename; (void)dataset_name;
+    throw std::runtime_error("HDF5 I/O is disabled in MSHQC_THIN_CORE build; use Python np.savez/memmap.");
+#endif
 }
 
 

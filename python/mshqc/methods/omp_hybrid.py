@@ -10,7 +10,7 @@ Orbital-Optimized Perturbation Theory (RHF & UHF, all-electron & strict frozen-c
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Tuple
+from typing import Callable, Optional, Tuple
 import numpy as np
 from scipy.linalg import eigh, expm
 
@@ -425,6 +425,7 @@ def optimize_orbitals_rhf(
     energy_tol: float = 1e-9,
     max_iter: int = 40,
     n_frozen: int = 0,
+    callback: Optional[Callable[[dict], None]] = None,
 ) -> HybridOMPResult:
     """Mesin optimisasi orbital terpadu RHF (dipakai oleh OMP2/2.5/3 dan plugin kustom)."""
     H = np.ascontiguousarray(H_core, dtype=np.float64)
@@ -457,6 +458,8 @@ def optimize_orbitals_rhf(
         e_tot = e_ref + float(e_mp2) + float(e_mp3)
         w_vo = _assemble_orbital_grad_rhf(B, C_act, C_vir, F_vo, g_oo, g_vv, Z_vo)
         w_rms = float(np.sqrt(np.mean(w_vo ** 2))) if w_vo.size > 0 else 0.0
+        if callback is not None:
+            callback({'iter': it, 'energy': e_tot, 'e_ref': e_ref, 'e_mp2': float(e_mp2), 'e_mp3': float(e_mp3), 'grad_rms': w_rms, 'method': method_name})
 
         if w_rms <= grad_tol and (it == 0 or abs(e_tot - e_prev) <= energy_tol):
             return HybridOMPResult(
@@ -498,6 +501,7 @@ def optimize_orbitals_uhf(
     energy_tol: float = 1e-9,
     max_iter: int = 40,
     n_frozen: int = 0,
+    callback: Optional[Callable[[dict], None]] = None,
 ) -> HybridOMPResult:
     """Mesin optimisasi orbital terpadu UHF (dipakai oleh UHF-OMP2/2.5/3 dan plugin kustom)."""
     H = np.ascontiguousarray(H_core, dtype=np.float64)
@@ -547,6 +551,8 @@ def optimize_orbitals_uhf(
             B, Ca_act, Ca_v, Cb_act, Cb_v, Fvo_a, Fvo_b, g_oo_a, g_vv_a, g_oo_b, g_vv_b, Za, Zb
         )
         w_rms = float(np.sqrt((np.sum(wa_vo ** 2) + np.sum(wb_vo ** 2)) / n_params))
+        if callback is not None:
+            callback({'iter': it, 'energy': e_tot, 'e_ref': e_ref, 'e_mp2': float(e_mp2), 'e_mp3': float(e_mp3), 'grad_rms': w_rms, 'method': method_name})
 
         if w_rms <= grad_tol and (it == 0 or abs(e_tot - e_prev) <= energy_tol):
             s2 = _compute_s2_uhf(Ca, Cb, S, na, nb)

@@ -242,6 +242,14 @@ jobs:
           micromamba activate geom_env
           python -m pytest tests/test_thin_core_stage5.py -v -s 2>&1 | tee 10_test_thin_core_stage5_log.txt
 
+      - name: "[11/11] Run Thin Core Stage 6 Verification (test_thin_core_stage6.py)"
+        if: always() && steps.compile.outcome == 'success'
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate geom_env
+          python -m pytest tests/test_thin_core_stage6.py -v -s 2>&1 | tee 11_test_thin_core_stage6_log.txt
+
       # =========================================================================
       # UPLOAD ALL TEST LOGS AS SINGLE COMBINED ARTIFACT (.zip)
       # =========================================================================
@@ -303,7 +311,6 @@ jobs:
             c-compiler
             llvm-openmp
             eigen
-            hdf5=1.14.3
             openblas
             liblapacke
             nanobind
@@ -373,6 +380,14 @@ jobs:
           set -o pipefail
           micromamba activate geom_env
           python -m pytest tests/test_thin_core_stage5.py -v -s 2>&1 | tee tc_03_stage5_log.txt
+
+      - name: "[THIN-CORE 4/4] Run Stage 6 Verification (Zero-HDF5, kappa-OOMP2, Checkpoint)"
+        if: always() && steps.compile_thin.outcome == 'success'
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate geom_env
+          python -m pytest tests/test_thin_core_stage6.py -v -s 2>&1 | tee tc_04_stage6_log.txt
 
       - name: Upload Thin-Core Test Logs
         if: always()

@@ -201,8 +201,15 @@ def run_df_mp2_uhf(
     Pb = Cb_all @ Cb_all.T if nb > 0 else np.zeros((nbf, nbf), dtype=np.float64)
     e_scf = float(0.5 * (np.sum(Pa * (H + Fa)) + np.sum(Pb * (H + Fb))) + v_nn)
 
-    Ca_sc, eps_a, Fvo_a = semicanonicalize_subspaces_frozen(Ca, Fa, na, nf_a)
-    Cb_sc, eps_b, Fvo_b = semicanonicalize_subspaces_frozen(Cb, Fb, nb, nf_b)
+    # [INJECTED_STAGE6_ROMP_FC_PARITY]
+    # ROMP2/ROMP3 standar (Psi4 & C++ ROMP2::semicanonicalize) mendiagonalisasi
+    # seluruh blok occupied sebelum memotong orbital inti beku n_frozen.
+    sc_nf_a = 0 if include_singles else nf_a
+    sc_nf_b = 0 if include_singles else nf_b
+    Ca_sc, eps_a, Fvo_a_raw = semicanonicalize_subspaces_frozen(Ca, Fa, na, sc_nf_a)
+    Cb_sc, eps_b, Fvo_b_raw = semicanonicalize_subspaces_frozen(Cb, Fb, nb, sc_nf_b)
+    Fvo_a = Fvo_a_raw[:, nf_a:] if include_singles else Fvo_a_raw
+    Fvo_b = Fvo_b_raw[:, nf_b:] if include_singles else Fvo_b_raw
 
     e_singles = (
         _compute_romp2_singles(
@@ -355,8 +362,15 @@ def run_df_mp3_uhf(
     Pb = Cb_all @ Cb_all.T if nb > 0 else np.zeros((nbf, nbf), dtype=np.float64)
     e_scf = float(0.5 * (np.sum(Pa * (H + Fa)) + np.sum(Pb * (H + Fb))) + v_nn)
 
-    Ca_sc, eps_a, Fvo_a = semicanonicalize_subspaces_frozen(Ca, Fa, na, nf_a)
-    Cb_sc, eps_b, Fvo_b = semicanonicalize_subspaces_frozen(Cb, Fb, nb, nf_b)
+    # [INJECTED_STAGE6_ROMP_FC_PARITY]
+    # ROMP2/ROMP3 standar (Psi4 & C++ ROMP2::semicanonicalize) mendiagonalisasi
+    # seluruh blok occupied sebelum memotong orbital inti beku n_frozen.
+    sc_nf_a = 0 if include_singles else nf_a
+    sc_nf_b = 0 if include_singles else nf_b
+    Ca_sc, eps_a, Fvo_a_raw = semicanonicalize_subspaces_frozen(Ca, Fa, na, sc_nf_a)
+    Cb_sc, eps_b, Fvo_b_raw = semicanonicalize_subspaces_frozen(Cb, Fb, nb, sc_nf_b)
+    Fvo_a = Fvo_a_raw[:, nf_a:] if include_singles else Fvo_a_raw
+    Fvo_b = Fvo_b_raw[:, nf_b:] if include_singles else Fvo_b_raw
 
     Ca_act = np.ascontiguousarray(Ca_sc[:, nf_a:na])
     Ca_v = np.ascontiguousarray(Ca_sc[:, na:])

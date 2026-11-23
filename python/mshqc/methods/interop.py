@@ -15,6 +15,7 @@ from .mp_hybrid import (
     run_df_romp3,
 )
 from .omp_hybrid import HybridOMPResult, run_df_omp_rhf, run_df_omp_uhf
+from .kappa_omp2 import run_df_kappa_omp2_rhf, run_df_kappa_omp2_uhf
 
 
 def _resolve_omp_params(method: str) -> Tuple[str, float, float, float]:
@@ -46,6 +47,7 @@ def run_from_arrays(
     energy_tol: float = 1e-9,
     max_iter: int = 40,
     n_frozen: int = 0,
+    kappa: float = 1.45,
 ) -> Union[HybridOMPResult, HybridMP2Result, HybridMP3Result]:
     """
     Menjalankan MP2 / ROMP2 / MP3 / ROMP3 / OMP2 / SCS-OMP2 / SOS-OMP2 / OMP2.5 / OMP3
@@ -80,6 +82,19 @@ def run_from_arrays(
         Cb = np.ascontiguousarray(C_beta, dtype=np.float64)
         nb = int(na if n_occ_beta is None else n_occ_beta)
         return run_df_mp3_uhf(H, float(v_nn), B, Ca, Cb, na, nb, n_frozen=nf)
+
+    if m_low in ("kappa-omp2", "k-omp2", "kappa-oomp2", "koomp2"):
+        if C_beta is None:
+            return run_df_kappa_omp2_rhf(
+                H, float(v_nn), B, Ca, na, kappa=float(kappa),
+                grad_tol=grad_tol, energy_tol=energy_tol, max_iter=max_iter, n_frozen=nf,
+            )
+        Cb = np.ascontiguousarray(C_beta, dtype=np.float64)
+        nb = int(na if n_occ_beta is None else n_occ_beta)
+        return run_df_kappa_omp2_uhf(
+            H, S, float(v_nn), B, Ca, Cb, na, nb, kappa=float(kappa),
+            grad_tol=grad_tol, energy_tol=energy_tol, max_iter=max_iter, n_frozen=nf,
+        )
 
     m_name, c_os, c_ss, lam_mp3 = _resolve_omp_params(m_low)
     if C_beta is None:

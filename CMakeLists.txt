@@ -259,29 +259,37 @@ endif()
 # ==============================================================================
 # 5. HDF5 DISCOVERY
 # ==============================================================================
-find_library(HDF5_C_LIB
-    NAMES hdf5 libhdf5 hdf5.lib libhdf5.lib
-    HINTS "$ENV{CONDA_PREFIX}/lib" "$ENV{CONDA_PREFIX}/Library/lib" "C:/deps/Library/lib" "/opt/homebrew/opt/hdf5/lib" "/opt/homebrew/lib" "/usr/local/lib64" "/usr/local/lib" "/usr/lib64" "/usr/lib/x86_64-linux-gnu" "/usr/lib"
-)
-find_library(HDF5_CXX_LIB
-    NAMES hdf5_cpp libhdf5_cpp hdf5_cpp.lib libhdf5_cpp.lib
-    HINTS "$ENV{CONDA_PREFIX}/lib" "$ENV{CONDA_PREFIX}/Library/lib" "C:/deps/Library/lib" "/opt/homebrew/opt/hdf5/lib" "/opt/homebrew/lib" "/usr/local/lib64" "/usr/local/lib" "/usr/lib64" "/usr/lib/x86_64-linux-gnu" "/usr/lib"
-)
-find_path(HDF5_INCLUDE_DIR
-    NAMES H5Cpp.h
-    HINTS "$ENV{CONDA_PREFIX}/include" "$ENV{CONDA_PREFIX}/Library/include" "C:/deps/Library/include" "/opt/homebrew/opt/hdf5/include" "/opt/homebrew/include" "/usr/local/include" "/usr/include" "/usr/include/hdf5/serial"
-)
-if(HDF5_C_LIB AND HDF5_CXX_LIB)
-    set(HDF5_LIBRARIES ${HDF5_CXX_LIB} ${HDF5_C_LIB})
+# [INJECTED_THIN_CORE_STAGE6_NO_HDF5]
+option(MSHQC_THIN_CORE "Compile minimal C++20 core kernels only (~65% less C++ code)" OFF)
+
+if(NOT MSHQC_THIN_CORE)
+    find_library(HDF5_C_LIB
+        NAMES hdf5 libhdf5 hdf5.lib libhdf5.lib
+        HINTS "$ENV{CONDA_PREFIX}/lib" "$ENV{CONDA_PREFIX}/Library/lib" "C:/deps/Library/lib" "/opt/homebrew/opt/hdf5/lib" "/opt/homebrew/lib" "/usr/local/lib64" "/usr/local/lib" "/usr/lib64" "/usr/lib/x86_64-linux-gnu" "/usr/lib"
+    )
+    find_library(HDF5_CXX_LIB
+        NAMES hdf5_cpp libhdf5_cpp hdf5_cpp.lib libhdf5_cpp.lib
+        HINTS "$ENV{CONDA_PREFIX}/lib" "$ENV{CONDA_PREFIX}/Library/lib" "C:/deps/Library/lib" "/opt/homebrew/opt/hdf5/lib" "/opt/homebrew/lib" "/usr/local/lib64" "/usr/local/lib" "/usr/lib64" "/usr/lib/x86_64-linux-gnu" "/usr/lib"
+    )
+    find_path(HDF5_INCLUDE_DIR
+        NAMES H5Cpp.h
+        HINTS "$ENV{CONDA_PREFIX}/include" "$ENV{CONDA_PREFIX}/Library/include" "C:/deps/Library/include" "/opt/homebrew/opt/hdf5/include" "/opt/homebrew/include" "/usr/local/include" "/usr/include" "/usr/include/hdf5/serial"
+    )
+    if(HDF5_C_LIB AND HDF5_CXX_LIB)
+        set(HDF5_LIBRARIES ${HDF5_CXX_LIB} ${HDF5_C_LIB})
+    else()
+        message(FATAL_ERROR "CRITICAL: HDF5 C/C++ libraries tidak ditemukan!")
+    endif()
 else()
-    message(FATAL_ERROR "CRITICAL: HDF5 C/C++ libraries tidak ditemukan!")
+    set(HDF5_LIBRARIES "")
+    set(HDF5_INCLUDE_DIR "")
+    message(STATUS "MSHQC_THIN_CORE=ON: skipping HDF5 C/C++ dependency (zero-HDF5 thin core)")
 endif()
 
 # ==============================================================================
 # 6. SOURCE FILES & TARGET CONFIGURATION
 # ==============================================================================
 
-option(MSHQC_THIN_CORE "Compile minimal C++20 core kernels only (~65% less C++ code)" OFF)
 
 file(GLOB_RECURSE SRC_CORE CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/core/*.cc")
 file(GLOB_RECURSE SRC_INTS CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/ints/*.cc")
@@ -296,7 +304,6 @@ set(ALL_SOURCES
     ${SRC_CORE}
     ${SRC_INTS}
     ${SRC_INTEGRALS_CORE}
-    ${SRC_UTILS}
     ${SRC_KERNELS}
 )
 
@@ -310,6 +317,7 @@ if(NOT MSHQC_THIN_CORE)
     file(GLOB_RECURSE SRC_GRADIENT CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/gradient/*.cc")
     file(GLOB_RECURSE SRC_SYMMETRY CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/symmetry/*.cc")
     list(APPEND ALL_SOURCES
+        ${SRC_UTILS}
         "${CMAKE_SOURCE_DIR}/src/integrals/eri_transformer.cc"
         ${SRC_SCF} ${SRC_MP} ${SRC_GRADIENT} ${SRC_SYMMETRY}
     )
@@ -337,6 +345,9 @@ elseif(UNIX AND NOT APPLE)
   target_compile_definitions(mshqc PUBLIC EIGEN_USE_BLAS)
 endif()
 target_compile_definitions(mshqc PUBLIC EIGEN_NO_DEBUG EIGEN_MPL2_ONLY)
+if(MSHQC_THIN_CORE)
+    target_compile_definitions(mshqc PUBLIC MSHQC_NO_HDF5=1)
+endif()
 
 set(MSHQC_LINK_LIBS
     Eigen3::Eigen

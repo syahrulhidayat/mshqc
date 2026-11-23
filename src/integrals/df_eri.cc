@@ -20,11 +20,14 @@
 #include "mshqc/integrals/df_eri.h"
 #include "mshqc/integrals/packed_ao_utils.h"
 #include "mshqc/integrals/df_metric_utils.h"
+#ifndef MSHQC_NO_HDF5
 #include "mshqc/utils/hdf5_io.h"
+#endif
 #include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <vector>
+#include <stdexcept>
 #include <omp.h>
 
 namespace mshqc {
@@ -198,6 +201,7 @@ void DensityFittingERI::compute(bool save_hdf5) {
   B_mat_ = std::move(V_raw);
 
   if (save_hdf5) {
+#ifndef MSHQC_NO_HDF5
      
         const std::string out_h5 = hdf5_path_.empty() ? std::string("df_tensor.h5") : hdf5_path_;
         utils::HDF5TensorIO io(out_h5, utils::HDF5TensorIO::Mode::WRITE_TRUNCATE);
@@ -212,7 +216,11 @@ void DensityFittingERI::compute(bool save_hdf5) {
             std::array<long, 4> offset = {P, 0, 0, 0};
             io.write_slice_4d("df_tensor", offset, chunks, slice_sq.data());
         }
-    }
+    
+#else
+        throw std::runtime_error("HDF5 save_hdf5 is disabled in MSHQC_THIN_CORE build; use Python np.savez/memmap.");
+#endif
+}
 
     is_computed_ = true;
 }

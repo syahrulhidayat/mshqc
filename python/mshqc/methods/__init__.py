@@ -48,6 +48,8 @@ from .geom_hybrid import (
     optimize_geometry_thin_core,
     compute_frequencies_thin_core,
 )
+from .kappa_omp2 import run_df_kappa_omp2_rhf, run_df_kappa_omp2_uhf
+from .checkpoint import save_orbital_checkpoint, load_orbital_checkpoint
 from .interop import run_from_arrays, run_from_pyscf
 
 __all__ = [
@@ -67,5 +69,7 @@ __all__ = [
     "compute_df_scf_gradient", "compute_df_gradient",
     "ThinCoreGeomResult", "ThinCoreVibResult",
     "optimize_geometry_thin_core", "compute_frequencies_thin_core",
+    "run_df_kappa_omp2_rhf", "run_df_kappa_omp2_uhf",
+    "save_orbital_checkpoint", "load_orbital_checkpoint",
     "run_from_arrays", "run_from_pyscf",
 ]
