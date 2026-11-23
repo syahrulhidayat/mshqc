@@ -220,25 +220,47 @@ jobs:
         if: always() && steps.compile.outcome == 'success'
         shell: bash -el {0}
         run: |
-          # [INJECTED_V2_STAGE12_WORKFLOW]
-          {
-            echo "### mshqc v2.0.0 Pure Thin-Core (${{ matrix.os }})"
-            echo ""
-            if [ -f 09_full_pytest_discovery_log.txt ]; then
-              echo "**Pytest Full Discovery:** \`$(tail -n 1 09_full_pytest_discovery_log.txt)\`"
-            fi
-            if [ -f /tmp/heavy_quick.json ]; then
-              python -c '
+          # [INJECTED_V2_STAGE12_SUMMARY_FIX]
+          set -o pipefail
+          micromamba activate geom_env
+          python - << 'PYEOF' | tee -a "$GITHUB_STEP_SUMMARY"
           import json
-          rows = json.load(open("/tmp/heavy_quick.json"))
-          print("\n| System | Basis | Nbf | FC | t_RHF (s) | t_OMP2 (s) | t_LT-SOS (s) | t_OMP3 (s) | RSS (MB) |")
-          print("|---|---|---:|---:|---:|---:|---:|---:|---:|")
-          for r in rows:
-              o3 = f"{r["t_omp3"]:.2f}" if r["t_omp3"] is not None else "skip"
-              print(f"| {r["label"]} | {r["basis"]} | {r["nbf"]} | {r["n_frozen"]} | {r["t_scf"]:.2f} | {r["t_omp2"]:.2f} | {r["t_lt_sos"]:.2f} | {o3} | {r["peak_mb"]:.1f} |")
-          '
-            fi
-          } >> "$GITHUB_STEP_SUMMARY"
+          from pathlib import Path
+
+          print("### mshqc v2.0.0 Pure Thin-Core (${{ matrix.os }})")
+          print()
+
+          p_pytest = Path("09_full_pytest_discovery_log.txt")
+          if p_pytest.exists():
+              lines = [ln.strip() for ln in p_pytest.read_text(encoding="utf-8").splitlines() if ln.strip()]
+              if lines:
+                  print(f"- **Pytest Full Discovery:** `{lines[-1]}`")
+
+          p_uni = Path("10_universal_v2_standard_log.txt")
+          if p_uni.exists():
+              lines = [ln.strip() for ln in p_uni.read_text(encoding="utf-8").splitlines() if ln.strip()]
+              if lines:
+                  print(f"- **Universal Validation:** `{lines[-1]}`")
+
+          p_bab4 = Path("mshqc_bab4_v2_raw.json")
+          if p_bab4.exists():
+              b4 = json.loads(p_bab4.read_text(encoding="utf-8"))
+              print(f"- **Bab IV Suite Wall Time:** `{b4.get('wall_time_s', 0.0):.2f} s` (threads={b4.get('threads', '?')})")
+
+          p_heavy = Path("/tmp/heavy_quick.json")
+          if p_heavy.exists():
+              raw = json.loads(p_heavy.read_text(encoding="utf-8"))
+              rows = raw["cases"] if isinstance(raw, dict) and "cases" in raw else raw
+              print()
+              print("| System | Basis | Nbf | FC | t_RHF (s) | t_OMP2 (s) | t_LT-SOS (s) | t_OMP3 (s) | RSS (MB) |")
+              print("|---|---|---:|---:|---:|---:|---:|---:|---:|")
+              for r in rows:
+                  o3 = f"{r['t_omp3']:.2f}" if r.get("t_omp3") is not None else "skip"
+                  print(
+                      f"| {r['label']} | {r['basis']} | {r['nbf']} | {r['n_frozen']} | "
+                      f"{r['t_scf']:.2f} | {r['t_omp2']:.2f} | {r['t_lt_sos']:.2f} | {o3} | {r['peak_mb']:.1f} |"
+                  )
+          PYEOF
 
       - name: Upload v2.0 Test Logs
         if: always()
