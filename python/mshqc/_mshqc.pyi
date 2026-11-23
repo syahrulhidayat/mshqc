@@ -452,3 +452,23 @@ class kernels:
         nb: int,
         vb: int,
     ) -> Tuple[np.ndarray, np.ndarray]: ...
+    @staticmethod
+    def eval_pp_ladder_and_zvec_rhf_exact(
+        eri_ao: ERITensor,
+        T2: np.ndarray,
+        C_occ: np.ndarray,
+        C_vir: np.ndarray,
+        need_zvec: bool = True,
+    ) -> Tuple[np.ndarray, np.ndarray]: ...
+    @staticmethod
+    def eval_pp_ladder_and_zvec_uhf_exact(
+        eri_ao: ERITensor,
+        T2_aa: np.ndarray,
+        T2_bb: np.ndarray,
+        T2_ab: np.ndarray,
+        Ca_occ: np.ndarray,
+        Ca_vir: np.ndarray,
+        Cb_occ: np.ndarray,
+        Cb_vir: np.ndarray,
+        need_zvec: bool = True,
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]: ...

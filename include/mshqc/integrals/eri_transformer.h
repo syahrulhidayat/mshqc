@@ -57,5 +57,26 @@ Eigen::MatrixXd factorize_eri_4d_exact(
     const ERITensor& eri_ao,
     double threshold = 1.0e-12);
 
+
+// 5. AO-Direct 4D Exact PP-Ladder & OMP3 VVVV Z-Vector (single half-symmetric pass over ERITensor)
+std::pair<Eigen::MatrixXd, Eigen::MatrixXd> eval_pp_ladder_and_zvec_rhf_exact(
+    const ERITensor& eri_ao,
+    const Eigen::MatrixXd& T2,
+    const Eigen::MatrixXd& C_occ,
+    const Eigen::MatrixXd& C_vir,
+    bool need_zvec = true);
+
+std::tuple<Eigen::MatrixXd, Eigen::MatrixXd, Eigen::MatrixXd, Eigen::MatrixXd, Eigen::MatrixXd>
+eval_pp_ladder_and_zvec_uhf_exact(
+    const ERITensor& eri_ao,
+    const Eigen::MatrixXd& T2_aa,
+    const Eigen::MatrixXd& T2_bb,
+    const Eigen::MatrixXd& T2_ab,
+    const Eigen::MatrixXd& Ca_occ,
+    const Eigen::MatrixXd& Ca_vir,
+    const Eigen::MatrixXd& Cb_occ,
+    const Eigen::MatrixXd& Cb_vir,
+    bool need_zvec = true);
+
 } // namespace integrals
 } // namespace mshqc

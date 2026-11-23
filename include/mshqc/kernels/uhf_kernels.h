@@ -28,7 +28,10 @@ std::tuple<double, double, double, Eigen::MatrixXd, Eigen::MatrixXd, Eigen::Matr
     const Eigen::VectorXd& eps_oa,
     const Eigen::VectorXd& eps_va,
     const Eigen::VectorXd& eps_ob,
-    const Eigen::VectorXd& eps_vb);
+    const Eigen::VectorXd& eps_vb,
+    const Eigen::MatrixXd& Waa_override = Eigen::MatrixXd(),
+    const Eigen::MatrixXd& Wbb_override = Eigen::MatrixXd(),
+    const Eigen::MatrixXd& Wab_override = Eigen::MatrixXd());
 
 // 3. 1-RDM korelasi UHF OMP2 (g_oo_a, g_vv_a, g_oo_b, g_vv_b), mendukung spin-scaling
 std::tuple<Eigen::MatrixXd, Eigen::MatrixXd, Eigen::MatrixXd, Eigen::MatrixXd> eval_omp2_1rdm_uhf(
@@ -94,7 +97,8 @@ std::pair<Eigen::MatrixXd, Eigen::MatrixXd> eval_omp3_zvec_uhf_df(
     const Eigen::MatrixXd& B_oo_b,
     const Eigen::MatrixXd& B_ov_b,
     const Eigen::MatrixXd& B_vv_b,
-    int na, int va, int nb, int vb);
+    int na, int va, int nb, int vb,
+    bool include_vvvv = true);
 
 // 8. Produk Hessian-vektor MO-DF terkopel (alpha & beta) untuk TR-SOSCF UHF
 std::pair<Eigen::MatrixXd, Eigen::MatrixXd> apply_mo_df_hessian_uhf(

@@ -589,5 +589,311 @@ Eigen::MatrixXd factorize_eri_4d_exact(const ERITensor& eri_ao, double threshold
     return L_tri;
 }
 
+
+namespace {
+
+// Batched half-symmetric (sig <= lam) AO-direct 4D contraction:
+// G_pairs[k](mu, lam) = sum_{nu, sig} (mu nu | lam sig) * D_pairs[k](nu, sig)
+void contract_ao_4d_pairs(
+    const ERITensor& eri_ao,
+    const std::vector<Eigen::MatrixXd>& D_pairs,
+    std::vector<Eigen::MatrixXd>& G_pairs)
+{
+    const int nbf = static_cast<int>(eri_ao.dimension(0));
+    const int n_total = static_cast<int>(D_pairs.size());
+    G_pairs.assign(n_total, Eigen::MatrixXd::Zero(nbf, nbf));
+    if (nbf <= 0 || n_total <= 0) return;
+
+    const Eigen::Index n = static_cast<Eigen::Index>(nbf);
+    const Eigen::Index n2 = n * n;
+    const int n_tri = nbf * (nbf + 1) / 2;
+    std::vector<int> pair_s(n_tri), pair_l(n_tri);
+    int idx = 0;
+    for (int s = 0; s < nbf; ++s) {
+        for (int l = s; l < nbf; ++l) {
+            pair_s[idx] = s;
+            pair_l[idx] = l;
+            ++idx;
+        }
+    }
+
+    const int max_t = omp_get_max_threads();
+    const double* eri_ptr = eri_ao.data();
+    constexpr int kPairBatch = 64;
+
+    for (int p0 = 0; p0 < n_total; p0 += kPairBatch) {
+        const int bsz = std::min(kPairBatch, n_total - p0);
+
+        // Pack D_col[sig](nu, k) = D_pairs[p0 + k](nu, sig) -> contiguous (nbf x bsz)
+        std::vector<Eigen::MatrixXd> D_col(nbf, Eigen::MatrixXd(nbf, bsz));
+        #pragma omp parallel for schedule(static)
+        for (int s = 0; s < nbf; ++s) {
+            Eigen::MatrixXd& Ds = D_col[s];
+            for (int k = 0; k < bsz; ++k) {
+                Ds.col(k) = D_pairs[p0 + k].col(s);
+            }
+        }
+
+        std::vector<std::vector<Eigen::MatrixXd>> G_tls(
+            max_t, std::vector<Eigen::MatrixXd>(nbf, Eigen::MatrixXd::Zero(nbf, bsz)));
+
+        #pragma omp parallel
+        {
+            const int tid = omp_get_thread_num();
+            auto& G_loc = G_tls[tid];
+            #pragma omp for schedule(static) nowait
+            for (int t = 0; t < n_tri; ++t) {
+                const int s = pair_s[t];
+                const int l = pair_l[t];
+                const Eigen::Index off = (static_cast<Eigen::Index>(s) * n + l) * n2;
+                Eigen::Map<const Eigen::MatrixXd> V_ls(eri_ptr + off, nbf, nbf);
+                G_loc[l].noalias() += V_ls * D_col[s];
+                if (l != s) {
+                    G_loc[s].noalias() += V_ls * D_col[l];
+                }
+            }
+        }
+
+        #pragma omp parallel for schedule(static)
+        for (int l = 0; l < nbf; ++l) {
+            Eigen::MatrixXd G_sum = Eigen::MatrixXd::Zero(nbf, bsz);
+            for (int tid = 0; tid < max_t; ++tid) {
+                G_sum.noalias() += G_tls[tid][l];
+            }
+            for (int k = 0; k < bsz; ++k) {
+                G_pairs[p0 + k].col(l) = G_sum.col(k);
+            }
+        }
+    }
+}
+
+} // namespace
+
+std::pair<Eigen::MatrixXd, Eigen::MatrixXd> eval_pp_ladder_and_zvec_rhf_exact(
+    const ERITensor& eri_ao,
+    const Eigen::MatrixXd& T2,
+    const Eigen::MatrixXd& C_occ,
+    const Eigen::MatrixXd& C_vir,
+    bool need_zvec)
+{
+    const int nbf = static_cast<int>(eri_ao.dimension(0));
+    const int no = static_cast<int>(C_occ.cols());
+    const int nv = static_cast<int>(C_vir.cols());
+    Eigen::MatrixXd W_pp = Eigen::MatrixXd::Zero(
+        static_cast<Eigen::Index>(nv) * nv, static_cast<Eigen::Index>(no) * no);
+    Eigen::MatrixXd Z_vvvv = Eigen::MatrixXd::Zero(nv, no);
+    if (no <= 0 || nv <= 0 || nbf <= 0) return {std::move(W_pp), std::move(Z_vvvv)};
+
+    const int n_pairs = no * (no + 1) / 2;
+    std::vector<int> pi_vec(n_pairs), pj_vec(n_pairs);
+    std::vector<Eigen::MatrixXd> D_pairs(n_pairs);
+    int idx = 0;
+    for (int i = 0; i < no; ++i) {
+        for (int j = i; j < no; ++j) {
+            pi_vec[idx] = i;
+            pj_vec[idx] = j;
+            ++idx;
+        }
+    }
+
+    #pragma omp parallel for schedule(static)
+    for (int k = 0; k < n_pairs; ++k) {
+        const int i = pi_vec[k];
+        const int j = pj_vec[k];
+        Eigen::Map<const Eigen::MatrixXd> T_ij(
+            T2.col(static_cast<Eigen::Index>(i) * no + j).data(), nv, nv);
+        Eigen::MatrixXd tmp = C_vir * T_ij;
+        D_pairs[k] = tmp * C_vir.transpose();
+    }
+
+    std::vector<Eigen::MatrixXd> G_pairs;
+    contract_ao_4d_pairs(eri_ao, D_pairs, G_pairs);
+
+    const int max_t = omp_get_max_threads();
+    std::vector<Eigen::MatrixXd> Z_tls(need_zvec ? max_t : 0, Eigen::MatrixXd::Zero(nv, no));
+
+    #pragma omp parallel
+    {
+        const int tid = omp_get_thread_num();
+        Eigen::MatrixXd tmp_gv(nbf, nv), W_ij(nv, nv);
+        Eigen::MatrixXd G_tilde, Y_ij, Y_ji;
+        #pragma omp for schedule(static) nowait
+        for (int k = 0; k < n_pairs; ++k) {
+            const int i = pi_vec[k];
+            const int j = pj_vec[k];
+            const Eigen::MatrixXd& Gk = G_pairs[k];
+
+            tmp_gv.noalias() = Gk * C_vir;
+            W_ij.noalias() = C_vir.transpose() * tmp_gv;
+            Eigen::Map<Eigen::MatrixXd> dst_ij(
+                W_pp.col(static_cast<Eigen::Index>(i) * no + j).data(), nv, nv);
+            dst_ij = W_ij;
+            if (i != j) {
+                Eigen::Map<Eigen::MatrixXd> dst_ji(
+                    W_pp.col(static_cast<Eigen::Index>(j) * no + i).data(), nv, nv);
+                dst_ji = W_ij.transpose();
+            }
+
+            if (need_zvec) {
+                Eigen::Map<const Eigen::MatrixXd> T_ij(
+                    T2.col(static_cast<Eigen::Index>(i) * no + j).data(), nv, nv);
+                G_tilde = 2.0 * Gk - Gk.transpose();
+                Y_ij = C_occ.transpose() * (G_tilde * C_vir);
+                Z_tls[tid].noalias() -= T_ij * Y_ij.transpose();
+                if (i != j) {
+                    Y_ji = C_occ.transpose() * (G_tilde.transpose() * C_vir);
+                    Z_tls[tid].noalias() -= T_ij.transpose() * Y_ji.transpose();
+                }
+            }
+        }
+    }
+
+    if (need_zvec) {
+        for (int t = 0; t < max_t; ++t) Z_vvvv.noalias() += Z_tls[t];
+    }
+    return {std::move(W_pp), std::move(Z_vvvv)};
+}
+
+std::tuple<Eigen::MatrixXd, Eigen::MatrixXd, Eigen::MatrixXd, Eigen::MatrixXd, Eigen::MatrixXd>
+eval_pp_ladder_and_zvec_uhf_exact(
+    const ERITensor& eri_ao,
+    const Eigen::MatrixXd& T2_aa,
+    const Eigen::MatrixXd& T2_bb,
+    const Eigen::MatrixXd& T2_ab,
+    const Eigen::MatrixXd& Ca_occ,
+    const Eigen::MatrixXd& Ca_vir,
+    const Eigen::MatrixXd& Cb_occ,
+    const Eigen::MatrixXd& Cb_vir,
+    bool need_zvec)
+{
+    const int nbf = static_cast<int>(eri_ao.dimension(0));
+    const int na = static_cast<int>(Ca_occ.cols());
+    const int va = static_cast<int>(Ca_vir.cols());
+    const int nb = static_cast<int>(Cb_occ.cols());
+    const int vb = static_cast<int>(Cb_vir.cols());
+
+    Eigen::MatrixXd W_aa = Eigen::MatrixXd::Zero(
+        static_cast<Eigen::Index>(va) * va, static_cast<Eigen::Index>(na) * na);
+    Eigen::MatrixXd W_bb = Eigen::MatrixXd::Zero(
+        static_cast<Eigen::Index>(vb) * vb, static_cast<Eigen::Index>(nb) * nb);
+    Eigen::MatrixXd W_ab = Eigen::MatrixXd::Zero(
+        static_cast<Eigen::Index>(va) * vb, static_cast<Eigen::Index>(na) * nb);
+    Eigen::MatrixXd Za_vvvv = Eigen::MatrixXd::Zero(va, na);
+    Eigen::MatrixXd Zb_vvvv = Eigen::MatrixXd::Zero(vb, nb);
+
+    const int n_aa = (na > 1 && va > 0) ? (na * (na - 1) / 2) : 0;
+    const int n_bb = (nb > 1 && vb > 0) ? (nb * (nb - 1) / 2) : 0;
+    const int n_ab = (na > 0 && nb > 0 && va > 0 && vb > 0) ? (na * nb) : 0;
+    const int n_total = n_aa + n_bb + n_ab;
+    if (nbf <= 0 || n_total <= 0) {
+        return {std::move(W_aa), std::move(W_bb), std::move(W_ab), std::move(Za_vvvv), std::move(Zb_vvvv)};
+    }
+
+    std::vector<int> aa_i(n_aa), aa_j(n_aa), bb_i(n_bb), bb_j(n_bb);
+    int idx = 0;
+    if (n_aa > 0) {
+        for (int i = 0; i < na; ++i)
+            for (int j = i + 1; j < na; ++j) { aa_i[idx] = i; aa_j[idx] = j; ++idx; }
+    }
+    idx = 0;
+    if (n_bb > 0) {
+        for (int i = 0; i < nb; ++i)
+            for (int j = i + 1; j < nb; ++j) { bb_i[idx] = i; bb_j[idx] = j; ++idx; }
+    }
+
+    const int off_bb = n_aa;
+    const int off_ab = n_aa + n_bb;
+    std::vector<Eigen::MatrixXd> D_pairs(n_total);
+
+    #pragma omp parallel for schedule(static)
+    for (int k = 0; k < n_total; ++k) {
+        if (k < n_aa) {
+            const int i = aa_i[k], j = aa_j[k];
+            Eigen::Map<const Eigen::MatrixXd> T_ij(
+                T2_aa.col(static_cast<Eigen::Index>(i) * na + j).data(), va, va);
+            D_pairs[k] = (Ca_vir * T_ij) * Ca_vir.transpose();
+        } else if (k < off_ab) {
+            const int kb = k - off_bb;
+            const int i = bb_i[kb], j = bb_j[kb];
+            Eigen::Map<const Eigen::MatrixXd> T_ij(
+                T2_bb.col(static_cast<Eigen::Index>(i) * nb + j).data(), vb, vb);
+            D_pairs[k] = (Cb_vir * T_ij) * Cb_vir.transpose();
+        } else {
+            const int kab = k - off_ab;
+            Eigen::Map<const Eigen::MatrixXd> T_ij(T2_ab.col(kab).data(), va, vb);
+            D_pairs[k] = (Ca_vir * T_ij) * Cb_vir.transpose();
+        }
+    }
+
+    std::vector<Eigen::MatrixXd> G_pairs;
+    contract_ao_4d_pairs(eri_ao, D_pairs, G_pairs);
+
+    const int max_t = omp_get_max_threads();
+    std::vector<Eigen::MatrixXd> Za_tls(need_zvec ? max_t : 0, Eigen::MatrixXd::Zero(va, na));
+    std::vector<Eigen::MatrixXd> Zb_tls(need_zvec ? max_t : 0, Eigen::MatrixXd::Zero(vb, nb));
+
+    #pragma omp parallel
+    {
+        const int tid = omp_get_thread_num();
+        #pragma omp for schedule(static) nowait
+        for (int k = 0; k < n_total; ++k) {
+            const Eigen::MatrixXd& Gk = G_pairs[k];
+            if (k < n_aa) {
+                const int i = aa_i[k], j = aa_j[k];
+                Eigen::MatrixXd W_raw = Ca_vir.transpose() * (Gk * Ca_vir);
+                Eigen::MatrixXd W_asym = 0.5 * (W_raw - W_raw.transpose());
+                Eigen::Map<Eigen::MatrixXd> dst_ij(
+                    W_aa.col(static_cast<Eigen::Index>(i) * na + j).data(), va, va);
+                Eigen::Map<Eigen::MatrixXd> dst_ji(
+                    W_aa.col(static_cast<Eigen::Index>(j) * na + i).data(), va, va);
+                dst_ij = W_asym;
+                dst_ji = -W_asym;
+                if (need_zvec) {
+                    Eigen::Map<const Eigen::MatrixXd> T_ij(
+                        T2_aa.col(static_cast<Eigen::Index>(i) * na + j).data(), va, va);
+                    Eigen::MatrixXd Y_ij = Ca_occ.transpose() * (Gk * Ca_vir);
+                    Za_tls[tid].noalias() -= T_ij * Y_ij.transpose();
+                }
+            } else if (k < off_ab) {
+                const int kb = k - off_bb;
+                const int i = bb_i[kb], j = bb_j[kb];
+                Eigen::MatrixXd W_raw = Cb_vir.transpose() * (Gk * Cb_vir);
+                Eigen::MatrixXd W_asym = 0.5 * (W_raw - W_raw.transpose());
+                Eigen::Map<Eigen::MatrixXd> dst_ij(
+                    W_bb.col(static_cast<Eigen::Index>(i) * nb + j).data(), vb, vb);
+                Eigen::Map<Eigen::MatrixXd> dst_ji(
+                    W_bb.col(static_cast<Eigen::Index>(j) * nb + i).data(), vb, vb);
+                dst_ij = W_asym;
+                dst_ji = -W_asym;
+                if (need_zvec) {
+                    Eigen::Map<const Eigen::MatrixXd> T_ij(
+                        T2_bb.col(static_cast<Eigen::Index>(i) * nb + j).data(), vb, vb);
+                    Eigen::MatrixXd Y_ij = Cb_occ.transpose() * (Gk * Cb_vir);
+                    Zb_tls[tid].noalias() -= T_ij * Y_ij.transpose();
+                }
+            } else {
+                const int kab = k - off_ab;
+                Eigen::Map<Eigen::MatrixXd> dst_ab(W_ab.col(kab).data(), va, vb);
+                dst_ab.noalias() = Ca_vir.transpose() * (Gk * Cb_vir);
+                if (need_zvec) {
+                    Eigen::Map<const Eigen::MatrixXd> T_ij(T2_ab.col(kab).data(), va, vb);
+                    Eigen::MatrixXd Ya = Ca_occ.transpose() * (Gk * Cb_vir);
+                    Za_tls[tid].noalias() -= T_ij * Ya.transpose();
+                    Eigen::MatrixXd YbT = Ca_vir.transpose() * (Gk * Cb_occ);
+                    Zb_tls[tid].noalias() -= T_ij.transpose() * YbT;
+                }
+            }
+        }
+    }
+
+    if (need_zvec) {
+        for (int t = 0; t < max_t; ++t) {
+            Za_vvvv.noalias() += Za_tls[t];
+            Zb_vvvv.noalias() += Zb_tls[t];
+        }
+    }
+    return {std::move(W_aa), std::move(W_bb), std::move(W_ab), std::move(Za_vvvv), std::move(Zb_vvvv)};
+}
+
 } // namespace integrals
 } // namespace mshqc

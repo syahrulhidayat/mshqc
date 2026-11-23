@@ -86,14 +86,16 @@ void bind_kernels_module(nb::module_& parent) {
     k.def("eval_rmp3_df", &kernels::eval_rmp3_df,
           nb::call_guard<nb::gil_scoped_release>(),
           nb::arg("T2"), nb::arg("B_oo"), nb::arg("B_ov"), nb::arg("B_vv"),
-          nb::arg("eps_occ"), nb::arg("eps_vir"));
+          nb::arg("eps_occ"), nb::arg("eps_vir"),
+          nb::arg("W_pp_override") = Eigen::MatrixXd());
     k.def("eval_omp3_1rdm_rhf", &kernels::eval_omp3_1rdm_rhf,
           nb::call_guard<nb::gil_scoped_release>(),
           nb::arg("T2"), nb::arg("L2"), nb::arg("n_occ"), nb::arg("n_vir"));
     k.def("eval_omp3_zvec_rhf_df", &kernels::eval_omp3_zvec_rhf_df,
           nb::call_guard<nb::gil_scoped_release>(),
           nb::arg("T2"), nb::arg("L2"), nb::arg("B_oo"), nb::arg("B_ov"), nb::arg("B_vv"),
-          nb::arg("n_occ"), nb::arg("n_vir"));
+          nb::arg("n_occ"), nb::arg("n_vir"),
+          nb::arg("include_vvvv") = true);
     k.def("apply_mo_df_hessian_rhf", &kernels::apply_mo_df_hessian_rhf,
           nb::call_guard<nb::gil_scoped_release>(),
           nb::arg("kappa_vo"), nb::arg("eps_occ"), nb::arg("eps_vir"),
@@ -124,7 +126,10 @@ void bind_kernels_module(nb::module_& parent) {
           nb::arg("T2_aa"), nb::arg("T2_bb"), nb::arg("T2_ab"),
           nb::arg("B_oo_a"), nb::arg("B_ov_a"), nb::arg("B_vv_a"),
           nb::arg("B_oo_b"), nb::arg("B_ov_b"), nb::arg("B_vv_b"),
-          nb::arg("eps_oa"), nb::arg("eps_va"), nb::arg("eps_ob"), nb::arg("eps_vb"));
+          nb::arg("eps_oa"), nb::arg("eps_va"), nb::arg("eps_ob"), nb::arg("eps_vb"),
+          nb::arg("Waa_override") = Eigen::MatrixXd(),
+          nb::arg("Wbb_override") = Eigen::MatrixXd(),
+          nb::arg("Wab_override") = Eigen::MatrixXd());
     k.def("eval_omp3_1rdm_uhf", &kernels::eval_omp3_1rdm_uhf,
           nb::call_guard<nb::gil_scoped_release>(),
           nb::arg("T2_aa"), nb::arg("T2_bb"), nb::arg("T2_ab"),
@@ -136,7 +141,8 @@ void bind_kernels_module(nb::module_& parent) {
           nb::arg("L2_aa"), nb::arg("L2_bb"), nb::arg("L2_ab"),
           nb::arg("B_oo_a"), nb::arg("B_ov_a"), nb::arg("B_vv_a"),
           nb::arg("B_oo_b"), nb::arg("B_ov_b"), nb::arg("B_vv_b"),
-          nb::arg("na"), nb::arg("va"), nb::arg("nb"), nb::arg("vb"));
+          nb::arg("na"), nb::arg("va"), nb::arg("nb"), nb::arg("vb"),
+          nb::arg("include_vvvv") = true);
     k.def("apply_mo_df_hessian_uhf", &kernels::apply_mo_df_hessian_uhf,
           nb::call_guard<nb::gil_scoped_release>(),
           nb::arg("kappa_vo_a"), nb::arg("kappa_vo_b"),
@@ -205,6 +211,15 @@ k.def("eval_mo_gcorr_uhf_df", &kernels::eval_mo_gcorr_uhf_df,
       nb::arg("g_oo_a"), nb::arg("g_vv_a"),
       nb::arg("g_oo_b"), nb::arg("g_vv_b"),
       nb::arg("na"), nb::arg("va"), nb::arg("nb"), nb::arg("vb"));
+    k.def("eval_pp_ladder_and_zvec_rhf_exact", &integrals::eval_pp_ladder_and_zvec_rhf_exact,
+          nb::call_guard<nb::gil_scoped_release>(),
+          nb::arg("eri_ao"), nb::arg("T2"), nb::arg("C_occ"), nb::arg("C_vir"),
+          nb::arg("need_zvec") = true);
+    k.def("eval_pp_ladder_and_zvec_uhf_exact", &integrals::eval_pp_ladder_and_zvec_uhf_exact,
+          nb::call_guard<nb::gil_scoped_release>(),
+          nb::arg("eri_ao"), nb::arg("T2_aa"), nb::arg("T2_bb"), nb::arg("T2_ab"),
+          nb::arg("Ca_occ"), nb::arg("Ca_vir"), nb::arg("Cb_occ"), nb::arg("Cb_vir"),
+          nb::arg("need_zvec") = true);
 }
 
 } // namespace mshqc

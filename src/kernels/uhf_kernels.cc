@@ -207,7 +207,10 @@ std::tuple<double, double, double, Eigen::MatrixXd, Eigen::MatrixXd, Eigen::Matr
     const Eigen::VectorXd& eps_oa,
     const Eigen::VectorXd& eps_va,
     const Eigen::VectorXd& eps_ob,
-    const Eigen::VectorXd& eps_vb)
+    const Eigen::VectorXd& eps_vb,
+    const Eigen::MatrixXd& Waa_override,
+    const Eigen::MatrixXd& Wbb_override,
+    const Eigen::MatrixXd& Wab_override)
 {
     const int na = static_cast<int>(eps_oa.size());
     const int va = static_cast<int>(eps_va.size());
@@ -560,26 +563,30 @@ std::tuple<double, double, double, Eigen::MatrixXd, Eigen::MatrixXd, Eigen::Matr
             safe_tblis_mult(1.0, t_Vovov_ab, "iakc", t_Tab, "jkbc", 1.0, t_Wr, "ijab");
         }
 
-        const int n_p = na * (na - 1) / 2;
-        std::vector<Eigen::MatrixXd> Tp(n_p, Eigen::MatrixXd(va, va));
-        std::vector<Eigen::MatrixXd> Wp(n_p, Eigen::MatrixXd::Zero(va, va));
-        int pi = 0;
-        for (int i = 0; i < na; ++i)
-            for (int j = i + 1; j < na; ++j) {
-                Eigen::Map<const Eigen::MatrixXd> Tij(T2_aa.col(static_cast<Eigen::Index>(i) * na + j).data(), va, va);
-                Tp[pi++] = Tij;
-            }
-        contract_vvvv_pairs_df(B_vv_a, va, B_vv_a, va, n_aux, Tp, Wp);
-        pi = 0;
-        for (int i = 0; i < na; ++i)
-            for (int j = i + 1; j < na; ++j) {
-                Eigen::MatrixXd W_asym = 0.5 * (Wp[pi] - Wp[pi].transpose());
-                Eigen::Map<Eigen::MatrixXd> dst_ij(Waa_l.col(static_cast<Eigen::Index>(i) * na + j).data(), va, va);
-                Eigen::Map<Eigen::MatrixXd> dst_ji(Waa_l.col(static_cast<Eigen::Index>(j) * na + i).data(), va, va);
-                dst_ij.noalias() += W_asym;
-                dst_ji.noalias() -= W_asym;
-                ++pi;
-            }
+        if (Waa_override.rows() == Waa_l.rows() && Waa_override.cols() == Waa_l.cols()) {
+            Waa_l.noalias() += Waa_override;
+        } else {
+            const int n_p = na * (na - 1) / 2;
+            std::vector<Eigen::MatrixXd> Tp(n_p, Eigen::MatrixXd(va, va));
+            std::vector<Eigen::MatrixXd> Wp(n_p, Eigen::MatrixXd::Zero(va, va));
+            int pi = 0;
+            for (int i = 0; i < na; ++i)
+                for (int j = i + 1; j < na; ++j) {
+                    Eigen::Map<const Eigen::MatrixXd> Tij(T2_aa.col(static_cast<Eigen::Index>(i) * na + j).data(), va, va);
+                    Tp[pi++] = Tij;
+                }
+            contract_vvvv_pairs_df(B_vv_a, va, B_vv_a, va, n_aux, Tp, Wp);
+            pi = 0;
+            for (int i = 0; i < na; ++i)
+                for (int j = i + 1; j < na; ++j) {
+                    Eigen::MatrixXd W_asym = 0.5 * (Wp[pi] - Wp[pi].transpose());
+                    Eigen::Map<Eigen::MatrixXd> dst_ij(Waa_l.col(static_cast<Eigen::Index>(i) * na + j).data(), va, va);
+                    Eigen::Map<Eigen::MatrixXd> dst_ji(Waa_l.col(static_cast<Eigen::Index>(j) * na + i).data(), va, va);
+                    dst_ij.noalias() += W_asym;
+                    dst_ji.noalias() -= W_asym;
+                    ++pi;
+                }
+        }
 
         #pragma omp parallel for collapse(2) reduction(+:e3_aa) schedule(static)
         for (int i = 0; i < na; ++i) {
@@ -625,26 +632,30 @@ std::tuple<double, double, double, Eigen::MatrixXd, Eigen::MatrixXd, Eigen::Matr
             safe_tblis_mult(-1.0, t_Voovv, "ikac", t_Tbb, "kjcb", 1.0, t_Wr, "ijab");
             safe_tblis_mult( 1.0, t_Vovov_ab, "kcia", t_Tab, "kjcb", 1.0, t_Wr, "ijab");
 
-            const int n_p = nb * (nb - 1) / 2;
-            std::vector<Eigen::MatrixXd> Tp(n_p, Eigen::MatrixXd(vb, vb));
-            std::vector<Eigen::MatrixXd> Wp(n_p, Eigen::MatrixXd::Zero(vb, vb));
-            int pi = 0;
-            for (int i = 0; i < nb; ++i)
-                for (int j = i + 1; j < nb; ++j) {
-                    Eigen::Map<const Eigen::MatrixXd> Tij(T2_bb.col(static_cast<Eigen::Index>(i) * nb + j).data(), vb, vb);
-                    Tp[pi++] = Tij;
-                }
-            contract_vvvv_pairs_df(B_vv_b, vb, B_vv_b, vb, n_aux, Tp, Wp);
-            pi = 0;
-            for (int i = 0; i < nb; ++i)
-                for (int j = i + 1; j < nb; ++j) {
-                    Eigen::MatrixXd W_asym = 0.5 * (Wp[pi] - Wp[pi].transpose());
-                    Eigen::Map<Eigen::MatrixXd> dst_ij(Wbb_l.col(static_cast<Eigen::Index>(i) * nb + j).data(), vb, vb);
-                    Eigen::Map<Eigen::MatrixXd> dst_ji(Wbb_l.col(static_cast<Eigen::Index>(j) * nb + i).data(), vb, vb);
-                    dst_ij.noalias() += W_asym;
-                    dst_ji.noalias() -= W_asym;
-                    ++pi;
-                }
+            if (Wbb_override.rows() == Wbb_l.rows() && Wbb_override.cols() == Wbb_l.cols()) {
+                Wbb_l.noalias() += Wbb_override;
+            } else {
+                const int n_p = nb * (nb - 1) / 2;
+                std::vector<Eigen::MatrixXd> Tp(n_p, Eigen::MatrixXd(vb, vb));
+                std::vector<Eigen::MatrixXd> Wp(n_p, Eigen::MatrixXd::Zero(vb, vb));
+                int pi = 0;
+                for (int i = 0; i < nb; ++i)
+                    for (int j = i + 1; j < nb; ++j) {
+                        Eigen::Map<const Eigen::MatrixXd> Tij(T2_bb.col(static_cast<Eigen::Index>(i) * nb + j).data(), vb, vb);
+                        Tp[pi++] = Tij;
+                    }
+                contract_vvvv_pairs_df(B_vv_b, vb, B_vv_b, vb, n_aux, Tp, Wp);
+                pi = 0;
+                for (int i = 0; i < nb; ++i)
+                    for (int j = i + 1; j < nb; ++j) {
+                        Eigen::MatrixXd W_asym = 0.5 * (Wp[pi] - Wp[pi].transpose());
+                        Eigen::Map<Eigen::MatrixXd> dst_ij(Wbb_l.col(static_cast<Eigen::Index>(i) * nb + j).data(), vb, vb);
+                        Eigen::Map<Eigen::MatrixXd> dst_ji(Wbb_l.col(static_cast<Eigen::Index>(j) * nb + i).data(), vb, vb);
+                        dst_ij.noalias() += W_asym;
+                        dst_ji.noalias() -= W_asym;
+                        ++pi;
+                    }
+            }
 
             #pragma omp parallel for collapse(2) reduction(+:e3_bb) schedule(static)
             for (int i = 0; i < nb; ++i) {
@@ -699,17 +710,21 @@ std::tuple<double, double, double, Eigen::MatrixXd, Eigen::MatrixXd, Eigen::Matr
             safe_tblis_mult(-1.0, t_Voovv_ab_ex, "ikbc", t_Tab, "kjac", 1.0, t_Wr, "ijab");
             safe_tblis_mult(-1.0, t_Tab, "ikcb", t_Voovv_ba_ex, "jkac", 1.0, t_Wr, "ijab");
 
-            const int n_p = na * nb;
-            std::vector<Eigen::MatrixXd> Tp(n_p, Eigen::MatrixXd(va, vb));
-            std::vector<Eigen::MatrixXd> Wp(n_p, Eigen::MatrixXd::Zero(va, vb));
-            for (int k = 0; k < n_p; ++k) {
-                Eigen::Map<const Eigen::MatrixXd> Tij(T2_ab.col(k).data(), va, vb);
-                Tp[k] = Tij;
-            }
-            contract_vvvv_pairs_df(B_vv_a, va, B_vv_b, vb, n_aux, Tp, Wp);
-            for (int k = 0; k < n_p; ++k) {
-                Eigen::Map<Eigen::MatrixXd> dst(Wab_l.col(k).data(), va, vb);
-                dst.noalias() += Wp[k];
+            if (Wab_override.rows() == Wab_l.rows() && Wab_override.cols() == Wab_l.cols()) {
+                Wab_l.noalias() += Wab_override;
+            } else {
+                const int n_p = na * nb;
+                std::vector<Eigen::MatrixXd> Tp(n_p, Eigen::MatrixXd(va, vb));
+                std::vector<Eigen::MatrixXd> Wp(n_p, Eigen::MatrixXd::Zero(va, vb));
+                for (int k = 0; k < n_p; ++k) {
+                    Eigen::Map<const Eigen::MatrixXd> Tij(T2_ab.col(k).data(), va, vb);
+                    Tp[k] = Tij;
+                }
+                contract_vvvv_pairs_df(B_vv_a, va, B_vv_b, vb, n_aux, Tp, Wp);
+                for (int k = 0; k < n_p; ++k) {
+                    Eigen::Map<Eigen::MatrixXd> dst(Wab_l.col(k).data(), va, vb);
+                    dst.noalias() += Wp[k];
+                }
             }
 
             #pragma omp parallel for collapse(2) reduction(+:e3_ab) schedule(static)
@@ -852,7 +867,8 @@ std::pair<Eigen::MatrixXd, Eigen::MatrixXd> eval_omp3_zvec_uhf_df(
     const Eigen::MatrixXd& B_oo_b,
     const Eigen::MatrixXd& B_ov_b,
     const Eigen::MatrixXd& B_vv_b,
-    int na, int va, int nb, int vb)
+    int na, int va, int nb, int vb,
+    bool include_vvvv)
 {
     const int n_aux = static_cast<int>(B_ov_a.cols());
     Eigen::MatrixXd Z_a = Eigen::MatrixXd::Zero(va, na);
@@ -884,7 +900,9 @@ std::pair<Eigen::MatrixXd, Eigen::MatrixXd> eval_omp3_zvec_uhf_df(
     }
 
     // 2. AA VVVV ladder (chunked Y_ooov)
-    accum_vvvv_ladder_uhf_chunked(-0.5, T2_aa, na, na, va, va, T2_aa, B_ov_a, na, va, B_vv_a, va, false, Z_a);
+    if (include_vvvv) {
+        accum_vvvv_ladder_uhf_chunked(-0.5, T2_aa, na, na, va, va, T2_aa, B_ov_a, na, va, B_vv_a, va, false, Z_a);
+    }
 
     // 3. AA OOOO ladder
     {
@@ -1242,6 +1260,18 @@ std::pair<Eigen::MatrixXd, Eigen::MatrixXd> eval_mo_gcorr_uhf_df(
     Eigen::MatrixXd Ga_vo = Eigen::MatrixXd::Zero(va, na);
     Eigen::MatrixXd Gb_vo = Eigen::MatrixXd::Zero(vb, nb);
     if (n_aux <= 0 || (!has_a && !has_b)) return {std::move(Ga_vo), std::move(Gb_vo)};
+    if (has_a && (B_oo_a.rows() != static_cast<Eigen::Index>(na) * na ||
+                  B_ov_a.rows() != static_cast<Eigen::Index>(na) * va ||
+                  B_vv_a.rows() != static_cast<Eigen::Index>(va) * va ||
+                  B_oo_a.cols() != n_aux || B_ov_a.cols() != n_aux || B_vv_a.cols() != n_aux)) {
+        throw std::invalid_argument("eval_mo_gcorr_uhf_df: dimensi blok alpha B tidak cocok dengan (na, va)");
+    }
+    if (has_b && (B_oo_b.rows() != static_cast<Eigen::Index>(nb) * nb ||
+                  B_ov_b.rows() != static_cast<Eigen::Index>(nb) * vb ||
+                  B_vv_b.rows() != static_cast<Eigen::Index>(vb) * vb ||
+                  B_oo_b.cols() != n_aux || B_ov_b.cols() != n_aux || B_vv_b.cols() != n_aux)) {
+        throw std::invalid_argument("eval_mo_gcorr_uhf_df: dimensi blok beta B tidak cocok dengan (nb, vb)");
+    }
 
     // 1. Coulomb terkopel alpha + beta di ruang MO
     Eigen::VectorXd c_aux = Eigen::VectorXd::Zero(n_aux);

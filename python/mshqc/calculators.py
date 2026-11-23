@@ -206,6 +206,7 @@ class MSHQCCalculator:
         if scf_res is None:
             scf_res = self.scf_res or self.run_scf()
         B_ao = self._get_ao_3index_factor(scf_res)
+        eri4_arg = self._get_eri4() if self.eri_method == "exact" else None
         H_core = self.integrals.compute_kinetic() + self.integrals.compute_nuclear()
         S_ovlp = self.integrals.compute_overlap()
         v_nn = float(self.molecule.nuclear_repulsion_energy())
@@ -214,13 +215,13 @@ class MSHQCCalculator:
             return run_from_arrays(
                 H_core, S_ovlp, v_nn, B_ao, scf_res.C_alpha, scf_res.n_occ_alpha,
                 method=method_name, grad_tol=grad_thresh, energy_tol=self.threshold,
-                max_iter=max_iter, n_frozen=self.n_frozen, kappa=kappa,
+                max_iter=max_iter, n_frozen=self.n_frozen, kappa=kappa, eri4=eri4_arg,
             )
         return run_from_arrays(
             H_core, S_ovlp, v_nn, B_ao, scf_res.C_alpha, scf_res.n_occ_alpha,
             C_beta=scf_res.C_beta, n_occ_beta=scf_res.n_occ_beta,
             method=method_name, grad_tol=grad_thresh, energy_tol=self.threshold,
-            max_iter=max_iter, n_frozen=self.n_frozen, kappa=kappa,
+            max_iter=max_iter, n_frozen=self.n_frozen, kappa=kappa, eri4=eri4_arg,
         )
 
     def run_mp2(self, scf_res: Optional[Any] = None, use_hybrid: Optional[bool] = None):

@@ -94,7 +94,12 @@ def test_exact_eri_parity_and_human_str():
     s_omp = str(r_ex["omp2"]["result"])
     assert len(s_scf) < 160 and "E_total" in s_scf
     assert len(s_omp) < 200 and "OMP2" in s_omp
-    print(f"[EXACT 4D  ] {s_omp}")
+    oh = "O 0 0 0.0\nH 0 0 0.9697"
+    u_ex = mshqc.run(oh, method=["scf", "mp3", "omp2.5", "omp3"], basis="cc-pVDZ", eri_method="exact", units="angstrom", threshold=1e-9)
+    u_cd = mshqc.run(oh, method=["scf", "mp3", "omp2.5", "omp3"], basis="cc-pVDZ", eri_method="cholesky", units="angstrom", threshold=1e-9)
+    for m in ("scf", "mp3", "omp2.5", "omp3"):
+        assert abs(u_ex[m]["energy"] - u_cd[m]["energy"]) < 1.0e-8, f"EXACT vs CHOL UHF mismatch on {m}"
+    print(f"[EXACT 4D  ] {s_omp} | OH OMP3={u_ex['omp3']['energy']:.8f} Ha")
 
 
 if __name__ == "__main__":

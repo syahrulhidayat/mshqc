@@ -218,7 +218,7 @@ def _assemble_orbital_grad_uhf(
     return wa_vo, wb_vo
 
 
-def _omp_rhf_corr_kernel(c_os: float, c_ss: float, lam_mp3: float) -> CorrCallbackRHF:
+def _omp_rhf_corr_kernel(c_os: float, c_ss: float, lam_mp3: float, eri4=None, mo_ctx: Optional[dict] = None) -> CorrCallbackRHF:
     """Persamaan korelasi murni RHF (MP2/SCS/SOS/OMP2.5/OMP3) di atas C++20 kernels."""
     if lam_mp3 != 0.0 and (c_os != 1.0 or c_ss != 1.0):
         raise ValueError("Spin-scaling (c_os, c_ss) bersama lam_mp3 != 0 belum diaktifkan di RHF")
@@ -232,6 +232,21 @@ def _omp_rhf_corr_kernel(c_os: float, c_ss: float, lam_mp3: float) -> CorrCallba
             g_oo, g_vv = K.eval_omp2_1rdm_rhf(T2, n_act, n_vir, c_os=c_os, c_ss=c_ss)
             Z_vo = K.eval_omp2_zvec_rhf_df(T2, B_oo, B_ov, B_vv, n_act, n_vir, c_os=c_os, c_ss=c_ss)
             return e_mp2, 0.0, g_oo, g_vv, Z_vo
+
+        if eri4 is not None and mo_ctx is not None:
+            W_pp, Z_vvvv = K.eval_pp_ladder_and_zvec_rhf_exact(
+                eri4, T2, mo_ctx['C_act'], mo_ctx['C_vir'], True
+            )
+            e_mp3_raw, L2 = K.eval_rmp3_df(T2, B_oo, B_ov, B_vv, eps_o, eps_v, W_pp)
+            e_mp3 = lam_mp3 * e_mp3_raw
+            if lam_mp3 == 1.0:
+                g_oo, g_vv = K.eval_omp3_1rdm_rhf(T2, L2, n_act, n_vir)
+                Z_vo = K.eval_omp3_zvec_rhf_df(T2, L2, B_oo, B_ov, B_vv, n_act, n_vir, False) + Z_vvvv
+                return e_mp2, e_mp3, g_oo, g_vv, Z_vo
+            g_oo, g_vv = K.eval_omp3_1rdm_rhf(T2, np.ascontiguousarray(lam_mp3 * L2), n_act, n_vir)
+            Z2 = K.eval_omp2_zvec_rhf_df(T2, B_oo, B_ov, B_vv, n_act, n_vir)
+            Z3 = K.eval_omp3_zvec_rhf_df(T2, L2, B_oo, B_ov, B_vv, n_act, n_vir, False) + Z_vvvv
+            return e_mp2, e_mp3, g_oo, g_vv, (1.0 - lam_mp3) * Z2 + lam_mp3 * Z3
 
         e_mp3_raw, L2 = K.eval_rmp3_df(T2, B_oo, B_ov, B_vv, eps_o, eps_v)
         e_mp3 = lam_mp3 * e_mp3_raw
@@ -248,7 +263,7 @@ def _omp_rhf_corr_kernel(c_os: float, c_ss: float, lam_mp3: float) -> CorrCallba
     return corr_fn
 
 
-def _omp_uhf_corr_kernel(c_os: float, c_ss: float, lam_mp3: float) -> CorrCallbackUHF:
+def _omp_uhf_corr_kernel(c_os: float, c_ss: float, lam_mp3: float, eri4=None, mo_ctx: Optional[dict] = None) -> CorrCallbackUHF:
     """Persamaan korelasi murni UHF (MP2/SCS/SOS/OMP2.5/OMP3) di atas C++20 kernels."""
     if lam_mp3 != 0.0 and (c_os != 1.0 or c_ss != 1.0):
         raise ValueError("Spin-scaling (c_os, c_ss) bersama lam_mp3 != 0 belum diaktifkan di UHF")
@@ -271,6 +286,48 @@ def _omp_uhf_corr_kernel(c_os: float, c_ss: float, lam_mp3: float) -> CorrCallba
                 na_act, va, nb_act, vb, c_os=c_os, c_ss=c_ss,
             )
             return e_mp2, 0.0, g_oo_a, g_vv_a, g_oo_b, g_vv_b, Za, Zb
+
+        if eri4 is not None and mo_ctx is not None:
+            W_aa, W_bb, W_ab, Za_v, Zb_v = K.eval_pp_ladder_and_zvec_uhf_exact(
+                eri4, T2_aa, T2_bb, T2_ab,
+                mo_ctx['Ca_act'], mo_ctx['Ca_v'], mo_ctx['Cb_act'], mo_ctx['Cb_v'], True,
+            )
+            e3_aa, e3_bb, e3_ab, L2_aa, L2_bb, L2_ab = K.eval_ump3_df(
+                T2_aa, T2_bb, T2_ab,
+                B_oo_a, B_ov_a, B_vv_a, B_oo_b, B_ov_b, B_vv_b,
+                eps_oa, eps_va, eps_ob, eps_vb,
+                W_aa, W_bb, W_ab,
+            )
+            e_mp3 = lam_mp3 * (e3_aa + e3_bb + e3_ab)
+            if lam_mp3 == 1.0:
+                g_oo_a, g_vv_a, g_oo_b, g_vv_b = K.eval_omp3_1rdm_uhf(
+                    T2_aa, T2_bb, T2_ab, L2_aa, L2_bb, L2_ab, na_act, va, nb_act, vb
+                )
+                Za_r, Zb_r = K.eval_omp3_zvec_uhf_df(
+                    T2_aa, T2_bb, T2_ab, L2_aa, L2_bb, L2_ab,
+                    B_oo_a, B_ov_a, B_vv_a, B_oo_b, B_ov_b, B_vv_b,
+                    na_act, va, nb_act, vb, False,
+                )
+                return e_mp2, e_mp3, g_oo_a, g_vv_a, g_oo_b, g_vv_b, Za_r + Za_v, Zb_r + Zb_v
+            g_oo_a, g_vv_a, g_oo_b, g_vv_b = K.eval_omp3_1rdm_uhf(
+                T2_aa, T2_bb, T2_ab,
+                np.ascontiguousarray(lam_mp3 * L2_aa),
+                np.ascontiguousarray(lam_mp3 * L2_bb),
+                np.ascontiguousarray(lam_mp3 * L2_ab),
+                na_act, va, nb_act, vb,
+            )
+            Z2a, Z2b = K.eval_omp2_zvec_uhf_df(
+                T2_aa, T2_bb, T2_ab,
+                B_oo_a, B_ov_a, B_vv_a, B_oo_b, B_ov_b, B_vv_b,
+                na_act, va, nb_act, vb,
+            )
+            Z3a_r, Z3b_r = K.eval_omp3_zvec_uhf_df(
+                T2_aa, T2_bb, T2_ab, L2_aa, L2_bb, L2_ab,
+                B_oo_a, B_ov_a, B_vv_a, B_oo_b, B_ov_b, B_vv_b,
+                na_act, va, nb_act, vb, False,
+            )
+            w2, w3 = 1.0 - lam_mp3, lam_mp3
+            return e_mp2, e_mp3, g_oo_a, g_vv_a, g_oo_b, g_vv_b, w2 * Z2a + w3 * (Z3a_r + Za_v), w2 * Z2b + w3 * (Z3b_r + Zb_v)
 
         e3_aa, e3_bb, e3_ab, L2_aa, L2_bb, L2_ab = K.eval_ump3_df(
             T2_aa, T2_bb, T2_ab,
@@ -436,6 +493,8 @@ def optimize_orbitals_rhf(
     max_iter: int = 40,
     n_frozen: int = 0,
     callback: Optional[Callable[[dict], None]] = None,
+    eri4=None,
+    mo_ctx: Optional[dict] = None,
 ) -> HybridOMPResult:
     """Mesin optimisasi orbital terpadu RHF (dipakai oleh OMP2/2.5/3 dan plugin kustom)."""
     H = np.ascontiguousarray(H_core, dtype=np.float64)
@@ -448,7 +507,7 @@ def optimize_orbitals_rhf(
 
     for it in range(max_iter):
         C_occ_all = np.ascontiguousarray(C[:, :n_occ])
-        J, K_mat = K.build_jk_3c_rhf(B, C_occ_all, nbf)
+        J, K_mat = K.build_jk_4d_rhf(eri4, C_occ_all) if eri4 is not None else K.build_jk_3c_rhf(B, C_occ_all, nbf)
         F_ao = H + J - K_mat
         e_ref = float(np.sum((C_occ_all @ C_occ_all.T) * (H + F_ao)) + v_nn)
 
@@ -456,6 +515,9 @@ def optimize_orbitals_rhf(
         C_act = np.ascontiguousarray(C[:, nf:n_occ])
         C_vir = np.ascontiguousarray(C[:, n_occ:])
         eps_o, eps_v = eps[nf:n_occ], eps[n_occ:]
+        if mo_ctx is not None:
+            mo_ctx['C_act'] = C_act
+            mo_ctx['C_vir'] = C_vir
 
         B_oo, B_ov, B_vv = K.transform_3c_mo_blocks(B, C_act, C_vir, nbf)
         out = corr_fn(B_oo, B_ov, B_vv, eps_o, eps_v)
@@ -529,6 +591,8 @@ def optimize_orbitals_uhf(
     max_iter: int = 40,
     n_frozen: int = 0,
     callback: Optional[Callable[[dict], None]] = None,
+    eri4=None,
+    mo_ctx: Optional[dict] = None,
 ) -> HybridOMPResult:
     """Mesin optimisasi orbital terpadu UHF (dipakai oleh UHF-OMP2/2.5/3 dan plugin kustom)."""
     H = np.ascontiguousarray(H_core, dtype=np.float64)
@@ -546,7 +610,7 @@ def optimize_orbitals_uhf(
     for it in range(max_iter):
         Ca_all = np.ascontiguousarray(Ca[:, :na])
         Cb_all = np.ascontiguousarray(Cb[:, :nb])
-        J, Ka, Kb = K.build_jk_3c_uhf(B, Ca_all, Cb_all, nbf)
+        J, Ka, Kb = K.build_jk_4d_uhf(eri4, Ca_all, Cb_all) if eri4 is not None else K.build_jk_3c_uhf(B, Ca_all, Cb_all, nbf)
         Fa_ao = H + J - Ka
         Fb_ao = H + J - Kb
         Pa = Ca_all @ Ca_all.T if na > 0 else np.zeros((nbf, nbf), dtype=np.float64)
@@ -559,6 +623,11 @@ def optimize_orbitals_uhf(
         Cb_act, Cb_v = np.ascontiguousarray(Cb[:, nf_b:nb]), np.ascontiguousarray(Cb[:, nb:])
         eps_oa, eps_va = eps_a[nf_a:na], eps_a[na:]
         eps_ob, eps_vb = eps_b[nf_b:nb], eps_b[nb:]
+        if mo_ctx is not None:
+            mo_ctx['Ca_act'] = Ca_act
+            mo_ctx['Ca_v'] = Ca_v
+            mo_ctx['Cb_act'] = Cb_act
+            mo_ctx['Cb_v'] = Cb_v
 
         B_oo_a, B_ov_a, B_vv_a, B_oo_b, B_ov_b, B_vv_b = K.transform_3c_mo_blocks_uhf(
             B, Ca_act, Ca_v, Cb_act, Cb_v, nbf
@@ -647,13 +716,16 @@ def run_df_omp_rhf(
     max_iter: int = 40,
     n_frozen: int = 0,
     callback: Optional[Callable[[dict], None]] = None,
+    eri4=None,
 ) -> HybridOMPResult:
-    """Jalankan optimisasi orbital DF-OMP RHF (OMP2, SCS-OMP2, SOS-OMP2, OMP2.5, OMP3)."""
+    """Jalankan optimisasi orbital DF/Cholesky/Exact-OMP RHF (OMP2, SCS-OMP2, SOS-OMP2, OMP2.5, OMP3)."""
+    mo_ctx = {} if (eri4 is not None and lam_mp3 != 0.0) else None
     return optimize_orbitals_rhf(
         H_core, v_nn, B_ao, C0, n_occ,
-        corr_fn=_omp_rhf_corr_kernel(c_os, c_ss, lam_mp3),
+        corr_fn=_omp_rhf_corr_kernel(c_os, c_ss, lam_mp3, eri4=eri4, mo_ctx=mo_ctx),
         method_name=method_name, grad_tol=grad_tol, energy_tol=energy_tol,
         max_iter=max_iter, n_frozen=n_frozen, callback=callback,
+        eri4=eri4, mo_ctx=mo_ctx,
     )
 
 
@@ -675,11 +747,14 @@ def run_df_omp_uhf(
     max_iter: int = 40,
     n_frozen: int = 0,
     callback: Optional[Callable[[dict], None]] = None,
+    eri4=None,
 ) -> HybridOMPResult:
-    """Jalankan optimisasi orbital DF-OMP UHF (radikal kulit terbuka) + evaluasi <S^2>."""
+    """Jalankan optimisasi orbital DF/Cholesky/Exact-OMP UHF (radikal kulit terbuka) + evaluasi <S^2>."""
+    mo_ctx = {} if (eri4 is not None and lam_mp3 != 0.0) else None
     return optimize_orbitals_uhf(
         H_core, S_ovlp, v_nn, B_ao, C0_a, C0_b, na, nb,
-        corr_fn=_omp_uhf_corr_kernel(c_os, c_ss, lam_mp3),
+        corr_fn=_omp_uhf_corr_kernel(c_os, c_ss, lam_mp3, eri4=eri4, mo_ctx=mo_ctx),
         method_name=method_name, grad_tol=grad_tol, energy_tol=energy_tol,
         max_iter=max_iter, n_frozen=n_frozen, callback=callback,
+        eri4=eri4, mo_ctx=mo_ctx,
     )

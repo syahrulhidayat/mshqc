@@ -48,7 +48,7 @@ def test_kappa_omp2_analytic_grad_and_large_kappa_limit():
         Co, Cv = np.ascontiguousarray(C_sc[:, :no]), np.ascontiguousarray(C_sc[:, no:])
         Boo, Bov, Bvv = K.transform_3c_mo_blocks(B_ao, Co, Cv, nbf)
         e_c, _, g_oo, g_vv, Z_vo = cb_r(Boo, Bov, Bvv, eps[:no], eps[no:])
-        w_vo = _assemble_orbital_grad_rhf(B_ao, Co, Cv, F_vo, g_oo, g_vv, Z_vo)
+        w_vo = _assemble_orbital_grad_rhf(Boo, Bov, Bvv, F_vo, g_oo, g_vv, Z_vo)
         return e_ref + e_c, w_vo, C_sc
 
     _, w_ana, C_base = eval_r_energy_and_grad(C0)
@@ -110,7 +110,7 @@ def test_kappa_omp2_analytic_grad_and_large_kappa_limit():
         e_c, _, goa, gva, gob, gvb, Za, Zb = cb_u(
             Boo_a, Bov_a, Bvv_a, Boo_b, Bov_b, Bvv_b, ea[:na], ea[na:], eb[:nb], eb[nb:]
         )
-        wa, wb = _assemble_orbital_grad_uhf(B_u, Cao, Cav, Cbo, Cbv, Fvo_a, Fvo_b, goa, gva, gob, gvb, Za, Zb)
+        wa, wb = _assemble_orbital_grad_uhf(Boo_a, Bov_a, Bvv_a, Boo_b, Bov_b, Bvv_b, Fvo_a, Fvo_b, goa, gva, gob, gvb, Za, Zb)
         return e_ref + e_c, wa, wb, Ca_sc, Cb_sc
 
     _, _, wb_ana, Ca_b, Cb_b = eval_u_energy_and_grad(scf_u.C_alpha, scf_u.C_beta)

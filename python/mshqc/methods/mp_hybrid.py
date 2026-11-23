@@ -296,6 +296,7 @@ def run_df_mp3_rhf(
     C0: np.ndarray,
     n_occ: int,
     n_frozen: int = 0,
+    eri4=None,
 ) -> HybridMP3Result:
     """DF/Cholesky-RMP3 bebas O(V^4) memakai 1x transformasi MO terpadu."""
     H = np.ascontiguousarray(H_core, dtype=np.float64)
@@ -306,7 +307,7 @@ def run_df_mp3_rhf(
     nf = _clamp_frozen(n_frozen, n_occ)
 
     C_occ_all = np.ascontiguousarray(C[:, :n_occ])
-    J, K_mat = K.build_jk_3c_rhf(B, C_occ_all, nbf)
+    J, K_mat = K.build_jk_4d_rhf(eri4, C_occ_all) if eri4 is not None else K.build_jk_3c_rhf(B, C_occ_all, nbf)
     F_ao = H + J - K_mat
     e_scf = float(np.sum((C_occ_all @ C_occ_all.T) * (H + F_ao)) + v_nn)
 
@@ -321,7 +322,11 @@ def run_df_mp3_rhf(
         B_oo, B_ov, B_vv = K.transform_3c_mo_blocks(B, C_act, C_vir, nbf)
         e_os, e_ss, T2 = K.eval_rmp2_df(B_ov, eps_o, eps_v)
         e_mp2 = e_os + e_ss
-        e_mp3, _ = K.eval_rmp3_df(T2, B_oo, B_ov, B_vv, eps_o, eps_v)
+        if eri4 is not None:
+            W_pp, _ = K.eval_pp_ladder_and_zvec_rhf_exact(eri4, T2, C_act, C_vir, False)
+            e_mp3, _ = K.eval_rmp3_df(T2, B_oo, B_ov, B_vv, eps_o, eps_v, W_pp)
+        else:
+            e_mp3, _ = K.eval_rmp3_df(T2, B_oo, B_ov, B_vv, eps_o, eps_v)
 
     e_corr = e_mp2 + e_mp3
     return HybridMP3Result(
@@ -355,6 +360,7 @@ def run_df_mp3_uhf(
     n_frozen: int = 0,
     include_singles: bool = False,
     reference: str = "uhf",
+    eri4=None,
 ) -> HybridMP3Result:
     """DF/Cholesky-UMP3 & Semicanonical ROMP3 bebas O(V^4) memakai 1x transformasi MO terpadu."""
     H = np.ascontiguousarray(H_core, dtype=np.float64)
@@ -367,7 +373,7 @@ def run_df_mp3_uhf(
 
     Ca_all = np.ascontiguousarray(Ca[:, :na])
     Cb_all = np.ascontiguousarray(Cb[:, :nb])
-    J, Ka, Kb = K.build_jk_3c_uhf(B, Ca_all, Cb_all, nbf)
+    J, Ka, Kb = K.build_jk_4d_uhf(eri4, Ca_all, Cb_all) if eri4 is not None else K.build_jk_3c_uhf(B, Ca_all, Cb_all, nbf)
     Fa = H + J - Ka
     Fb = H + J - Kb
     Pa = Ca_all @ Ca_all.T if na > 0 else np.zeros((nbf, nbf), dtype=np.float64)
@@ -375,8 +381,6 @@ def run_df_mp3_uhf(
     e_scf = float(0.5 * (np.sum(Pa * (H + Fa)) + np.sum(Pb * (H + Fb))) + v_nn)
 
     # [INJECTED_STAGE6_ROMP_FC_PARITY]
-    # ROMP2/ROMP3 standar (Psi4 & C++ ROMP2::semicanonicalize) mendiagonalisasi
-    # seluruh blok occupied sebelum memotong orbital inti beku n_frozen.
     sc_nf_a = 0 if include_singles else nf_a
     sc_nf_b = 0 if include_singles else nf_b
     Ca_sc, eps_a, Fvo_a_raw = semicanonicalize_subspaces_frozen(Ca, Fa, na, sc_nf_a)
@@ -404,11 +408,22 @@ def run_df_mp3_uhf(
         B_ov_a, B_ov_b, eps_oa, eps_va, eps_ob, eps_vb
     )
     e_mp2 = e_singles + e_aa + e_bb + e_ab
-    e3_aa, e3_bb, e3_ab, _, _, _ = K.eval_ump3_df(
-        T2_aa, T2_bb, T2_ab,
-        B_oo_a, B_ov_a, B_vv_a, B_oo_b, B_ov_b, B_vv_b,
-        eps_oa, eps_va, eps_ob, eps_vb,
-    )
+    if eri4 is not None:
+        W_aa, W_bb, W_ab, _, _ = K.eval_pp_ladder_and_zvec_uhf_exact(
+            eri4, T2_aa, T2_bb, T2_ab, Ca_act, Ca_v, Cb_act, Cb_v, False
+        )
+        e3_aa, e3_bb, e3_ab, _, _, _ = K.eval_ump3_df(
+            T2_aa, T2_bb, T2_ab,
+            B_oo_a, B_ov_a, B_vv_a, B_oo_b, B_ov_b, B_vv_b,
+            eps_oa, eps_va, eps_ob, eps_vb,
+            W_aa, W_bb, W_ab,
+        )
+    else:
+        e3_aa, e3_bb, e3_ab, _, _, _ = K.eval_ump3_df(
+            T2_aa, T2_bb, T2_ab,
+            B_oo_a, B_ov_a, B_vv_a, B_oo_b, B_ov_b, B_vv_b,
+            eps_oa, eps_va, eps_ob, eps_vb,
+        )
     e_mp3 = e3_aa + e3_bb + e3_ab
     e_corr = e_mp2 + e_mp3
     return HybridMP3Result(
@@ -439,11 +454,12 @@ def run_df_romp3(
     na: int,
     nb: int,
     n_frozen: int = 0,
+    eri4=None,
 ) -> HybridMP3Result:
-    """DF/Cholesky-ROMP3 semikanonik (identik dengan ROMP3::compute() C++)."""
+    """DF/Cholesky/Exact-ROMP3 semikanonik (identik dengan ROMP3::compute() C++)."""
     return run_df_mp3_uhf(
         H_core, v_nn, B_ao, C_rohf, C_rohf, na, nb,
-        n_frozen=n_frozen, include_singles=True, reference="rohf",
+        n_frozen=n_frozen, include_singles=True, reference="rohf", eri4=eri4,
     )
 
 

@@ -23,7 +23,8 @@ Eigen::MatrixXd eval_pp_ladder_rhf_df(
     const Eigen::MatrixXd& T2,
     const Eigen::MatrixXd& B_vv,
     int n_occ,
-    int n_vir);
+    int n_vir,
+    bool include_vvvv = true);
 
 // Complete RHF DF/Cholesky MP3 energy E^(3) and second-order amplitude L2 = W / D
 std::pair<double, Eigen::MatrixXd> eval_rmp3_df(
@@ -32,7 +33,8 @@ std::pair<double, Eigen::MatrixXd> eval_rmp3_df(
     const Eigen::MatrixXd& B_ov,
     const Eigen::MatrixXd& B_vv,
     const Eigen::VectorXd& eps_occ,
-    const Eigen::VectorXd& eps_vir);
+    const Eigen::VectorXd& eps_vir,
+    const Eigen::MatrixXd& W_pp_override = Eigen::MatrixXd());
 
 // Streaming zero-copy RHF OMP3 1-RDM (gamma_oo, gamma_vv)
 std::pair<Eigen::MatrixXd, Eigen::MatrixXd> eval_omp3_1rdm_rhf(

@@ -276,7 +276,8 @@ Eigen::MatrixXd eval_pp_ladder_rhf_df(
     const Eigen::MatrixXd& T2,
     const Eigen::MatrixXd& B_vv,
     int n_occ,
-    int n_vir)
+    int n_vir,
+    bool include_vvvv)
 {
     const int n_aux = static_cast<int>(B_vv.cols());
     Eigen::MatrixXd W_pp = Eigen::MatrixXd::Zero(
@@ -322,7 +323,8 @@ std::pair<double, Eigen::MatrixXd> eval_rmp3_df(
     const Eigen::MatrixXd& B_ov,
     const Eigen::MatrixXd& B_vv,
     const Eigen::VectorXd& eps_occ,
-    const Eigen::VectorXd& eps_vir)
+    const Eigen::VectorXd& eps_vir,
+    const Eigen::MatrixXd& W_pp_override)
 {
     const int no = static_cast<int>(eps_occ.size());
     const int nv = static_cast<int>(eps_vir.size());
@@ -332,7 +334,9 @@ std::pair<double, Eigen::MatrixXd> eval_rmp3_df(
     }
 
     // 1. Particle-Particle Ladder bebas O(V^4) (adaptive 3-path)
-    Eigen::MatrixXd W = eval_pp_ladder_rhf_df(T2, B_vv, no, nv);
+    Eigen::MatrixXd W = (W_pp_override.rows() == T2.rows() && W_pp_override.cols() == T2.cols())
+        ? W_pp_override
+        : eval_pp_ladder_rhf_df(T2, B_vv, no, nv);
 
     auto t_T = make_t2_view_4d(T2, no, nv);
     auto t_W = make_t2_view_4d(W, no, nv);
@@ -522,7 +526,7 @@ Eigen::MatrixXd eval_omp3_zvec_rhf_df(
     T_eff.resize(0, 0);
 
     // 2. Kontribusi Particle-Particle Ladder bebas O(V^4) via chunked Y_ooov (<= 64 MB)
-    {
+    if (include_vvvv) {
         constexpr size_t kMaxChunkBytes = 64ULL * 1024ULL * 1024ULL;
         const size_t slice_bytes = static_cast<size_t>(n_vir) * n_vir * n_vir * sizeof(double);
         const int mb_max = (slice_bytes > 0)
@@ -708,6 +712,12 @@ Eigen::MatrixXd eval_mo_gcorr_rhf_df(
     const int n_aux = static_cast<int>(B_ov.cols());
     Eigen::MatrixXd G_vo = Eigen::MatrixXd::Zero(n_vir, n_occ);
     if (n_occ <= 0 || n_vir <= 0 || n_aux <= 0) return G_vo;
+    if (B_oo.rows() != static_cast<Eigen::Index>(n_occ) * n_occ ||
+        B_ov.rows() != static_cast<Eigen::Index>(n_occ) * n_vir ||
+        B_vv.rows() != static_cast<Eigen::Index>(n_vir) * n_vir ||
+        B_oo.cols() != n_aux || B_vv.cols() != n_aux) {
+        throw std::invalid_argument("eval_mo_gcorr_rhf_df: dimensi B_oo/B_ov/B_vv tidak cocok dengan (n_occ, n_vir)");
+    }
 
     // 1. Coulomb ruang MO: 2 * sum_P B^P_vo * [Tr(B^P_oo g_oo) + Tr(B^P_vv g_vv)]
     Eigen::Map<const Eigen::VectorXd> goo_v(g_oo.data(), static_cast<Eigen::Index>(n_occ) * n_occ);
