@@ -154,5 +154,17 @@ Eigen::MatrixXd eval_df_nuclear_gradient(
     const Eigen::MatrixXd& gamma_2c,
     double cutoff = 1e-12);
 
+
+// 5. OpenMP-parallel O(N^4) Laplace-Transformed SOS-OMP2 quadrature kernels
+std::tuple<double, Eigen::MatrixXd, Eigen::MatrixXd> eval_lt_sos_intermediates_rhf_df(
+    const Eigen::MatrixXd& B_ov, const Eigen::VectorXd& d_ov,
+    const Eigen::VectorXd& weights, const Eigen::VectorXd& nodes, double c_os = 1.3);
+
+std::tuple<double, Eigen::MatrixXd, Eigen::MatrixXd, Eigen::MatrixXd, Eigen::MatrixXd>
+eval_lt_sos_intermediates_uhf_df(
+    const Eigen::MatrixXd& B_ov_a, const Eigen::MatrixXd& B_ov_b,
+    const Eigen::VectorXd& da, const Eigen::VectorXd& db,
+    const Eigen::VectorXd& weights, const Eigen::VectorXd& nodes, double c_os = 1.3);
+
 } // namespace kernels
 } // namespace mshqc

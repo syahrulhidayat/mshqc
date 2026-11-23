@@ -766,5 +766,132 @@ Eigen::MatrixXd eval_df_nuclear_gradient(
     return g_tot;
 }
 
+
+std::tuple<double, Eigen::MatrixXd, Eigen::MatrixXd> eval_lt_sos_intermediates_rhf_df(
+    const Eigen::MatrixXd& B_ov,
+    const Eigen::VectorXd& d_ov,
+    const Eigen::VectorXd& weights,
+    const Eigen::VectorXd& nodes,
+    double c_os)
+{
+    const Eigen::Index m = B_ov.rows();
+    const Eigen::Index n_aux = B_ov.cols();
+    const int nq = static_cast<int>(weights.size());
+    if (d_ov.size() != m || nodes.size() != weights.size()) {
+        throw std::invalid_argument("eval_lt_sos_intermediates_rhf_df: dimensi input tidak cocok");
+    }
+
+    Eigen::MatrixXd X_conn = Eigen::MatrixXd::Zero(m, n_aux);
+    Eigen::MatrixXd X_deriv = Eigen::MatrixXd::Zero(m, n_aux);
+    if (m == 0 || n_aux == 0 || nq == 0) {
+        return {0.0, std::move(X_conn), std::move(X_deriv)};
+    }
+
+    double e_sum = 0.0;
+    #pragma omp parallel reduction(+:e_sum)
+    {
+        Eigen::VectorXd exp_half(m);
+        Eigen::MatrixXd B_w(m, n_aux);
+        Eigen::MatrixXd X_q(n_aux, n_aux);
+        Eigen::MatrixXd Y_q(m, n_aux);
+        Eigen::MatrixXd Xc_loc = Eigen::MatrixXd::Zero(m, n_aux);
+        Eigen::MatrixXd Xd_loc = Eigen::MatrixXd::Zero(m, n_aux);
+
+        #pragma omp for schedule(static) nowait
+        for (int q = 0; q < nq; ++q) {
+            const double wq = weights(q);
+            const double tq = nodes(q);
+            exp_half = (-0.5 * tq * d_ov.array()).exp();
+            B_w = B_ov.array().colwise() * exp_half.array();
+            X_q.noalias() = B_w.transpose() * B_w;
+            e_sum += wq * X_q.squaredNorm();
+
+            Y_q.noalias() = B_w * X_q;
+            Y_q.array().colwise() *= exp_half.array();
+            Xc_loc.noalias() -= (c_os * wq) * Y_q;
+            Xd_loc.noalias() -= (c_os * wq * tq) * Y_q;
+        }
+
+        #pragma omp critical
+        {
+            X_conn.noalias() += Xc_loc;
+            X_deriv.noalias() += Xd_loc;
+        }
+    }
+    return {-c_os * e_sum, std::move(X_conn), std::move(X_deriv)};
+}
+
+std::tuple<double, Eigen::MatrixXd, Eigen::MatrixXd, Eigen::MatrixXd, Eigen::MatrixXd>
+eval_lt_sos_intermediates_uhf_df(
+    const Eigen::MatrixXd& B_ov_a,
+    const Eigen::MatrixXd& B_ov_b,
+    const Eigen::VectorXd& da,
+    const Eigen::VectorXd& db,
+    const Eigen::VectorXd& weights,
+    const Eigen::VectorXd& nodes,
+    double c_os)
+{
+    const Eigen::Index ma = B_ov_a.rows();
+    const Eigen::Index mb = B_ov_b.rows();
+    const Eigen::Index n_aux = B_ov_a.cols();
+    const int nq = static_cast<int>(weights.size());
+    if (da.size() != ma || db.size() != mb || B_ov_b.cols() != n_aux || nodes.size() != weights.size()) {
+        throw std::invalid_argument("eval_lt_sos_intermediates_uhf_df: dimensi input tidak cocok");
+    }
+
+    Eigen::MatrixXd Xc_a = Eigen::MatrixXd::Zero(ma, n_aux);
+    Eigen::MatrixXd Xd_a = Eigen::MatrixXd::Zero(ma, n_aux);
+    Eigen::MatrixXd Xc_b = Eigen::MatrixXd::Zero(mb, n_aux);
+    Eigen::MatrixXd Xd_b = Eigen::MatrixXd::Zero(mb, n_aux);
+    if (ma == 0 || mb == 0 || n_aux == 0 || nq == 0) {
+        return {0.0, std::move(Xc_a), std::move(Xd_a), std::move(Xc_b), std::move(Xd_b)};
+    }
+
+    double e_sum = 0.0;
+    #pragma omp parallel reduction(+:e_sum)
+    {
+        Eigen::VectorXd ea_half(ma), eb_half(mb);
+        Eigen::MatrixXd Ba_w(ma, n_aux), Bb_w(mb, n_aux);
+        Eigen::MatrixXd Xa_q(n_aux, n_aux), Xb_q(n_aux, n_aux);
+        Eigen::MatrixXd Ya_q(ma, n_aux), Yb_q(mb, n_aux);
+        Eigen::MatrixXd Xca_loc = Eigen::MatrixXd::Zero(ma, n_aux);
+        Eigen::MatrixXd Xda_loc = Eigen::MatrixXd::Zero(ma, n_aux);
+        Eigen::MatrixXd Xcb_loc = Eigen::MatrixXd::Zero(mb, n_aux);
+        Eigen::MatrixXd Xdb_loc = Eigen::MatrixXd::Zero(mb, n_aux);
+
+        #pragma omp for schedule(static) nowait
+        for (int q = 0; q < nq; ++q) {
+            const double wq = weights(q);
+            const double tq = nodes(q);
+            ea_half = (-0.5 * tq * da.array()).exp();
+            eb_half = (-0.5 * tq * db.array()).exp();
+            Ba_w = B_ov_a.array().colwise() * ea_half.array();
+            Bb_w = B_ov_b.array().colwise() * eb_half.array();
+            Xa_q.noalias() = Ba_w.transpose() * Ba_w;
+            Xb_q.noalias() = Bb_w.transpose() * Bb_w;
+            e_sum += wq * Xa_q.cwiseProduct(Xb_q).sum();
+
+            Ya_q.noalias() = Ba_w * Xb_q;
+            Ya_q.array().colwise() *= ea_half.array();
+            Yb_q.noalias() = Bb_w * Xa_q;
+            Yb_q.array().colwise() *= eb_half.array();
+
+            Xca_loc.noalias() -= (c_os * wq) * Ya_q;
+            Xda_loc.noalias() -= (c_os * wq * tq) * Ya_q;
+            Xcb_loc.noalias() -= (c_os * wq) * Yb_q;
+            Xdb_loc.noalias() -= (c_os * wq * tq) * Yb_q;
+        }
+
+        #pragma omp critical
+        {
+            Xc_a.noalias() += Xca_loc;
+            Xd_a.noalias() += Xda_loc;
+            Xc_b.noalias() += Xcb_loc;
+            Xd_b.noalias() += Xdb_loc;
+        }
+    }
+    return {-c_os * e_sum, std::move(Xc_a), std::move(Xd_a), std::move(Xc_b), std::move(Xd_b)};
+}
+
 } // namespace kernels
 } // namespace mshqc

@@ -2,10 +2,7 @@
 # Licensed under the Apache License, Version 2.0
 """
 O(N^4) Zero-T2 Laplace-Transformed SOS-OMP2 (RHF & UHF, all-electron & frozen-core).
-
-Menghilangkan alokasi tensor amplitudo 4-indeks T2 O(O^2 V^2) dan menurunkan kompleksitas
-komputasi dari O(N^5) menjadi O(n_q * O * V * N_aux^2) ~ O(N^4) melalui kuadratur Laplace
-berbobot non-negatif (NNLS sparse minimax) yang mencocokkan 1/Delta dan 1/Delta^2 sekaligus.
+Kuadratur NNLS sparse di Python + kontraksi paralel OpenMP di C++20 `mshqc.kernels`.
 """
 
 from __future__ import annotations
@@ -14,6 +11,7 @@ from typing import Callable, Optional, Tuple
 import numpy as np
 from scipy.optimize import nnls
 
+from .._mshqc import kernels as K
 from .kappa_omp2 import _assemble_subspace_1rdm
 from .omp_hybrid import HybridOMPResult, optimize_orbitals_rhf, optimize_orbitals_uhf
 
@@ -23,16 +21,11 @@ def build_laplace_quadrature(
     delta_max: float,
     n_grid: int = 220,
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Membangun pasangan kuadratur Laplace (weights, nodes) positif untuk rentang [delta_min, delta_max]
-    sehingga sum_q w_q exp(-t_q x) ~= 1/x DAN sum_q (w_q t_q) exp(-t_q x) ~= 1/x^2 secara simultan.
-    Solusi NNLS secara otomatis bersifat sparse (hanya ~10-18 titik aktif, akurasi relatif < 1e-8).
-    """
+    """Bangun kuadratur Laplace positif sparse (weights, nodes) untuk 1/x dan 1/x^2 sekaligus."""
     d_min = max(float(delta_min), 1.0e-6)
     d_max = max(float(delta_max), d_min * 1.05)
     R = d_max / d_min
 
-    # Diskretisasi log-spaced pada rentang ternormalisasi x in [0.90, 1.10 * R]
     x = np.geomspace(0.90, 1.10 * R, max(160, int(n_grid)))
     t_cand = np.geomspace(1.0e-3 / R, 36.0, max(180, int(n_grid)))
 
@@ -40,7 +33,6 @@ def build_laplace_quadrature(
     A_val = x[:, None] * E
     b_val = np.ones_like(x)
 
-    # Baris turunan berbobot memastikan 1/x^2 (untuk diagonal/degenerasi 1-RDM) sama akuratnya
     der_w = 0.25
     A_der = der_w * (x[:, None] ** 2) * (t_cand[None, :] * E)
     b_der = np.full_like(x, der_w)
@@ -72,23 +64,16 @@ def _assemble_lt_1rdm_and_zvec(
     Xc_3d = X_conn.T.reshape(n_aux, no, nv)
     Xd_3d = X_deriv.T.reshape(n_aux, no, nv)
 
-    # 1-RDM subruang OO: O(no^2 * nv * n_aux)
     Bov_o = Bov_3d.transpose(1, 0, 2).reshape(no, n_aux * nv)
     Xc_o = Xc_3d.transpose(1, 0, 2).reshape(no, n_aux * nv)
     Xd_o = Xd_3d.transpose(1, 0, 2).reshape(no, n_aux * nv)
-    A_oo = Xc_o @ Bov_o.T
-    deg_oo = Xd_o @ Bov_o.T
-    g_oo = _assemble_subspace_1rdm(A_oo, deg_oo, eps_o)
+    g_oo = _assemble_subspace_1rdm(Xc_o @ Bov_o.T, Xd_o @ Bov_o.T, eps_o)
 
-    # 1-RDM subruang VV: O(nv^2 * no * n_aux)
     Bov_v = Bov_3d.transpose(2, 0, 1).reshape(nv, n_aux * no)
     Xc_v = Xc_3d.transpose(2, 0, 1).reshape(nv, n_aux * no)
     Xd_v = Xd_3d.transpose(2, 0, 1).reshape(nv, n_aux * no)
-    A_vv = Xc_v @ Bov_v.T
-    deg_vv = -(Xd_v @ Bov_v.T)
-    g_vv = _assemble_subspace_1rdm(A_vv, deg_vv, eps_v)
+    g_vv = _assemble_subspace_1rdm(Xc_v @ Bov_v.T, -(Xd_v @ Bov_v.T), eps_v)
 
-    # Z-vektor terhubung via 2 BLAS-3 DGEMM: O(n_aux * nv^2 * no + n_aux * nv * no^2)
     Bvv_3d = B_vv.T.reshape(n_aux, nv, nv)
     Boo_3d = B_oo.T.reshape(n_aux, no, no)
     Z1 = Bvv_3d.transpose(1, 0, 2).reshape(nv, n_aux * nv) @ Xc_3d.transpose(0, 2, 1).reshape(n_aux * nv, no)
@@ -103,28 +88,16 @@ def _lt_sos_omp2_rhf_callback(c_os: float = 1.3):
         if no == 0 or nv == 0 or n_aux == 0:
             return 0.0, 0.0, np.zeros((no, no)), np.zeros((nv, nv)), np.zeros((nv, no))
 
-        d_ov = (eps_v[None, :] - eps_o[:, None]).reshape(-1)
+        d_ov = np.ascontiguousarray((eps_v[None, :] - eps_o[:, None]).reshape(-1), dtype=np.float64)
         d_min = max(2.0 * float(np.min(d_ov)), 1.0e-5)
         d_max = max(2.0 * float(np.max(d_ov)), d_min * 1.1)
         weights, nodes = build_laplace_quadrature(d_min, d_max)
 
-        e_sum = 0.0
-        X_conn = np.zeros_like(B_ov)
-        X_deriv = np.zeros_like(B_ov)
-
-        for wq, tq in zip(weights, nodes):
-            exp_half = np.exp(-0.5 * tq * d_ov)
-            B_w = B_ov * exp_half[:, None]
-            X_q = B_w.T @ B_w
-            e_sum += wq * float(np.sum(X_q * X_q))
-
-            Y_q = (B_w @ X_q) * exp_half[:, None]
-            X_conn -= (c_os * wq) * Y_q
-            X_deriv -= (c_os * wq * tq) * Y_q
-
-        e_corr = -c_os * e_sum
+        e_corr, X_conn, X_deriv = K.eval_lt_sos_intermediates_rhf_df(
+            np.ascontiguousarray(B_ov, dtype=np.float64), d_ov, weights, nodes, float(c_os)
+        )
         g_oo, g_vv, Z_vo = _assemble_lt_1rdm_and_zvec(B_oo, B_ov, B_vv, X_conn, X_deriv, eps_o, eps_v)
-        return e_corr, 0.0, g_oo, g_vv, Z_vo
+        return float(e_corr), 0.0, g_oo, g_vv, Z_vo
 
     return corr_fn
 
@@ -142,39 +115,20 @@ def _lt_sos_omp2_uhf_callback(c_os: float = 1.3):
                 np.zeros((va, na)), np.zeros((vb, nb)),
             )
 
-        da = (eps_va[None, :] - eps_oa[:, None]).reshape(-1)
-        db = (eps_vb[None, :] - eps_ob[:, None]).reshape(-1)
+        da = np.ascontiguousarray((eps_va[None, :] - eps_oa[:, None]).reshape(-1), dtype=np.float64)
+        db = np.ascontiguousarray((eps_vb[None, :] - eps_ob[:, None]).reshape(-1), dtype=np.float64)
         d_min = max(float(np.min(da)) + float(np.min(db)), 1.0e-5)
         d_max = max(float(np.max(da)) + float(np.max(db)), d_min * 1.1)
         weights, nodes = build_laplace_quadrature(d_min, d_max)
 
-        e_sum = 0.0
-        Xc_a = np.zeros_like(B_ov_a)
-        Xd_a = np.zeros_like(B_ov_a)
-        Xc_b = np.zeros_like(B_ov_b)
-        Xd_b = np.zeros_like(B_ov_b)
-
-        for wq, tq in zip(weights, nodes):
-            ea_half = np.exp(-0.5 * tq * da)
-            eb_half = np.exp(-0.5 * tq * db)
-            Ba_w = B_ov_a * ea_half[:, None]
-            Bb_w = B_ov_b * eb_half[:, None]
-
-            Xa_q = Ba_w.T @ Ba_w
-            Xb_q = Bb_w.T @ Bb_w
-            e_sum += wq * float(np.sum(Xa_q * Xb_q))
-
-            Ya_q = (Ba_w @ Xb_q) * ea_half[:, None]
-            Yb_q = (Bb_w @ Xa_q) * eb_half[:, None]
-            Xc_a -= (c_os * wq) * Ya_q
-            Xd_a -= (c_os * wq * tq) * Ya_q
-            Xc_b -= (c_os * wq) * Yb_q
-            Xd_b -= (c_os * wq * tq) * Yb_q
-
-        e_corr = -c_os * e_sum
+        e_corr, Xc_a, Xd_a, Xc_b, Xd_b = K.eval_lt_sos_intermediates_uhf_df(
+            np.ascontiguousarray(B_ov_a, dtype=np.float64),
+            np.ascontiguousarray(B_ov_b, dtype=np.float64),
+            da, db, weights, nodes, float(c_os),
+        )
         g_oo_a, g_vv_a, Za = _assemble_lt_1rdm_and_zvec(B_oo_a, B_ov_a, B_vv_a, Xc_a, Xd_a, eps_oa, eps_va)
         g_oo_b, g_vv_b, Zb = _assemble_lt_1rdm_and_zvec(B_oo_b, B_ov_b, B_vv_b, Xc_b, Xd_b, eps_ob, eps_vb)
-        return e_corr, 0.0, g_oo_a, g_vv_a, g_oo_b, g_vv_b, Za, Zb
+        return float(e_corr), 0.0, g_oo_a, g_vv_a, g_oo_b, g_vv_b, Za, Zb
 
     return corr_fn
 
@@ -192,7 +146,7 @@ def run_df_lt_sos_omp2_rhf(
     n_frozen: int = 0,
     callback: Optional[Callable[[dict], None]] = None,
 ) -> HybridOMPResult:
-    """Jalankan O(N^4) Zero-T2 LT-SOS-OMP2 RHF (default c_os = 1.3)."""
+    """Jalankan O(N^4) Zero-T2 LT-SOS-OMP2 RHF (OpenMP C++20 quadrature kernel)."""
     return optimize_orbitals_rhf(
         H_core, v_nn, B_ao, C0, n_occ,
         corr_fn=_lt_sos_omp2_rhf_callback(c_os=c_os),
@@ -218,7 +172,7 @@ def run_df_lt_sos_omp2_uhf(
     n_frozen: int = 0,
     callback: Optional[Callable[[dict], None]] = None,
 ) -> HybridOMPResult:
-    """Jalankan O(N^4) Zero-T2 LT-SOS-OMP2 UHF (radikal kulit terbuka, default c_os = 1.3)."""
+    """Jalankan O(N^4) Zero-T2 LT-SOS-OMP2 UHF (OpenMP C++20 quadrature kernel)."""
     return optimize_orbitals_uhf(
         H_core, S_ovlp, v_nn, B_ao, C0_a, C0_b, na, nb,
         corr_fn=_lt_sos_omp2_uhf_callback(c_os=c_os),

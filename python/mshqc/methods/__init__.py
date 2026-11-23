@@ -55,6 +55,15 @@ from .geom_hybrid import (
 from .kappa_omp2 import run_df_kappa_omp2_rhf, run_df_kappa_omp2_uhf
 from .lt_sos_omp2 import build_laplace_quadrature, run_df_lt_sos_omp2_rhf, run_df_lt_sos_omp2_uhf
 from .checkpoint import save_orbital_checkpoint, load_orbital_checkpoint
+from .properties import (
+    NaturalOrbitalResult,
+    PopulationResult,
+    build_1rdm_ao,
+    scf_density_ao,
+    compute_natural_orbitals,
+    mulliken_and_lowdin_charges,
+    write_molden,
+)
 from .interop import run_from_arrays, run_from_pyscf
 
 __all__ = [
@@ -78,5 +87,7 @@ __all__ = [
     "run_df_kappa_omp2_rhf", "run_df_kappa_omp2_uhf",
     "build_laplace_quadrature", "run_df_lt_sos_omp2_rhf", "run_df_lt_sos_omp2_uhf",
     "save_orbital_checkpoint", "load_orbital_checkpoint",
+    "NaturalOrbitalResult", "PopulationResult", "build_1rdm_ao", "scf_density_ao",
+    "compute_natural_orbitals", "mulliken_and_lowdin_charges", "write_molden",
     "run_from_arrays", "run_from_pyscf",
 ]

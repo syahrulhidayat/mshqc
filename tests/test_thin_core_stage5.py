@@ -42,7 +42,7 @@ def test_core_cpp_modularity_and_slimness():
     bind_leg = root / "python" / "bind_legacy.cc"
 
     assert prim_h.is_file() and prim_cc.is_file()
-    assert bind_cc.is_file() and bind_leg.is_file()
+    assert bind_cc.is_file() and not bind_leg.exists()
 
     n_prim_h = len(prim_h.read_text(encoding="utf-8").splitlines())
     n_bind_cc = len(bind_cc.read_text(encoding="utf-8").splitlines())

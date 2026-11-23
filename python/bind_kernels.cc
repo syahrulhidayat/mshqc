@@ -1,7 +1,6 @@
 // Copyright 2026 Muhamad Syahrul Hidayat
 // Licensed under the Apache License, Version 2.0
 
-
 #include <nanobind/nanobind.h>
 #include <nanobind/eigen/dense.h>
 #include <nanobind/stl/pair.h>
@@ -10,9 +9,6 @@
 #include <nanobind/stl/tuple.h>
 
 #include "mshqc/basis.h"
-#ifndef MSHQC_THIN_CORE_BUILD
-#include "mshqc/core/fock_builder.h"
-#endif
 #include "mshqc/core/molecule.h"
 #include "mshqc/integrals/packed_ao_utils.h"
 #include "mshqc/ints/integrals.h"
@@ -27,7 +23,7 @@ namespace mshqc {
 void bind_kernels_module(nb::module_& parent) {
     auto k = parent.def_submodule(
         "kernels",
-        "Coarse-grained C++20 HPC primitives (RHF + UHF, MP2/MP3/OMP2/OMP3) for hybrid Python/C++ methods");
+        "Coarse-grained C++20 HPC primitives (RHF + UHF, MP2/MP3/OMP2/OMP3, LT-SOS & Analytic DF Gradients)");
 
     nb::class_<kernels::SafeDFEngine>(k, "DensityFittingERI")
         .def(nb::init<const Molecule&, const BasisSet&, const BasisSet&, double>(),
@@ -49,32 +45,6 @@ void bind_kernels_module(nb::module_& parent) {
           nb::call_guard<nb::gil_scoped_release>(),
           nb::arg("mol"), nb::arg("primary_basis"), nb::arg("aux_basis"),
           nb::arg("cutoff") = 1e-10, nb::arg("save_hdf5") = false, nb::arg("verbose") = false);
-
-#ifndef MSHQC_THIN_CORE_BUILD
-    nb::class_<FockBuilder>(k, "FockBuilder")
-        .def("__init__",
-             [](FockBuilder* self,
-                IntegralEngine* integrals,
-                const BasisSet& basis,
-                const Eigen::MatrixXd& H_core,
-                const Eigen::MatrixXd& schwarz) {
-                 auto sp_int = std::shared_ptr<IntegralEngine>(integrals, [](IntegralEngine*) {});
-                 new (self) FockBuilder(sp_int, basis, H_core, schwarz);
-             },
-             nb::arg("integrals"), nb::arg("basis"), nb::arg("H_core"), nb::arg("schwarz"),
-             nb::keep_alive<1, 2>(), nb::keep_alive<1, 3>())
-        .def("reset", &FockBuilder::reset)
-        .def("compute",
-             [](FockBuilder& self, const Eigen::MatrixXd& P_alpha, const Eigen::MatrixXd& P_beta) {
-                 Eigen::MatrixXd F_alpha, F_beta;
-                 {
-                     nb::gil_scoped_release release;
-                     self.compute(P_alpha, P_beta, F_alpha, F_beta);
-                 }
-                 return std::make_pair(std::move(F_alpha), std::move(F_beta));
-             },
-             nb::arg("P_alpha"), nb::arg("P_beta"));
-#endif
 
     // --- Shared AO/MO & RHF Primitives ---
     k.def("is_packed_ao", &integrals::is_packed_ao_matrix, nb::arg("L_mat"), nb::arg("nbf"));
@@ -128,7 +98,7 @@ void bind_kernels_module(nb::module_& parent) {
           nb::arg("kappa_vo"), nb::arg("eps_occ"), nb::arg("eps_vir"),
           nb::arg("B_oo"), nb::arg("B_ov"), nb::arg("B_vv"));
 
-    // --- Phase 3: Open-Shell (UHF) DF Primitives ---
+    // --- Open-Shell (UHF) DF Primitives ---
     k.def("build_jk_3c_uhf", &kernels::build_jk_3c_uhf,
           nb::call_guard<nb::gil_scoped_release>(),
           nb::arg("L_mat"), nb::arg("C_occ_a"), nb::arg("C_occ_b"), nb::arg("nbf"));
@@ -173,7 +143,7 @@ void bind_kernels_module(nb::module_& parent) {
           nb::arg("B_oo_a"), nb::arg("B_ov_a"), nb::arg("B_vv_a"),
           nb::arg("B_oo_b"), nb::arg("B_ov_b"), nb::arg("B_vv_b"));
 
-    // --- Stage 3: Thin-Core Analytic DF Nuclear Gradient Primitives ---
+    // --- Analytic DF Nuclear Gradient & O(N^4) LT-SOS Primitives ---
     k.def("contract_ao_sym", &kernels::contract_ao_sym,
           nb::call_guard<nb::gil_scoped_release>(),
           nb::arg("L_mat"), nb::arg("M_sym"), nb::arg("nbf"));
@@ -186,6 +156,14 @@ void bind_kernels_module(nb::module_& parent) {
           nb::arg("P_eff_ao"), nb::arg("W_eff_ao"),
           nb::arg("Gamma_3c"), nb::arg("gamma_2c"),
           nb::arg("cutoff") = 1e-12);
+    k.def("eval_lt_sos_intermediates_rhf_df", &kernels::eval_lt_sos_intermediates_rhf_df,
+          nb::call_guard<nb::gil_scoped_release>(),
+          nb::arg("B_ov"), nb::arg("d_ov"), nb::arg("weights"), nb::arg("nodes"),
+          nb::arg("c_os") = 1.3);
+    k.def("eval_lt_sos_intermediates_uhf_df", &kernels::eval_lt_sos_intermediates_uhf_df,
+          nb::call_guard<nb::gil_scoped_release>(),
+          nb::arg("B_ov_a"), nb::arg("B_ov_b"), nb::arg("da"), nb::arg("db"),
+          nb::arg("weights"), nb::arg("nodes"), nb::arg("c_os") = 1.3);
 }
 
 } // namespace mshqc

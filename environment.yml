@@ -19,7 +19,6 @@ dependencies:
   - mkl-include
   - liblapacke
   - eigen
-  - hdf5=1.14.3
   - jemalloc
   - pip:
       - build

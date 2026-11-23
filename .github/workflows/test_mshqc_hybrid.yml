@@ -1,19 +1,18 @@
-name: Compile Locally and Run Hybrid Phase 1 Test (mshqc)
+name: Build & Verify mshqc v2.0 Pure Thin-Core
 
 on:
   push:
     branches:
       - build-pypi
-      - test-geom
-      - test
       - hybrid-v2
+      - master
   workflow_dispatch:
 
 jobs:
-  hybrid_phase1_test:
-    name: Local Build & Hybrid Phase 1 (${{ matrix.os }})
+  thin_core_v2_test:
+    name: Pure Thin-Core v2.0 (Zero-HDF5, ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 90
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -25,7 +24,6 @@ jobs:
       TBLIS_NUM_THREADS: "4"
       MKL_NUM_THREADS: "1"
       OPENBLAS_NUM_THREADS: "1"
-      HDF5_USE_FILE_LOCKING: "FALSE"
       PYTHONUNBUFFERED: "1"
       PYTHONIOENCODING: "utf-8"
 
@@ -42,7 +40,7 @@ jobs:
           cp -rf /tmp/mshqc-basis/data/basis/* python/mshqc/basis/
           rm -rf /tmp/mshqc-basis
 
-      - name: Set up Micromamba Build Environment for mshqc (geom_env)
+      - name: Set up Micromamba Build Environment (Zero-HDF5)
         uses: mamba-org/setup-micromamba@v2
         with:
           environment-name: geom_env
@@ -57,7 +55,6 @@ jobs:
             c-compiler
             llvm-openmp
             eigen
-            hdf5=1.14.3
             openblas
             liblapacke
             nanobind
@@ -105,29 +102,29 @@ jobs:
             git submodule update --init --recursive
 
             python - << 'EOF'
-          import pathlib
-          p = pathlib.Path('src/external/catch/catch.hpp')
-          p.write_text(p.read_text().replace('SIGSTKSZ', '8192'))
-          for f in ('src/external/marray/include/short_vector.hpp', 'src/external/marray/include/range.hpp', 'src/util/thread.h'):
-              fp = pathlib.Path(f)
-              fp.write_text('#include <limits>\n' + fp.read_text())
-          tp = pathlib.Path('src/external/tci/tci/task_set.c')
-          tp.write_text('#include <stdlib.h>\n' + tp.read_text())
-          ep = pathlib.Path('src/external/marray/include/expression.hpp')
-          ep.write_text(ep.read_text().replace(
-              '#include <x86intrin.h>',
-              '#if defined(__GNUC__) && (defined(__x86_64__) || defined(__i386__))\n#include <x86intrin.h>\n#else\n#undef __AVX512F__\n#undef __AVX__\n#undef __SSE2__\n#endif'
-          ))
-          cp = pathlib.Path('src/util/cpuid.hpp')
-          if cp.exists():
-              txt = cp.read_text()
-              txt = txt.replace('enum {VENDOR_ARM, VENDOR_UNKNOWN}', 'enum {VENDOR_ARM, VENDOR_UNKNOWN};')
-              txt = txt.replace('enum {MODEL_ARMV7, MODEL_ARMV8, MODEL_UNKNOWN}', 'enum {MODEL_ARMV7, MODEL_ARMV8, MODEL_UNKNOWN};')
-              cp.write_text(txt)
-          cx = pathlib.Path('src/util/cpuid.cxx')
-          if cx.exists():
-              cx.write_text(cx.read_text().replace('strtoi(ptno, pos, 16)', '((void)pos, (int)strtol(ptno.c_str(), NULL, 16))'))
-          EOF
+            import pathlib
+            p = pathlib.Path('src/external/catch/catch.hpp')
+            p.write_text(p.read_text().replace('SIGSTKSZ', '8192'))
+            for f in ('src/external/marray/include/short_vector.hpp', 'src/external/marray/include/range.hpp', 'src/util/thread.h'):
+                fp = pathlib.Path(f)
+                fp.write_text('#include <limits>\n' + fp.read_text())
+            tp = pathlib.Path('src/external/tci/tci/task_set.c')
+            tp.write_text('#include <stdlib.h>\n' + tp.read_text())
+            ep = pathlib.Path('src/external/marray/include/expression.hpp')
+            ep.write_text(ep.read_text().replace(
+                '#include <x86intrin.h>',
+                '#if defined(__GNUC__) && (defined(__x86_64__) || defined(__i386__))\n#include <x86intrin.h>\n#else\n#undef __AVX512F__\n#undef __AVX__\n#undef __SSE2__\n#endif'
+            ))
+            cp = pathlib.Path('src/util/cpuid.hpp')
+            if cp.exists():
+                txt = cp.read_text()
+                txt = txt.replace('enum {VENDOR_ARM, VENDOR_UNKNOWN}', 'enum {VENDOR_ARM, VENDOR_UNKNOWN};')
+                txt = txt.replace('enum {MODEL_ARMV7, MODEL_ARMV8, MODEL_UNKNOWN}', 'enum {MODEL_ARMV7, MODEL_ARMV8, MODEL_UNKNOWN};')
+                cp.write_text(txt)
+            cx = pathlib.Path('src/util/cpuid.cxx')
+            if cx.exists():
+                cx.write_text(cx.read_text().replace('strtoi(ptno, pos, 16)', '((void)pos, (int)strtol(ptno.c_str(), NULL, 16))'))
+            EOF
 
             CFG_ARCH="reference"
             if [ "$(uname -m)" = "x86_64" ]; then
@@ -145,7 +142,7 @@ jobs:
             cp -rf "$CONDA_PREFIX/lib/libcint.a" "$CONDA_PREFIX/lib/libtblis.a" "$CONDA_PREFIX/lib/libtci.a" .cache_local_deps/lib/
           fi
 
-      - name: Compile mshqc In-Place in geom_env
+      - name: Compile mshqc v2.0 Pure Thin-Core (8 C++20 Files, Zero-HDF5)
         id: compile
         shell: bash -el {0}
         run: |
@@ -157,274 +154,68 @@ jobs:
           export CMAKE_ARGS="-DOpenMP_ROOT=$CONDA_PREFIX"
           export CMAKE_BUILD_PARALLEL_LEVEL=4
           python -m pip install --no-build-isolation --no-deps -e . -v
-          python -c "import mshqc; print('Compiled mshqc version:', getattr(mshqc, '__version__', 'local-build'))"
+          python -c "import mshqc; assert mshqc.__version__ == '2.0.0'; assert mshqc.THIN_CORE_ONLY is True; print('Verified mshqc v2.0.0 Pure Thin-Core')"
 
-      # =========================================================================
-      # SINGLE TEST SUITE: HYBRID ARCHITECTURE PHASE 1-5 & THIN CORE STAGE 1-5
-      # =========================================================================
-      - name: "[01/10] Run Hybrid Phase 1 Verification (test_hybrid_phase1.py)"
+      - name: "[1/7] Stage 3: SAD Speedup, Analytic DF-SCF Gradients & Core Profile"
         if: always() && steps.compile.outcome == 'success'
         shell: bash -el {0}
         run: |
           set -o pipefail
           micromamba activate geom_env
-          python -m pytest tests/test_hybrid_phase1.py -v -s 2>&1 | tee 01_test_hybrid_phase1_log.txt
+          python -m pytest tests/test_thin_core_stage3.py -v -s 2>&1 | tee 01_stage3_log.txt
 
-      - name: "[02/10] Run Hybrid Phase 2 Verification (test_hybrid_phase2.py)"
+      - name: "[2/7] Stage 4: ROHF/ROMP2/ROMP3, Analytic OMP2/SCS-OMP2 Gradients & GeomOpt/Freq"
         if: always() && steps.compile.outcome == 'success'
         shell: bash -el {0}
         run: |
           set -o pipefail
           micromamba activate geom_env
-          python -m pytest tests/test_hybrid_phase2.py -v -s 2>&1 | tee 02_test_hybrid_phase2_log.txt
+          python -m pytest tests/test_thin_core_stage4.py -v -s 2>&1 | tee 02_stage4_log.txt
 
-      - name: "[03/10] Run Hybrid Phase 3 Verification (test_hybrid_phase3.py)"
+      - name: "[3/7] Stage 5: Diagonal SAD Exchange Kernel, Core Modularity & E2E Pipeline"
         if: always() && steps.compile.outcome == 'success'
         shell: bash -el {0}
         run: |
           set -o pipefail
           micromamba activate geom_env
-          python -m pytest tests/test_hybrid_phase3.py -v -s 2>&1 | tee 03_test_hybrid_phase3_log.txt
+          python -m pytest tests/test_thin_core_stage5.py -v -s 2>&1 | tee 03_stage5_log.txt
 
-      - name: "[04/10] Run Hybrid Phase 4 Verification (test_hybrid_phase4.py)"
+      - name: "[4/7] Stage 6: Hardened kappa-OOMP2 (FD + CH4 Td), Telemetry & .npz Checkpoints"
         if: always() && steps.compile.outcome == 'success'
         shell: bash -el {0}
         run: |
           set -o pipefail
           micromamba activate geom_env
-          python -m pytest tests/test_hybrid_phase4.py -v -s 2>&1 | tee 04_test_hybrid_phase4_log.txt
+          python -m pytest tests/test_thin_core_stage6.py -v -s 2>&1 | tee 04_stage6_log.txt
 
-      - name: "[05/10] Run Hybrid Phase 5 Verification (test_hybrid_phase5.py)"
+      - name: "[5/7] Stage 7 & 8: O(N^4) Zero-T2 LT-SOS-OMP2 & Analytic DF-kappa-OOMP2 Gradients"
         if: always() && steps.compile.outcome == 'success'
         shell: bash -el {0}
         run: |
           set -o pipefail
           micromamba activate geom_env
-          python -m pytest tests/test_hybrid_phase5.py -v -s 2>&1 | tee 05_test_hybrid_phase5_log.txt
+          python -m pytest tests/test_thin_core_stage7.py -v -s 2>&1 | tee 05_stage7_log.txt
 
-      - name: "[06/10] Run Thin Core Stage 1 Verification (test_thin_core_stage1.py)"
+      - name: "[6/7] Stage 9 & v2.0: Pure Zero-Legacy Layout, Stub Parity & Full Top-Level APIs"
         if: always() && steps.compile.outcome == 'success'
         shell: bash -el {0}
         run: |
           set -o pipefail
           micromamba activate geom_env
-          python -m pytest tests/test_thin_core_stage1.py -v -s 2>&1 | tee 06_test_thin_core_stage1_log.txt
+          python -m pytest tests/test_thin_core_stage8_parity.py -v -s 2>&1 | tee 06_stage8_v2_log.txt
 
-      - name: "[07/10] Run Thin Core Stage 2 Verification (test_thin_core_stage2.py)"
+      - name: "[7/7] Stage 10 (v2.1): OpenMP C++20 LT-SOS Kernel, NOONs, Charges & Molden Export"
         if: always() && steps.compile.outcome == 'success'
         shell: bash -el {0}
         run: |
           set -o pipefail
           micromamba activate geom_env
-          python -m pytest tests/test_thin_core_stage2.py -v -s 2>&1 | tee 07_test_thin_core_stage2_log.txt
+          python -m pytest tests/test_thin_core_stage9_v21.py -v -s 2>&1 | tee 07_stage9_v21_log.txt
 
-      - name: "[08/10] Run Thin Core Stage 3 Verification (test_thin_core_stage3.py)"
-        if: always() && steps.compile.outcome == 'success'
-        shell: bash -el {0}
-        run: |
-          set -o pipefail
-          micromamba activate geom_env
-          python -m pytest tests/test_thin_core_stage3.py -v -s 2>&1 | tee 08_test_thin_core_stage3_log.txt
-
-      - name: "[09/10] Run Thin Core Stage 4 Verification (test_thin_core_stage4.py)"
-        if: always() && steps.compile.outcome == 'success'
-        shell: bash -el {0}
-        run: |
-          set -o pipefail
-          micromamba activate geom_env
-          python -m pytest tests/test_thin_core_stage4.py -v -s 2>&1 | tee 09_test_thin_core_stage4_log.txt
-
-      - name: "[10/10] Run Thin Core Stage 5 Verification (test_thin_core_stage5.py)"
-        if: always() && steps.compile.outcome == 'success'
-        shell: bash -el {0}
-        run: |
-          set -o pipefail
-          micromamba activate geom_env
-          python -m pytest tests/test_thin_core_stage5.py -v -s 2>&1 | tee 10_test_thin_core_stage5_log.txt
-
-      - name: "[11/11] Run Thin Core Stage 6 Verification (test_thin_core_stage6.py)"
-        if: always() && steps.compile.outcome == 'success'
-        shell: bash -el {0}
-        run: |
-          set -o pipefail
-          micromamba activate geom_env
-          python -m pytest tests/test_thin_core_stage6.py -v -s 2>&1 | tee 11_test_thin_core_stage6_log.txt
-
-      - name: "[12/12] Run Thin Core Stage 7 & 8 Verification (test_thin_core_stage7.py)"
-        if: always() && steps.compile.outcome == 'success'
-        shell: bash -el {0}
-        run: |
-          set -o pipefail
-          micromamba activate geom_env
-          python -m pytest tests/test_thin_core_stage7.py -v -s 2>&1 | tee 12_test_thin_core_stage7_log.txt
-
-      - name: "[13/13] Run Stage 9 Repo Layout & Top-Level API Parity (test_thin_core_stage8_parity.py)"
-        if: always() && steps.compile.outcome == 'success'
-        shell: bash -el {0}
-        run: |
-          set -o pipefail
-          micromamba activate geom_env
-          python -m pytest tests/test_thin_core_stage8_parity.py -v -s 2>&1 | tee 13_test_thin_core_stage8_parity_log.txt
-
-      # =========================================================================
-      # UPLOAD ALL TEST LOGS AS SINGLE COMBINED ARTIFACT (.zip)
-      # =========================================================================
-      - name: Upload All Hybrid & Thin Core Test Logs (Combined ZIP)
+      - name: Upload v2.0 Test Logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: mshqc-hybrid-test-logs-${{ matrix.os }}
-          path: '*_test_*_log.txt'
-          if-no-files-found: warn
-
-  # [INJECTED_THIN_CORE_STAGE4_CI_JOB]
-  thin_core_only_test:
-    name: Thin-Core Only (-DMSHQC_THIN_CORE=ON, ${{ matrix.os }})
-    needs: hybrid_phase1_test
-    if: always()
-    runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-
-    env:
-      OMP_NUM_THREADS: "4"
-      OMP_WAIT_POLICY: "PASSIVE"
-      TBLIS_NUM_THREADS: "4"
-      MKL_NUM_THREADS: "1"
-      OPENBLAS_NUM_THREADS: "1"
-      HDF5_USE_FILE_LOCKING: "FALSE"
-      PYTHONUNBUFFERED: "1"
-      PYTHONIOENCODING: "utf-8"
-
-    steps:
-      - name: Checkout Source Code
-        uses: actions/checkout@v4
-
-      - name: Fetch Basis Sets from mshqc-basis
-        shell: bash -eo pipefail {0}
-        run: |
-          git clone --depth 1 https://github.com/syahrulhidayat/mshqc-basis.git /tmp/mshqc-basis
-          mkdir -p data/basis python/mshqc/basis
-          cp -rf /tmp/mshqc-basis/data/basis/* data/basis/
-          cp -rf /tmp/mshqc-basis/data/basis/* python/mshqc/basis/
-          rm -rf /tmp/mshqc-basis
-
-      - name: Set up Micromamba Build Environment (geom_env)
-        uses: mamba-org/setup-micromamba@v2
-        with:
-          environment-name: geom_env
-          create-args: >-
-            -c conda-forge
-            python=3.11
-            cmake
-            ninja
-            make
-            pkg-config
-            cxx-compiler
-            c-compiler
-            llvm-openmp
-            eigen
-            openblas
-            liblapacke
-            nanobind
-            setuptools
-            wheel
-            pip
-            numpy
-            scipy
-            pytest
-
-      - name: Restore Cached libcint & TBLIS (${{ runner.os }})
-        uses: actions/cache@v4
-        with:
-          path: .cache_local_deps
-          key: local-geom-deps-${{ runner.os }}-v2
-
-      - name: Install Cached libcint & TBLIS into geom_env
-        shell: bash -el {0}
-        run: |
-          set -o pipefail
-          micromamba activate geom_env
-          if [ -f ".cache_local_deps/lib/libtblis.a" ]; then
-            cp -rf .cache_local_deps/include/* "$CONDA_PREFIX/include/"
-            cp -rf .cache_local_deps/lib/* "$CONDA_PREFIX/lib/" 2>/dev/null || true
-            if [ -d ".cache_local_deps/lib64" ]; then
-              cp -rf .cache_local_deps/lib64/* "$CONDA_PREFIX/lib/" 2>/dev/null || true
-            fi
-          else
-            echo "Cache miss for libcint/TBLIS; run full build job first to populate cache."
-            exit 1
-          fi
-
-      - name: Compile Minimal C++20 Thin-Core (-DMSHQC_THIN_CORE=ON)
-        id: compile_thin
-        shell: bash -el {0}
-        run: |
-          set -o pipefail
-          micromamba activate geom_env
-          export TBLIS_DIR="$CONDA_PREFIX"
-          export OpenMP_ROOT="$CONDA_PREFIX"
-          export CMAKE_PREFIX_PATH="$CONDA_PREFIX"
-          export CMAKE_ARGS="-DOpenMP_ROOT=$CONDA_PREFIX -DMSHQC_THIN_CORE=ON"
-          export CMAKE_BUILD_PARALLEL_LEVEL=4
-          python -m pip install --no-build-isolation --no-deps -e . -v
-          python -c "import mshqc; assert mshqc.THIN_CORE_ONLY is True; assert not hasattr(mshqc, 'RHF'); print('Verified THIN_CORE_ONLY=True')"
-
-      - name: "[THIN-CORE 1/3] Run Stage 3 Verification (No Legacy C++)"
-        if: always() && steps.compile_thin.outcome == 'success'
-        shell: bash -el {0}
-        run: |
-          set -o pipefail
-          micromamba activate geom_env
-          python -m pytest tests/test_thin_core_stage3.py -v -s 2>&1 | tee tc_01_stage3_log.txt
-
-      - name: "[THIN-CORE 2/3] Run Stage 4 Verification (No Legacy C++)"
-        if: always() && steps.compile_thin.outcome == 'success'
-        shell: bash -el {0}
-        run: |
-          set -o pipefail
-          micromamba activate geom_env
-          python -m pytest tests/test_thin_core_stage4.py -v -s 2>&1 | tee tc_02_stage4_log.txt
-
-      - name: "[THIN-CORE 3/3] Run Stage 5 Verification (No Legacy C++)"
-        if: always() && steps.compile_thin.outcome == 'success'
-        shell: bash -el {0}
-        run: |
-          set -o pipefail
-          micromamba activate geom_env
-          python -m pytest tests/test_thin_core_stage5.py -v -s 2>&1 | tee tc_03_stage5_log.txt
-
-      - name: "[THIN-CORE 4/4] Run Stage 6 Verification (Zero-HDF5, kappa-OOMP2, Checkpoint)"
-        if: always() && steps.compile_thin.outcome == 'success'
-        shell: bash -el {0}
-        run: |
-          set -o pipefail
-          micromamba activate geom_env
-          python -m pytest tests/test_thin_core_stage6.py -v -s 2>&1 | tee tc_04_stage6_log.txt
-
-      - name: "[THIN-CORE 5/5] Run Stage 7 & 8 Verification (Irreducible Core, O(N^4) LT-SOS, k-OOMP2 Grad)"
-        if: always() && steps.compile_thin.outcome == 'success'
-        shell: bash -el {0}
-        run: |
-          set -o pipefail
-          micromamba activate geom_env
-          python -m pytest tests/test_thin_core_stage7.py -v -s 2>&1 | tee tc_05_stage7_log.txt
-
-      - name: "[THIN-CORE 6/6] Run Stage 9 Full API Parity & Repo Hygiene (No Legacy C++)"
-        if: always() && steps.compile_thin.outcome == 'success'
-        shell: bash -el {0}
-        run: |
-          set -o pipefail
-          micromamba activate geom_env
-          python -m pytest tests/test_thin_core_stage8_parity.py -v -s 2>&1 | tee tc_06_stage8_parity_log.txt
-
-      - name: Upload Thin-Core Test Logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: mshqc-thin-core-only-logs-${{ matrix.os }}
-          path: tc_*_log.txt
+          name: mshqc-v2-thin-core-logs-${{ matrix.os }}
+          path: 0*_log.txt
           if-no-files-found: warn

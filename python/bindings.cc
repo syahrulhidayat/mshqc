@@ -1,6 +1,5 @@
 // Copyright 2026 Muhamad Syahrul Hidayat
 // Licensed under the Apache License, Version 2.0
-// [INJECTED_THIN_CORE_STAGE7_IRREDUCIBLE_BINDINGS]
 
 #include <nanobind/nanobind.h>
 #include <nanobind/eigen/dense.h>
@@ -22,14 +21,11 @@ using namespace mshqc::integrals;
 
 namespace mshqc {
 void bind_kernels_module(nanobind::module_& m);
-#ifndef MSHQC_THIN_CORE_BUILD
-void bind_legacy_module(nanobind::module_& m, nanobind::class_<Molecule>& mol_cls);
-#endif
 } // namespace mshqc
 
 NB_MODULE(_mshqc, m) {
     mshqc_auto_tune::initialize_hpc_environment();
-    m.doc() = "MSHQC: Irreducible Thin-Core C++20 / Python Quantum Chemistry Engine";
+    m.doc() = "MSHQC v2.0: Pure Thin-Core C++20 / Python Quantum Chemistry Engine";
 
     nb::class_<ERITensor>(m, "ERITensor")
         .def("size", &ERITensor::size)
@@ -54,8 +50,7 @@ NB_MODULE(_mshqc, m) {
         .def_rw("z", &Atom::z)
         .def("position", &Atom::position);
 
-    nb::class_<Molecule> mol_cls(m, "Molecule");
-    mol_cls
+    nb::class_<Molecule>(m, "Molecule")
         .def(nb::init<int, int>(), nb::arg("charge") = 0, nb::arg("multiplicity") = 1)
         .def("add_atom", [](Molecule& mol, int Z, double x, double y, double z, const std::string& units) {
             double s = mshqc_auto_tune::unit_scale(units);
@@ -163,7 +158,4 @@ NB_MODULE(_mshqc, m) {
           "Compute standard noble-gas frozen core orbital count (Psi4 convention)");
 
     mshqc::bind_kernels_module(m);
-#ifndef MSHQC_THIN_CORE_BUILD
-    mshqc::bind_legacy_module(m, mol_cls);
-#endif
 }

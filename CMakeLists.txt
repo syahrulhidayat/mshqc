@@ -1,17 +1,15 @@
 cmake_minimum_required(VERSION 3.18)
-project(mshqc VERSION 1.0.4 LANGUAGES CXX C)
+project(mshqc VERSION 2.0.0 LANGUAGES CXX C)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-# Kompatibilitas lintas versi macOS (macOS 11.0+ ke atas)
 if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
     set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS deployment version")
 endif()
 
-# Seragamkan Dynamic CRT (/MD) di Windows agar tidak terjadi Cross-CRT Heap Corruption (0xc0000374)
 if(MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
 endif()
@@ -20,25 +18,22 @@ endif()
 # 0. OS & COMPILER SPECIFIC FLAGS
 # ==============================================================================
 if(MSVC)
-
-  set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /O2 /Ob2 /Oi /Ot /arch:AVX2 /fp:fast /openmp:llvm /Zc:__cplusplus /permissive- /DNDEBUG /EHsc /bigobj")
-  add_compile_options(
-    /arch:AVX2
-    /openmp:llvm
-    /EHsc
-    /bigobj
-    "/FI${CMAKE_SOURCE_DIR}/include/mshqc/msvc_compat.h"
-  )
-  add_compile_definitions(
-    _USE_MATH_DEFINES
-    _CRT_SECURE_NO_WARNINGS
-    NOMINMAX
-    __restrict__=__restrict
-    H5_BUILT_AS_DYNAMIC_LIB
-    EIGEN_MAX_ALIGN_BYTES=32
-  )
+    set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /O2 /Ob2 /Oi /Ot /arch:AVX2 /fp:fast /openmp:llvm /Zc:__cplusplus /permissive- /DNDEBUG /EHsc /bigobj")
+    add_compile_options(
+        /arch:AVX2
+        /openmp:llvm
+        /EHsc
+        /bigobj
+        "/FI${CMAKE_SOURCE_DIR}/include/mshqc/msvc_compat.h"
+    )
+    add_compile_definitions(
+        _USE_MATH_DEFINES
+        _CRT_SECURE_NO_WARNINGS
+        NOMINMAX
+        __restrict__=__restrict
+        EIGEN_MAX_ALIGN_BYTES=32
+    )
 elseif(APPLE)
-    # Konfigurasi macOS (Apple Silicon ARM64 & Intel x86_64)
     add_compile_definitions(_LIBCPP_ENABLE_CXX17_REMOVED_UNARY_BINARY_FUNCTION _LIBCPP_ENABLE_CXX17_REMOVED_RANDOM_SHUFFLE)
     if(DEFINED ENV{GITHUB_ACTIONS} OR DEFINED ENV{CIBUILDWHEEL})
         if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
@@ -50,7 +45,6 @@ elseif(APPLE)
         set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -g -fno-omit-frame-pointer -mcpu=native -funroll-loops -ftree-vectorize -DNDEBUG -fno-math-errno -Wno-deprecated-enum-enum-conversion -Wno-deprecated-declarations")
     endif()
 else()
-    # Konfigurasi Linux (TETAP UTUH 100% SESUAI ASLINYA)
     if(DEFINED ENV{GITHUB_ACTIONS} OR DEFINED ENV{CIBUILDWHEEL})
         set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O3 -g -fno-omit-frame-pointer -mavx2 -mfma -mno-avx512f -funroll-loops -ftree-vectorize -mtune=generic -DNDEBUG -fno-math-errno -Wno-deprecated-enum-enum-conversion -Wno-deprecated-declarations")
     else()
@@ -198,7 +192,7 @@ else()
 endif()
 
 # ==============================================================================
-# 3. EIGEN DISCOVERY
+# 3. EIGEN, LIBCINT & TBLIS DISCOVERY (Zero-HDF5 Thin Core)
 # ==============================================================================
 find_path(EIGEN3_INCLUDE_DIR
     NAMES Eigen/Dense
@@ -225,9 +219,6 @@ if(NOT TARGET Eigen3::Eigen)
     target_include_directories(Eigen3::Eigen INTERFACE "${EIGEN3_INCLUDE_DIR}")
 endif()
 
-# ==============================================================================
-# 4. LIBCINT & TBLIS DISCOVERY
-# ==============================================================================
 find_library(CINT_LIBRARY
     NAMES cint.lib libcint.dll.a cint libcint.a
     HINTS "$ENV{CONDA_PREFIX}/lib" "$ENV{CONDA_PREFIX}/Library/lib" "C:/deps/Library/lib" "$ENV{HOME}/libcint_install/lib64" "$ENV{HOME}/libcint_install/lib" "/opt/homebrew/lib" "/usr/local/lib64" "/usr/local/lib" "/usr/lib64" "/usr/lib"
@@ -257,64 +248,22 @@ if(NOT TBLIS_LIBRARY OR NOT TBLIS_INCLUDE_DIR)
 endif()
 
 # ==============================================================================
-# 5. HDF5 DISCOVERY
+# 4. IRREDUCIBLE C++20 THIN-CORE SOURCES (8 Core Files + 2 Binding Files)
 # ==============================================================================
-# [INJECTED_THIN_CORE_STAGE6_NO_HDF5]
-option(MSHQC_THIN_CORE "Compile minimal C++20 core kernels only (~65% less C++ code)" OFF)
-
-if(NOT MSHQC_THIN_CORE)
-    find_library(HDF5_C_LIB
-        NAMES hdf5 libhdf5 hdf5.lib libhdf5.lib
-        HINTS "$ENV{CONDA_PREFIX}/lib" "$ENV{CONDA_PREFIX}/Library/lib" "C:/deps/Library/lib" "/opt/homebrew/opt/hdf5/lib" "/opt/homebrew/lib" "/usr/local/lib64" "/usr/local/lib" "/usr/lib64" "/usr/lib/x86_64-linux-gnu" "/usr/lib"
-    )
-    find_library(HDF5_CXX_LIB
-        NAMES hdf5_cpp libhdf5_cpp hdf5_cpp.lib libhdf5_cpp.lib
-        HINTS "$ENV{CONDA_PREFIX}/lib" "$ENV{CONDA_PREFIX}/Library/lib" "C:/deps/Library/lib" "/opt/homebrew/opt/hdf5/lib" "/opt/homebrew/lib" "/usr/local/lib64" "/usr/local/lib" "/usr/lib64" "/usr/lib/x86_64-linux-gnu" "/usr/lib"
-    )
-    find_path(HDF5_INCLUDE_DIR
-        NAMES H5Cpp.h
-        HINTS "$ENV{CONDA_PREFIX}/include" "$ENV{CONDA_PREFIX}/Library/include" "C:/deps/Library/include" "/opt/homebrew/opt/hdf5/include" "/opt/homebrew/include" "/usr/local/include" "/usr/include" "/usr/include/hdf5/serial"
-    )
-    if(HDF5_C_LIB AND HDF5_CXX_LIB)
-        set(HDF5_LIBRARIES ${HDF5_CXX_LIB} ${HDF5_C_LIB})
-    else()
-        message(FATAL_ERROR "CRITICAL: HDF5 C/C++ libraries tidak ditemukan!")
-    endif()
-else()
-    set(HDF5_LIBRARIES "")
-    set(HDF5_INCLUDE_DIR "")
-    message(STATUS "MSHQC_THIN_CORE=ON: skipping HDF5 C/C++ dependency (zero-HDF5 thin core)")
-endif()
-
-# ==============================================================================
-# 6. SOURCE FILES & TARGET CONFIGURATION
-# ==============================================================================
-
-
-# [INJECTED_THIN_CORE_STAGE9_LEGACY_DIR]
-set(SRC_CORE_MINIMAL
+set(MSHQC_CORE_SOURCES
     "${CMAKE_SOURCE_DIR}/src/core/molecule.cc"
     "${CMAKE_SOURCE_DIR}/src/core/basis.cc"
     "${CMAKE_SOURCE_DIR}/src/ints/integrals.cc"
     "${CMAKE_SOURCE_DIR}/src/integrals/df_eri.cc"
     "${CMAKE_SOURCE_DIR}/src/integrals/cholesky_eri.cc"
-)
-file(GLOB_RECURSE SRC_KERNELS CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/kernels/*.cc")
-
-set(ALL_SOURCES
-    ${SRC_CORE_MINIMAL}
-    ${SRC_KERNELS}
+    "${CMAKE_SOURCE_DIR}/src/kernels/primitives.cc"
+    "${CMAKE_SOURCE_DIR}/src/kernels/mp3_kernels.cc"
+    "${CMAKE_SOURCE_DIR}/src/kernels/uhf_kernels.cc"
 )
 
-if(NOT MSHQC_THIN_CORE)
-    file(GLOB_RECURSE SRC_LEGACY CONFIGURE_DEPENDS "${CMAKE_SOURCE_DIR}/src/legacy/*.cc")
-    list(APPEND ALL_SOURCES ${SRC_LEGACY})
-    message(STATUS "mshqc build profile: FULL (8 Core C++20 Files + src/legacy/ Solvers)")
-else()
-    message(STATUS "mshqc build profile: THIN-CORE ONLY (Irreducible 8 C++20 Core Files + Python Orchestration)")
-endif()
+message(STATUS "mshqc v${PROJECT_VERSION} build profile: PURE THIN-CORE (8 C++20 Core Files, Zero-HDF5)")
 
-add_library(mshqc STATIC ${ALL_SOURCES})
+add_library(mshqc STATIC ${MSHQC_CORE_SOURCES})
 
 if(APPLE)
     set(MSHQC_RPATH "@loader_path;@loader_path/../../..")
@@ -328,20 +277,16 @@ set_target_properties(mshqc PROPERTIES
 )
 
 if(MKL_LIBRARY AND MKL_INCLUDE_DIR AND NOT MSVC)
-  target_compile_definitions(mshqc PUBLIC EIGEN_USE_MKL_ALL)
+    target_compile_definitions(mshqc PUBLIC EIGEN_USE_MKL_ALL)
 elseif(UNIX AND NOT APPLE)
-  target_compile_definitions(mshqc PUBLIC EIGEN_USE_BLAS)
+    target_compile_definitions(mshqc PUBLIC EIGEN_USE_BLAS)
 endif()
-target_compile_definitions(mshqc PUBLIC EIGEN_NO_DEBUG EIGEN_MPL2_ONLY)
-if(MSHQC_THIN_CORE)
-    target_compile_definitions(mshqc PUBLIC MSHQC_NO_HDF5=1)
-endif()
+target_compile_definitions(mshqc PUBLIC EIGEN_NO_DEBUG EIGEN_MPL2_ONLY MSHQC_NO_HDF5=1)
 
 set(MSHQC_LINK_LIBS
     Eigen3::Eigen
     ${CINT_LIBRARY}
     ${TBLIS_LIBRARY}
-    ${HDF5_LIBRARIES}
     ${BLAS_LIBRARIES}
     ${LAPACK_LIBRARIES}
     OpenMP::OpenMP_CXX
@@ -355,13 +300,11 @@ endif()
 
 target_link_libraries(mshqc PUBLIC ${MSHQC_LINK_LIBS})
 
-# Validasi ketat direktori include agar tidak ada relative path lintas OS
 set(MSHQC_BUILD_INCLUDES
     "${CMAKE_SOURCE_DIR}/include"
     "${EIGEN3_INCLUDE_DIR}"
     "${CINT_INCLUDE_DIR}"
     "${TBLIS_INCLUDE_DIR}"
-    "${HDF5_INCLUDE_DIR}"
     "${Python_ROOT_DIR}/include"
 )
 if(MKL_INCLUDE_DIR AND EXISTS "${MKL_INCLUDE_DIR}")
@@ -384,14 +327,8 @@ foreach(_inc IN LISTS MSHQC_BUILD_INCLUDES)
     endif()
 endforeach()
 
-set(MSHQC_BINDING_SOURCES "python/bindings.cc" "python/bind_kernels.cc")
-if(NOT MSHQC_THIN_CORE)
-    list(APPEND MSHQC_BINDING_SOURCES "python/bind_legacy.cc")
-endif()
-nanobind_add_module(_mshqc NOMINSIZE ${MSHQC_BINDING_SOURCES})
-if(MSHQC_THIN_CORE)
-    target_compile_definitions(_mshqc PRIVATE MSHQC_THIN_CORE_BUILD=1)
-endif()
+nanobind_add_module(_mshqc NOMINSIZE "python/bindings.cc" "python/bind_kernels.cc")
+target_compile_definitions(_mshqc PRIVATE MSHQC_THIN_CORE_BUILD=1)
 
 foreach(_inc IN LISTS MSHQC_BUILD_INCLUDES)
     if(_inc AND IS_ABSOLUTE "${_inc}" AND EXISTS "${_inc}")

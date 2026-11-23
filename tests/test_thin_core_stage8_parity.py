@@ -1,19 +1,14 @@
 #!/usr/bin/env python3
 """
-Validasi Tahap 9 (Full Top-Level API Parity & Clean `src/legacy/` Separation):
-1. Verifikasi struktur repo bersih: 8 file `.cc` inti di `src/{core,ints,integrals,kernels}`
-   dan seluruh solver legacy terisolasi rapi di `src/legacy/`.
-2. Seluruh API tingkat atas (`mshqc.run`, `MSHQCSession`, `quick_calculation`, `compare_methods`)
-   berjalan mulus di build `THIN_CORE_ONLY` maupun `FULL` termasuk `kappa-omp2` & `lt-sos-omp2`.
-3. `Molecule.gradient`, `Molecule.optimize_geometry`, `Molecule.frequencies`, dan `Molecule.scan_pes`
-   tersedia dan konsisten di kedua profil build.
+Validasi Final mshqc v2.0 (Pure Zero-Legacy Thin-Core, Stub Parity & Full Top-Level APIs).
 """
+import ast
 from pathlib import Path
 import numpy as np
 import mshqc
 
 
-def test_clean_src_vs_legacy_repository_layout():
+def test_pure_v2_zero_legacy_repository_layout():
     root = Path(__file__).resolve().parent.parent
     expected_core = {
         "src/core/molecule.cc",
@@ -25,30 +20,39 @@ def test_clean_src_vs_legacy_repository_layout():
         "src/kernels/mp3_kernels.cc",
         "src/kernels/uhf_kernels.cc",
     }
-    actual_non_legacy = {
-        p.relative_to(root).as_posix()
-        for p in (root / "src").rglob("*.cc")
-        if "src/legacy/" not in p.relative_to(root).as_posix()
+    actual_cc = {p.relative_to(root).as_posix() for p in (root / "src").rglob("*.cc")}
+    assert actual_cc == expected_core, f"Unexpected C++ files in src/: {actual_cc ^ expected_core}"
+    assert not (root / "src" / "legacy").exists()
+    assert not (root / "python" / "bind_legacy.cc").exists()
+    assert mshqc.THIN_CORE_ONLY is True
+    assert mshqc.__version__ == "2.0.0"
+    print(f"[PURE V2.0  ] Verified strictly {len(actual_cc)} core C++20 files & zero legacy files.")
+
+
+def test_pyi_stub_covers_all_kernels_symbols():
+    root = Path(__file__).resolve().parent.parent
+    pyi_path = root / "python" / "mshqc" / "_mshqc.pyi"
+    tree = ast.parse(pyi_path.read_text(encoding="utf-8"), filename=str(pyi_path))
+
+    kernels_cls = next(
+        (n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == "kernels"),
+        None,
+    )
+    assert kernels_cls is not None, "Class kernels tidak ditemukan di _mshqc.pyi"
+
+    stub_syms = {
+        n.name for n in kernels_cls.body if isinstance(n, (ast.FunctionDef, ast.ClassDef))
     }
-    legacy_files = list((root / "src" / "legacy").rglob("*.cc"))
-    print(
-        f"[REPO LAYOUT] Core C++ files: {len(actual_non_legacy)} | "
-        f"Archived in src/legacy/: {len(legacy_files)}"
-    )
-    assert actual_non_legacy == expected_core, (
-        f"Unexpected non-legacy C++ files: {actual_non_legacy ^ expected_core}"
-    )
-    assert len(legacy_files) >= 15
+    runtime_syms = {name for name in dir(mshqc.kernels) if not name.startswith("_")}
+    missing = runtime_syms - stub_syms
+    print(f"[STUB CHECK ] Runtime kernels={len(runtime_syms)} | Stubbed={len(stub_syms)} | Missing={missing}")
+    assert not missing, f"Simbol mshqc.kernels belum ada di _mshqc.pyi: {sorted(missing)}"
 
 
-def test_top_level_apis_work_in_thin_core_and_full():
+def test_top_level_apis_and_molecule_methods():
     h2o = "O 0.0 0.0 0.1173\nH 0.0 0.7572 -0.4692\nH 0.0 -0.7572 -0.4692"
 
-    # 1. MSHQCSession dengan seluruh keluarga metode baru (termasuk kappa-omp2 & lt-sos-omp2)
-    sess = mshqc.MSHQCSession(
-        h2o, basis_name="cc-pVDZ", eri_method="df", units="angstrom",
-        threshold=1e-10, use_symmetry=False,
-    )
+    sess = mshqc.MSHQCSession(h2o, basis_name="cc-pVDZ", units="angstrom", threshold=1e-10)
     res_map = sess.run_complete_analysis(
         methods=["rhf", "mp2", "omp2", "lt-sos-omp2", "kappa-omp2"],
         grad_thresh=1e-6,
@@ -56,48 +60,30 @@ def test_top_level_apis_work_in_thin_core_and_full():
     for key in ("RHF", "RMP2", "OMP2", "LT-SOS-OMP2", "KAPPA-OMP2"):
         assert key in res_map and np.isfinite(float(getattr(res_map[key], "energy_total", getattr(res_map[key], "e_total"))))
 
-    # 2. quick_calculation & compare_methods
     r_qk = mshqc.quick_calculation(h2o, basis="cc-pVDZ", method="df-kappa-omp2", units="angstrom")
     r_lt = mshqc.quick_calculation(h2o, basis="cc-pVDZ", method="df-lt-sos-omp2", units="angstrom")
     assert abs(r_qk.energy_total - res_map["KAPPA-OMP2"].energy_total) < 1e-7
     assert abs(r_lt.energy_total - res_map["LT-SOS-OMP2"].energy_total) < 1e-7
 
     cmp_res = mshqc.compare_methods(
-        h2o, basis="cc-pVDZ", methods=["rhf", "omp2", "kappa-omp2"],
-        eri_method="df", units="angstrom",
+        h2o, basis="cc-pVDZ", methods=["rhf", "omp2", "kappa-omp2"], units="angstrom"
     )
     assert set(cmp_res.keys()) >= {"RHF", "OMP2", "KAPPA-OMP2"}
 
-    # 3. Default eri_method saat THIN_CORE_ONLY tidak melempar AttributeError
-    if mshqc.THIN_CORE_ONLY:
-        calc_def = mshqc.MSHQCCalculator(h2o, basis_name="cc-pVDZ", units="angstrom")
-        assert calc_def.eri_method == "df"
-        assert calc_def.run_scf().converged
-    print(
-        f"[TOP APIs   ] Session/Quick/Compare OK | kappa-OOMP2={r_qk.energy_total:.8f} | "
-        f"LT-SOS={r_lt.energy_total:.8f}"
-    )
-
-
-def test_molecule_scan_pes_and_methods_parity():
     h2 = mshqc.Molecule(0, 1)
     h2.add_atom("H", 0.0, 0.0, 0.0, units="angstrom")
-    h2.add_atom("H", 0.0, 0.0, 0.74, units="angstrom")
-
-    assert hasattr(h2, "gradient") and hasattr(h2, "optimize_geometry")
-    assert hasattr(h2, "frequencies") and hasattr(h2, "scan_pes")
-
-    pts = h2.scan_pes(0, 1, [0.65, 0.74, 0.90], method="omp2", eri_mode="df", basis="cc-pVDZ")
-    assert len(pts) == 3
-    assert pts[1].energy_ha < pts[0].energy_ha and pts[1].energy_ha < pts[2].energy_ha
+    h2.add_atom("H", 0.0, 0.0, 0.78, units="angstrom")
+    opt = h2.optimize_geometry(method="omp2", basis="cc-pVDZ", g_convergence="gau_tight")
+    assert opt.converged
+    pts = h2.scan_pes(0, 1, [0.65, 0.74, 0.90], method="omp2", basis="cc-pVDZ")
+    assert len(pts) == 3 and pts[1].energy_ha < pts[0].energy_ha and pts[1].energy_ha < pts[2].energy_ha
     print(
-        f"[PES H2 OMP2] r=0.65:{pts[0].energy_ha:.6f} | r=0.74:{pts[1].energy_ha:.6f} | "
-        f"r=0.90:{pts[2].energy_ha:.6f} Ha"
+        f"[V2.0 APIs  ] Session/Quick/Compare OK | H2 R_eq={opt.bond_lengths_angstrom['H1-H2']:.5f} A"
     )
 
 
 if __name__ == "__main__":
-    test_clean_src_vs_legacy_repository_layout()
-    test_top_level_apis_work_in_thin_core_and_full()
-    test_molecule_scan_pes_and_methods_parity()
-    print("[PASS] Semua validasi Tahap 9 (Clean Repo & Full Thin-Core API Parity) lulus!")
+    test_pure_v2_zero_legacy_repository_layout()
+    test_pyi_stub_covers_all_kernels_symbols()
+    test_top_level_apis_and_molecule_methods()
+    print("[PASS] Semua validasi Final mshqc v2.0 Pure Thin-Core lulus!")

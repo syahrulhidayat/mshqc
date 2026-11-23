@@ -1,48 +1,43 @@
 # Copyright 2026 Muhamad Syahrul Hidayat
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# Licensed under the Apache License, Version 2.0
+"""High-level Pythonic interface untuk mshqc v2.0 Pure Thin-Core Engine."""
 
-
-
-# File: python/mshqc/calculators.py
 from __future__ import annotations
+
 import os
 import time
-from typing import List, Optional, Tuple, Union, Dict, Any
-import mshqc
+from typing import Any, Dict, List, Optional, Tuple, Union
+import numpy as np
 
-_SYMBOL_TO_Z = {
-    'H': 1, 'He': 2, 'Li': 3, 'Be': 4, 'B': 5, 'C': 6, 'N': 7, 'O': 8, 'F': 9, 'Ne': 10,
-    'Na': 11, 'Mg': 12, 'Al': 13, 'Si': 14, 'P': 15, 'S': 16, 'Cl': 17, 'Ar': 18,
-    'K': 19, 'Ca': 20, 'Sc': 21, 'Ti': 22, 'V': 23, 'Cr': 24, 'Mn': 25, 'Fe': 26,
-    'Co': 27, 'Ni': 28, 'Cu': 29, 'Zn': 30, 'Ga': 31, 'Ge': 32, 'As': 33, 'Se': 34,
-    'Br': 35, 'Kr': 36, 'Rb': 37, 'Sr': 38, 'Y': 39, 'Zr': 40, 'Nb': 41, 'Mo': 42,
-    'Tc': 43, 'Ru': 44, 'Rh': 45, 'Pd': 46, 'Ag': 47, 'Cd': 48, 'In': 49, 'Sn': 50,
-    'Sb': 51, 'Te': 52, 'I': 53, 'Xe': 54,
-    'Cs': 55, 'Ba': 56, 'La': 57, 'Ce': 58, 'Pr': 59, 'Nd': 60, 'Pm': 61, 'Sm': 62, 'Eu': 63, 'Gd': 64,
-    'Tb': 65, 'Dy': 66, 'Ho': 67, 'Er': 68, 'Tm': 69, 'Yb': 70, 'Lu': 71,
-    'Hf': 72, 'Ta': 73, 'W': 74, 'Re': 75, 'Os': 76, 'Ir': 77, 'Pt': 78, 'Au': 79, 'Hg': 80,
-    'Tl': 81, 'Pb': 82, 'Bi': 83, 'Po': 84, 'At': 85, 'Rn': 86,
-    'Fr': 87, 'Ra': 88, 'Ac': 89, 'Th': 90, 'Pa': 91, 'U': 92, 'Np': 93, 'Pu': 94,
-    'Am': 95, 'Cm': 96, 'Bk': 97, 'Cf': 98, 'Es': 99, 'Fm': 100, 'Md': 101, 'No': 102,
-    'Lr': 103, 'Rf': 104, 'Db': 105, 'Sg': 106, 'Bh': 107, 'Hs': 108, 'Mt': 109, 'Ds': 110,
-    'Rg': 111, 'Cn': 112, 'Nh': 113, 'Fl': 114, 'Mc': 115, 'Lv': 116, 'Ts': 117, 'Og': 118
+import mshqc
+from .geom_opt import ANGSTROM_TO_BOHR, GeomOptResult, UniversalGeomOptimizer
+
+
+_SYMBOL_TO_Z: Dict[str, int] = {
+    "H": 1, "He": 2, "Li": 3, "Be": 4, "B": 5, "C": 6, "N": 7, "O": 8, "F": 9, "Ne": 10,
+    "Na": 11, "Mg": 12, "Al": 13, "Si": 14, "P": 15, "S": 16, "Cl": 17, "Ar": 18,
+    "K": 19, "Ca": 20, "Sc": 21, "Ti": 22, "V": 23, "Cr": 24, "Mn": 25, "Fe": 26,
+    "Co": 27, "Ni": 28, "Cu": 29, "Zn": 30, "Ga": 31, "Ge": 32, "As": 33, "Se": 34,
+    "Br": 35, "Kr": 36, "Rb": 37, "Sr": 38, "Y": 39, "Zr": 40, "Nb": 41, "Mo": 42,
+    "Tc": 43, "Ru": 44, "Rh": 45, "Pd": 46, "Ag": 47, "Cd": 48, "In": 49, "Sn": 50,
+    "Sb": 51, "Te": 52, "I": 53, "Xe": 54,
+    "Cs": 55, "Ba": 56, "La": 57, "Ce": 58, "Pr": 59, "Nd": 60, "Pm": 61, "Sm": 62, "Eu": 63, "Gd": 64,
+    "Tb": 65, "Dy": 66, "Ho": 67, "Er": 68, "Tm": 69, "Yb": 70, "Lu": 71,
+    "Hf": 72, "Ta": 73, "W": 74, "Re": 75, "Os": 76, "Ir": 77, "Pt": 78, "Au": 79, "Hg": 80,
+    "Tl": 81, "Pb": 82, "Bi": 83, "Po": 84, "At": 85, "Rn": 86,
+    "Fr": 87, "Ra": 88, "Ac": 89, "Th": 90, "Pa": 91, "U": 92, "Np": 93, "Pu": 94,
+    "Am": 95, "Cm": 96, "Bk": 97, "Cf": 98, "Es": 99, "Fm": 100, "Md": 101, "No": 102,
+    "Lr": 103, "Rf": 104, "Db": 105, "Sg": 106, "Bh": 107, "Hs": 108, "Mt": 109, "Ds": 110,
+    "Rg": 111, "Cn": 112, "Nh": 113, "Fl": 114, "Mc": 115, "Lv": 116, "Ts": 117, "Og": 118,
 }
 
-def build_molecule(atoms: Union[mshqc.Molecule, str, List[Tuple]],
-                   charge: int = 0,
-                   multiplicity: Optional[int] = None,
-                   units: str = "bohr") -> mshqc.Molecule:
+
+def build_molecule(
+    atoms: Union[mshqc.Molecule, str, List[Tuple]],
+    charge: int = 0,
+    multiplicity: Optional[int] = None,
+    units: str = "bohr",
+) -> mshqc.Molecule:
     """Bangun objek mshqc.Molecule dari list tuple [(Z/sym, x, y, z)] atau string XYZ."""
     if isinstance(atoms, mshqc.Molecule):
         return atoms
@@ -72,274 +67,71 @@ def build_molecule(atoms: Union[mshqc.Molecule, str, List[Tuple]],
 
 
 class MSHQCCalculator:
-    """High-level Pythonic interface untuk Unified Engine MSHQC (RHF/UHF/ROHF, MP2/MP3, OMP2/OMP3)."""
+    """
+    Orkestrator tingkat tinggi mshqc v2.0 (Pure Thin-Core):
+    RHF/UHF/ROHF, MP2/MP3/ROMP2/ROMP3, OMP2/SCS-OMP2/SOS-OMP2/LT-SOS-OMP2/OMP2.5/OMP3/kappa-OMP2.
+    """
 
-    # [INJECTED_HPC_V3_CALCULATORS]
-    def __init__(self,
-                 molecule: Union[mshqc.Molecule, str, List[Tuple]],
-                 basis_name: str = "cc-pVTZ",
-                 eri_method: Optional[str] = None,
-                 aux_basis_name: Optional[str] = None,
-                 charge: int = 0,
-                 multiplicity: Optional[int] = None,
-                 units: str = "bohr",
-                 reference: Optional[str] = None,
-                 threshold: float = 1e-9,
-                 scf_type: str = "incore",
-                 print_level: int = 0,
-                 basis_dir: Optional[str] = None,
-                 freeze_core: bool = False,
-                 n_frozen: int = 0,
-                 memory_limit_gb: float = 4.0,
-                 use_symmetry: bool = True,
-                 level_shift: float = 0.0):  # [INJECTED_PROD_V6_LEVEL_SHIFT]
-
-        raw_mol = build_molecule(molecule, charge=charge, multiplicity=multiplicity, units=units)
-        # [INJECTED_THIN_CORE_STAGE9_DEFAULT_ERI]
-        if eri_method is None:
-            self.eri_method = "df" if getattr(mshqc, "THIN_CORE_ONLY", False) else "exact"
-        else:
-            self.eri_method = eri_method.lower()
-        if getattr(mshqc, "THIN_CORE_ONLY", False) and self.eri_method == "exact":
-            raise RuntimeError(
-                "eri_method='exact' memerlukan build FULL (-DMSHQC_THIN_CORE=OFF). "
-                "Pada build Thin-Core gunakan eri_method='df' atau 'cholesky'."
+    def __init__(
+        self,
+        molecule: Union[mshqc.Molecule, str, List[Tuple]],
+        basis_name: str = "cc-pVTZ",
+        eri_method: Optional[str] = None,
+        aux_basis_name: Optional[str] = None,
+        charge: int = 0,
+        multiplicity: Optional[int] = None,
+        units: str = "bohr",
+        reference: Optional[str] = None,
+        threshold: float = 1e-9,
+        scf_type: str = "incore",
+        print_level: int = 0,
+        basis_dir: Optional[str] = None,
+        freeze_core: bool = False,
+        n_frozen: int = 0,
+        memory_limit_gb: float = 4.0,
+        use_symmetry: bool = False,
+        level_shift: float = 0.0,
+    ):
+        self.molecule = build_molecule(molecule, charge=charge, multiplicity=multiplicity, units=units)
+        self.eri_method = "df" if eri_method is None else eri_method.lower()
+        if self.eri_method not in ("df", "cholesky"):
+            raise ValueError(
+                f"mshqc v2.0 Thin-Core mendukung eri_method='df' atau 'cholesky' (diterima: {self.eri_method!r}). "
+                "Untuk mode exact 4D legacy, gunakan tag v1.0.5-thesis-archive atau branch test."
             )
-        self.use_symmetry = use_symmetry
 
-        # [INJECTED_THIN_CORE_STAGE3_CALC]
-        if use_symmetry and hasattr(mshqc, "PointGroup"):
-            self.pg = mshqc.PointGroup(raw_mol)
-            self.pg.detect()
-            self.molecule = self.pg.get_aligned_molecule()
-        else:
-            self.pg = None
-            self.molecule = raw_mol
-
+        self.use_symmetry = bool(use_symmetry)
+        self.pg = None
+        self.pl = None
         self.basis_name = basis_name
         self.aux_basis_name = aux_basis_name or f"{basis_name}-RI"
-        self.threshold = threshold
+        self.threshold = float(threshold)
         self.scf_type = scf_type
-        self.print_level = print_level
-        self.freeze_core = freeze_core
-        self.n_frozen = n_frozen if n_frozen > 0 else (
-            mshqc.standard_frozen_core(self.molecule) if freeze_core else 0
+        self.print_level = int(print_level)
+        self.freeze_core = bool(freeze_core)
+        self.n_frozen = (
+            int(n_frozen)
+            if n_frozen > 0
+            else (int(mshqc.standard_frozen_core(self.molecule)) if freeze_core else 0)
         )
-        self.memory_limit_gb = memory_limit_gb
-        self.level_shift = level_shift
+        self.memory_limit_gb = float(memory_limit_gb)
+        self.level_shift = float(level_shift)
 
-        if basis_dir is None:
-            basis_dir = os.environ.get("MSHQC_BASIS_PATH", "data/basis")
-        self.basis_dir = basis_dir
-
+        self.basis_dir = basis_dir or os.environ.get("MSHQC_BASIS_PATH", "data/basis")
         self.basis = mshqc.BasisSet(basis_name, self.molecule, self.basis_dir)
         self.integrals = mshqc.IntegralEngine(self.molecule, self.basis)
-        # Jangan pernah bangun PetiteList 4D O(N^4) saat mode DF/Cholesky!
-        if self.pg is not None:
-            self.pl = mshqc.PetiteList(self.basis, self.pg)
-            if self.eri_method == "exact":
-                self.pl.build()
-        else:
-            self.pl = None
 
-        n_elec = int(self.molecule.total_nuclear_charge()) - self.molecule.charge()
-        mult = self.molecule.multiplicity()
+        n_elec = int(self.molecule.total_nuclear_charge()) - int(self.molecule.charge())
+        mult = int(self.molecule.multiplicity())
         self.n_alpha = (n_elec + mult - 1) // 2
         self.n_beta = n_elec - self.n_alpha
-
-        if reference is None:
-            self.reference = "rhf" if mult == 1 else "uhf"
-        else:
-            self.reference = reference.lower()
+        self.reference = ("rhf" if mult == 1 else "uhf") if reference is None else reference.lower()
 
         self.scf_res = None
         self.mp2_res = None
-        self._ao_factor_cache = None
+        self._ao_factor_cache: Optional[np.ndarray] = None
 
-    def _make_scf_config(self) -> mshqc.SCFConfig:
-        conf = mshqc.SCFConfig()
-        conf.scf_type = self.scf_type
-        conf.energy_threshold = self.threshold
-        conf.density_threshold = self.threshold
-        conf.print_level = self.print_level
-        conf.eri_method = self.eri_method
-        if hasattr(conf, 'freeze_core'): conf.freeze_core = self.freeze_core
-        if hasattr(conf, 'n_frozen'): conf.n_frozen = self.n_frozen
-        if hasattr(conf, 'memory_limit_gb'): conf.memory_limit_gb = self.memory_limit_gb
-        if hasattr(conf, 'level_shift'): conf.level_shift = self.level_shift
-        if self.eri_method == "df":
-            conf.use_df = True
-            conf.aux_basis_name = self.aux_basis_name
-            conf.df_threshold = self.threshold
-        else:
-            conf.use_df = False
-            conf.cholesky_threshold = self.threshold
-        return conf
-
-    def _make_mp2_config(self, opt_method: str = "soscf", grad_thresh: float = 1e-5, max_iter: int = 50) -> mshqc.MP2Config:
-        conf = mshqc.MP2Config()
-        conf.scf_type = self.scf_type
-        conf.energy_threshold = self.threshold
-        conf.gradient_threshold = grad_thresh
-        conf.max_iterations = max_iter
-        conf.opt_method = opt_method
-        conf.print_level = self.print_level
-        conf.eri_method = self.eri_method
-        if hasattr(conf, 'freeze_core'): conf.freeze_core = self.freeze_core
-        if hasattr(conf, 'n_frozen'): conf.n_frozen = self.n_frozen
-        if hasattr(conf, 'memory_limit_gb'): conf.memory_limit_gb = self.memory_limit_gb
-        if self.eri_method == "df":
-            conf.use_df = True
-            conf.aux_basis_name = self.aux_basis_name
-            conf.df_threshold = self.threshold
-        else:
-            conf.use_df = False
-            conf.cholesky_threshold = self.threshold
-        return conf
-
-    # [INJECTED_THIN_CORE_STAGE1_ROUTING]
-    def _hybrid_enabled(self, use_hybrid: Optional[bool]) -> bool:
-        if not hasattr(mshqc, "RHF"):
-            return True
-        if use_hybrid is not None:
-            return bool(use_hybrid)
-        return os.environ.get("MSHQC_USE_HYBRID_SOLVERS", "0").strip().lower() in ("1", "true", "yes")
-
-    def run_scf(self, ref: Optional[str] = None, use_hybrid: Optional[bool] = None):
-        ref_mode = (ref or self.reference).lower()
-        use_sym = (self.pg is not None and self.pl is not None)
-        if (
-            self._hybrid_enabled(use_hybrid)
-            and not use_sym
-            and self.eri_method in ("df", "cholesky")
-            and self.scf_type != "ooc"
-            # [INJECTED_THIN_CORE_STAGE4_ROHF]
-            and ref_mode in ("rhf", "uhf", "rohf")
-        ):
-            from .methods.scf_hybrid import build_sad_guess, run_df_rhf, run_df_rohf, run_df_uhf
-            P_sad = build_sad_guess(self.molecule, self.basis)
-            B_ao = self._get_ao_3index_factor(None)
-            H_core = self.integrals.compute_kinetic() + self.integrals.compute_nuclear()
-            S_ovlp = self.integrals.compute_overlap()
-            v_nn = self.molecule.nuclear_repulsion_energy()
-            if ref_mode == "rhf":
-                self.scf_res = run_df_rhf(
-                    H_core, S_ovlp, v_nn, B_ao, self.n_alpha,
-                    energy_tol=self.threshold, density_tol=self.threshold,
-                    level_shift=self.level_shift,
-                    P_init=P_sad,
-                )
-            elif ref_mode == "rohf":
-                self.scf_res = run_df_rohf(
-                    H_core, S_ovlp, v_nn, B_ao, self.n_alpha, self.n_beta,
-                    energy_tol=self.threshold, density_tol=self.threshold,
-                    P_init=P_sad,
-                )
-            else:
-                self.scf_res = run_df_uhf(
-                    H_core, S_ovlp, v_nn, B_ao, self.n_alpha, self.n_beta,
-                    energy_tol=self.threshold, density_tol=self.threshold,
-                    level_shift=self.level_shift,
-                    P_init=P_sad,
-                )
-            return self.scf_res
-        conf = self._make_scf_config()
-        if ref_mode == "rhf":
-            if use_sym:
-                solver = mshqc.RHF(self.molecule, self.basis, self.integrals, self.pg, self.pl, conf)
-            else:
-                solver = mshqc.RHF(self.molecule, self.basis, self.integrals, conf)
-        elif ref_mode == "rohf":
-            if use_sym:
-                solver = mshqc.ROHF(self.molecule, self.basis, self.integrals, self.pg, self.pl, self.n_alpha, self.n_beta, conf)
-            else:
-                solver = mshqc.ROHF(self.molecule, self.basis, self.integrals, self.n_alpha, self.n_beta, conf)
-        else:
-            if use_sym:
-                solver = mshqc.UHF(self.molecule, self.basis, self.integrals, self.pg, self.pl, self.n_alpha, self.n_beta, conf)
-            else:
-                solver = mshqc.UHF(self.molecule, self.basis, self.integrals, self.n_alpha, self.n_beta, conf)
-        self.scf_res = solver.compute()
-        return self.scf_res
-
-    # [INJECTED_THIN_CORE_STAGE2_CALC]
-    def run_mp2(self, scf_res: Optional[mshqc.SCFResult] = None, use_hybrid: Optional[bool] = None):
-        if scf_res is None:
-            scf_res = self.scf_res or self.run_scf(use_hybrid=use_hybrid)
-        if (
-            (self._hybrid_enabled(use_hybrid) or (not hasattr(mshqc, 'SCFResult') or not isinstance(scf_res, mshqc.SCFResult)))
-            and self.eri_method in ("df", "cholesky")
-            and self.reference in ("rhf", "uhf", "rohf")
-        ):
-            m_key = "romp2" if self.reference == "rohf" else "mp2"
-            self.mp2_res = self._run_hybrid_omp_method(m_key, scf_res=scf_res)
-            return self.mp2_res
-        conf = self._make_mp2_config()
-        sym_args = (self.pg, self.pl) if (self.pg is not None and self.pl is not None) else ()
-        if self.reference == "rhf":
-            solver = mshqc.RMP2(self.molecule, self.basis, self.integrals, scf_res, conf, *sym_args)
-        elif self.reference == "rohf":
-            solver = mshqc.ROMP2(self.molecule, self.basis, self.integrals, scf_res, conf, *sym_args)
-        else:
-            solver = mshqc.UMP2(self.molecule, self.basis, self.integrals, scf_res, conf, *sym_args)
-        self.mp2_res = solver.compute()
-        return self.mp2_res
-
-    def run_mp3(self, scf_res: Optional[mshqc.SCFResult] = None, mp2_res: Optional[mshqc.MP2Result] = None, use_hybrid: Optional[bool] = None):
-        if scf_res is None:
-            scf_res = self.scf_res or self.run_scf(use_hybrid=use_hybrid)
-        if (
-            (self._hybrid_enabled(use_hybrid) or (not hasattr(mshqc, 'SCFResult') or not isinstance(scf_res, mshqc.SCFResult)))
-            and self.eri_method in ("df", "cholesky")
-            and self.reference in ("rhf", "uhf", "rohf")
-        ):
-            m_key = "romp3" if self.reference == "rohf" else "mp3"
-            return self._run_hybrid_omp_method(m_key, scf_res=scf_res)
-        if mp2_res is None:
-            mp2_res = (
-                self.mp2_res if (hasattr(mshqc, 'MP2Result') and isinstance(self.mp2_res, mshqc.MP2Result))
-                else self.run_mp2(scf_res, use_hybrid=False)
-            )
-        conf = self._make_mp2_config()
-        if self.reference == "rhf":
-            solver = mshqc.RMP3(scf_res, mp2_res, conf, self.integrals)
-        elif self.reference == "rohf":
-            solver = mshqc.ROMP3(scf_res, mp2_res, conf, self.integrals)
-        else:
-            solver = mshqc.UMP3(scf_res, mp2_res, conf, self.integrals)
-        return solver.compute()
-
-    def run_omp2(self, scf_res: Optional[mshqc.SCFResult] = None, opt_method: str = "soscf", grad_thresh: float = 1e-5, max_iter: int = 50, use_hybrid: Optional[bool] = None):
-        if scf_res is None:
-            scf_res = self.scf_res or self.run_scf(use_hybrid=use_hybrid)
-        if (
-            (self._hybrid_enabled(use_hybrid) or (not hasattr(mshqc, 'SCFResult') or not isinstance(scf_res, mshqc.SCFResult)))
-            and self.eri_method in ("df", "cholesky")
-            and self.reference in ("rhf", "uhf")
-        ):
-            return self._run_hybrid_omp_method("omp2", scf_res=scf_res, grad_thresh=grad_thresh, max_iter=max_iter)
-        conf = self._make_mp2_config(opt_method=opt_method, grad_thresh=grad_thresh, max_iter=max_iter)
-        sym_args = (self.pg, self.pl) if (self.pg is not None and self.pl is not None) else ()
-        solver = mshqc.OMP2(self.molecule, self.basis, self.integrals, scf_res, conf, *sym_args)
-        return solver.compute()
-
-    def run_omp3(self, scf_res: Optional[mshqc.SCFResult] = None, opt_method: str = "soscf", grad_thresh: float = 1e-5, max_iter: int = 50, use_hybrid: Optional[bool] = None):
-        if scf_res is None:
-            scf_res = self.scf_res or self.run_scf(use_hybrid=use_hybrid)
-        if (
-            (self._hybrid_enabled(use_hybrid) or (not hasattr(mshqc, 'SCFResult') or not isinstance(scf_res, mshqc.SCFResult)))
-            and self.eri_method in ("df", "cholesky")
-            and self.reference in ("rhf", "uhf")
-        ):
-            return self._run_hybrid_omp_method("omp3", scf_res=scf_res, grad_thresh=grad_thresh, max_iter=max_iter)
-        conf = self._make_mp2_config(opt_method=opt_method, grad_thresh=grad_thresh, max_iter=max_iter)
-        sym_args = (self.pg, self.pl) if (self.pg is not None and self.pl is not None) else ()
-        solver = mshqc.OMP3(self.molecule, self.basis, self.integrals, scf_res, conf, *sym_args)
-        return solver.compute()
-
-
-    # [INJECTED_HYBRID_PHASE4_CACHE]
-    def _get_ao_3index_factor(self, scf_res: Optional[Any] = None):
+    def _get_ao_3index_factor(self, scf_res: Optional[Any] = None) -> np.ndarray:
         if scf_res is not None and hasattr(scf_res, "L_mat") and scf_res.L_mat.shape[0] > 0 and scf_res.L_mat.shape[1] > 0:
             return scf_res.L_mat
         if self._ao_factor_cache is not None:
@@ -350,112 +142,158 @@ class MSHQCCalculator:
                 self.molecule, self.basis, aux_basis, self.threshold, False, self.print_level > 0
             )
             return self._ao_factor_cache
-        if self.eri_method == "cholesky":
-            chol = mshqc.CholeskyERI(self.basis, self.integrals)
-            chol.set_threshold(self.threshold)
-            chol.set_print_level(self.print_level)
-            chol.compute()
-            self._ao_factor_cache = chol.get_L_mat().copy()
-            return self._ao_factor_cache
-        raise ValueError(f"Metode hibrida mendukung eri_method='df' atau 'cholesky', diterima: {self.eri_method}")
+        chol = mshqc.CholeskyERI(self.basis, self.integrals)
+        chol.set_threshold(self.threshold)
+        chol.set_print_level(self.print_level)
+        chol.compute()
+        self._ao_factor_cache = chol.get_L_mat().copy()
+        return self._ao_factor_cache
 
-    def _run_hybrid_omp_method(self, method_name: str, scf_res: Optional[mshqc.SCFResult] = None, grad_thresh: float = 1e-5, max_iter: int = 50):
+    def run_scf(self, ref: Optional[str] = None, use_hybrid: Optional[bool] = None):
+        del use_hybrid
+        from .methods.scf_hybrid import build_sad_guess, run_df_rhf, run_df_rohf, run_df_uhf
+
+        ref_mode = (ref or self.reference).lower()
+        P_sad = build_sad_guess(self.molecule, self.basis)
+        B_ao = self._get_ao_3index_factor(None)
+        H_core = self.integrals.compute_kinetic() + self.integrals.compute_nuclear()
+        S_ovlp = self.integrals.compute_overlap()
+        v_nn = float(self.molecule.nuclear_repulsion_energy())
+
+        if ref_mode == "rhf":
+            self.scf_res = run_df_rhf(
+                H_core, S_ovlp, v_nn, B_ao, self.n_alpha,
+                energy_tol=self.threshold, density_tol=self.threshold,
+                level_shift=self.level_shift, P_init=P_sad,
+            )
+        elif ref_mode == "rohf":
+            self.scf_res = run_df_rohf(
+                H_core, S_ovlp, v_nn, B_ao, self.n_alpha, self.n_beta,
+                energy_tol=self.threshold, density_tol=self.threshold,
+                P_init=P_sad,
+            )
+        elif ref_mode == "uhf":
+            self.scf_res = run_df_uhf(
+                H_core, S_ovlp, v_nn, B_ao, self.n_alpha, self.n_beta,
+                energy_tol=self.threshold, density_tol=self.threshold,
+                level_shift=self.level_shift, P_init=P_sad,
+            )
+        else:
+            raise ValueError(f"Referensi SCF tidak dikenali: {ref_mode}")
+        return self.scf_res
+
+    def _dispatch_correlated(
+        self,
+        method_name: str,
+        scf_res: Optional[Any] = None,
+        grad_thresh: float = 1e-5,
+        max_iter: int = 50,
+        kappa: float = 1.45,
+    ):
         from .methods.interop import run_from_arrays
-        if self.eri_method not in ("df", "cholesky"):
-            raise ValueError(f"Metode hibrida '{method_name}' mendukung eri_method='df' atau 'cholesky'.")
+
         if scf_res is None:
             scf_res = self.scf_res or self.run_scf()
         B_ao = self._get_ao_3index_factor(scf_res)
         H_core = self.integrals.compute_kinetic() + self.integrals.compute_nuclear()
         S_ovlp = self.integrals.compute_overlap()
-        v_nn = self.molecule.nuclear_repulsion_energy()
-        if self.reference == "rhf":
+        v_nn = float(self.molecule.nuclear_repulsion_energy())
+
+        if self.reference == "rhf" and method_name not in ("romp2", "romp3"):
             return run_from_arrays(
                 H_core, S_ovlp, v_nn, B_ao, scf_res.C_alpha, scf_res.n_occ_alpha,
                 method=method_name, grad_tol=grad_thresh, energy_tol=self.threshold,
-                max_iter=max_iter, n_frozen=self.n_frozen,
-            )
-        return run_from_arrays(
-            H_core, S_ovlp, v_nn, B_ao, scf_res.C_alpha, scf_res.n_occ_alpha,
-            C_beta=scf_res.C_beta, n_occ_beta=scf_res.n_occ_beta,
-            method=method_name, grad_tol=grad_thresh, energy_tol=self.threshold,
-            max_iter=max_iter, n_frozen=self.n_frozen,
-        )
-
-    def run_scs_omp2(self, scf_res: Optional[mshqc.SCFResult] = None, grad_thresh: float = 1e-5, max_iter: int = 50):
-        return self._run_hybrid_omp_method("scs-omp2", scf_res=scf_res, grad_thresh=grad_thresh, max_iter=max_iter)
-
-    def run_sos_omp2(self, scf_res: Optional[mshqc.SCFResult] = None, grad_thresh: float = 1e-5, max_iter: int = 50):
-        return self._run_hybrid_omp_method("sos-omp2", scf_res=scf_res, grad_thresh=grad_thresh, max_iter=max_iter)
-
-    def run_lt_sos_omp2(self, scf_res: Optional[mshqc.SCFResult] = None, grad_thresh: float = 1e-5, max_iter: int = 50):
-        return self._run_hybrid_omp_method("lt-sos-omp2", scf_res=scf_res, grad_thresh=grad_thresh, max_iter=max_iter)
-
-    def run_omp25(self, scf_res: Optional[mshqc.SCFResult] = None, grad_thresh: float = 1e-5, max_iter: int = 50):
-        return self._run_hybrid_omp_method("omp2.5", scf_res=scf_res, grad_thresh=grad_thresh, max_iter=max_iter)
-
-    def run_kappa_omp2(self, scf_res: Optional[mshqc.SCFResult] = None, kappa: float = 1.45, grad_thresh: float = 1e-5, max_iter: int = 50):
-        from .methods.interop import run_from_arrays
-        if self.eri_method not in ("df", "cholesky"):
-            raise ValueError("kappa-OMP2 mendukung eri_method='df' atau 'cholesky'.")
-        if scf_res is None:
-            scf_res = self.scf_res or self.run_scf()
-        B_ao = self._get_ao_3index_factor(scf_res)
-        H_core = self.integrals.compute_kinetic() + self.integrals.compute_nuclear()
-        S_ovlp = self.integrals.compute_overlap()
-        v_nn = self.molecule.nuclear_repulsion_energy()
-        if self.reference == "rhf":
-            return run_from_arrays(
-                H_core, S_ovlp, v_nn, B_ao, scf_res.C_alpha, scf_res.n_occ_alpha,
-                method="kappa-omp2", grad_tol=grad_thresh, energy_tol=self.threshold,
                 max_iter=max_iter, n_frozen=self.n_frozen, kappa=kappa,
             )
         return run_from_arrays(
             H_core, S_ovlp, v_nn, B_ao, scf_res.C_alpha, scf_res.n_occ_alpha,
             C_beta=scf_res.C_beta, n_occ_beta=scf_res.n_occ_beta,
-            method="kappa-omp2", grad_tol=grad_thresh, energy_tol=self.threshold,
+            method=method_name, grad_tol=grad_thresh, energy_tol=self.threshold,
             max_iter=max_iter, n_frozen=self.n_frozen, kappa=kappa,
         )
 
+    def run_mp2(self, scf_res: Optional[Any] = None, use_hybrid: Optional[bool] = None):
+        del use_hybrid
+        key = "romp2" if self.reference == "rohf" else "mp2"
+        self.mp2_res = self._dispatch_correlated(key, scf_res=scf_res)
+        return self.mp2_res
 
-def run(molecule: Union[mshqc.Molecule, str, List[Tuple]],
-        method: Union[str, List[str]] = "omp2",
-        basis: str = "cc-pVTZ",
-        eri_method: str = "df",
-        aux_basis: Optional[str] = None,
-        charge: int = 0,
-        multiplicity: Optional[int] = None,
-        units: str = "bohr",
-        reference: Optional[str] = None,
-        threshold: float = 1e-9,
-        grad_thresh: float = 1e-5,
-        opt_method: str = "soscf",
-        print_level: int = 0,
-        freeze_core: bool = False,
-        n_frozen: int = 0,
-        memory_limit_gb: float = 4.0,
-        use_symmetry: bool = True,
-        scf_type: str = "incore",
-        level_shift: float = 0.0) -> Union[Any, Dict[str, Any]]:
-    """
-    Fungsi satu baris (one-liner) untuk menjalankan satu atau beberapa metode sekaligus.
-    Contoh:
-        res = mshqc.run("O 0 0 0.1173\\nH 0 0.7572 -0.4692\\nH 0 -0.7572 -0.4692",
-                        method=["scf", "mp2", "omp2", "omp3"],
-                        basis="cc-pVTZ", eri_method="df", units="angstrom")
-    """
+    def run_mp3(self, scf_res: Optional[Any] = None, mp2_res: Optional[Any] = None, use_hybrid: Optional[bool] = None):
+        del mp2_res, use_hybrid
+        key = "romp3" if self.reference == "rohf" else "mp3"
+        return self._dispatch_correlated(key, scf_res=scf_res)
+
+    def run_omp2(self, scf_res: Optional[Any] = None, opt_method: str = "soscf", grad_thresh: float = 1e-5, max_iter: int = 50, use_hybrid: Optional[bool] = None):
+        del opt_method, use_hybrid
+        return self._dispatch_correlated("omp2", scf_res=scf_res, grad_thresh=grad_thresh, max_iter=max_iter)
+
+    def run_omp3(self, scf_res: Optional[Any] = None, opt_method: str = "soscf", grad_thresh: float = 1e-5, max_iter: int = 50, use_hybrid: Optional[bool] = None):
+        del opt_method, use_hybrid
+        return self._dispatch_correlated("omp3", scf_res=scf_res, grad_thresh=grad_thresh, max_iter=max_iter)
+
+    def run_scs_omp2(self, scf_res: Optional[Any] = None, grad_thresh: float = 1e-5, max_iter: int = 50):
+        return self._dispatch_correlated("scs-omp2", scf_res=scf_res, grad_thresh=grad_thresh, max_iter=max_iter)
+
+    def run_sos_omp2(self, scf_res: Optional[Any] = None, grad_thresh: float = 1e-5, max_iter: int = 50):
+        return self._dispatch_correlated("sos-omp2", scf_res=scf_res, grad_thresh=grad_thresh, max_iter=max_iter)
+
+    def run_lt_sos_omp2(self, scf_res: Optional[Any] = None, grad_thresh: float = 1e-5, max_iter: int = 50):
+        return self._dispatch_correlated("lt-sos-omp2", scf_res=scf_res, grad_thresh=grad_thresh, max_iter=max_iter)
+
+    def run_omp25(self, scf_res: Optional[Any] = None, grad_thresh: float = 1e-5, max_iter: int = 50):
+        return self._dispatch_correlated("omp2.5", scf_res=scf_res, grad_thresh=grad_thresh, max_iter=max_iter)
+
+    def run_kappa_omp2(self, scf_res: Optional[Any] = None, kappa: float = 1.45, grad_thresh: float = 1e-5, max_iter: int = 50):
+        return self._dispatch_correlated("kappa-omp2", scf_res=scf_res, grad_thresh=grad_thresh, max_iter=max_iter, kappa=kappa)
+
+
+def run(
+    molecule: Union[mshqc.Molecule, str, List[Tuple]],
+    method: Union[str, List[str]] = "omp2",
+    basis: str = "cc-pVTZ",
+    eri_method: str = "df",
+    aux_basis: Optional[str] = None,
+    charge: int = 0,
+    multiplicity: Optional[int] = None,
+    units: str = "bohr",
+    reference: Optional[str] = None,
+    threshold: float = 1e-9,
+    grad_thresh: float = 1e-5,
+    opt_method: str = "soscf",
+    print_level: int = 0,
+    freeze_core: bool = False,
+    n_frozen: int = 0,
+    memory_limit_gb: float = 4.0,
+    use_symmetry: bool = False,
+    scf_type: str = "incore",
+    level_shift: float = 0.0,
+    kappa: float = 1.45,
+) -> Union[Any, Dict[str, Any]]:
+    """One-liner untuk menjalankan satu atau beberapa metode mshqc v2.0 sekaligus."""
     calc = MSHQCCalculator(
-        molecule=molecule, basis_name=basis, eri_method=eri_method,
-        aux_basis_name=aux_basis, charge=charge, multiplicity=multiplicity,
-        units=units, reference=reference, threshold=threshold, print_level=print_level,
-        freeze_core=freeze_core, n_frozen=n_frozen, memory_limit_gb=memory_limit_gb, use_symmetry=use_symmetry, scf_type=scf_type, level_shift=level_shift
+        molecule=molecule,
+        basis_name=basis,
+        eri_method=eri_method,
+        aux_basis_name=aux_basis,
+        charge=charge,
+        multiplicity=multiplicity,
+        units=units,
+        reference=reference,
+        threshold=threshold,
+        print_level=print_level,
+        freeze_core=freeze_core,
+        n_frozen=n_frozen,
+        memory_limit_gb=memory_limit_gb,
+        use_symmetry=use_symmetry,
+        scf_type=scf_type,
+        level_shift=level_shift,
     )
 
     methods = [method] if isinstance(method, str) else list(method)
     results: Dict[str, Any] = {}
 
     for m in methods:
-        m_low = m.lower()
+        m_low = m.lower().strip()
         t0 = time.perf_counter()
         if m_low in ("scf", "hf", "rhf", "uhf", "rohf"):
             res = calc.run_scf(ref=m_low if m_low in ("rhf", "uhf", "rohf") else None)
@@ -476,22 +314,24 @@ def run(molecule: Union[mshqc.Molecule, str, List[Tuple]],
         elif m_low in ("omp2.5", "omp25", "omp2_5"):
             res = calc.run_omp25(grad_thresh=grad_thresh)
         elif m_low in ("kappa-omp2", "kappa_omp2", "k-omp2", "kappa-oomp2"):
-            res = calc.run_kappa_omp2(grad_thresh=grad_thresh)
+            res = calc.run_kappa_omp2(kappa=kappa, grad_thresh=grad_thresh)
         else:
             raise ValueError(f"Metode tidak dikenali: {m}")
         elapsed = time.perf_counter() - t0
-        results[m] = {"result": res, "energy": getattr(res, "energy_total", getattr(res, "e_total", None)), "time": elapsed}
+        results[m] = {
+            "result": res,
+            "energy": getattr(res, "energy_total", getattr(res, "e_total", None)),
+            "time": elapsed,
+        }
 
     if isinstance(method, str):
         return results[method]["result"]
     return results
 
-from .geom_opt import UniversalGeomOptimizer, GeomOptResult, ANGSTROM_TO_BOHR
-
 
 def optimize_geometry_universal(
     atoms: list,
-    coords: "np.ndarray",
+    coords: np.ndarray,
     basis: str = "cc-pVDZ",
     method: str = "omp2",
     charge: int = 0,
@@ -505,68 +345,19 @@ def optimize_geometry_universal(
     fd_step_bohr: float = 1.0e-4,
     **kwargs,
 ) -> GeomOptResult:
-    """
-    Menjalankan optimasi geometri untuk metode apa pun yang tersedia di mshqc:
-      - 'rhf', 'uhf', 'rohf'
-      - 'rmp2', 'ump2', 'romp2', 'rmp3', 'ump3', 'romp3'
-      - 'omp2' ('rhf-omp2'), 'uhf-omp2'
-      - 'omp3' ('rhf-omp3'), 'uhf-omp3'
-      - 'mp3@omp2', 'ump3@uhf-omp2'
-    """
-    import numpy as np
-
+    """Optimisasi geometri berbasis UniversalGeomOptimizer dengan runner kustom atau bawaan."""
     coords_arr = np.asarray(coords, dtype=np.float64)
-    if units.strip().lower().startswith("ang"):
-        coords_bohr = coords_arr * ANGSTROM_TO_BOHR
-    else:
-        coords_bohr = coords_arr.copy()
+    coords_bohr = coords_arr * ANGSTROM_TO_BOHR if units.strip().lower().startswith("ang") else coords_arr.copy()
 
     def _default_energy_eval(c_bohr: np.ndarray) -> float:
         if single_point_runner is not None:
             return single_point_runner(c_bohr)
-
-        # Resolusi otomatis fungsi kalkulator yang ada di modul calculators.py
-        g_dict = globals()
-        m_low = method.strip().lower().replace("-", "_")
-
-        # 1. Cek apakah ada fungsi spesifik seperti run_omp3, run_omp2, dll.
-        for candidate in (f"run_{m_low}", m_low, "calculate", "single_point", "run"):
-            if candidate in g_dict and callable(g_dict[candidate]):
-                fn = g_dict[candidate]
-                try:
-                    return fn(
-                        atoms=atoms,
-                        coords=c_bohr,
-                        basis=basis,
-                        method=method,
-                        charge=charge,
-                        multiplicity=multiplicity,
-                        units="bohr",
-                        **kwargs,
-                    )
-                except TypeError:
-                    pass
-
-        # 2. Cek apakah ada kelas Calculator di calculators.py
-        if "Calculator" in g_dict:
-            calc_obj = g_dict["Calculator"](
-                atoms=atoms,
-                coords=c_bohr,
-                basis=basis,
-                charge=charge,
-                multiplicity=multiplicity,
-                units="bohr",
-                **kwargs,
-            )
-            if hasattr(calc_obj, "run"):
-                return calc_obj.run(method=method)
-            if hasattr(calc_obj, m_low):
-                return getattr(calc_obj, m_low)()
-
-        raise RuntimeError(
-            "Berikan argumen single_point_runner=lambda coords_bohr: <energi> "
-            "sesuai pemanggilan single-point mshqc Anda."
+        mol_tuples = [(atoms[i], float(c_bohr[i, 0]), float(c_bohr[i, 1]), float(c_bohr[i, 2])) for i in range(len(atoms))]
+        res = run(
+            mol_tuples, method=method, basis=basis, eri_method=integral_mode,
+            charge=charge, multiplicity=multiplicity, units="bohr", **kwargs,
         )
+        return float(getattr(res, "energy_total", getattr(res, "e_total")))
 
     opt = UniversalGeomOptimizer(
         energy_fn=_default_energy_eval,
@@ -580,7 +371,6 @@ def optimize_geometry_universal(
     return opt.run(coords_bohr)
 
 
-
 def recommend_hpc_settings(
     molecule: Union[mshqc.Molecule, str, List[Tuple]],
     basis_name: str = "cc-pVTZ",
@@ -591,11 +381,7 @@ def recommend_hpc_settings(
     memory_limit_gb: float = 8.0,
     basis_dir: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """
-    Auto-profiler HPC untuk rentang molekul ringan -> berat dan atom berat.
-    Menghitung estimasi N_bf, N_aux, kebutuhan RAM, rekomendasi ERI/SCF/freeze_core,
-    serta peringatan fisika kuantum jika terdapat unsur Z > 36 (memerlukan ECP/relativistik).
-    """
+    """Auto-profiler HPC untuk estimasi N_bf, kebutuhan RAM, dan rekomendasi metode mshqc v2.0."""
     mol = build_molecule(molecule, charge=charge, multiplicity=multiplicity, units=units)
     bdir = basis_dir or os.environ.get("MSHQC_BASIS_PATH", "data/basis")
     basis = mshqc.BasisSet(basis_name, mol, bdir)
@@ -603,49 +389,27 @@ def recommend_hpc_settings(
     n_elec = int(mol.total_nuclear_charge()) - int(mol.charge())
     mult = int(mol.multiplicity())
     na = (n_elec + mult - 1) // 2
-    nb = n_elec - na
     va = max(0, nbf - na)
     n_aux_est = int(nbf * 3.0)
 
     max_z = max((int(mol.atom(i).atomic_number) for i in range(mol.n_atoms())), default=0)
-    n_frozen_std = int(mshqc.standard_frozen_core(mol)) if hasattr(mshqc, "standard_frozen_core") else 0
+    n_frozen_std = int(mshqc.standard_frozen_core(mol))
 
-    mem_exact_gb = (nbf ** 4) * 8.0 / 1.0e9
     mem_df_packed_gb = (nbf * (nbf + 1) / 2.0) * n_aux_est * 8.0 / 1.0e9
     mem_bvv_gb = (va ** 2) * n_aux_est * 8.0 / 1.0e9
     mem_t2_gb = (max(1, na - n_frozen_std) ** 2) * (va ** 2) * 8.0 / 1.0e9
 
-    if nbf <= 60:
-        tier = "light"
-        eri_rec = "df" if method.lower() in ("omp2", "omp3") else "exact"
-        scf_rec = "incore"
-        fc_rec = False
-    elif nbf <= 250:
-        tier = "medium"
-        eri_rec = "df"
-        scf_rec = "incore"
-        fc_rec = True
-    else:
-        tier = "heavy"
-        eri_rec = "df"
-        scf_rec = "ooc" if mem_df_packed_gb > memory_limit_gb * 0.55 else "incore"
-        fc_rec = True
-
+    tier = "light" if nbf <= 60 else ("medium" if nbf <= 250 else "heavy")
+    fc_rec = nbf > 60
     warnings: List[str] = []
     if max_z > 36:
         warnings.append(
-            f"Terdeteksi atom berat Z={max_z} (>36). mshqc-sync saat ini all-electron non-relativistik "
-            "tanpa ECP/X2C; gunakan dengan kehati-hatian karena efek relativistik signifikan."
+            f"Terdeteksi atom berat Z={max_z} (>36). mshqc all-electron non-relativistik tanpa ECP/X2C."
         )
-    elif max_z >= 21 and max_z <= 30 and mult > 1:
+    if method.lower() in ("omp2", "omp3", "kappa-omp2") and (mem_df_packed_gb + mem_bvv_gb + mem_t2_gb) > memory_limit_gb:
         warnings.append(
-            f"Terdeteksi logam transisi 3d open-shell (Z={max_z}, mult={mult}). "
-            "Disarankan max_iterations>=200 dan verifikasi spin <S^2> serta kestabilan orbital."
-        )
-    if method.lower() in ("omp2", "omp3") and (mem_df_packed_gb + mem_bvv_gb + mem_t2_gb) > memory_limit_gb:
-        warnings.append(
-            f"Estimasi puncak RAM OMP2/OMP3 ({mem_df_packed_gb + mem_bvv_gb + mem_t2_gb:.2f} GB) "
-            f"melebihi memory_limit_gb={memory_limit_gb:.2f} GB; pertimbangkan DF-MP2 streaming atau basis lebih kecil."
+            f"Estimasi puncak RAM ({mem_df_packed_gb + mem_bvv_gb + mem_t2_gb:.2f} GB) melebihi "
+            f"memory_limit_gb={memory_limit_gb:.2f} GB; pertimbangkan method='lt-sos-omp2' (zero-T2 O(N^4))."
         )
 
     return {
@@ -653,13 +417,10 @@ def recommend_hpc_settings(
         "nbf": nbf,
         "n_electrons": n_elec,
         "max_Z": max_z,
-        "eri_method": eri_rec,
-        "scf_type": scf_rec,
+        "eri_method": "df",
         "freeze_core": fc_rec,
         "n_frozen_standard": n_frozen_std,
-        "use_symmetry": (eri_rec == "exact"),
         "est_ram_gb": {
-            "exact_eri_4d": round(mem_exact_gb, 3),
             "df_packed_3c": round(mem_df_packed_gb, 3),
             "omp_bvv_3c": round(mem_bvv_gb, 3),
             "t2_active_4d": round(mem_t2_gb, 3),

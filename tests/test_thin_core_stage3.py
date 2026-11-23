@@ -123,7 +123,8 @@ def test_report_thin_core_vs_legacy_profile():
         + list((root / "src" / "kernels").glob("*.cc"))
         + list((root / "include" / "mshqc" / "kernels").glob("*.h"))
     )
-    legacy_files = list((root / "src" / "legacy").rglob("*.cc"))
+    legacy_dir = root / "src" / "legacy"
+    legacy_files = list(legacy_dir.rglob("*.cc")) if legacy_dir.is_dir() else []
 
     def stats(files):
         loc, kb = 0, 0.0
@@ -135,11 +136,11 @@ def test_report_thin_core_vs_legacy_profile():
 
     c_loc, c_kb = stats(core_files)
     l_loc, l_kb = stats(legacy_files)
-    pct = 100.0 * l_loc / max(1, c_loc + l_loc)
     print(
-        f"\n[THIN-CORE PROFILE] Minimal Core (-DMSHQC_THIN_CORE=ON): {c_loc} LOC ({c_kb:.1f} KB) | "
-        f"Optional Legacy: {l_loc} LOC ({l_kb:.1f} KB) -> -{pct:.1f}% C++ when Thin-Core enabled"
+        f"\n[THIN-CORE PROFILE] Pure v2.0 C++20 Core: {c_loc} LOC ({c_kb:.1f} KB) | "
+        f"Legacy C++ Remaining: {l_loc} LOC ({l_kb:.1f} KB)"
     )
+    assert l_loc == 0
     assert c_loc > 0
 
 
