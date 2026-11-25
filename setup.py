@@ -157,6 +157,9 @@ class CMakeBuild(build_ext):
                     _copy_if_newer(gbs_file, dst_wheel_basis_dir)
 
 
+# Ensure package data directory exists before setuptools metadata/egg_info runs
+os.makedirs(os.path.join(os.path.dirname(os.path.abspath(__file__)), "python", "mshqc", "basis"), exist_ok=True)
+
 setup(
     ext_modules=[CMakeExtension("mshqc._mshqc")],
     cmdclass={"build_ext": CMakeBuild},

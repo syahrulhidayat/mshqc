@@ -56,8 +56,9 @@ jobs:
         shell: bash
         run: |
           git clone --depth 1 https://github.com/syahrulhidayat/mshqc-basis.git /tmp/mshqc-basis
-          mkdir -p data/basis
+          mkdir -p data/basis python/mshqc/basis
           cp -rf /tmp/mshqc-basis/data/basis/* data/basis/
+          cp -rf /tmp/mshqc-basis/data/basis/* python/mshqc/basis/
           rm -rf /tmp/mshqc-basis
 
       - name: Set up Python
@@ -409,7 +410,7 @@ jobs:
         env:
           CIBW_BUILD_VERBOSITY: "1"
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
-          CIBW_BUILD: "cp310-* cp311-* cp312-* cp313-*"
+          CIBW_BUILD: "cp311-* cp312-* cp313-*"
           CIBW_SKIP: "*-win32 *-manylinux_i686 *-musllinux_*"
           CIBW_BUILD_FRONTEND: "pip; args: --no-build-isolation"
           CIBW_TEST_SKIP: "*"
@@ -435,7 +436,7 @@ jobs:
                     -DCMAKE_POSITION_INDEPENDENT_CODE=ON \
                     -DCMAKE_C_FLAGS="$CFLAGS" \
                     -DENABLE_EXAMPLE=0 -DENABLE_TEST=0 -DBUILD_SHARED_LIBS=OFF .. &&
-              make -j$(nproc) && make install &&
+              make -j$(nproc) bin_PROGRAMS= noinst_PROGRAMS= check_PROGRAMS= && make install bin_PROGRAMS= noinst_PROGRAMS= check_PROGRAMS= &&
               git clone --depth 1 -b v1.2.0 https://github.com/devinamatthews/tblis.git /tmp/tblis &&
               cd /tmp/tblis && git submodule update --init --recursive &&
               sed -i 's/SIGSTKSZ/8192/g' src/external/catch/catch.hpp &&
@@ -447,7 +448,7 @@ jobs:
               ./configure --prefix=/usr/local --enable-static --disable-shared --with-pic --without-hwloc \
                 --enable-config=haswell,zen,core2,sandybridge,bulldozer,piledriver,excavator,reference \
                 CFLAGS="$CFLAGS" CXXFLAGS="$CXXFLAGS" LIBS="-latomic" &&
-              make -j$(nproc) && make install &&
+              make -j$(nproc) bin_PROGRAMS= noinst_PROGRAMS= check_PROGRAMS= && make install bin_PROGRAMS= noinst_PROGRAMS= check_PROGRAMS= &&
               cp -r /usr/local/include /usr/local/lib* /project/.cache_deps/ 2>/dev/null || true
             fi
 
@@ -522,8 +523,9 @@ jobs:
       - name: Fetch Basis Sets from mshqc-basis
         run: |
           git clone --depth 1 https://github.com/syahrulhidayat/mshqc-basis.git /tmp/mshqc-basis
-          mkdir -p data/basis
+          mkdir -p data/basis python/mshqc/basis
           cp -rf /tmp/mshqc-basis/data/basis/* data/basis/
+          cp -rf /tmp/mshqc-basis/data/basis/* python/mshqc/basis/
           rm -rf /tmp/mshqc-basis
       - name: Remove local cache dir if exists
         run: rm -rf .cache_deps
