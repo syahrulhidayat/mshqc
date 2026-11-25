@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+title: "mshqc: A Pure Thin-Core C++20/Python Quantum Chemistry Engine for O(V^4)-Memory-Free Orbital-Optimized Møller–Plesset Perturbation Theory"
+message: "If you use mshqc in your research, please cite it using the metadata from this file."
+type: software
+authors:
+  - given-names: "Muhamad Syahrul"
+    family-names: "Hidayat"
+    affiliation: "Department of Physics, Faculty of Mathematics and Natural Sciences, Universitas Gadjah Mada, Yogyakarta, Indonesia"
+    orcid: "https://orcid.org/0009-0005-4112-1807"
+repository-code: "https://github.com/syahrulhidayat/mshqc"
+url: "https://pypi.org/project/mshqc/"
+license: Apache-2.0
+version: "2.0.0"
+date-released: "2026-11-25"
+keywords:
+  - quantum chemistry
+  - electronic structure
+  - C++20
+  - Python
+  - nanobind
+  - Orbital-Optimized Moller-Plesset
+  - OMP2
+  - OMP3
+  - kappa-OOMP2
+  - LT-SOS-OMP2
+  - Density Fitting
+  - Cholesky decomposition

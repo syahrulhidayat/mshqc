@@ -1,6 +1,6 @@
 % ============================================================
-%  paper.bib — Bibliography for mshqc JOSS submission
-%  All citation keys match paper.md and include DOIs where available.
+% paper.bib — Bibliography for mshqc v2.0 JOSS submission
+% All citation keys match paper.md and include verified DOIs.
 % ============================================================
 
 @misc{jakob2022nanobind,
@@ -77,7 +77,7 @@
 }
 
 @article{feyereisen1993use,
-  title     = {Use of approximate integrals in ab initio theory. {A}nick-type second order {M\o{}ller--Plesset} perturbation theory},
+  title     = {Use of approximate integrals in ab initio theory. {A}n application in {MP2} calculations},
   author    = {Feyereisen, Martin and Fitzgerald, George and Komornicki, Andrew},
   journal   = {Chemical Physics Letters},
   volume    = {208},
@@ -196,6 +196,42 @@
   doi       = {10.1016/0009-2614(88)85250-3}
 }
 
+@article{almlof1991elimination,
+  title     = {Elimination of energy denominators in {M\o{}ller--Plesset} perturbation theory by a {L}aplace transform approach},
+  author    = {Alml{\"o}f, Jan},
+  journal   = {Chemical Physics Letters},
+  volume    = {181},
+  number    = {4},
+  pages     = {319--320},
+  year      = {1991},
+  publisher = {Elsevier},
+  doi       = {10.1016/0009-2614(91)80078-C}
+}
+
+@article{grimme2003improved,
+  title     = {Improved second-order {M\o{}ller--Plesset} perturbation theory by separate scaling of parallel- and antiparallel-spin pair correlation energies},
+  author    = {Grimme, Stefan},
+  journal   = {The Journal of Chemical Physics},
+  volume    = {118},
+  number    = {20},
+  pages     = {9095--9102},
+  year      = {2003},
+  publisher = {AIP},
+  doi       = {10.1063/1.1569242}
+}
+
+@article{jung2004scaled,
+  title     = {Scaled opposite-spin second order {M\o{}ller--Plesset} correlation theory: An economical electronic structure method},
+  author    = {Jung, Yousung and Lochan, Rohini C. and Dutoi, Anthony D. and Head-Gordon, Martin},
+  journal   = {The Journal of Chemical Physics},
+  volume    = {121},
+  number    = {20},
+  pages     = {9793--9802},
+  year      = {2004},
+  publisher = {AIP},
+  doi       = {10.1063/1.1809602}
+}
+
 @article{neese2009assessment,
   title     = {Assessment of Orbital-Optimized, Spin-Component Scaled Second-Order Many-Body Perturbation Theory for Thermochemistry and Kinetics},
   author    = {Neese, Frank and Schwabe, Tobias and Kossmann, Simone and Schirmer, Bernd and Grimme, Stefan},
@@ -244,6 +280,18 @@
   doi       = {10.1063/1.3665134}
 }
 
+@article{lee2018regularized,
+  title     = {Regularized Orbital-Optimized Second-Order {M\o{}ller--Plesset} Perturbation Theory: A Reliable Fifth-Order-Scaling Electron Correlation Model with Orbital Energy Dependent Regularizers},
+  author    = {Lee, Joonho and Head-Gordon, Martin},
+  journal   = {Journal of Chemical Theory and Computation},
+  volume    = {14},
+  number    = {10},
+  pages     = {5203--5219},
+  year      = {2018},
+  publisher = {ACS},
+  doi       = {10.1021/acs.jctc.8b00731}
+}
+
 @misc{guennebaud2010eigen,
   title  = {Eigen v3},
   author = {Guennebaud, Ga{\"e}l and Jacob, Beno{\^i}t and others},
@@ -261,13 +309,6 @@
   year      = {2017},
   publisher = {SIAM},
   doi       = {10.1137/16M108968X}
-}
-
-@misc{hdfgroup1997hdf5,
-  title  = {Hierarchical Data Format, version 5},
-  author = {{The HDF Group}},
-  year   = {1997},
-  url    = {https://www.hdfgroup.org/HDF5/}
 }
 
 @article{dagum1998openmp,
@@ -305,6 +346,7 @@
   publisher = {AIP},
   doi       = {10.1063/5.0006074}
 }
+
 @mastersthesis{hidayat2026thesis,
   author  = {Hidayat, Muhamad Syahrul},
   title   = {Formulation and Implementation of $\mathcal{O}(V^4)$-Memory-Free Orbital-Optimized {M\o{}ller--Plesset} Perturbation Theory ({OMP2} and {OMP3}) Based on Tensor Decomposition and Trust-Region {SOSCF} in the {mshqc} Library},
