@@ -2,6 +2,8 @@ name: Compile and Release Wheel to PyPI, GitHub & Zenodo
 
 on:
   push:
+    branches:
+      - "hybrid-v2"
     tags:
       - "v*"
   workflow_dispatch:
