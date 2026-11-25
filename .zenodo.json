@@ -1,0 +1,36 @@
+{
+  "title": "mshqc: A Pure Thin-Core C++20/Python Quantum Chemistry Engine for O(V^4)-Memory-Free Orbital-Optimized Moller-Plesset Perturbation Theory",
+  "upload_type": "software",
+  "description": "mshqc v2.0 is a lean, high-performance electronic structure library built on an irreducible 9-file C++20 kernel core (zero-HDF5) paired with modular Python orchestration and optional NumPy/PyTorch-CUDA FP64 backends. It implements RHF, UHF, ROHF, canonical MP2/MP3, ROMP2/ROMP3, and orbital-optimized perturbation methods (OMP2, SCS-OMP2, SOS-OMP2, O(N^4) LT-SOS-OMP2, kappa-OOMP2, OMP2.5, OMP3) across Density Fitting, full-pivoted Cholesky decomposition, and exact 4-center ERI modes, together with analytical DF nuclear gradients, geometry optimization, harmonic frequencies, pure-Python Abelian point-group symmetry, and Molden/PySCF interoperability.",
+  "creators": [
+    {
+      "name": "Hidayat, Muhamad Syahrul",
+      "affiliation": "Department of Physics, Faculty of Mathematics and Natural Sciences, Universitas Gadjah Mada, Yogyakarta, Indonesia",
+      "orcid": "0009-0005-4112-1807"
+    }
+  ],
+  "license": "apache-2.0",
+  "access_right": "open",
+  "keywords": [
+    "quantum chemistry",
+    "electronic structure",
+    "C++20",
+    "Python",
+    "Orbital-Optimized Moller-Plesset",
+    "OMP2",
+    "OMP3",
+    "kappa-OOMP2",
+    "LT-SOS-OMP2",
+    "Density Fitting",
+    "Cholesky decomposition",
+    "TBLIS",
+    "libcint"
+  ],
+  "related_identifiers": [
+    {
+      "identifier": "https://pypi.org/project/mshqc/",
+      "relation": "isIdenticalTo",
+      "scheme": "url"
+    }
+  ]
+}
