@@ -1,99 +1,116 @@
-# Troubleshooting Guide
+# Troubleshooting Guide (`mshqc` v2.0)
 
-This document defines resolutions for build failures, linkage errors, and runtime anomalies in the C++20 core of `mshqc` and its library dependencies (`libcint`, `TBLIS`, `MKL`, `HDF5`, `jemalloc`, `nanobind`).
+This document covers build failures, linkage issues, basis-set discovery, backend configuration, and convergence tuning in the Pure Thin-Core C++20 (`MSHQC_NO_HDF5=1`) and Python orchestration layers (`libcint`, `TBLIS`, `MKL`/`OpenBLAS`, `nanobind`, optional `PyTorch`).
 
 ---
 
 ## Table of Contents
 
-1. [Hermetic Environment & CMake Path Resolution Leakage](#1-hermetic-environment--cmake-path-resolution-leakage)
-2. [Shared Library Linkage & ABI Incompatibilities](#2-shared-library-linkage--abi-incompatibilities)
-3. [Runtime Race Conditions & Thread Pool Oversubscription](#3-runtime-race-conditions--thread-pool-oversubscription)
-4. [Illegal Instruction / Segfaults from `-march=native`](#4-illegal-instruction--segfaults-from--marchnative)
-5. [Memory Allocator Conflicts (jemalloc vs. glibc malloc)](#5-memory-allocator-conflicts-jemalloc-vs-glibc-malloc)
-6. [Cholesky & Density Fitting Decomposition Threshold Tuning](#6-cholesky--density-fitting-decomposition-threshold-tuning)
-7. [nanobind Import Failures & Python ABI Mismatch](#7-nanobind-import-failures--python-abi-mismatch)
-8. [MKL Threading Layer Conflicts](#8-mkl-threading-layer-conflicts)
-9. [HDF5 Out-of-Core I/O & File Locking](#9-hdf5-out-of-core-io--file-locking)
-10. [DIIS & Orbital Optimization Convergence Tuning](#10-diis--orbital-optimization-convergence-tuning)
+1. [Basis Set Not Found (`MSHQC_BASIS_PATH`)](#1-basis-set-not-found-mshqc_basis_path)
+2. [Hermetic Environment & CMake Path Resolution Leakage](#2-hermetic-environment--cmake-path-resolution-leakage)
+3. [Shared Library Linkage & ABI Incompatibilities](#3-shared-library-linkage--abi-incompatibilities)
+4. [Runtime Thread Pool Oversubscription (Linux / macOS / Windows)](#4-runtime-thread-pool-oversubscription-linux--macos--windows)
+5. [Illegal Instruction / Segfaults from `-march=native`](#5-illegal-instruction--segfaults-from--marchnative)
+6. [Memory Allocator Conflicts (`jemalloc` vs `glibc malloc`)](#6-memory-allocator-conflicts-jemalloc-vs-glibc-malloc)
+7. [Cholesky & Density Fitting Threshold Tuning](#7-cholesky--density-fitting-threshold-tuning)
+8. [`nanobind` Import Failures & Python ABI Mismatch](#8-nanobind-import-failures--python-abi-mismatch)
+9. [MKL Threading Layer Conflicts](#9-mkl-threading-layer-conflicts)
+10. [DIIS, Level-Shifting & Orbital-Optimization Convergence Tuning](#10-diis-level-shifting--orbital-optimization-convergence-tuning)
+11. [PyTorch / CUDA FP64 Backend Fallback](#11-pytorch--cuda-fp64-backend-fallback)
 
 ---
 
-## 1. Hermetic Environment & CMake Path Resolution Leakage
+## 1. Basis Set Not Found (`MSHQC_BASIS_PATH`)
 
 ### Root Cause
 
-If CMake fails to locate third-party libraries such as `libcint`, `tblis`, or `eigen`, the OS system compiler (`/usr/bin/c++`) may be overriding the Conda toolchain.
+When building from source without cloning `mshqc-basis` into `data/basis/`, `BasisSet("cc-pVDZ", mol)` cannot locate `.gbs` files.
 
 ### Resolution
 
-Always build from within an activated Conda environment and pass `$CONDA_PREFIX` to `CMAKE_PREFIX_PATH`:
+Clone `syahrulhidayat/mshqc-basis` and point `MSHQC_BASIS_PATH` to its `data/basis` folder (or copy the `.gbs` files into `data/basis/`):
+
+```bash
+git clone --depth 1 [https://github.com/syahrulhidayat/mshqc-basis.git](https://github.com/syahrulhidayat/mshqc-basis.git) ../mshqc-basis
+export MSHQC_BASIS_PATH="$(pwd)/../mshqc-basis/data/basis"
+```
+
+---
+
+## 2. Hermetic Environment & CMake Path Resolution Leakage
+
+### Root Cause
+
+If CMake fails to locate `libcint`, `tblis`, or `eigen`, the OS system compiler (`/usr/bin/c++`) may be overriding the Conda toolchain.
+
+### Resolution
+
+Always build inside an activated Conda/Micromamba environment and export `CMAKE_PREFIX_PATH` and `TBLIS_DIR`:
 
 ```bash
 conda activate mshqc_314
+export TBLIS_DIR="$HOME/tblis_install"
 export CMAKE_PREFIX_PATH="$HOME/libcint_install:$HOME/tblis_install:$CONDA_PREFIX"
-pip install -v -e . --no-build-isolation
+pip install -v -e . --no-build-isolation --no-deps
 ```
 
 ---
 
-## 2. Shared Library Linkage & ABI Incompatibilities
+## 3. Shared Library Linkage & ABI Incompatibilities
 
 ### Root Cause
 
-Late-stage linkage failures (`cannot find -lcint` or `undefined reference to tblis_tensor_contract`) stem from missing library search paths or mixing system packages with `conda-forge` libraries.
+Late-stage linkage errors (`cannot find -lcint` or `undefined reference to tblis_*`) stem from stale CMake caches or mixing OS libraries with `conda-forge`.
 
 ### Resolution
-
-Purge build artifacts and rebuild cleanly against the active Conda environment:
 
 ```bash
-rm -rf build/ dist/ *.egg-info/ python/*.egg-info/
-pip install -v -e . --no-build-isolation
+rm -rf build/ dist/ *.egg-info/ python/*.egg-info/ python/mshqc/*.so
+pip install -v -e . --no-build-isolation --no-deps
 ```
 
 ---
 
-## 3. Runtime Race Conditions & Thread Pool Oversubscription
+## 4. Runtime Thread Pool Oversubscription (Linux / macOS / Windows)
 
 ### Root Cause
 
-`mshqc` parallelizes outer loops via OpenMP while invoking `MKL` and `TBLIS` kernels. If each library spawns its own thread pool, total threads can exceed physical CPU cores.
+`mshqc` parallelizes outer loops via OpenMP while invoking `MKL`/`OpenBLAS` and `TBLIS`. Nested thread pools can oversubscribe physical CPU cores.
 
 ### Resolution
 
-`mshqc` automatically locks `MKL_NUM_THREADS=1` and `OPENBLAS_NUM_THREADS=1` at import time. For explicit pinning in shell scripts:
+`mshqc` automatically locks `MKL_NUM_THREADS=1` and `OPENBLAS_NUM_THREADS=1` at import time (and `TBLIS_NUM_THREADS=1` on macOS/Windows). For explicit pinning on Linux:
 
 ```bash
 export OMP_NUM_THREADS=4
-export TBLIS_NUM_THREADS=6
+export TBLIS_NUM_THREADS=4
 export MKL_NUM_THREADS=1
 export OPENBLAS_NUM_THREADS=1
 ```
 
 ---
 
-## 4. Illegal Instruction / Segfaults from `-march=native`
+## 5. Illegal Instruction / Segfaults from `-march=native`
 
 ### Root Cause
 
-Local builds default to `-march=native`. Running a binary compiled on an AVX-512 host on an older AVX2 CPU will trigger `Illegal instruction (core dumped)`.
+Local source builds default to `-march=native`. Moving binaries compiled on an AVX-512 host to an AVX2-only CPU causes `Illegal instruction (core dumped)`.
 
 ### Resolution
 
-Rebuild with portable AVX2 architecture flags:
+Build with portable AVX2 flags (official PyPI wheels already use portable AVX2 on Linux/Windows and `apple-m1` on macOS ARM64):
 
 ```bash
-CMAKE_ARGS="-DCMAKE_CXX_FLAGS='-O3 -mavx2 -mfma -mno-avx512f -DNDEBUG'" pip install -v -e . --no-build-isolation
+GITHUB_ACTIONS=true pip install -v -e . --no-build-isolation --no-deps
 ```
 
 ---
 
-## 5. Memory Allocator Conflicts (jemalloc vs. glibc malloc)
+## 6. Memory Allocator Conflicts (`jemalloc` vs `glibc malloc`)
 
 ### Root Cause
 
-Preloading a competing allocator (`tcmalloc` or multiple `jemalloc` instances) via `LD_PRELOAD` can cause arena conflicts.
+Preloading competing allocators via `LD_PRELOAD` can trigger heap corruption or hangs on shutdown.
 
 ### Resolution
 
@@ -103,42 +120,46 @@ unset LD_PRELOAD
 
 ---
 
-## 6. Cholesky & Density Fitting Decomposition Threshold Tuning
+## 7. Cholesky & Density Fitting Threshold Tuning
 
 ### Root Cause
 
-For diffuse basis sets (`aug-cc-pVXZ`) with near-linear dependencies, an overly tight Cholesky threshold may include near-zero pivots, whereas a loose threshold reduces correlation energy accuracy.
+For diffuse basis sets (`aug-cc-pVXZ`) with near-linear dependencies, an overly tight Cholesky threshold may retain near-zero pivots, while a loose threshold degrades correlation accuracy.
 
 ### Resolution
 
-Adjust `threshold` in `mshqc.run()` or `cholesky_threshold` / `df_threshold` in `SCFConfig` and `MP2Config`:
+Pass `threshold` directly in `mshqc.run()` or `MSHQCCalculator`:
 
 ```python
 import mshqc
 
-scf_conf = mshqc.SCFConfig(eri_method="cholesky", threshold=1e-8)
-mp2_conf = mshqc.MP2Config(eri_method="cholesky", threshold=1e-8)
+calc = mshqc.MSHQCCalculator(
+    mshqc.molecule("H2O"),
+    basis_name="aug-cc-pVDZ",
+    eri_method="cholesky",
+    threshold=1e-8,
+)
 ```
 
 ---
 
-## 7. nanobind Import Failures & Python ABI Mismatch
+## 8. `nanobind` Import Failures & Python ABI Mismatch
 
 ### Root Cause
 
-The compiled `_mshqc.*.so` extension is tied to the exact Python minor version used during compilation.
+The compiled `_mshqc.*.so` / `_mshqc.*.pyd` extension is bound to a specific Python minor version.
 
 ### Resolution
 
-Verify `which python` points to `$CONDA_PREFIX/bin/python` and re-run `pip install -v -e . --no-build-isolation`.
+Verify `which python` matches your target environment and rebuild cleanly (`pip install -v -e . --no-build-isolation --no-deps`).
 
 ---
 
-## 8. MKL Threading Layer Conflicts
+## 9. MKL Threading Layer Conflicts
 
 ### Root Cause
 
-Incompatible OpenMP runtimes (`libiomp5` vs `libgomp`) can cause deadlocks during Fock builds.
+Mixing `libiomp5` and `libgomp` on Linux can stall Fock or GEMM calls.
 
 ### Resolution
 
@@ -149,47 +170,46 @@ export MKL_NUM_THREADS=1
 
 ---
 
-## 9. HDF5 Out-of-Core I/O & File Locking
+## 10. DIIS, Level-Shifting & Orbital-Optimization Convergence Tuning
 
 ### Root Cause
 
-When `scf_type="out_of_core"` is used with Density Fitting, three-center integrals are written to `df_tensor.h5`. On network filesystems (NFS/Lustre), OS file locking can raise an HDF5 access error, or an interrupted run can leave a stale `.h5` file.
+Open-shell radicals, biradicals (`O2`), or stretched bonds may converge slowly during SCF or OMP2/OMP3 macro-iterations.
 
 ### Resolution
 
-Disable HDF5 file locking in the environment and remove any stale temporary `.h5` file before restarting:
-
-```bash
-export HDF5_USE_FILE_LOCKING=FALSE
-rm -f df_tensor.h5
-```
-
-For systems that fit in RAM, keep the default `scf_type="incore"` so that all three-index tensors remain in memory without touching disk.
-
----
-
-## 10. DIIS & Orbital Optimization Convergence Tuning
-
-### Root Cause
-
-Open-shell radicals or stretched geometries may exhibit slow SCF or orbital-optimization convergence.
-
-### Resolution
-
-Adjust `diis_max_vectors` and `diis_threshold` on `SCFConfig`, or select `opt_method="soscf"` (Steihaug–Toint trust-region SOSCF) vs `"lbfgs"` on `MP2Config`:
+Enable `level_shift`, tighten `threshold`, or use `kappa-OMP2` to regularize small orbital denominators:
 
 ```python
 import mshqc
 
-scf_conf = mshqc.SCFConfig(eri_method="df", threshold=1e-9, max_iterations=150)
-scf_conf.diis_max_vectors = 10
-scf_conf.diis_threshold   = 1e-2
-
-mp2_conf = mshqc.MP2Config(
+calc = mshqc.MSHQCCalculator(
+    mshqc.molecule("O2"),
+    basis_name="cc-pVDZ",
     eri_method="df",
     threshold=1e-9,
-    gradient_threshold=1e-5,
-    opt_method="soscf",
-    max_iterations=50,
+    level_shift=0.25,
 )
+scf_res = calc.run_scf()
+omp_res = calc.run_kappa_omp2(scf_res, kappa=1.45, grad_thresh=1e-6)
+```
+
+---
+
+## 11. PyTorch / CUDA FP64 Backend Fallback
+
+### Root Cause
+
+Consumer GPUs without strong FP64 throughput or missing `torch` installations may fail if strict GPU execution is forced.
+
+### Resolution
+
+Keep `fallback_to_cpp=True` when registering the PyTorch backend so unsupported kernels fall back seamlessly to the C++20 core:
+
+```python
+from mshqc.backends import enable_torch_backend, use_backend
+
+enable_torch_backend(device="auto", name="torch", fallback_to_cpp=True)
+with use_backend("torch"):
+    ...
 ```
