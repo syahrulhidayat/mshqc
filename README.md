@@ -134,6 +134,23 @@ python benchmarks/run_universal_v2.py --tier quick --basis cc-pVDZ --extended
 python benchmarks/run_bab4_v2.py --quick --skip-ram
 ```
 
+<!-- BENCHMARK_START -->
+### Verified v2.0.0 CI Benchmarks (`cc-pVTZ` / `cc-pVTZ-RI`, 4 Threads)
+
+| System | ERI Mode | Method | Energy (Ha) | Wall Time (s) | Peak RSS (MB) | Net RAM (MB) |
+| :--- | :---: | :--- | :---: | :---: | :---: | :---: |
+| `H2O` | `exact` | `OMP3` | `-76.33711056` | `0.530` | `294.30` | `216.02` |
+| `H2O` | `cholesky` | `OMP3` | `-76.33711056` | `1.085` | `202.54` | `124.51` |
+| `H2O` | `df` | `OMP2` | `-76.33402331` | `0.040` | `107.42` | `29.31` |
+| `H2O` | `df` | `kappa-OOMP2` | `-76.32973119` | `0.057` | — | — |
+| `H2O` | `df` | `LT-SOS-OMP2` | `-76.32966314` | `0.120` | — | — |
+| `H2O` | `df` | `OMP3` | `-76.33725847` | `0.274` | `142.00` | `63.92` |
+| `H2O` (`cc-pVQZ`) | `df` | `OMP3` | *72.32x MO RAM cut* | — | `284.87` | `206.73` |
+| `O2` (triplet) | `df` | `OMP2` | `-150.14712919` | `0.147` | — | — |
+| `O2` (triplet) | `df` | `OMP3` | `-150.13330241` | `2.131` | `213.61` | `135.59` |
+
+*CI Verification Highlights (Linux `x86_64`, Python 3.11, 4 threads, $\tau = 10^{-9}\text{ Ha}$): `pytest tests/` 34 passed (2 optional skipped); Universal Validation (`cc-pVDZ`, 26 systems $\times$ 3 ERI modes) **78/78 PASS** in 42.29 s; Analytic vs Central-FD orbital gradients $\le 1.49 \times 10^{-9}\text{ Ha/rad}$; Analytic DF nuclear gradients (all-electron & frozen-core `OMP2`/`kappa-OOMP2`) $\le 6.46 \times 10^{-8}\text{ Ha/Bohr}$; $\mathcal{O}(N^4)$ `LT-SOS-OMP2` vs $\mathcal{O}(N^5)$ parity $\le 2.27 \times 10^{-13}\text{ Ha}$.*
+<!-- BENCHMARK_END -->
 ---
 
 ## Citing mshqc
