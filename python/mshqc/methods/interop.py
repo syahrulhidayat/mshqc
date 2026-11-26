@@ -50,6 +50,7 @@ def run_from_arrays(
     n_frozen: int = 0,
     kappa: float = 1.45,
     eri4=None,
+    salc_blocks=None,
 ) -> Union[HybridOMPResult, HybridMP2Result, HybridMP3Result]:
     """
     Menjalankan MP2 / ROMP2 / MP3 / ROMP3 / OMP2 / SCS-OMP2 / SOS-OMP2 / OMP2.5 / OMP3
@@ -116,7 +117,7 @@ def run_from_arrays(
         return run_df_omp_rhf(
             H, float(v_nn), B, Ca, na,
             method_name=m_name, c_os=c_os, c_ss=c_ss, lam_mp3=lam_mp3,
-            grad_tol=grad_tol, energy_tol=energy_tol, max_iter=max_iter, n_frozen=nf, eri4=eri4,
+            grad_tol=grad_tol, energy_tol=energy_tol, max_iter=max_iter, n_frozen=nf, eri4=eri4, salc_blocks=salc_blocks,
         )
 
     Cb = np.ascontiguousarray(C_beta, dtype=np.float64)
@@ -124,7 +125,7 @@ def run_from_arrays(
     return run_df_omp_uhf(
         H, S, float(v_nn), B, Ca, Cb, na, nb,
         method_name=m_name, c_os=c_os, c_ss=c_ss, lam_mp3=lam_mp3,
-        grad_tol=grad_tol, energy_tol=energy_tol, max_iter=max_iter, n_frozen=nf, eri4=eri4,
+        grad_tol=grad_tol, energy_tol=energy_tol, max_iter=max_iter, n_frozen=nf, eri4=eri4, salc_blocks=salc_blocks,
     )
 
 

@@ -14,7 +14,8 @@ from typing import Callable, Deque, Dict, List, Optional, Tuple
 import numpy as np
 from scipy.linalg import eigh
 
-from ..backends import active_kernels as K 
+from ..backends import active_kernels as K
+from .symmetry import AbelianSALCBlocks, diagonalize_fock_salc 
 
 @dataclass
 class HybridSCFResult:
@@ -288,6 +289,7 @@ def _diagonalize_fock(
     C_prev: Optional[np.ndarray] = None,
     n_occ: int = 0,
     level_shift: float = 0.0,
+    salc_blocks: Optional[AbelianSALCBlocks] = None,
 ) -> Tuple[np.ndarray, np.ndarray]:
     if level_shift > 0.0 and C_prev is not None and 0 < n_occ < F_ao.shape[0]:
         F_mo = C_prev.T @ F_ao @ C_prev
@@ -298,6 +300,9 @@ def _diagonalize_fock(
         eps = eps_s.copy()
         eps[n_occ:] -= level_shift
         return eps, C_new
+
+    if salc_blocks is not None:
+        return diagonalize_fock_salc(F_ao, salc_blocks)
 
     Fp = X.T @ F_ao @ X
     eps, C_orth = eigh(0.5 * (Fp + Fp.T))
@@ -319,6 +324,7 @@ def run_df_rhf(
     P_init: Optional[np.ndarray] = None,
     callback: Optional[Callable[[dict], None]] = None,
     eri4=None,
+    salc_blocks: Optional[AbelianSALCBlocks] = None,
 ) -> HybridSCFResult:
     """Menjalankan DF/Cholesky/Exact-4D RHF di Python menggunakan kernel C++20."""
     H = np.ascontiguousarray(H_core, dtype=np.float64)
@@ -343,9 +349,9 @@ def run_df_rhf(
                 K0 = K.build_exchange_3c_diag(B, np.ascontiguousarray(0.5 * diag0), nbf)
             else:
                 K0 = K.build_exchange_3c_occ(B, _factorize_psd_density(0.5 * P0), nbf)
-        eps, C = _diagonalize_fock(H + J0 - K0, X)
+        eps, C = _diagonalize_fock(H + J0 - K0, X, salc_blocks=salc_blocks)
     else:
-        eps, C = _diagonalize_fock(H, X)
+        eps, C = _diagonalize_fock(H, X, salc_blocks=salc_blocks)
 
     diis = PulayDIIS(max_vectors=diis_space)
     e_prev = 0.0
@@ -380,19 +386,19 @@ def run_df_rhf(
             and err_rms <= max(density_tol, 1.0e-11)
         )
         if it > 2 and (strict_conv or plateau_conv):
-            eps, C = _diagonalize_fock(F, X)
+            eps, C = _diagonalize_fock(F, X, salc_blocks=salc_blocks)
             C_occ = np.ascontiguousarray(C[:, :n_occ])
             J, K_mat = K.build_jk_4d_rhf(eri4, C_occ) if eri4 is not None else K.build_jk_3c_rhf(B, C_occ, nbf)
             F = H + J - K_mat
             P = 2.0 * (C_occ @ C_occ.T)
             e_tot = float(0.5 * np.sum(P * (H + F)) + v_nn)
-            eps, C = _diagonalize_fock(F, X)
+            eps, C = _diagonalize_fock(F, X, salc_blocks=salc_blocks)
             converged = True
             break
 
         diis.add((F,), grad_orth)
         (F_ext,) = diis.extrapolate()
-        eps, C = _diagonalize_fock(F_ext, X, C_prev=C, n_occ=n_occ, level_shift=level_shift)
+        eps, C = _diagonalize_fock(F_ext, X, C_prev=C, n_occ=n_occ, level_shift=level_shift, salc_blocks=salc_blocks)
         e_prev = e_tot
         P_prev = P
 
@@ -432,6 +438,7 @@ def run_df_uhf(
     mix_homo_lumo: bool = False,
     callback: Optional[Callable[[dict], None]] = None,
     eri4=None,
+    salc_blocks: Optional[AbelianSALCBlocks] = None,
 ) -> HybridSCFResult:
     """Menjalankan DF/Cholesky/Exact-4D UHF di Python menggunakan kernel C++20."""
     H = np.ascontiguousarray(H_core, dtype=np.float64)
@@ -463,10 +470,10 @@ def run_df_uhf(
             else:
                 Ka0 = K.build_exchange_3c_occ(B, _factorize_psd_density(fa_scale * P0), nbf)
                 Kb0 = K.build_exchange_3c_occ(B, _factorize_psd_density(fb_scale * P0), nbf) if nb > 0 else np.zeros((nbf, nbf), dtype=np.float64)
-        eps_a, Ca = _diagonalize_fock(H + J0 - Ka0, X)
-        eps_b, Cb = _diagonalize_fock(H + J0 - Kb0, X)
+        eps_a, Ca = _diagonalize_fock(H + J0 - Ka0, X, salc_blocks=salc_blocks)
+        eps_b, Cb = _diagonalize_fock(H + J0 - Kb0, X, salc_blocks=salc_blocks)
     else:
-        eps_a, Ca = _diagonalize_fock(H, X)
+        eps_a, Ca = _diagonalize_fock(H, X, salc_blocks=salc_blocks)
         eps_b, Cb = eps_a.copy(), Ca.copy()
         if mix_homo_lumo and na == nb and 0 < na < nbf:
             theta = 0.25 * np.pi
@@ -520,8 +527,8 @@ def run_df_uhf(
             and err_rms <= max(density_tol, 1.0e-11)
         )
         if it > 2 and (strict_conv or plateau_conv):
-            eps_a, Ca = _diagonalize_fock(Fa, X)
-            eps_b, Cb = _diagonalize_fock(Fb, X)
+            eps_a, Ca = _diagonalize_fock(Fa, X, salc_blocks=salc_blocks)
+            eps_b, Cb = _diagonalize_fock(Fb, X, salc_blocks=salc_blocks)
             Ca_o = np.ascontiguousarray(Ca[:, :na])
             Cb_o = np.ascontiguousarray(Cb[:, :nb])
             J, Ka, Kb = K.build_jk_4d_uhf(eri4, Ca_o, Cb_o) if eri4 is not None else K.build_jk_3c_uhf(B, Ca_o, Cb_o, nbf)
@@ -530,15 +537,15 @@ def run_df_uhf(
             Pa = Ca_o @ Ca_o.T if na > 0 else np.zeros((nbf, nbf), dtype=np.float64)
             Pb = Cb_o @ Cb_o.T if nb > 0 else np.zeros((nbf, nbf), dtype=np.float64)
             e_tot = float(0.5 * (np.sum(Pa * (H + Fa)) + np.sum(Pb * (H + Fb))) + v_nn)
-            eps_a, Ca = _diagonalize_fock(Fa, X)
-            eps_b, Cb = _diagonalize_fock(Fb, X)
+            eps_a, Ca = _diagonalize_fock(Fa, X, salc_blocks=salc_blocks)
+            eps_b, Cb = _diagonalize_fock(Fb, X, salc_blocks=salc_blocks)
             converged = True
             break
 
         diis.add((Fa, Fb), err_stack)
         Fa_ext, Fb_ext = diis.extrapolate()
-        eps_a, Ca = _diagonalize_fock(Fa_ext, X, C_prev=Ca, n_occ=na, level_shift=level_shift)
-        eps_b, Cb = _diagonalize_fock(Fb_ext, X, C_prev=Cb, n_occ=nb, level_shift=level_shift)
+        eps_a, Ca = _diagonalize_fock(Fa_ext, X, C_prev=Ca, n_occ=na, level_shift=level_shift, salc_blocks=salc_blocks)
+        eps_b, Cb = _diagonalize_fock(Fb_ext, X, C_prev=Cb, n_occ=nb, level_shift=level_shift, salc_blocks=salc_blocks)
         e_prev = e_tot
         Pa_prev, Pb_prev = Pa, Pb
 
@@ -582,6 +589,7 @@ def run_df_rohf(
     P_init: Optional[np.ndarray] = None,
     callback: Optional[Callable[[dict], None]] = None,
     eri4=None,
+    salc_blocks: Optional[AbelianSALCBlocks] = None,
 ) -> HybridSCFResult:
     """
     Menjalankan DF/Cholesky/Exact-4D ROHF (Guest-Saunders / Roothaan unified Fock F_uni)
@@ -594,7 +602,7 @@ def run_df_rohf(
             H_core, S_ovlp, v_nn, B_ao, na,
             energy_tol=energy_tol, density_tol=density_tol,
             max_iter=max_iter, diis_space=diis_space,
-            C_init=C_init, P_init=P_init, callback=callback, eri4=eri4,
+            C_init=C_init, P_init=P_init, callback=callback, eri4=eri4, salc_blocks=salc_blocks,
         )
 
     H = np.ascontiguousarray(H_core, dtype=np.float64)
@@ -623,7 +631,7 @@ def run_df_rohf(
         Pa = (float(na) / float(n_tot)) * P0
         Pb = (float(nb) / float(n_tot)) * P0
     else:
-        eps, C = _diagonalize_fock(H, X)
+        eps, C = _diagonalize_fock(H, X, salc_blocks=salc_blocks)
         Pa = C[:, :na] @ C[:, :na].T
         Pb = C[:, :nb] @ C[:, :nb].T if nb > 0 else np.zeros((nbf, nbf), dtype=np.float64)
 
@@ -654,7 +662,7 @@ def run_df_rohf(
         e_tot = float(0.5 * (np.sum(Pa * (H + Fa)) + np.sum(Pb * (H + Fb))) + v_nn)
 
         if C is None:
-            eps, C = _diagonalize_fock(0.5 * (Fa + Fb), X)
+            eps, C = _diagonalize_fock(0.5 * (Fa + Fb), X, salc_blocks=salc_blocks)
 
         Fa_mo = C.T @ Fa @ C
         Fb_mo = C.T @ Fb @ C
@@ -701,7 +709,7 @@ def run_df_rohf(
         else:
             (F_solve,) = diis.extrapolate()
 
-        eps, C = _diagonalize_fock(F_solve, X)
+        eps, C = _diagonalize_fock(F_solve, X, salc_blocks=salc_blocks)
         occ_a_vec = _smear_electrons(eps, na)
         occ_b_vec = _smear_electrons(eps, nb)
         if np.all((occ_a_vec == 0.0) | (occ_a_vec == 1.0)) and np.all((occ_b_vec == 0.0) | (occ_b_vec == 1.0)):

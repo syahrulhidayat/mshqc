@@ -476,6 +476,96 @@ def compute_ram_benchmark(cases: List[Tuple[str, str, str, str, str]]) -> Dict[s
     return ram_results
 
 
+
+def compare_symmetry_bab4(
+    sys_list: List[str],
+    modes: List[str],
+    basis_name: str,
+) -> Dict[str, Any]:
+    """
+    Head-to-head Bab IV: C1 + Permutasi 8-Lipat (use_symmetry=False)
+    vs Simetri Abelian + Permutasi 8-Lipat (use_symmetry=True).
+    """
+    aux_name = f"{basis_name}-RI"
+    has_cpp_petite = hasattr(mshqc.IntegralEngine, "set_abelian_symmetry")
+    print("\n" + "=" * 116, flush=True)
+    print(
+        f" [SYMMETRY BENCHMARK] C1 (8-Fold) vs Abelian + 8-Fold ({basis_name} | "
+        f"THREADS={N_THREADS} | C++ Petite List={'ON' if has_cpp_petite else 'REBUILD_REQUIRED'})",
+        flush=True,
+    )
+    print("=" * 116, flush=True)
+    print(
+        f"| {'Sistem':<8} | {'Grup':<4} | {'Mode':<8} | {'Quartet (C1/Abel)':<19} | "
+        f"{'max|dE| (Ha)':<12} | {'t_C1 (s)':<9} | {'t_Abel (s)':<10} | {'C1/Abel':<8} |",
+        flush=True,
+    )
+    print(f"|{'-'*10}|{'-'*6}|{'-'*10}|{'-'*21}|{'-'*14}|{'-'*11}|{'-'*12}|{'-'*10}|", flush=True)
+
+    summary: Dict[str, Any] = {}
+    tot_c1 = 0.0
+    tot_ab = 0.0
+
+    def _run_one(sys_name: str, mode: str, use_sym: bool) -> Tuple[Dict[str, float], float, int, str]:
+        is_uhf = SYSTEMS[sys_name]["is_uhf"]
+        mol = build_mol(sys_name)
+        t0 = time.perf_counter()
+        calc = mshqc.MSHQCCalculator(
+            mol, basis_name=basis_name, eri_method=mode.lower(),
+            aux_basis_name=aux_name, threshold=1e-9, use_symmetry=use_sym,
+        )
+        pg = calc.pg.point_group if calc.pg is not None else "C1"
+        energies: Dict[str, float] = {}
+        scf = calc.run_scf()
+        energies["SCF"] = float(scf.energy_total)
+        energies["MP2"] = float(calc.run_mp2(scf).energy_total)
+        energies["MP3"] = float(calc.run_mp3(scf).energy_total)
+        energies["OMP2"] = float(calc.run_omp2(scf, grad_thresh=1e-5).energy_total)
+        energies["OMP3"] = float(calc.run_omp3(scf, grad_thresh=1e-5).energy_total)
+        if is_uhf:
+            calc_ro = mshqc.MSHQCCalculator(
+                mol, basis_name=basis_name, eri_method=mode.lower(),
+                aux_basis_name=aux_name, reference="rohf", threshold=1e-9, use_symmetry=use_sym,
+            )
+            calc_ro._eri4_cache = calc._eri4_cache
+            calc_ro._ao_factor_cache = calc._ao_factor_cache
+            rohf = calc_ro.run_scf()
+            energies["ROHF"] = float(rohf.energy_total)
+            energies["ROMP2"] = float(calc_ro.run_mp2(rohf).energy_total)
+            energies["ROMP3"] = float(calc_ro.run_mp3(rohf).energy_total)
+        dt = time.perf_counter() - t0
+        q_cnt = int(calc.integrals.last_eri_quartets()) if (mode == "EXACT" and hasattr(calc.integrals, "last_eri_quartets")) else 0
+        return energies, dt, q_cnt, pg
+
+    for sys_name in sys_list:
+        for mode in modes:
+            e_c1, t_c1, q_c1, _ = _run_one(sys_name, mode, False)
+            e_ab, t_ab, q_ab, pg = _run_one(sys_name, mode, True)
+            max_de = max(abs(e_c1[k] - e_ab[k]) for k in e_c1)
+            ratio = t_c1 / max(t_ab, 1e-9)
+            tot_c1 += t_c1
+            tot_ab += t_ab
+            q_str = f"{q_c1}/{q_ab}" if mode == "EXACT" and q_c1 > 0 else "-"
+            print(
+                f"| {sys_name:<8} | {pg:<4} | {mode:<8} | {q_str:<19} | "
+                f"{max_de:<12.2e} | {t_c1:<9.3f} | {t_ab:<10.3f} | {ratio:<6.2f} x |",
+                flush=True,
+            )
+            summary[f"{sys_name}|{mode}"] = {
+                "point_group": pg, "quartets_c1": q_c1, "quartets_abelian": q_ab,
+                "max_dE_ha": max_de, "t_c1_s": t_c1, "t_abelian_s": t_ab, "ratio_c1_over_abelian": ratio,
+            }
+            gc.collect()
+
+    print("=" * 116, flush=True)
+    print(
+        f" TOTAL: C1 (8-Fold) = {tot_c1:.3f} s | Abelian + 8-Fold = {tot_ab:.3f} s | "
+        f"Rasio C1/Abelian = {tot_c1 / max(tot_ab, 1e-9):.2f}x",
+        flush=True,
+    )
+    return summary
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="mshqc v2.0 Pure Thin-Core Bab IV & Core-5 Benchmark Runner")
     parser.add_argument("--out", default="mshqc_bab4_v2_raw.json")
@@ -483,11 +573,20 @@ def main() -> None:
     parser.add_argument("--core5", action="store_true", help="Jalankan 5 sistem inti (pengganti test_mshqc2)")
     parser.add_argument("--quick", action="store_true", help="Mode uji cepat (H2O & OH, cc-pVDZ, DF)")
     parser.add_argument("--skip-ram", action="store_true", help="Lewati subprocess RAM benchmark")
+    parser.add_argument("--compare-symmetry", action="store_true", help="Bandingkan C1 (8-fold) vs Abelian + 8-fold pada Bab IV")
     parser.add_argument("--ram-worker", default=None, help=argparse.SUPPRESS)
     args = parser.parse_args()
 
     if args.ram_worker is not None:
         run_ram_worker(args.ram_worker)
+        sys.exit(0)
+
+    if args.compare_symmetry:
+        sys_list = ["H2O", "OH", "O2"] if args.quick else (CORE5_ORDER if args.core5 else ALL_SYSTEM_ORDER)
+        modes = ["EXACT", "DF"] if args.quick else ["EXACT", "CHOLESKY", "DF"]
+        basis_name = "cc-pVDZ" if args.quick else "cc-pVTZ"
+        sym_res = compare_symmetry_bab4(sys_list, modes, basis_name)
+        Path("mshqc_symmetry_compare_bab4.json").write_text(json.dumps(sym_res, indent=2), encoding="utf-8")
         sys.exit(0)
 
     sys_list = ["H2O", "OH"] if args.quick else (CORE5_ORDER if args.core5 else ALL_SYSTEM_ORDER)

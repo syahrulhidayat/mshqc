@@ -265,6 +265,9 @@ def _sph_signs(l_val: int, sx: int, sy: int, sz: int) -> List[int]:
     if l_val == 3:
         # libcint spherical f (m=-3..+3): y(3x^2-y^2), xyz, yz^2, z^3, xz^2, z(x^2-y^2), x(x^2-3y^2)
         return [sy, sx * sy * sz, sy, sz, sx, sz, sx]
+    if l_val == 4:
+        # libcint spherical g (m=-4..+4)
+        return [sx * sy, sy * sz, sx * sy, sy * sz, 1, sx * sz, 1, sx * sz, 1]
     return [1] * (2 * l_val + 1)
 
 
@@ -342,3 +345,198 @@ def label_mo_irreps(
                 best_irrep = irrep_name
         labels.append(best_irrep if best_err <= tol else "mix")
     return labels
+
+
+@dataclass
+class AbelianSALCBlocks:
+    """Blok ortogonalizer SALC per irrep Abelian untuk diagonalisasi & rotasi orbital terblok."""
+    point_group: str
+    irrep_names: List[str]
+    X_blocks: List[np.ndarray]
+    XS_blocks: List[np.ndarray]
+    n_basis: int
+
+
+def build_salc_orthogonalizer(
+    mol,
+    basis,
+    S_ovlp: np.ndarray,
+    sym: Optional[AbelianSymmetryInfo] = None,
+    lindep_tol: float = 1.0e-8,
+) -> Optional[AbelianSALCBlocks]:
+    """Bangun matriks ortogonalisasi simetris Löwdin per blok irrep Abelian (X_g^T S X_g = I)."""
+    from scipy.linalg import eigh
+
+    info = sym if sym is not None else detect_abelian_symmetry(mol)
+    if info.point_group == "C1":
+        return None
+
+    for sh_idx in range(int(basis.n_shells())):
+        sh = basis.shell(sh_idx)
+        l_val = int(sh.l()) if hasattr(sh, "l") else int(sh.angular_momentum.value)
+        if l_val > 4:
+            return None
+
+    S = np.ascontiguousarray(S_ovlp, dtype=np.float64)
+    nbf = S.shape[0]
+    op_mats = build_ao_symmetry_operators(mol, basis, info)
+    table = _CHAR_TABLES[info.point_group]
+    inv_g = 1.0 / float(len(info.operations))
+
+    irrep_names: List[str] = []
+    X_blocks: List[np.ndarray] = []
+    XS_blocks: List[np.ndarray] = []
+    total_dim = 0
+
+    for name, chars in table.items():
+        P_ir = np.zeros((nbf, nbf), dtype=np.float64)
+        for op, chi in zip(info.operations, chars):
+            P_ir += float(chi) * op_mats[op]
+        P_ir *= inv_g
+        evals_p, evecs_p = eigh(0.5 * (P_ir + P_ir.T))
+        U_g = evecs_p[:, evals_p > 0.5]
+        if U_g.shape[1] == 0:
+            continue
+        S_gg = U_g.T @ S @ U_g
+        evals_s, evecs_s = eigh(0.5 * (S_gg + S_gg.T))
+        keep = evals_s > lindep_tol
+        if not np.any(keep):
+            continue
+        inv_sqrt = 1.0 / np.sqrt(evals_s[keep])
+        U_s = evecs_s[:, keep]
+        X_g = np.ascontiguousarray(U_g @ ((U_s * inv_sqrt[None, :]) @ U_s.T))
+        irrep_names.append(name)
+        X_blocks.append(X_g)
+        XS_blocks.append(np.ascontiguousarray(X_g.T @ S))
+        total_dim += X_g.shape[1]
+
+    if total_dim == 0:
+        return None
+    return AbelianSALCBlocks(
+        point_group=info.point_group,
+        irrep_names=irrep_names,
+        X_blocks=X_blocks,
+        XS_blocks=XS_blocks,
+        n_basis=nbf,
+    )
+
+
+def diagonalize_fock_salc(
+    F_ao: np.ndarray,
+    salc: AbelianSALCBlocks,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Diagonalisasi matriks Fock terblok per irrep Abelian, lalu urutkan global berdasarkan energi."""
+    from scipy.linalg import eigh
+
+    eps_parts: List[np.ndarray] = []
+    C_parts: List[np.ndarray] = []
+    for X_g in salc.X_blocks:
+        Fp_g = X_g.T @ F_ao @ X_g
+        e_g, C_orth_g = eigh(0.5 * (Fp_g + Fp_g.T))
+        eps_parts.append(e_g)
+        C_parts.append(X_g @ C_orth_g)
+
+    eps_all = np.concatenate(eps_parts)
+    C_all = np.hstack(C_parts)
+    order = np.argsort(eps_all, kind="mergesort")
+    return eps_all[order], np.ascontiguousarray(C_all[:, order])
+
+
+def label_mo_irrep_indices(
+    C: np.ndarray,
+    salc: AbelianSALCBlocks,
+    purity_tol: float = 0.99,
+) -> Optional[np.ndarray]:
+    """Identifikasi indeks blok irrep tiap kolom orbital MO di C menggunakan proyeksi metrik-S."""
+    nmo = C.shape[1]
+    n_irr = len(salc.XS_blocks)
+    weights = np.zeros((n_irr, nmo), dtype=np.float64)
+    for g, XS_g in enumerate(salc.XS_blocks):
+        proj = XS_g @ C
+        weights[g] = np.sum(proj * proj, axis=0)
+    best = np.argmax(weights, axis=0)
+    max_w = weights[best, np.arange(nmo)]
+    if float(np.min(max_w)) < purity_tol:
+        return None
+    return best.astype(np.int64)
+
+
+def semicanonicalize_subspaces_salc(
+    C: np.ndarray,
+    F_ao: np.ndarray,
+    n_occ: int,
+    n_frozen: int,
+    irrep_ids: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Semikanonikalisasi subruang (frozen / active-occ / virtual) per blok irrep Abelian."""
+    from scipy.linalg import eigh
+
+    nbf = C.shape[0]
+    nf = max(0, min(int(n_frozen), int(n_occ)))
+    n_act = n_occ - nf
+    n_vir = nbf - n_occ
+    C_out = C.copy()
+    eps = np.zeros(nbf, dtype=np.float64)
+    unique_irr = np.unique(irrep_ids)
+
+    def _diag_slice(start: int, stop: int) -> None:
+        if stop <= start:
+            return
+        sub_irr = irrep_ids[start:stop]
+        for g in unique_irr:
+            loc = np.flatnonzero(sub_irr == g)
+            if loc.size == 0:
+                continue
+            cols = start + loc
+            Cg = C[:, cols]
+            Fg = Cg.T @ F_ao @ Cg
+            eg, Ug = eigh(0.5 * (Fg + Fg.T))
+            eps[cols] = eg
+            C_out[:, cols] = Cg @ Ug
+
+    _diag_slice(0, nf)
+    _diag_slice(nf, n_occ)
+    _diag_slice(n_occ, nbf)
+
+    F_vo_act = (
+        C_out[:, n_occ:].T @ F_ao @ C_out[:, nf:n_occ]
+        if (n_act > 0 and n_vir > 0)
+        else np.zeros((n_vir, n_act), dtype=np.float64)
+    )
+    if F_vo_act.size > 0:
+        same_mask = irrep_ids[n_occ:, None] == irrep_ids[None, nf:n_occ]
+        F_vo_act = np.where(same_mask, F_vo_act, 0.0)
+    return C_out, eps, F_vo_act
+
+
+def rotate_orbitals_salc(
+    C: np.ndarray,
+    kappa_vo: np.ndarray,
+    n_occ: int,
+    n_frozen: int,
+    irrep_ids: np.ndarray,
+) -> np.ndarray:
+    """Rotasi uniter eksponensial exp(K) terblok per irrep Abelian (hanya mencampur irrep sama)."""
+    from scipy.linalg import expm
+
+    nf = max(0, min(int(n_frozen), int(n_occ)))
+    n_act = n_occ - nf
+    if n_act <= 0 or kappa_vo.size == 0:
+        return C
+
+    C_out = C.copy()
+    act_irr = irrep_ids[nf:n_occ]
+    vir_irr = irrep_ids[n_occ:]
+    for g in np.unique(act_irr):
+        aloc = np.flatnonzero(act_irr == g)
+        vloc = np.flatnonzero(vir_irr == g)
+        if aloc.size == 0 or vloc.size == 0:
+            continue
+        na_g, nv_g = aloc.size, vloc.size
+        K_g = np.zeros((na_g + nv_g, na_g + nv_g), dtype=np.float64)
+        blk = kappa_vo[np.ix_(vloc, aloc)]
+        K_g[na_g:, :na_g] = blk
+        K_g[:na_g, na_g:] = -blk.T
+        cols = np.concatenate((nf + aloc, n_occ + vloc))
+        C_out[:, cols] = C[:, cols] @ expm(K_g)
+    return C_out

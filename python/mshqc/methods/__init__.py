@@ -78,6 +78,8 @@ from .interop import run_from_arrays, run_from_pyscf
 # [INJECTED_V2_POLISH_SYMMETRY_EXPORT]
 from .symmetry import (
     AbelianSymmetryInfo,
+    AbelianSALCBlocks,
+    build_salc_orthogonalizer,
     align_principal_axes,
     detect_abelian_symmetry,
     build_ao_symmetry_operators,
@@ -111,6 +113,7 @@ __all__ = [
     "ExcitedStateResult", "run_df_cis_rhf", "run_df_tdhf_rhf",
     "OODoubleHybridResult", "run_oo_double_hybrid_rhf",
     "run_from_arrays", "run_from_pyscf",
-    "AbelianSymmetryInfo", "align_principal_axes", "detect_abelian_symmetry",
+    "AbelianSymmetryInfo", "AbelianSALCBlocks", "build_salc_orthogonalizer",
+    "align_principal_axes", "detect_abelian_symmetry",
     "build_ao_symmetry_operators", "symmetrize_ao_matrix", "label_mo_irreps",
 ]

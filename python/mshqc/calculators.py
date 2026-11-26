@@ -91,6 +91,12 @@ class MSHQCCalculator:
       
         self._h_core_cache: Optional[np.ndarray] = None
         self._s_ovlp_cache: Optional[np.ndarray] = None
+        self._salc_blocks = None
+        if self.use_symmetry:
+            from .methods.symmetry import detect_abelian_symmetry
+            self.pg = detect_abelian_symmetry(self.molecule)
+            if self.pg.point_group != "C1" and hasattr(self.integrals, "set_abelian_symmetry"):
+                self.integrals.set_abelian_symmetry(True)
 
     def _get_h_core(self) -> np.ndarray:
         if self._h_core_cache is None:
@@ -107,6 +113,16 @@ class MSHQCCalculator:
                 dtype=np.float64,
             )
         return self._s_ovlp_cache
+
+    def _get_salc_blocks(self):
+        if not self.use_symmetry or self.pg is None or self.pg.point_group == "C1":
+            return None
+        if self._salc_blocks is None:
+            from .methods.symmetry import build_salc_orthogonalizer
+            self._salc_blocks = build_salc_orthogonalizer(
+                self.molecule, self.basis, self._get_s_ovlp(), self.pg
+            )
+        return self._salc_blocks
 
     def _get_eri4(self):
         if self._eri4_cache is None:
@@ -146,6 +162,7 @@ class MSHQCCalculator:
         B_ao = None if eri4_arg is not None else self._get_ao_3index_factor(None)
         H_core = self._get_h_core()
         S_ovlp = self._get_s_ovlp()
+        salc_blocks = self._get_salc_blocks()
         v_nn = float(self.molecule.nuclear_repulsion_energy())
 
         if ref_mode == "rhf":
@@ -153,18 +170,20 @@ class MSHQCCalculator:
                 H_core, S_ovlp, v_nn, B_ao, self.n_alpha,
                 energy_tol=self.threshold, density_tol=self.threshold,
                 level_shift=self.level_shift, P_init=P_sad, eri4=eri4_arg,
+                salc_blocks=salc_blocks,
             )
         elif ref_mode == "rohf":
             self.scf_res = run_df_rohf(
                 H_core, S_ovlp, v_nn, B_ao, self.n_alpha, self.n_beta,
                 energy_tol=self.threshold, density_tol=self.threshold,
-                P_init=P_sad, eri4=eri4_arg,
+                P_init=P_sad, eri4=eri4_arg, salc_blocks=salc_blocks,
             )
         elif ref_mode == "uhf":
             self.scf_res = run_df_uhf(
                 H_core, S_ovlp, v_nn, B_ao, self.n_alpha, self.n_beta,
                 energy_tol=self.threshold, density_tol=self.threshold,
                 level_shift=self.level_shift, P_init=P_sad, eri4=eri4_arg,
+                salc_blocks=salc_blocks,
             )
         else:
             raise ValueError(f"Referensi SCF tidak dikenali: {ref_mode}")
@@ -188,17 +207,20 @@ class MSHQCCalculator:
         S_ovlp = self._get_s_ovlp()
         v_nn = float(self.molecule.nuclear_repulsion_energy())
 
+        salc_blocks = self._get_salc_blocks()
         if self.reference == "rhf" and method_name not in ("romp2", "romp3"):
             return run_from_arrays(
                 H_core, S_ovlp, v_nn, B_ao, scf_res.C_alpha, scf_res.n_occ_alpha,
                 method=method_name, grad_tol=grad_thresh, energy_tol=self.threshold,
                 max_iter=max_iter, n_frozen=self.n_frozen, kappa=kappa, eri4=eri4_arg,
+                salc_blocks=salc_blocks,
             )
         return run_from_arrays(
             H_core, S_ovlp, v_nn, B_ao, scf_res.C_alpha, scf_res.n_occ_alpha,
             C_beta=scf_res.C_beta, n_occ_beta=scf_res.n_occ_beta,
             method=method_name, grad_tol=grad_thresh, energy_tol=self.threshold,
             max_iter=max_iter, n_frozen=self.n_frozen, kappa=kappa, eri4=eri4_arg,
+            salc_blocks=salc_blocks,
         )
 
     def run_mp2(self, scf_res: Optional[Any] = None, use_hybrid: Optional[bool] = None):

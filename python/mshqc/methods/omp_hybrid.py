@@ -16,6 +16,12 @@ from scipy.linalg import eigh, expm
 
 from ..backends import active_kernels as K  
 from .tr_soscf import solve_tr_soscf_rhf, solve_tr_soscf_uhf
+from .symmetry import (
+    AbelianSALCBlocks,
+    label_mo_irrep_indices,
+    rotate_orbitals_salc,
+    semicanonicalize_subspaces_salc,
+)
 
 CorrCallbackRHF = Callable[
     [np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray],
@@ -495,6 +501,7 @@ def optimize_orbitals_rhf(
     callback: Optional[Callable[[dict], None]] = None,
     eri4=None,
     mo_ctx: Optional[dict] = None,
+    salc_blocks: Optional[AbelianSALCBlocks] = None,
 ) -> HybridOMPResult:
     """Mesin optimisasi orbital terpadu RHF (dipakai oleh OMP2/2.5/3 dan plugin kustom)."""
     H = np.ascontiguousarray(H_core, dtype=np.float64)
@@ -502,6 +509,7 @@ def optimize_orbitals_rhf(
     C = np.array(C0, dtype=np.float64, copy=True)
     nbf = H.shape[0]
     nf = max(0, min(int(n_frozen), int(n_occ)))
+    irrep_ids = label_mo_irrep_indices(C, salc_blocks) if salc_blocks is not None else None
     e_prev = 0.0
     trust_radius = 0.25
 
@@ -511,7 +519,10 @@ def optimize_orbitals_rhf(
         F_ao = H + J - K_mat
         e_ref = float(np.sum((C_occ_all @ C_occ_all.T) * (H + F_ao)) + v_nn)
 
-        C, eps, F_vo = semicanonicalize_subspaces_frozen(C, F_ao, n_occ, nf)
+        if irrep_ids is not None:
+            C, eps, F_vo = semicanonicalize_subspaces_salc(C, F_ao, n_occ, nf, irrep_ids)
+        else:
+            C, eps, F_vo = semicanonicalize_subspaces_frozen(C, F_ao, n_occ, nf)
         C_act = np.ascontiguousarray(C[:, nf:n_occ])
         C_vir = np.ascontiguousarray(C[:, n_occ:])
         eps_o, eps_v = eps[nf:n_occ], eps[n_occ:]
@@ -529,6 +540,8 @@ def optimize_orbitals_rhf(
 
         e_tot = e_ref + float(e_mp2) + float(e_mp3)
         w_vo = _assemble_orbital_grad_rhf(B_oo, B_ov, B_vv, F_vo, g_oo, g_vv, Z_vo)
+        if irrep_ids is not None and w_vo.size > 0:
+            w_vo = np.where(irrep_ids[n_occ:, None] == irrep_ids[None, nf:n_occ], w_vo, 0.0)
         w_rms = float(np.sqrt(np.mean(w_vo ** 2))) if w_vo.size > 0 else 0.0
         if callback is not None:
             callback({
@@ -559,7 +572,10 @@ def optimize_orbitals_rhf(
         trust_radius = _update_trust_radius(trust_radius, it, e_tot, e_prev)
         e_prev = e_tot
         kappa = solve_tr_soscf_rhf(w_vo, eps_o, eps_v, B_oo, B_ov, B_vv, trust_radius=trust_radius)
-        C = _rotate_orbitals(C, kappa, n_occ, n_frozen=nf)
+        if irrep_ids is not None:
+            C = rotate_orbitals_salc(C, kappa, n_occ, nf, irrep_ids)
+        else:
+            C = _rotate_orbitals(C, kappa, n_occ, n_frozen=nf)
 
     g_oo_c = np.ascontiguousarray(g_oo, dtype=np.float64)
     g_vv_c = np.ascontiguousarray(g_vv, dtype=np.float64)
@@ -593,6 +609,7 @@ def optimize_orbitals_uhf(
     callback: Optional[Callable[[dict], None]] = None,
     eri4=None,
     mo_ctx: Optional[dict] = None,
+    salc_blocks: Optional[AbelianSALCBlocks] = None,
 ) -> HybridOMPResult:
     """Mesin optimisasi orbital terpadu UHF (dipakai oleh UHF-OMP2/2.5/3 dan plugin kustom)."""
     H = np.ascontiguousarray(H_core, dtype=np.float64)
@@ -603,6 +620,8 @@ def optimize_orbitals_uhf(
     nbf = H.shape[0]
     nf_a = max(0, min(int(n_frozen), int(na)))
     nf_b = max(0, min(int(n_frozen), int(nb)))
+    irr_a = label_mo_irrep_indices(Ca, salc_blocks) if salc_blocks is not None else None
+    irr_b = label_mo_irrep_indices(Cb, salc_blocks) if salc_blocks is not None else None
     n_params = max(1, (nbf - na) * (na - nf_a) + (nbf - nb) * (nb - nf_b))
     e_prev = 0.0
     trust_radius = 0.25
@@ -617,8 +636,14 @@ def optimize_orbitals_uhf(
         Pb = Cb_all @ Cb_all.T if nb > 0 else np.zeros((nbf, nbf), dtype=np.float64)
         e_ref = float(0.5 * (np.sum(Pa * (H + Fa_ao)) + np.sum(Pb * (H + Fb_ao))) + v_nn)
 
-        Ca, eps_a, Fvo_a = semicanonicalize_subspaces_frozen(Ca, Fa_ao, na, nf_a)
-        Cb, eps_b, Fvo_b = semicanonicalize_subspaces_frozen(Cb, Fb_ao, nb, nf_b)
+        if irr_a is not None:
+            Ca, eps_a, Fvo_a = semicanonicalize_subspaces_salc(Ca, Fa_ao, na, nf_a, irr_a)
+        else:
+            Ca, eps_a, Fvo_a = semicanonicalize_subspaces_frozen(Ca, Fa_ao, na, nf_a)
+        if irr_b is not None:
+            Cb, eps_b, Fvo_b = semicanonicalize_subspaces_salc(Cb, Fb_ao, nb, nf_b, irr_b)
+        else:
+            Cb, eps_b, Fvo_b = semicanonicalize_subspaces_frozen(Cb, Fb_ao, nb, nf_b)
         Ca_act, Ca_v = np.ascontiguousarray(Ca[:, nf_a:na]), np.ascontiguousarray(Ca[:, na:])
         Cb_act, Cb_v = np.ascontiguousarray(Cb[:, nf_b:nb]), np.ascontiguousarray(Cb[:, nb:])
         eps_oa, eps_va = eps_a[nf_a:na], eps_a[na:]
@@ -647,6 +672,10 @@ def optimize_orbitals_uhf(
             B_oo_a, B_ov_a, B_vv_a, B_oo_b, B_ov_b, B_vv_b,
             Fvo_a, Fvo_b, g_oo_a, g_vv_a, g_oo_b, g_vv_b, Za, Zb,
         )
+        if irr_a is not None and wa_vo.size > 0:
+            wa_vo = np.where(irr_a[na:, None] == irr_a[None, nf_a:na], wa_vo, 0.0)
+        if irr_b is not None and wb_vo.size > 0:
+            wb_vo = np.where(irr_b[nb:, None] == irr_b[None, nf_b:nb], wb_vo, 0.0)
         w_rms = float(np.sqrt((np.sum(wa_vo ** 2) + np.sum(wb_vo ** 2)) / n_params))
         if callback is not None:
             callback({
@@ -682,9 +711,15 @@ def optimize_orbitals_uhf(
             B_oo_a, B_ov_a, B_vv_a, B_oo_b, B_ov_b, B_vv_b,
             trust_radius=trust_radius,
         )
-        Ca = _rotate_orbitals(Ca, ka, na, n_frozen=nf_a)
+        if irr_a is not None:
+            Ca = rotate_orbitals_salc(Ca, ka, na, nf_a, irr_a)
+        else:
+            Ca = _rotate_orbitals(Ca, ka, na, n_frozen=nf_a)
         if nb - nf_b > 0:
-            Cb = _rotate_orbitals(Cb, kb, nb, n_frozen=nf_b)
+            if irr_b is not None:
+                Cb = rotate_orbitals_salc(Cb, kb, nb, nf_b, irr_b)
+            else:
+                Cb = _rotate_orbitals(Cb, kb, nb, n_frozen=nf_b)
 
     s2 = _compute_s2_uhf(Ca, Cb, S, na, nb)
     return HybridOMPResult(
@@ -717,6 +752,7 @@ def run_df_omp_rhf(
     n_frozen: int = 0,
     callback: Optional[Callable[[dict], None]] = None,
     eri4=None,
+    salc_blocks: Optional[AbelianSALCBlocks] = None,
 ) -> HybridOMPResult:
     """Jalankan optimisasi orbital DF/Cholesky/Exact-OMP RHF (OMP2, SCS-OMP2, SOS-OMP2, OMP2.5, OMP3)."""
     mo_ctx = {} if (eri4 is not None and lam_mp3 != 0.0) else None
@@ -725,7 +761,7 @@ def run_df_omp_rhf(
         corr_fn=_omp_rhf_corr_kernel(c_os, c_ss, lam_mp3, eri4=eri4, mo_ctx=mo_ctx),
         method_name=method_name, grad_tol=grad_tol, energy_tol=energy_tol,
         max_iter=max_iter, n_frozen=n_frozen, callback=callback,
-        eri4=eri4, mo_ctx=mo_ctx,
+        eri4=eri4, mo_ctx=mo_ctx, salc_blocks=salc_blocks,
     )
 
 
@@ -748,6 +784,7 @@ def run_df_omp_uhf(
     n_frozen: int = 0,
     callback: Optional[Callable[[dict], None]] = None,
     eri4=None,
+    salc_blocks: Optional[AbelianSALCBlocks] = None,
 ) -> HybridOMPResult:
     """Jalankan optimisasi orbital DF/Cholesky/Exact-OMP UHF (radikal kulit terbuka) + evaluasi <S^2>."""
     mo_ctx = {} if (eri4 is not None and lam_mp3 != 0.0) else None
@@ -756,5 +793,5 @@ def run_df_omp_uhf(
         corr_fn=_omp_uhf_corr_kernel(c_os, c_ss, lam_mp3, eri4=eri4, mo_ctx=mo_ctx),
         method_name=method_name, grad_tol=grad_tol, energy_tol=energy_tol,
         max_iter=max_iter, n_frozen=n_frozen, callback=callback,
-        eri4=eri4, mo_ctx=mo_ctx,
+        eri4=eri4, mo_ctx=mo_ctx, salc_blocks=salc_blocks,
     )
