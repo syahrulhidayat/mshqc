@@ -511,6 +511,7 @@ def compute_psi4_suite(
                     psi4.core.clean()
                     restore_wfn(scf_wfn, hf_snap)
             finally:
+                psi4.core.clean()
 
             results[key] = entry
             gc.collect()
