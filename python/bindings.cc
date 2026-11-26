@@ -117,6 +117,8 @@ NB_MODULE(_mshqc, m) {
         .def("compute_kinetic", &IntegralEngine::compute_kinetic, nb::call_guard<nb::gil_scoped_release>())
         .def("compute_nuclear", &IntegralEngine::compute_nuclear, nb::call_guard<nb::gil_scoped_release>())
         .def("compute_eri", &IntegralEngine::compute_eri, nb::rv_policy::reference_internal, nb::call_guard<nb::gil_scoped_release>())
+        .def("set_abelian_symmetry", &IntegralEngine::set_abelian_symmetry, nb::arg("enable"))
+        .def("last_eri_quartets", &IntegralEngine::last_eri_quartets)
         .def("compute_eri_diagonal", &IntegralEngine::compute_eri_diagonal)
         .def("compute_eri_column", &IntegralEngine::compute_eri_column, nb::arg("pivot_index"));
 

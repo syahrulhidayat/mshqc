@@ -43,6 +43,9 @@ public:
     Eigen::MatrixXd compute_core_hamiltonian();
     
     const Eigen::Tensor<double, 4>& compute_eri();
+    void set_abelian_symmetry(bool enable);
+    bool abelian_symmetry() const { return use_abelian_symmetry_; }
+    size_t last_eri_quartets() const { return last_eri_quartets_; }
     
     size_t nbasis() const { return nbasis_; }
     
@@ -89,6 +92,8 @@ private:
     const BasisSet& basis_;
     size_t nbasis_;
     bool cache_valid = false;
+    bool use_abelian_symmetry_ = false;
+    size_t last_eri_quartets_ = 0;
     Eigen::Tensor<double, 4> cached_eri;
     std::vector<int> atm_;
     std::vector<int> bas_;

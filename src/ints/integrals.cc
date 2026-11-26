@@ -50,6 +50,8 @@ void cint3c2e_sph_optimizer(CINTOpt **opt, int *atm, int natm, int *bas, int nba
 
 #include <stdexcept>
 #include <cstdlib>
+#include <cstdint>
+#include <array>
 #ifdef _OPENMP
 #include <omp.h>
 #endif
@@ -271,100 +273,347 @@ Eigen::MatrixXd IntegralEngine::compute_core_hamiltonian() {
 // ============================================================================
 // COMPUTE ERI DENSE (TWO-ELECTRON)
 // ============================================================================
+// [INJECTED_ABELIAN_8FOLD_PETITE_LIST]
+namespace {
+
+inline int abelian_sph_sign(int l, int m, int sx, int sy, int sz) {
+    if (l == 0) return 1;
+    if (l == 1) {
+        static constexpr int idx_map[3] = {0, 1, 2};
+        const int s[3] = {sx, sy, sz};
+        return (m >= 0 && m < 3) ? s[idx_map[m]] : 1;
+    }
+    if (l == 2) {
+        switch (m) {
+            case 0: return sx * sy;
+            case 1: return sy * sz;
+            case 2: return 1;
+            case 3: return sx * sz;
+            case 4: return 1;
+            default: return 1;
+        }
+    }
+    if (l == 3) {
+        switch (m) {
+            case 0: return sy;
+            case 1: return sx * sy * sz;
+            case 2: return sy;
+            case 3: return sz;
+            case 4: return sx;
+            case 5: return sz;
+            case 6: return sx;
+            default: return 1;
+        }
+    }
+    if (l == 4) {
+        switch (m) {
+            case 0: return sx * sy;
+            case 1: return sy * sz;
+            case 2: return sx * sy;
+            case 3: return sy * sz;
+            case 4: return 1;
+            case 5: return sx * sz;
+            case 6: return 1;
+            case 7: return sx * sz;
+            case 8: return 1;
+            default: return 1;
+        }
+    }
+    return 1;
+}
+
+inline std::uint64_t canon_8fold_key(int a, int b, int c, int d) {
+    if (a < b) std::swap(a, b);
+    if (c < d) std::swap(c, d);
+    std::uint64_t p1 = static_cast<std::uint64_t>(a) * (a + 1) / 2 + static_cast<std::uint64_t>(b);
+    std::uint64_t p2 = static_cast<std::uint64_t>(c) * (c + 1) / 2 + static_cast<std::uint64_t>(d);
+    if (p1 < p2) std::swap(p1, p2);
+    return (p1 << 32) | p2;
+}
+
+struct AbelianShellOps {
+    std::vector<std::array<int, 3>> signs;
+    std::vector<std::vector<int>> shell_perm;
+};
+
+AbelianShellOps build_abelian_shell_ops(
+    const Molecule& mol,
+    const BasisSet& basis,
+    const std::vector<int>& bas_arr)
+{
+    AbelianShellOps out;
+    const int nat = static_cast<int>(mol.n_atoms());
+    const int nbas = basis.n_shells();
+
+    // Dukung harmonik sferis s, p, d, f, g (l <= 4)
+    for (int s = 0; s < nbas; ++s) {
+        if (bas_arr[s * BAS_SLOTS + ANG_OF] > 4) return out;
+    }
+
+    std::vector<std::vector<int>> atom_shells(nat);
+    for (int s = 0; s < nbas; ++s) {
+        const int a = bas_arr[s * BAS_SLOTS + ATOM_OF];
+        if (a < 0 || a >= nat) return out;
+        atom_shells[a].push_back(s);
+    }
+
+    static constexpr std::array<int, 3> kOps[8] = {
+        { 1,  1,  1}, {-1, -1,  1}, {-1,  1, -1}, { 1, -1, -1},
+        {-1, -1, -1}, { 1,  1, -1}, { 1, -1,  1}, {-1,  1,  1},
+    };
+    const double tol = 1.0e-4;
+
+    for (const auto& sgn : kOps) {
+        std::vector<int> aperm(nat, -1);
+        std::vector<char> used(nat, 0);
+        bool ok = true;
+        for (int i = 0; i < nat; ++i) {
+            const auto& ai = mol.atom(i);
+            const double tx = sgn[0] * ai.x;
+            const double ty = sgn[1] * ai.y;
+            const double tz = sgn[2] * ai.z;
+            int best = -1;
+            double best_d = 1.0e30;
+            for (int j = 0; j < nat; ++j) {
+                const auto& aj = mol.atom(j);
+                if (aj.atomic_number != ai.atomic_number) continue;
+                const double dx = aj.x - tx, dy = aj.y - ty, dz = aj.z - tz;
+                const double d = std::sqrt(dx * dx + dy * dy + dz * dz);
+                if (d < best_d) {
+                    best_d = d;
+                    best = j;
+                }
+            }
+            if (best < 0 || best_d > tol || used[best]) {
+                ok = false;
+                break;
+            }
+            aperm[i] = best;
+            used[best] = 1;
+        }
+        if (!ok) continue;
+
+        std::vector<int> sperm(nbas, -1);
+        for (int i = 0; i < nat && ok; ++i) {
+            const int j = aperm[i];
+            if (atom_shells[i].size() != atom_shells[j].size()) {
+                ok = false;
+                break;
+            }
+            for (size_t k = 0; k < atom_shells[i].size(); ++k) {
+                const int si = atom_shells[i][k];
+                const int sj = atom_shells[j][k];
+                if (bas_arr[si * BAS_SLOTS + ANG_OF] != bas_arr[sj * BAS_SLOTS + ANG_OF] ||
+                    bas_arr[si * BAS_SLOTS + NPRIM_OF] != bas_arr[sj * BAS_SLOTS + NPRIM_OF]) {
+                    ok = false;
+                    break;
+                }
+                sperm[si] = sj;
+            }
+        }
+        if (ok) {
+            out.signs.push_back(sgn);
+            out.shell_perm.push_back(std::move(sperm));
+        }
+    }
+    return out;
+}
+
+} // namespace
+
+void IntegralEngine::set_abelian_symmetry(bool enable) {
+    if (use_abelian_symmetry_ != enable) {
+        use_abelian_symmetry_ = enable;
+        cache_valid = false;
+    }
+}
+
 const Eigen::Tensor<double, 4>& IntegralEngine::compute_eri() {
     if (cache_valid) return cached_eri;
 
     // [INJECTED_HPC_V5_ERI_OOM_GUARD]
-  {
-    double mem_lim_gb = 8.0;
-    if (const char* env_mem = std::getenv("MSHQC_MEMORY_GB")) {
-      const double v = std::atof(env_mem);
-      if (v >= 0.5) mem_lim_gb = v;
+    {
+        double mem_lim_gb = 8.0;
+        if (const char* env_mem = std::getenv("MSHQC_MEMORY_GB")) {
+            const double v = std::atof(env_mem);
+            if (v >= 0.5) mem_lim_gb = v;
+        }
+        const double est_gb =
+            static_cast<double>(nbasis_) * nbasis_ * nbasis_ * nbasis_ *
+            static_cast<double>(sizeof(double)) / 1.0e9;
+        if (est_gb > mem_lim_gb * 0.85) {
+            throw std::runtime_error(
+                "Exact 4-center ERI tensor requires " + std::to_string(est_gb) +
+                " GB RAM (nbasis=" + std::to_string(nbasis_) +
+                "), exceeding budget (" + std::to_string(mem_lim_gb * 0.85) +
+                " GB). Use eri_method='df' or 'cholesky', or set MSHQC_MEMORY_GB.");
+        }
     }
-    const double est_gb =
-        static_cast<double>(nbasis_) * nbasis_ * nbasis_ * nbasis_ *
-        static_cast<double>(sizeof(double)) / 1.0e9;
-    if (est_gb > mem_lim_gb * 0.85) {
-      throw std::runtime_error(
-          "Exact 4-center ERI tensor requires " + std::to_string(est_gb) +
-          " GB RAM (nbasis=" + std::to_string(nbasis_) +
-          "), exceeding budget (" + std::to_string(mem_lim_gb * 0.85) +
-          " GB). Use eri_method='df' or 'cholesky', or set MSHQC_MEMORY_GB.");
-    }
-  }
-  cached_eri.resize(nbasis_, nbasis_, nbasis_, nbasis_);
+
+    cached_eri.resize(nbasis_, nbasis_, nbasis_, nbasis_);
     cached_eri.setZero();
     auto shell2bf = basis_.shell_to_basis_function_map();
-    int nbas = basis_.n_shells();
-    std::vector<double> schwarz_max(nbas * nbas, 0.0);
+    const int nbas = basis_.n_shells();
+
+    std::vector<int> shell_dim(nbas), shell_l(nbas);
+    for (int s = 0; s < nbas; ++s) {
+        shell_dim[s] = CINTcgto_spheric(s, bas_.data());
+        shell_l[s] = bas_[s * BAS_SLOTS + ANG_OF];
+    }
+
+    std::vector<double> schwarz_max(static_cast<size_t>(nbas) * nbas, 0.0);
     #pragma omp parallel
     {
         std::vector<double> buf(65536, 0.0);
         #pragma omp for schedule(dynamic)
         for (int s1 = 0; s1 < nbas; ++s1) {
             for (int s2 = 0; s2 <= s1; ++s2) {
-                int dim1 = CINTcgto_spheric(s1, bas_.data());
-                int dim2 = CINTcgto_spheric(s2, bas_.data());
-                size_t req_sz = static_cast<size_t>(dim1) * dim2 * dim1 * dim2;
+                const int dim1 = shell_dim[s1];
+                const int dim2 = shell_dim[s2];
+                const size_t req_sz = static_cast<size_t>(dim1) * dim2 * dim1 * dim2;
                 if (buf.size() < req_sz) buf.resize(req_sz);
 
                 int shls[4] = {s1, s2, s1, s2};
-                int has_val = cint2e_sph(buf.data(), shls, atm_.data(), mol_.n_atoms(), bas_.data(), nbas, env_.data(), static_cast<CINTOpt*>(opt_));
+                int has_val = cint2e_sph(buf.data(), shls, atm_.data(), mol_.n_atoms(),
+                                         bas_.data(), nbas, env_.data(), static_cast<CINTOpt*>(opt_));
                 if (has_val) {
                     double max_v = 0.0;
                     for (size_t x = 0; x < req_sz; ++x) max_v = std::max(max_v, std::abs(buf[x]));
-                    schwarz_max[s1 * nbas + s2] = std::sqrt(max_v);
-                    schwarz_max[s2 * nbas + s1] = std::sqrt(max_v);
+                    schwarz_max[static_cast<size_t>(s1) * nbas + s2] = std::sqrt(max_v);
+                    schwarz_max[static_cast<size_t>(s2) * nbas + s1] = std::sqrt(max_v);
                 }
             }
         }
     }
 
-    // 2. Main ERI Loop
+    AbelianShellOps abel;
+    const bool active_abelian = use_abelian_symmetry_;
+    if (active_abelian) {
+        abel = build_abelian_shell_ops(mol_, basis_, bas_);
+    }
+    const int n_ops = static_cast<int>(abel.signs.size());
+    const bool use_petite = (active_abelian && n_ops > 1);
+
     const double screen_thresh = 1e-12;
-    #pragma omp parallel
+    size_t eval_quartets = 0;
+
+    #pragma omp parallel reduction(+:eval_quartets)
     {
         std::vector<double> buf(65536, 0.0);
         #pragma omp for schedule(dynamic, 1)
         for (int s1 = 0; s1 < nbas; ++s1) {
             for (int s2 = 0; s2 <= s1; ++s2) {
-                double bound1 = schwarz_max[s1 * nbas + s2];
+                const double bound1 = schwarz_max[static_cast<size_t>(s1) * nbas + s2];
                 if (bound1 < screen_thresh) continue;
 
                 for (int s3 = 0; s3 <= s1; ++s3) {
-                    int s4_max = (s1 == s3) ? s2 : s3;
+                    const int s4_max = (s1 == s3) ? s2 : s3;
                     for (int s4 = 0; s4 <= s4_max; ++s4) {
-                        if (bound1 * schwarz_max[s3 * nbas + s4] < screen_thresh) continue;
+                        if (bound1 * schwarz_max[static_cast<size_t>(s3) * nbas + s4] < screen_thresh) continue;
 
-                        int dim1 = CINTcgto_spheric(s1, bas_.data());
-                        int dim2 = CINTcgto_spheric(s2, bas_.data());
-                        int dim3 = CINTcgto_spheric(s3, bas_.data());
-                        int dim4 = CINTcgto_spheric(s4, bas_.data());
-                        size_t req_sz = static_cast<size_t>(dim1) * dim2 * dim3 * dim4;
+                        std::uint64_t my_key = 0;
+                        if (use_petite) {
+                            my_key = canon_8fold_key(s1, s2, s3, s4);
+                            bool is_canon = true;
+                            for (int g = 1; g < n_ops; ++g) {
+                                const auto& sp = abel.shell_perm[g];
+                                if (canon_8fold_key(sp[s1], sp[s2], sp[s3], sp[s4]) < my_key) {
+                                    is_canon = false;
+                                    break;
+                                }
+                            }
+                            if (!is_canon) continue;
+                        }
+
+                        const int dim1 = shell_dim[s1];
+                        const int dim2 = shell_dim[s2];
+                        const int dim3 = shell_dim[s3];
+                        const int dim4 = shell_dim[s4];
+                        const size_t req_sz = static_cast<size_t>(dim1) * dim2 * dim3 * dim4;
                         if (buf.size() < req_sz) buf.resize(req_sz);
 
                         int shls[4] = {s1, s2, s3, s4};
-                        if (!cint2e_sph(buf.data(), shls, atm_.data(), mol_.n_atoms(), bas_.data(), nbas, env_.data(), static_cast<CINTOpt*>(opt_))) continue;
+                        eval_quartets += 1;
+                        if (!cint2e_sph(buf.data(), shls, atm_.data(), mol_.n_atoms(),
+                                        bas_.data(), nbas, env_.data(), static_cast<CINTOpt*>(opt_))) {
+                            continue;
+                        }
 
-                        int bf1 = shell2bf[s1]; int bf2 = shell2bf[s2];
-                        int bf3 = shell2bf[s3]; int bf4 = shell2bf[s4];
+                        if (!use_petite) {
+                            const int bf1 = shell2bf[s1], bf2 = shell2bf[s2];
+                            const int bf3 = shell2bf[s3], bf4 = shell2bf[s4];
+                            for (int i = 0; i < dim1; ++i) {
+                                for (int j = 0; j < dim2; ++j) {
+                                    for (int k = 0; k < dim3; ++k) {
+                                        for (int l = 0; l < dim4; ++l) {
+                                            const double val = buf[i + dim1 * (j + dim2 * (k + dim3 * l))];
+                                            const Eigen::Index i1 = bf1 + i, i2 = bf2 + j;
+                                            const Eigen::Index i3 = bf3 + k, i4 = bf4 + l;
+                                            cached_eri(i1, i2, i3, i4) = val;
+                                            cached_eri(i2, i1, i3, i4) = val;
+                                            cached_eri(i1, i2, i4, i3) = val;
+                                            cached_eri(i2, i1, i4, i3) = val;
+                                            cached_eri(i3, i4, i1, i2) = val;
+                                            cached_eri(i4, i3, i1, i2) = val;
+                                            cached_eri(i3, i4, i2, i1) = val;
+                                            cached_eri(i4, i3, i2, i1) = val;
+                                        }
+                                    }
+                                }
+                            }
+                        } else {
+                            std::uint64_t seen_keys[8];
+                            int n_seen = 0;
+                            const int l1 = shell_l[s1], l2 = shell_l[s2];
+                            const int l3 = shell_l[s3], l4 = shell_l[s4];
 
-                        // Konversi layout Col-Major libcint (i fast) -> C-Major (l fast)
-                        for (int i = 0; i < dim1; ++i) {
-                            for (int j = 0; j < dim2; ++j) {
-                                for (int k = 0; k < dim3; ++k) {
-                                    for (int l = 0; l < dim4; ++l) {
-                                        double val = buf[i + dim1*(j + dim2*(k + dim3*l))];
+                            for (int g = 0; g < n_ops; ++g) {
+                                const auto& sp = abel.shell_perm[g];
+                                const int t1 = sp[s1], t2 = sp[s2], t3 = sp[s3], t4 = sp[s4];
+                                const std::uint64_t kg = (g == 0) ? my_key : canon_8fold_key(t1, t2, t3, t4);
+                                bool dup = false;
+                                for (int u = 0; u < n_seen; ++u) {
+                                    if (seen_keys[u] == kg) {
+                                        dup = true;
+                                        break;
+                                    }
+                                }
+                                if (dup) continue;
+                                seen_keys[n_seen++] = kg;
 
-                                        Eigen::Index i1 = bf1 + i, i2 = bf2 + j, i3 = bf3 + k, i4 = bf4 + l;
-                                        cached_eri(i1, i2, i3, i4) = val;
-                                        cached_eri(i2, i1, i3, i4) = val;
-                                        cached_eri(i1, i2, i4, i3) = val;
-                                        cached_eri(i2, i1, i4, i3) = val;
-                                        cached_eri(i3, i4, i1, i2) = val;
-                                        cached_eri(i4, i3, i1, i2) = val;
-                                        cached_eri(i3, i4, i2, i1) = val;
-                                        cached_eri(i4, i3, i2, i1) = val;
+                                const int sx = abel.signs[g][0], sy = abel.signs[g][1], sz = abel.signs[g][2];
+                                const int bf1 = shell2bf[t1], bf2 = shell2bf[t2];
+                                const int bf3 = shell2bf[t3], bf4 = shell2bf[t4];
+
+                                int sg1[9], sg2[9], sg3[9], sg4[9];
+                                for (int i = 0; i < dim1; ++i) sg1[i] = abelian_sph_sign(l1, i, sx, sy, sz);
+                                for (int j = 0; j < dim2; ++j) sg2[j] = abelian_sph_sign(l2, j, sx, sy, sz);
+                                for (int k = 0; k < dim3; ++k) sg3[k] = abelian_sph_sign(l3, k, sx, sy, sz);
+                                for (int l = 0; l < dim4; ++l) sg4[l] = abelian_sph_sign(l4, l, sx, sy, sz);
+
+                                for (int i = 0; i < dim1; ++i) {
+                                    const Eigen::Index i1 = bf1 + i;
+                                    const int p1 = sg1[i];
+                                    for (int j = 0; j < dim2; ++j) {
+                                        const Eigen::Index i2 = bf2 + j;
+                                        const int p12 = p1 * sg2[j];
+                                        for (int k = 0; k < dim3; ++k) {
+                                            const Eigen::Index i3 = bf3 + k;
+                                            const int p123 = p12 * sg3[k];
+                                            for (int l = 0; l < dim4; ++l) {
+                                                const double val = static_cast<double>(p123 * sg4[l]) *
+                                                    buf[i + dim1 * (j + dim2 * (k + dim3 * l))];
+                                                const Eigen::Index i4 = bf4 + l;
+                                                cached_eri(i1, i2, i3, i4) = val;
+                                                cached_eri(i2, i1, i3, i4) = val;
+                                                cached_eri(i1, i2, i4, i3) = val;
+                                                cached_eri(i2, i1, i4, i3) = val;
+                                                cached_eri(i3, i4, i1, i2) = val;
+                                                cached_eri(i4, i3, i1, i2) = val;
+                                                cached_eri(i3, i4, i2, i1) = val;
+                                                cached_eri(i4, i3, i2, i1) = val;
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -375,6 +624,7 @@ const Eigen::Tensor<double, 4>& IntegralEngine::compute_eri() {
         }
     }
 
+    last_eri_quartets_ = eval_quartets;
     cache_valid = true;
     return cached_eri;
 }
