@@ -216,6 +216,14 @@ jobs:
           micromamba activate geom_env
           python benchmarks/run_bab4_v2.py --out mshqc_bab4_v2_raw.json --log 11_bab4_v2_full_log.txt
 
+      - name: "[11/11] Bab IV Symmetry Comparison Benchmark (C1 vs Point-Group Symmetry)"
+        if: always() && steps.compile.outcome == 'success'
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate geom_env
+          python benchmarks/run_bab4_v2.py --compare-symmetry 2>&1 | tee 12_symmetry_compare_bab4_log.txt
+
       - name: Publish Benchmark Summary to GitHub Step Summary
         if: always() && steps.compile.outcome == 'success'
         shell: bash -el {0}
