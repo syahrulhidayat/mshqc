@@ -51,8 +51,7 @@ def _print_head_to_head_summary(base_path: Path, abel_path: Path) -> None:
                 max_de = max(max_de, abs(float(b_val["e"]) - float(a_val["e"])))
                 n_checked += 1
 
-    print("
-" + "=" * 96, flush=True)
+    print("\n" + "=" * 96, flush=True)
     print(" [PERBANDINGAN LANGSUNG BAB IV] C1 + 8-FOLD (Default) vs ABELIAN + 8-FOLD", flush=True)
     print("=" * 96, flush=True)
     print(f"| {'Mode Integral':<16} | {'C1 + 8-Fold (s)':>16} | {'Abelian + 8-Fold (s)':>20} | {'Rasio C1/Abelian':>18} |", flush=True)
