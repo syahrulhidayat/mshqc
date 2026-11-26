@@ -40,11 +40,12 @@ except Exception:
 CPU_AVAIL = os.cpu_count() or 4
 N_THREADS = int(os.environ.get("OMP_NUM_THREADS", str(min(4, CPU_AVAIL))))
 os.environ["OMP_NUM_THREADS"] = str(N_THREADS)
-os.environ["OPENBLAS_NUM_THREADS"] = "1"
-os.environ["MKL_NUM_THREADS"] = "1"
-os.environ["MKL_DYNAMIC"] = "FALSE"
 os.environ["OMP_MAX_ACTIVE_LEVELS"] = "1"
+os.environ["OMP_NESTED"] = "FALSE"
 os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
+# Biarkan psi4.set_num_threads(N_THREADS) mengelola threading BLAS/OpenMP secara native
+for _k in ("OPENBLAS_NUM_THREADS", "MKL_NUM_THREADS", "BLIS_NUM_THREADS"):
+    os.environ.pop(_k, None)
 
 SHM_DIR = "/dev/shm" if os.path.isdir("/dev/shm") and os.access("/dev/shm", os.W_OK) else tempfile.gettempdir()
 os.environ.setdefault("PSI_SCRATCH", SHM_DIR)
@@ -109,48 +110,6 @@ class TeeLogger:
         self.log_file.close()
 
 
-def _load_blas_setters():
-    setters = []
-    lib_names = ("libmkl_rt.so", "libmkl_rt.so.2", "libopenblas.so", "libopenblas.so.0")
-    candidates = []
-    for d in (os.path.join(sys.prefix, "lib"), os.environ.get("CONDA_PREFIX", "") and os.path.join(os.environ["CONDA_PREFIX"], "lib")):
-        if d and os.path.isdir(d):
-            for name in lib_names:
-                full_p = os.path.join(d, name)
-                if os.path.exists(full_p):
-                    candidates.append(full_p)
-    candidates.extend(lib_names)
-    candidates.append(None)
-
-    seen_ptrs = set()
-    for lib_name in candidates:
-        try:
-            lib = ctypes.CDLL(lib_name)
-        except Exception:
-            continue
-        for fn_name in ("MKL_Set_Num_Threads", "openblas_set_num_threads"):
-            if hasattr(lib, fn_name):
-                fn = getattr(lib, fn_name)
-                ptr = ctypes.cast(fn, ctypes.c_void_p).value
-                if ptr not in seen_ptrs:
-                    seen_ptrs.add(ptr)
-                    fn.argtypes = [ctypes.c_int]
-                    fn.restype = None
-                    setters.append(fn)
-    return setters
-
-
-_BLAS_SETTERS = _load_blas_setters()
-
-
-def set_blas_threads(num_t: int) -> None:
-    for fn in _BLAS_SETTERS:
-        try:
-            fn(int(num_t))
-        except Exception:
-            pass
-
-
 def get_rss_and_hwm_mb() -> Tuple[float, float]:
     if sys.platform.startswith("linux"):
         rss, hwm = 0.0, 0.0
@@ -206,7 +165,6 @@ def configure_psi4(mode_lower: str, is_uhf: bool, basis: str = "cc-pVTZ", aux: s
         "mp_type": corr_t,
         "cc_type": corr_t,
         "freeze_core": "false",
-        "hess_type": "approx_diag",
         "r_convergence": 1e-6,
         "rms_mograd_convergence": 1e-5,
         "max_mograd_convergence": 1e-4,
@@ -350,15 +308,10 @@ def run_ram_worker(payload_str: str) -> None:
 
         mol = build_psi4_mol(sys_name, mode_lower, exact_symmetry=p.get("exact_symmetry", "auto"))
         configure_psi4(mode_lower, is_uhf, basis=p["basis"], aux=p["aux"])
-
-        set_blas_threads(1)
         _, scf_wfn = psi4.energy("scf", molecule=mol, return_wfn=True)
         if mode_lower in ("cholesky", "df"):
             psi4.set_options({"scf_type": "pk", "read_scf_3index": False})
-
-        set_blas_threads(N_THREADS if mode_lower == "exact" else 1)
         psi4.energy(p["method"].lower(), ref_wfn=scf_wfn, molecule=mol)
-        set_blas_threads(1)
 
         curr_rss, peak_hwm = get_rss_and_hwm_mb()
         scratch_ram = get_scratch_mb(scratch_sub)
@@ -420,8 +373,6 @@ def compute_psi4_suite(
 
             key = f"{sys_name}|{mode_upper}"
             entry: Dict[str, Any] = {}
-
-            set_blas_threads(1)
             try:
                 t0 = time.perf_counter()
                 e_scf, scf_wfn = psi4.energy("scf", molecule=mol, return_wfn=True)
@@ -460,8 +411,6 @@ def compute_psi4_suite(
                     rohf_snap = snapshot_wfn(rohf_wfn)
                     if mode_lower in ("cholesky", "df"):
                         psi4.set_options({"scf_type": "pk", "read_scf_3index": False})
-
-                    set_blas_threads(1)
                     for ro_key, ro_call in (("ROMP2", "mp2"), ("ROMP3", "mp3")):
                         try:
                             t0 = time.perf_counter()
@@ -489,15 +438,12 @@ def compute_psi4_suite(
                         psi4.core.clean()
                         restore_wfn(rohf_wfn, rohf_snap)
                 finally:
-                    set_blas_threads(1)
                     psi4.core.clean()
                     configure_psi4(mode_lower, is_uhf, basis=basis_name, aux=aux_name)
                     restore_wfn(scf_wfn, hf_snap)
 
             if mode_lower in ("cholesky", "df"):
                 psi4.set_options({"scf_type": "pk", "read_scf_3index": False})
-
-            set_blas_threads(N_THREADS if mode_lower == "exact" else 1)
             try:
                 for m_key, m_call, m_lbl in (("MP2", "mp2", f"{ref_lbl}MP2"), ("MP3", "mp3", f"{ref_lbl}MP3")):
                     try:
@@ -528,9 +474,18 @@ def compute_psi4_suite(
                 for m_key, m_call in oo_methods:
                     try:
                         psi4.core.set_output_file(tmp_log, False)
-                        t0 = time.perf_counter()
-                        e_val, opt_wfn = psi4.energy(m_call, ref_wfn=scf_wfn, molecule=mol, return_wfn=True)
-                        t_val = time.perf_counter() - t0
+                        try:
+                            t0 = time.perf_counter()
+                            e_val, opt_wfn = psi4.energy(m_call, ref_wfn=scf_wfn, molecule=mol, return_wfn=True)
+                            t_val = time.perf_counter() - t0
+                        except Exception:
+                            psi4.core.clean()
+                            restore_wfn(scf_wfn, hf_snap)
+                            psi4.set_options({"hess_type": "approx_diag"})
+                            psi4.core.set_output_file(tmp_log, False)
+                            t0 = time.perf_counter()
+                            e_val, opt_wfn = psi4.energy(m_call, ref_wfn=scf_wfn, molecule=mol, return_wfn=True)
+                            t_val = time.perf_counter() - t0
 
                         psi4.core.flush_outfile()
                         psi4.core.set_output_file("NUL" if os.name == "nt" else "/dev/null", False)
@@ -556,7 +511,6 @@ def compute_psi4_suite(
                     psi4.core.clean()
                     restore_wfn(scf_wfn, hf_snap)
             finally:
-                set_blas_threads(1)
 
             results[key] = entry
             gc.collect()

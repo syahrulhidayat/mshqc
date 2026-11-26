@@ -274,6 +274,8 @@ jobs:
                   fp.write_text(new_txt, encoding="utf-8")
           PYPATCH
           fi
+          unset MKL_NUM_THREADS OPENBLAS_NUM_THREADS BLIS_NUM_THREADS
+          export OMP_NUM_THREADS=4 OMP_MAX_ACTIVE_LEVELS=1 OMP_NESTED=FALSE
           export PSI_SCRATCH="$RUNNER_TEMP/psi4_bab4_scratch"
           mkdir -p "$PSI_SCRATCH"
           python benchmarks/run_psi4_bab4_v2.py \
