@@ -224,6 +224,17 @@ jobs:
           micromamba activate geom_env
           python benchmarks/run_bab4_v2.py --compare-symmetry 2>&1 | tee 12_symmetry_compare_bab4_log.txt
 
+      - name: "[11/11] Full Bab IV Benchmark Suite v2.0 (Abelian + 8-Fold Symmetry, Tables 1-5 + RAM)"
+        if: always() && steps.compile.outcome == 'success'
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate geom_env
+          python benchmarks/run_bab4_abelian_v2.py \
+            --out mshqc_bab4_abelian_v2_raw.json \
+            --log 12_bab4_abelian_v2_full_log.txt \
+            --baseline-json mshqc_bab4_v2_raw.json 2>&1 | tee 12_bab4_abelian_v2_summary_log.txt
+
       - name: Publish Benchmark Summary to GitHub Step Summary
         if: always() && steps.compile.outcome == 'success'
         shell: bash -el {0}
@@ -253,7 +264,11 @@ jobs:
           p_bab4 = Path("mshqc_bab4_v2_raw.json")
           if p_bab4.exists():
               b4 = json.loads(p_bab4.read_text(encoding="utf-8"))
-              print(f"- **Bab IV Suite Wall Time:** `{b4.get('wall_time_s', 0.0):.2f} s` (threads={b4.get('threads', '?')})")
+              print(f"- **Bab IV Suite (C1 + 8-Fold) Wall Time:** `{b4.get('wall_time_s', 0.0):.2f} s` (threads={b4.get('threads', '?')})")
+          p_bab4_ab = Path("mshqc_bab4_abelian_v2_raw.json")
+          if p_bab4_ab.exists():
+              b4a = json.loads(p_bab4_ab.read_text(encoding="utf-8"))
+              print(f"- **Bab IV Suite (Abelian + 8-Fold) Wall Time:** `{b4a.get('wall_time_s', 0.0):.2f} s` (threads={b4a.get('threads', '?')})")
 
           p_heavy = Path("/tmp/heavy_quick.json")
           if p_heavy.exists():
