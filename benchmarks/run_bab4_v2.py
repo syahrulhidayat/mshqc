@@ -151,6 +151,7 @@ def run_ram_worker(payload_str: str) -> None:
     calc = mshqc.MSHQCCalculator(
         mol, basis_name=p["basis"], eri_method=p["mode"].lower(),
         aux_basis_name=p["aux"], threshold=1e-9,
+        use_symmetry=bool(p.get("use_symmetry", False)),
     )
     scf_res = calc.run_scf()
     gc.collect()
@@ -169,15 +170,17 @@ def compute_solver_suite(
     modes: List[str],
     basis_name: str,
     include_extended: bool = True,
+    use_symmetry: bool = False,
 ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
     aux_name = f"{basis_name}-RI"
     ref_suite: Dict[str, Any] = {}
     traces: Dict[str, Any] = {}
 
     print("\n" + "=" * 110, flush=True)
+    sym_tag = "ABELIAN + 8-FOLD" if use_symmetry else "C1 + 8-FOLD"
     print(
         f" [LIVE TEST 1/5] MSHQC v{mshqc.__version__} THIN-CORE SOLVER SUITE "
-        f"(THREADS: {N_THREADS} | {basis_name} / {aux_name})",
+        f"(THREADS: {N_THREADS} | {basis_name} / {aux_name} | SYMMETRY: {sym_tag})",
         flush=True,
     )
     print("=" * 110, flush=True)
@@ -199,6 +202,7 @@ def compute_solver_suite(
             calc = mshqc.MSHQCCalculator(
                 mol, basis_name=basis_name, eri_method=mode.lower(),
                 aux_basis_name=aux_name, threshold=1e-9,
+                use_symmetry=use_symmetry,
             )
 
             t0 = time.perf_counter()
@@ -222,6 +226,7 @@ def compute_solver_suite(
                 calc_ro = mshqc.MSHQCCalculator(
                     mol, basis_name=basis_name, eri_method=mode.lower(),
                     aux_basis_name=aux_name, reference="rohf", threshold=1e-9,
+                    use_symmetry=use_symmetry,
                 )
                 calc_ro._eri4_cache = calc._eri4_cache
                 calc_ro._ao_factor_cache = calc._ao_factor_cache
@@ -289,18 +294,19 @@ def compute_solver_suite(
                 v_nn = float(mol.nuclear_repulsion_energy())
                 B_ao = scf_res.L_mat
                 tr_o2, tr_o3 = [], []
+                salc_blk = calc._get_salc_blocks() if use_symmetry else None
                 if not is_uhf:
                     M.run_df_omp_rhf(H_c, v_nn, B_ao, scf_res.C_alpha, scf_res.n_occ_alpha,
-                                     method_name="omp2", grad_tol=1e-5, callback=tr_o2.append)
+                                     method_name="omp2", grad_tol=1e-5, callback=tr_o2.append, salc_blocks=salc_blk)
                     M.run_df_omp_rhf(H_c, v_nn, B_ao, scf_res.C_alpha, scf_res.n_occ_alpha,
-                                     method_name="omp3", lam_mp3=1.0, grad_tol=1e-5, callback=tr_o3.append)
+                                     method_name="omp3", lam_mp3=1.0, grad_tol=1e-5, callback=tr_o3.append, salc_blocks=salc_blk)
                 else:
                     M.run_df_omp_uhf(H_c, S_o, v_nn, B_ao, scf_res.C_alpha, scf_res.C_beta,
                                      scf_res.n_occ_alpha, scf_res.n_occ_beta,
-                                     method_name="omp2", grad_tol=1e-5, callback=tr_o2.append)
+                                     method_name="omp2", grad_tol=1e-5, callback=tr_o2.append, salc_blocks=salc_blk)
                     M.run_df_omp_uhf(H_c, S_o, v_nn, B_ao, scf_res.C_alpha, scf_res.C_beta,
                                      scf_res.n_occ_alpha, scf_res.n_occ_beta,
-                                     method_name="omp3", lam_mp3=1.0, grad_tol=1e-5, callback=tr_o3.append)
+                                     method_name="omp3", lam_mp3=1.0, grad_tol=1e-5, callback=tr_o3.append, salc_blocks=salc_blk)
                 traces[f"{sys_name}|DF"] = {"OMP2": tr_o2, "OMP3": tr_o3}
 
             ref_suite[f"{sys_name}|{mode}"] = entry
@@ -449,18 +455,19 @@ def verify_orbital_gradients_fd(sys_list: List[str], basis_name: str, traces: Di
     return fd_summary
 
 
-def compute_ram_benchmark(cases: List[Tuple[str, str, str, str, str]]) -> Dict[str, Any]:
+def compute_ram_benchmark(cases: List[Tuple[str, str, str, str, str]], use_symmetry: bool = False) -> Dict[str, Any]:
     ram_results: Dict[str, Any] = {}
     script_path = os.path.abspath(__file__)
     print("\n" + "=" * 96, flush=True)
-    print(" [LIVE TEST 5/5] PENGUKURAN PEAK RSS (VmHWM) & NET WORKING RAM TERKALIBRASI (MSHQC v2.0)", flush=True)
+    sym_tag = "ABELIAN + 8-FOLD" if use_symmetry else "C1 + 8-FOLD"
+    print(f" [LIVE TEST 5/5] PENGUKURAN PEAK RSS (VmHWM) & NET WORKING RAM TERKALIBRASI ({sym_tag})", flush=True)
     print("=" * 96, flush=True)
     print(f"| {'Sistem':<8} | {'Basis':<8} | {'Mode ERI':<9} | {'Metode':<6} | {'Base HWM (MB)':<14} | {'Peak HWM (MB)':<14} | {'Net RAM (MB)':<13} |", flush=True)
     print(f"|{'-'*10}|{'-'*10}|{'-'*11}|{'-'*8}|{'-'*16}|{'-'*16}|{'-'*15}|", flush=True)
 
     for sys_name, b_name, aux_name, mode, method in cases:
         key = f"{sys_name}|{b_name}|{mode}|{method}"
-        payload = json.dumps({"sys": sys_name, "basis": b_name, "aux": aux_name, "mode": mode, "method": method})
+        payload = json.dumps({"sys": sys_name, "basis": b_name, "aux": aux_name, "mode": mode, "method": method, "use_symmetry": use_symmetry})
         try:
             out = subprocess.check_output([sys.executable, script_path, "--ram-worker", payload], text=True)
             res = json.loads(out.strip().splitlines()[-1])
@@ -573,6 +580,7 @@ def main() -> None:
     parser.add_argument("--core5", action="store_true", help="Jalankan 5 sistem inti (pengganti test_mshqc2)")
     parser.add_argument("--quick", action="store_true", help="Mode uji cepat (H2O & OH, cc-pVDZ, DF)")
     parser.add_argument("--skip-ram", action="store_true", help="Lewati subprocess RAM benchmark")
+    parser.add_argument("--use-symmetry", action="store_true", help="Aktifkan Simetri Grup Titik Abelian + Permutasi 8-Lipat pada seluruh suite Bab IV")
     parser.add_argument("--compare-symmetry", action="store_true", help="Bandingkan C1 (8-fold) vs Abelian + 8-fold pada Bab IV")
     parser.add_argument("--ram-worker", default=None, help=argparse.SUPPRESS)
     args = parser.parse_args()
@@ -600,16 +608,18 @@ def main() -> None:
     sys.stdout = logger
     try:
         t0 = time.perf_counter()
-        ref_suite, traces = compute_solver_suite(sys_list, modes, basis_name, include_extended=True)
+        ref_suite, traces = compute_solver_suite(sys_list, modes, basis_name, include_extended=True, use_symmetry=args.use_symmetry)
         t1_rows, t2_rows = compute_table1_and_table2(t1_cases)
         fd_summary = verify_orbital_gradients_fd(fd_systems, basis_name, traces)
-        ram_bench = {} if args.skip_ram else compute_ram_benchmark(ram_cases)
+        ram_bench = {} if args.skip_ram else compute_ram_benchmark(ram_cases, use_symmetry=args.use_symmetry)
         wall_s = time.perf_counter() - t0
 
         Path(args.out).write_text(
             json.dumps({
                 "engine": f"mshqc-v{mshqc.__version__}",
                 "thin_core_only": mshqc.THIN_CORE_ONLY,
+            "use_symmetry": bool(args.use_symmetry),
+            "symmetry_mode": "abelian+8fold" if args.use_symmetry else "c1+8fold",
                 "threads": N_THREADS,
                 "wall_time_s": wall_s,
                 "ref_suite": ref_suite,
