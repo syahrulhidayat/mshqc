@@ -235,19 +235,21 @@ jobs:
             --log 12_bab4_abelian_v2_full_log.txt \
             --baseline-json mshqc_bab4_v2_raw.json 2>&1 | tee 12_bab4_abelian_v2_summary_log.txt
 
+      - name: "Restore Cached Psi4 Environment (ubuntu-latest only)"
+        if: always() && steps.compile.outcome == 'success' && matrix.os == 'ubuntu-latest'
+        uses: actions/cache@v4
+        with:
+          path: ~/micromamba/envs/psi4_env
+          key: psi4-env-${{ runner.os }}-py311-v1
+
       - name: "Set up Psi4 Reference Environment (ubuntu-latest only)"
         if: always() && steps.compile.outcome == 'success' && matrix.os == 'ubuntu-latest'
-        uses: mamba-org/setup-micromamba@v2
-        with:
-          init-shell: bash
-          environment-name: psi4_env
-          cache-environment: true
-          create-args: >-
-            -c conda-forge
-            python=3.11
-            psi4
-            numpy
-            scipy
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          if [ ! -x "$MAMBA_ROOT_PREFIX/envs/psi4_env/bin/python" ]; then
+            micromamba create -y -n psi4_env -c conda-forge python=3.11 psi4 numpy scipy
+          fi
 
       - name: "[12/13] Psi4 Bab IV Reference Suite v2.0 (ubuntu-latest, Same Runner CPU)"
         if: always() && steps.compile.outcome == 'success' && matrix.os == 'ubuntu-latest'
