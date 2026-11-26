@@ -12,7 +12,7 @@ jobs:
   thin_core_v2_test:
     name: Pure Thin-Core v2.0 (Zero-HDF5, ${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 60
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -235,6 +235,65 @@ jobs:
             --log 12_bab4_abelian_v2_full_log.txt \
             --baseline-json mshqc_bab4_v2_raw.json 2>&1 | tee 12_bab4_abelian_v2_summary_log.txt
 
+      - name: "Set up Psi4 Reference Environment (ubuntu-latest only)"
+        if: always() && steps.compile.outcome == 'success' && matrix.os == 'ubuntu-latest'
+        uses: mamba-org/setup-micromamba@v2
+        with:
+          init-shell: bash
+          environment-name: psi4_env
+          cache-environment: true
+          create-args: >-
+            -c conda-forge
+            python=3.11
+            psi4
+            numpy
+            scipy
+
+      - name: "[12/13] Psi4 Bab IV Reference Suite v2.0 (ubuntu-latest, Same Runner CPU)"
+        if: always() && steps.compile.outcome == 'success' && matrix.os == 'ubuntu-latest'
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate psi4_env
+          if ! python -c "import psi4" >/dev/null 2>&1; then
+            python - << 'PYPATCH'
+          import pathlib, re, sys
+          for fp in pathlib.Path(sys.prefix).rglob("psi4/driver/procrouting/proc_table.py"):
+              txt = fp.read_text(encoding="utf-8")
+              pat = r"for key in functionals:\s+ssuper = build_superfunctional_from_dictionary\(functionals\[key\], 1, 1, True\)\[0\]"
+              rep = (
+                  "for key in list(functionals.keys()):\n"
+                  "    try:\n"
+                  "        ssuper = build_superfunctional_from_dictionary(functionals[key], 1, 1, True)[0]\n"
+                  "    except Exception:\n"
+                  "        functionals.pop(key, None)\n"
+                  "        continue"
+              )
+              new_txt, cnt = re.subn(pat, rep, txt)
+              if cnt > 0:
+                  fp.write_text(new_txt, encoding="utf-8")
+          PYPATCH
+          fi
+          export PSI_SCRATCH="$RUNNER_TEMP/psi4_bab4_scratch"
+          mkdir -p "$PSI_SCRATCH"
+          python benchmarks/run_psi4_bab4_v2.py \
+            --out psi4_bab4_v2_raw.json \
+            --log 13_psi4_bab4_v2_log.txt
+          rm -rf "$PSI_SCRATCH"
+
+      - name: "[13/13] Head-to-Head Bab IV Comparator (mshqc C1+8F & Abelian+8F vs Psi4)"
+        if: always() && steps.compile.outcome == 'success' && matrix.os == 'ubuntu-latest'
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate geom_env
+          python benchmarks/compare_bab4_v2.py \
+            --mshqc mshqc_bab4_v2_raw.json \
+            --psi4 psi4_bab4_v2_raw.json \
+            --mshqc-abelian mshqc_bab4_abelian_v2_raw.json \
+            --out-txt 14_bab4_v2_compare_psi4_log.txt \
+            --out-md comparison_bab4_v2_summary.md
+
       - name: Publish Benchmark Summary to GitHub Step Summary
         if: always() && steps.compile.outcome == 'success'
         shell: bash -el {0}
@@ -270,6 +329,11 @@ jobs:
               b4a = json.loads(p_bab4_ab.read_text(encoding="utf-8"))
               print(f"- **Bab IV Suite (Abelian + 8-Fold) Wall Time:** `{b4a.get('wall_time_s', 0.0):.2f} s` (threads={b4a.get('threads', '?')})")
 
+          p_cmp = Path("comparison_bab4_v2_summary.md")
+          if p_cmp.exists():
+              print()
+              print(p_cmp.read_text(encoding="utf-8").strip())
+
           p_heavy = Path("/tmp/heavy_quick.json")
           if p_heavy.exists():
               raw = json.loads(p_heavy.read_text(encoding="utf-8"))
@@ -293,4 +357,6 @@ jobs:
           path: |
             *_log.txt
             mshqc_*_v2_raw.json
+            psi4_*_v2_raw.json
+            comparison_bab4_v2_summary.md
           if-no-files-found: warn
