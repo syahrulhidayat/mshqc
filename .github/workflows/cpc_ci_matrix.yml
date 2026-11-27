@@ -1,0 +1,116 @@
+name: CPC Sanitizer & Modal GPU Dispatch
+
+# Sengaja menggunakan workflow_dispatch (+ tag v* untuk GPU) agar:
+# 1. `test_hybrid.yml` tetap menjadi gerbang push cepat utama tanpa duplikasi.
+# 2. Job ASan/TSan tidak memicu kegagalan palsu sebelum dependensi native
+#    diselaraskan penuh dengan `test_hybrid.yml`.
+# 3. Kredit GPU Modal (A100/H100) hanya terpakai saat verifikasi eksplisit.
+on:
+  workflow_dispatch:
+    inputs:
+      run_sanitizers:
+        description: "Run C++20 ASan+UBSan and TSan jobs"
+        required: false
+        default: "false"
+        type: choice
+        options:
+          - "false"
+          - "true"
+      run_modal_gpu:
+        description: "Run FP64 GPU benchmark on Modal (source build, non-PyPI)"
+        required: false
+        default: "true"
+        type: choice
+        options:
+          - "true"
+          - "false"
+      modal_gpu_type:
+        description: "Modal GPU SKU with native FP64"
+        required: false
+        default: "A100"
+        type: choice
+        options:
+          - "A100"
+          - "H100"
+      bench_script:
+        description: "Benchmark script path inside repo"
+        required: false
+        default: "benchmarks/run_heavy_large_v2.py"
+        type: string
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  cpp-asan-ubsan:
+    name: C++20 ASan + UBSan (Memory Safety)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && inputs.run_sanitizers == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure & build C++20 tests with ASan + UBSan
+        env:
+          ASAN_OPTIONS: "detect_leaks=1:strict_string_checks=1:halt_on_error=1"
+          UBSAN_OPTIONS: "print_stacktrace=1:halt_on_error=1"
+        run: |
+          cmake -S . -B build-asan             -DCMAKE_BUILD_TYPE=RelWithDebInfo             -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer -g"             -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"             -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=address,undefined"
+          cmake --build build-asan -j"$(nproc)"
+          ctest --test-dir build-asan --output-on-failure
+
+  cpp-tsan-openmp:
+    name: C++20 TSan (OpenMP Race Check)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' && inputs.run_sanitizers == 'true'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure & build C++20 tests with TSan (isolated from ASan)
+        env:
+          OMP_NUM_THREADS: "2"
+          TSAN_OPTIONS: "halt_on_error=1:second_deadlock_stack=1"
+        run: |
+          cmake -S . -B build-tsan             -DCMAKE_BUILD_TYPE=RelWithDebInfo             -DCMAKE_CXX_FLAGS="-fsanitize=thread -fno-omit-frame-pointer -g"             -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=thread"             -DCMAKE_SHARED_LINKER_FLAGS="-fsanitize=thread"
+          cmake --build build-tsan -j"$(nproc)"
+          ctest --test-dir build-tsan --output-on-failure
+
+  gpu-modal-fp64:
+    name: Modal Serverless GPU FP64 Benchmark (Source Build)
+    runs-on: ubuntu-latest
+    if: >-
+      (github.event_name == 'workflow_dispatch' && inputs.run_modal_gpu == 'true') ||
+      startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Modal CLI
+        run: python -m pip install --upgrade pip modal
+
+      - name: Dispatch FP64 GPU benchmark to Modal
+        env:
+          MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
+          MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
+          MSHQC_MODAL_GPU: ${{ inputs.modal_gpu_type || 'A100' }}
+          MSHQC_GIT_SHA: ${{ github.sha }}
+          MSHQC_BENCH_SCRIPT: ${{ inputs.bench_script || 'benchmarks/run_heavy_large_v2.py' }}
+        run: |
+          if [ -z "$MODAL_TOKEN_ID" ] || [ -z "$MODAL_TOKEN_SECRET" ]; then
+            echo "ERROR: Set MODAL_TOKEN_ID and MODAL_TOKEN_SECRET in GitHub Repository Secrets."
+            exit 1
+          fi
+          mkdir -p artifacts
+          modal run scripts/modal_gpu_bench.py             --bench-script "$MSHQC_BENCH_SCRIPT"             --out artifacts/modal_gpu_bench.json
+
+      - name: Archive GPU benchmark artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: modal-gpu-fp64-benchmark-${{ github.sha }}
+          path: artifacts/modal_gpu_bench.json
+          retention-days: 90
