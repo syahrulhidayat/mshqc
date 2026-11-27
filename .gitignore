@@ -62,3 +62,9 @@ debug
 inject.py
 inject_*.py
 fix_phase*.py
+# [PHASE0_CPC_HYGIENE]
+inject_phase0_*.py
+*.phase0.bak
+artifacts/
+build-asan/
+build-tsan/
