@@ -1,4 +1,4 @@
-name: Sync Exact GitHub Structure to Google Drive1
+name: Sync Exact GitHub Structure to Google Drive
 
 on:
   push:
