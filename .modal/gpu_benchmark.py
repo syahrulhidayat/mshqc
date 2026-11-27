@@ -1,13 +1,19 @@
 #!/usr/bin/env python3
 """
 .modal/gpu_benchmark.py
-Serverless NVIDIA CUDA GPU CI & Benchmark Runner untuk mshqc v2.0 di Modal.com.
-Menguji RHF, LT-SOS-OMP2, dan OMP3 (CPU C++20 vs CUDA FP64).
+Serverless NVIDIA CUDA GPU CI & CPC Scaling Benchmark Runner untuk mshqc v2.0 di Modal.com.
+Menguji RHF, DF-OMP2, O(N^4) LT-SOS-OMP2, dan DF-OMP3 (CPU C++20 vs CUDA FP64)
+serta merekam Peak VRAM, Peak CPU RSS, paritas energi |dE|, dan JSON mentah.
 """
 from __future__ import annotations
 
+import json
 import os
+import platform
+import resource
+import sys
 from pathlib import Path
+
 import modal
 
 GPU_TYPE = os.environ.get("MODAL_GPU", "T4")
@@ -43,12 +49,28 @@ image = (
         "rm -rf /tmp/libcint /tmp/tblis",
         "git clone --depth 1 https://github.com/syahrulhidayat/mshqc-basis.git /opt/mshqc-basis",
     )
-    .add_local_dir(".", remote_path="/workspace", ignore=[".git", "build", "dist", "__pycache__", ".cache*"])
+    .add_local_dir(
+        ".",
+        remote_path="/workspace",
+        ignore=[".git", "build", "dist", "__pycache__", ".cache*", "artifacts", "experimental"],
+    )
 )
 
 
-@app.function(image=image, gpu=GPU_TYPE, cpu=4.0, memory=16384, timeout=1200)
-def run_cuda_suite(heavy: bool = False) -> str:
+def _peak_cpu_rss_mb() -> float:
+    if sys.platform.startswith("linux"):
+        try:
+            with open("/proc/self/status", encoding="utf-8") as fh:
+                for line in fh:
+                    if line.startswith("VmHWM:"):
+                        return float(line.split()[1]) / 1024.0
+        except OSError:
+            pass
+    return float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss) / 1024.0
+
+
+@app.function(image=image, gpu=GPU_TYPE, cpu=4.0, memory=32768, timeout=2400)
+def run_cuda_suite(mode: str = "smoke", git_sha: str = "local") -> dict:
     import subprocess
     import time
     import torch
@@ -61,12 +83,30 @@ def run_cuda_suite(heavy: bool = False) -> str:
     os.environ["CMAKE_BUILD_PARALLEL_LEVEL"] = "4"
 
     gpu_name = torch.cuda.get_device_name(0)
-    print(f"=== Modal GPU Info: {gpu_name} (CUDA {torch.version.cuda}) ===", flush=True)
+    gpu_total_gb = torch.cuda.get_device_properties(0).total_memory / (1024.0**3)
+    print(f"=== Modal GPU Info: {gpu_name} ({gpu_total_gb:.1f} GB, CUDA {torch.version.cuda}) ===", flush=True)
+
+    # Build langsung dari source tree /workspace (bukan PyPI)
     subprocess.run(["python", "-m", "pip", "install", "--no-build-isolation", "--no-deps", "-e", "."], check=True)
     subprocess.run(["python", "-m", "pytest", "tests/test_thin_core_stage12_polish.py", "-v", "-s"], check=True)
 
     import mshqc
     from mshqc.backends import enable_torch_backend, use_backend
+
+    mshqc_path = str(Path(mshqc.__file__).resolve())
+    assert "/workspace" in mshqc_path, f"Expected workspace build, got {mshqc_path}"
+
+    # Ukur throughput FP64 hardware murni (GEMM 2048x2048) untuk transparansi tabel CPC
+    n_gemm = 2048
+    a = torch.ones((n_gemm, n_gemm), dtype=torch.float64, device="cuda")
+    b = torch.ones((n_gemm, n_gemm), dtype=torch.float64, device="cuda")
+    torch.cuda.synchronize()
+    tg0 = time.perf_counter()
+    _ = a @ b
+    torch.cuda.synchronize()
+    fp64_tflops = (2.0 * (n_gemm**3)) / ((time.perf_counter() - tg0) * 1e12)
+    del a, b
+    torch.cuda.empty_cache()
 
     cuda_backend = enable_torch_backend(device="cuda", name="cuda", fallback_to_cpp=True)
 
@@ -81,62 +121,133 @@ def run_cuda_suite(heavy: bool = False) -> str:
         ("H", -1.2450, 2.4900, 0.0), ("H", -3.3740, 1.2460, 0.0),
         ("H", -3.3740, -1.2460, 0.0), ("H", -1.2450, -2.4900, 0.0),
     ]
-
-    systems = [
-        ("C6H6 (114 BF, FC)", mshqc.molecule("C6H6"), "cc-pVDZ", True, True),
+    anthracene = [
+        ("C", 0.0000, 1.4050, 0.0), ("C", 0.0000, -1.4050, 0.0),
+        ("C", 1.2200, 0.7150, 0.0), ("C", 1.2200, -0.7150, 0.0),
+        ("C", -1.2200, 0.7150, 0.0), ("C", -1.2200, -0.7150, 0.0),
+        ("C", 2.4650, 1.4050, 0.0), ("C", 2.4650, -1.4050, 0.0),
+        ("C", 3.6550, 0.7100, 0.0), ("C", 3.6550, -0.7100, 0.0),
+        ("C", -2.4650, 1.4050, 0.0), ("C", -2.4650, -1.4050, 0.0),
+        ("C", -3.6550, 0.7100, 0.0), ("C", -3.6550, -0.7100, 0.0),
+        ("H", 0.0000, 2.4900, 0.0), ("H", 0.0000, -2.4900, 0.0),
+        ("H", 2.4650, 2.4900, 0.0), ("H", 2.4650, -2.4900, 0.0),
+        ("H", 4.6000, 1.2500, 0.0), ("H", 4.6000, -1.2500, 0.0),
+        ("H", -2.4650, 2.4900, 0.0), ("H", -2.4650, -2.4900, 0.0),
+        ("H", -4.6000, 1.2500, 0.0), ("H", -4.6000, -1.2500, 0.0),
     ]
-    if heavy:
-        systems.append(("C10H8 (180 BF, FC)", mshqc.build_molecule(naphthalene, units="angstrom"), "cc-pVDZ", True, True))
-        systems.append(("C6H6 (264 BF, FC)", mshqc.molecule("C6H6"), "cc-pVTZ", True, False))
+
+    # (label, mol, basis, freeze_core, do_omp2, do_omp3)
+    systems = [
+        ("C6H6 (114 BF, FC)", mshqc.molecule("C6H6"), "cc-pVDZ", True, True, True),
+    ]
+    if mode in {"heavy", "cpc_scaling"}:
+        systems.append(("C10H8 (180 BF, FC)", mshqc.build_molecule(naphthalene, units="angstrom"), "cc-pVDZ", True, True, True))
+    if mode == "cpc_scaling":
+        systems.append(("C14H10 (246 BF, FC)", mshqc.build_molecule(anthracene, units="angstrom"), "cc-pVDZ", True, True, True))
+        systems.append(("C6H6 (264 BF, FC)", mshqc.molecule("C6H6"), "cc-pVTZ", True, True, True))
+        systems.append(("C10H8 (412 BF, FC)", mshqc.build_molecule(naphthalene, units="angstrom"), "cc-pVTZ", True, True, False))
+    elif mode == "heavy":
+        systems.append(("C6H6 (264 BF, FC)", mshqc.molecule("C6H6"), "cc-pVTZ", True, True, False))
 
     lines = [
-        f"### mshqc v2.0 CUDA FP64 Benchmark ({gpu_name})",
+        f"### mshqc v{mshqc.__version__} CUDA FP64 Benchmark ({gpu_name}, mode={mode})",
+        f"- **FP64 GEMM 2048 Throughput:** `{fp64_tflops:.2f} TFLOPS` | **CUDA:** `{torch.version.cuda}` | **SHA:** `{git_sha[:10]}`",
         "",
-        "| System | Basis | t_RHF (CPU/GPU) | t_LT-SOS (CPU/GPU) | t_OMP3 (CPU/GPU) | Speedup OMP3 | |dE_OMP3| |",
-        "|---|---|---:|---:|---:|---:|---:|",
+        "| System | Basis | Nbf | t_RHF (CPU/GPU) | t_OMP2 (CPU/GPU) | t_LT-SOS (CPU/GPU) | t_OMP3 (CPU/GPU) | Speedup OMP3 | |dE_max| | Peak VRAM (MB) |",
+        "|---|---|---:|---:|---:|---:|---:|---:|---:|---:|",
     ]
 
-    _ = torch.eye(4, dtype=torch.float64, device="cuda") @ torch.eye(4, dtype=torch.float64, device="cuda")
-    torch.cuda.synchronize()
-
-    for label, mol, basis, fc, do_omp3 in systems:
+    records = []
+    for label, mol, basis, fc, do_omp2, do_omp3 in systems:
         calc_c = mshqc.MSHQCCalculator(mol, basis_name=basis, eri_method="df", freeze_core=fc)
+        nbf = int(calc_c.basis.n_basis_functions())
         t0 = time.perf_counter(); scf_c = calc_c.run_scf(); t_rhf_c = time.perf_counter() - t0
+        o2_c, t_o2_c = None, None
+        if do_omp2:
+            t0 = time.perf_counter(); o2_c = calc_c.run_omp2(scf_c, grad_thresh=1e-5); t_o2_c = time.perf_counter() - t0
         t0 = time.perf_counter(); lt_c = calc_c.run_lt_sos_omp2(scf_c, grad_thresh=1e-5); t_lt_c = time.perf_counter() - t0
         o3_c, t_o3_c = None, None
         if do_omp3:
             t0 = time.perf_counter(); o3_c = calc_c.run_omp3(scf_c, grad_thresh=1e-5); t_o3_c = time.perf_counter() - t0
 
+        torch.cuda.reset_peak_memory_stats()
         calc_g = mshqc.MSHQCCalculator(mol, basis_name=basis, eri_method="df", freeze_core=fc)
         with use_backend("cuda"):
             t0 = time.perf_counter(); scf_g = calc_g.run_scf(); torch.cuda.synchronize(); t_rhf_g = time.perf_counter() - t0
+            o2_g, t_o2_g = None, None
+            if do_omp2:
+                t0 = time.perf_counter(); o2_g = calc_g.run_omp2(scf_g, grad_thresh=1e-5); torch.cuda.synchronize(); t_o2_g = time.perf_counter() - t0
             t0 = time.perf_counter(); lt_g = calc_g.run_lt_sos_omp2(scf_g, grad_thresh=1e-5); torch.cuda.synchronize(); t_lt_g = time.perf_counter() - t0
             o3_g, t_o3_g = None, None
             if do_omp3:
                 t0 = time.perf_counter(); o3_g = calc_g.run_omp3(scf_g, grad_thresh=1e-5); torch.cuda.synchronize(); t_o3_g = time.perf_counter() - t0
 
-        assert abs(lt_c.energy_total - lt_g.energy_total) < 1e-9
-        if do_omp3 and o3_c is not None and o3_g is not None:
-            de_o3 = abs(o3_c.energy_total - o3_g.energy_total)
+        peak_vram_mb = torch.cuda.max_memory_allocated() / (1024.0**2)
+        peak_cpu_mb = _peak_cpu_rss_mb()
+
+        de_rhf = abs(scf_c.energy_total - scf_g.energy_total)
+        de_lt = abs(lt_c.energy_total - lt_g.energy_total)
+        de_o2 = abs(o2_c.energy_total - o2_g.energy_total) if (o2_c and o2_g) else 0.0
+        de_o3 = abs(o3_c.energy_total - o3_g.energy_total) if (o3_c and o3_g) else 0.0
+        de_max = max(de_rhf, de_o2, de_lt, de_o3)
+
+        assert de_rhf < 1e-9, f"RHF CUDA parity mismatch: {de_rhf}"
+        assert de_lt < 1e-9, f"LT-SOS-OMP2 CUDA parity mismatch: {de_lt}"
+        if o2_c and o2_g:
+            assert de_o2 < 1e-9, f"OMP2 CUDA parity mismatch: {de_o2}"
+        if o3_c and o3_g:
             assert de_o3 < 1e-9, f"OMP3 CUDA parity mismatch: {de_o3}"
+
+        o2_col = f"{t_o2_c:.2f}s / {t_o2_g:.2f}s" if (t_o2_c is not None and t_o2_g is not None) else "skip"
+        if t_o3_c is not None and t_o3_g is not None:
             o3_col = f"{t_o3_c:.2f}s / {t_o3_g:.2f}s"
-            sp_col = f"{t_o3_c / max(t_o3_g, 1e-6):.2f}x"
-            de_col = f"{de_o3:.2e}"
+            sp_o3 = t_o3_c / max(t_o3_g, 1e-6)
+            sp_col = f"{sp_o3:.2f}x"
         else:
-            o3_col, sp_col, de_col = "skip", "-", "-"
+            o3_col, sp_o3, sp_col = "skip", None, "-"
 
         lines.append(
-            f"| {label} | {basis} | {t_rhf_c:.2f}s / {t_rhf_g:.2f}s | "
-            f"{t_lt_c:.2f}s / {t_lt_g:.2f}s | {o3_col} | {sp_col} | {de_col} |"
+            f"| {label} | {basis} | {nbf} | {t_rhf_c:.2f}s / {t_rhf_g:.2f}s | "
+            f"{o2_col} | {t_lt_c:.2f}s / {t_lt_g:.2f}s | {o3_col} | {sp_col} | "
+            f"{de_max:.2e} | {peak_vram_mb:.1f} |"
         )
+        records.append({
+            "label": label,
+            "basis": basis,
+            "nbf": nbf,
+            "freeze_core": fc,
+            "t_rhf_cpu": t_rhf_c, "t_rhf_gpu": t_rhf_g, "de_rhf": de_rhf,
+            "t_omp2_cpu": t_o2_c, "t_omp2_gpu": t_o2_g, "de_omp2": de_o2,
+            "t_lt_sos_cpu": t_lt_c, "t_lt_sos_gpu": t_lt_g, "de_lt_sos": de_lt,
+            "t_omp3_cpu": t_o3_c, "t_omp3_gpu": t_o3_g, "de_omp3": de_o3,
+            "speedup_omp3": sp_o3,
+            "speedup_lt_sos": t_lt_c / max(t_lt_g, 1e-6),
+            "peak_vram_mb": round(peak_vram_mb, 2),
+            "peak_cpu_rss_mb": round(peak_cpu_mb, 2),
+        })
         cuda_backend.clear_cache()
 
-    report = "\n".join(lines)
-    print("\n" + report, flush=True)
-    return report
+    report_md = "\n".join(lines)
+    print("\n" + report_md, flush=True)
+    return {
+        "git_sha": git_sha,
+        "mode": mode,
+        "gpu_sku_requested": GPU_TYPE,
+        "gpu_name": gpu_name,
+        "gpu_vram_gb": round(gpu_total_gb, 2),
+        "cuda_version": torch.version.cuda,
+        "torch_version": torch.__version__,
+        "fp64_gemm_2048_tflops": round(fp64_tflops, 3),
+        "platform": platform.platform(),
+        "records": records,
+        "markdown": report_md,
+    }
 
 
 @app.local_entrypoint()
-def main(heavy: bool = False) -> None:
-    report = run_cuda_suite.remote(heavy=heavy)
-    Path("cuda_gpu_benchmark_summary.md").write_text(report + "\n", encoding="utf-8")
+def main(heavy: bool = False, mode: str = "") -> None:
+    resolved_mode = mode.strip() if mode.strip() else ("heavy" if heavy else "smoke")
+    git_sha = os.environ.get("MSHQC_GIT_SHA", "local")
+    payload = run_cuda_suite.remote(mode=resolved_mode, git_sha=git_sha)
+    Path("cuda_gpu_benchmark_summary.md").write_text(payload["markdown"] + "\n", encoding="utf-8")
+    Path("cuda_gpu_benchmark_raw.json").write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")

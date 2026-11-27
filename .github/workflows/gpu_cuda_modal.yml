@@ -4,25 +4,30 @@ on:
   workflow_dispatch:
     inputs:
       gpu:
-        description: "NVIDIA GPU type di Modal (T4=murah, L4=cepat, A100=FP64 penuh)"
+        description: "NVIDIA GPU di Modal (T4=smoke murah, A100/H100=FP64 penuh untuk CPC)"
         required: true
-        default: "T4"
+        default: "A100"
         type: choice
         options:
           - T4
           - L4
           - A100
-      heavy:
-        description: "Jalankan juga C6H6 cc-pVTZ (264 BF)"
-        required: false
-        default: false
-        type: boolean
+          - H100
+      mode:
+        description: "Mode benchmark: smoke (114 BF), heavy (<=264 BF), cpc_scaling (114..412 BF)"
+        required: true
+        default: "smoke"
+        type: choice
+        options:
+          - smoke
+          - heavy
+          - cpc_scaling
 
 jobs:
   modal_cuda_gpu:
-    name: "CUDA FP64 Suite on Modal (${{ inputs.gpu }})"
+    name: "CUDA FP64 Suite on Modal (${{ inputs.gpu }} / ${{ inputs.mode }})"
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - name: Checkout Repository
@@ -51,26 +56,24 @@ jobs:
           MODAL_TOKEN_ID: ${{ secrets.MODAL_TOKEN_ID }}
           MODAL_TOKEN_SECRET: ${{ secrets.MODAL_TOKEN_SECRET }}
           MODAL_GPU: ${{ inputs.gpu }}
+          MSHQC_GIT_SHA: ${{ github.sha }}
         run: |
-          EXTRA=""
-          if [ "${{ inputs.heavy }}" = "true" ]; then
-            EXTRA="--heavy"
-          fi
-          modal run .modal/gpu_benchmark.py $EXTRA 2>&1 | tee modal_cuda_log.txt
+          modal run .modal/gpu_benchmark.py --mode "${{ inputs.mode }}" 2>&1 | tee modal_cuda_log.txt
 
-      - name: Publish CUDA Summary & Artifact
+      - name: Publish CUDA Summary
         if: always()
         run: |
           if [ -f cuda_gpu_benchmark_summary.md ]; then
             cat cuda_gpu_benchmark_summary.md >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - name: Upload CUDA Benchmark Logs
+      - name: Upload CUDA Benchmark Artifacts (Markdown + Raw JSON)
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: mshqc-cuda-modal-${{ inputs.gpu }}
+          name: mshqc-cuda-modal-${{ inputs.gpu }}-${{ inputs.mode }}
           path: |
             modal_cuda_log.txt
             cuda_gpu_benchmark_summary.md
+            cuda_gpu_benchmark_raw.json
           if-no-files-found: ignore
