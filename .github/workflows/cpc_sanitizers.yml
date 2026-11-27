@@ -1,0 +1,157 @@
+name: CPC C++20 Sanitizers (ASan+UBSan & TSan)
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_asan:
+        description: "Jalankan AddressSanitizer + UndefinedBehaviorSanitizer"
+        required: false
+        default: true
+        type: boolean
+      run_tsan:
+        description: "Jalankan ThreadSanitizer (OpenMP race check, terpisah dari ASan)"
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  cpp-asan-ubsan:
+    name: C++20 ASan + UBSan (ubuntu-latest)
+    runs-on: ubuntu-latest
+    if: inputs.run_asan == true
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch Basis Sets from mshqc-basis
+        shell: bash -eo pipefail {0}
+        run: |
+          git clone --depth 1 https://github.com/syahrulhidayat/mshqc-basis.git /tmp/mshqc-basis
+          mkdir -p data/basis python/mshqc/basis
+          cp -rf /tmp/mshqc-basis/data/basis/* data/basis/
+          cp -rf /tmp/mshqc-basis/data/basis/* python/mshqc/basis/
+          rm -rf /tmp/mshqc-basis
+
+      - name: Set up Micromamba Build Environment
+        uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: san_env
+          create-args: >-
+            -c conda-forge
+            python=3.11 cmake ninja make pkg-config cxx-compiler c-compiler
+            llvm-openmp eigen openblas liblapacke nanobind setuptools wheel pip
+            numpy scipy pytest
+
+      - name: Restore Cached libcint & TBLIS
+        uses: actions/cache@v4
+        with:
+          path: .cache_local_deps
+          key: local-geom-deps-Linux-v2
+
+      - name: Install libcint & TBLIS into CONDA_PREFIX
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate san_env
+          mkdir -p .cache_local_deps/include .cache_local_deps/lib
+          if [ -f ".cache_local_deps/lib/libtblis.a" ] && [ -f ".cache_local_deps/lib/libcint.a" ]; then
+            cp -rf .cache_local_deps/include/* "$CONDA_PREFIX/include/"
+            cp -rf .cache_local_deps/lib/* "$CONDA_PREFIX/lib/"
+          else
+            git clone --depth 1 -b v6.1.2 https://github.com/sunqm/libcint.git /tmp/libcint
+            cmake -S /tmp/libcint -B /tmp/libcint/build -GNinja               -DCMAKE_INSTALL_PREFIX="$CONDA_PREFIX" -DCMAKE_POSITION_INDEPENDENT_CODE=ON               -DCMAKE_C_FLAGS="-O3 -fPIC -std=gnu17 -Wno-incompatible-pointer-types -Wno-implicit-function-declaration"               -DENABLE_EXAMPLE=0 -DENABLE_TEST=0 -DBUILD_SHARED_LIBS=OFF
+            cmake --build /tmp/libcint/build -j4 && cmake --install /tmp/libcint/build
+            [ -f "$CONDA_PREFIX/lib64/libcint.a" ] && cp -f "$CONDA_PREFIX/lib64/libcint.a" "$CONDA_PREFIX/lib/libcint.a"
+
+            git clone --depth 1 -b v1.2.0 https://github.com/devinamatthews/tblis.git /tmp/tblis
+            cd /tmp/tblis && git submodule update --init --recursive
+            python "$GITHUB_WORKSPACE/cmake/patch_tblis.py"
+            ./configure --prefix="$CONDA_PREFIX" --enable-static --disable-shared --with-pic --without-hwloc               --enable-config="haswell,zen,core2,reference"               CFLAGS="-O3 -fPIC -std=gnu17 -Wno-implicit-function-declaration -Wno-incompatible-function-pointer-types"               CXXFLAGS="-O3 -fPIC -std=c++17"
+            make -j4 bin_PROGRAMS= noinst_PROGRAMS= check_PROGRAMS=
+            make install bin_PROGRAMS= noinst_PROGRAMS= check_PROGRAMS=
+          fi
+
+      - name: Build & Run ASan + UBSan Smoke Tests
+        shell: bash -el {0}
+        env:
+          OMP_NUM_THREADS: "2"
+          TBLIS_NUM_THREADS: "2"
+          OPENBLAS_NUM_THREADS: "1"
+          ASAN_OPTIONS: "detect_leaks=0:halt_on_error=1:strict_string_checks=1"
+          UBSAN_OPTIONS: "print_stacktrace=1:halt_on_error=1"
+        run: |
+          set -o pipefail
+          micromamba activate san_env
+          export TBLIS_DIR="$CONDA_PREFIX"
+          export OpenMP_ROOT="$CONDA_PREFIX"
+          export CMAKE_PREFIX_PATH="$CONDA_PREFIX"
+          export CMAKE_BUILD_PARALLEL_LEVEL=4
+          export CMAKE_ARGS="-DOpenMP_ROOT=$CONDA_PREFIX -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_CXX_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer -g' -DCMAKE_SHARED_LINKER_FLAGS='-fsanitize=address,undefined'"
+          python -m pip install --no-build-isolation --no-deps -e . -v
+          ASAN_LIB=$($CXX -print-file-name=libasan.so)
+          LD_PRELOAD="$ASAN_LIB" python -m pytest tests/test_thin_core_stage3.py tests/test_thin_core_stage7.py tests/test_thin_core_stage8_parity.py -v
+
+  cpp-tsan-openmp:
+    name: C++20 TSan OpenMP Race Check (ubuntu-latest)
+    runs-on: ubuntu-latest
+    if: inputs.run_tsan == true
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch Basis Sets from mshqc-basis
+        shell: bash -eo pipefail {0}
+        run: |
+          git clone --depth 1 https://github.com/syahrulhidayat/mshqc-basis.git /tmp/mshqc-basis
+          mkdir -p data/basis python/mshqc/basis
+          cp -rf /tmp/mshqc-basis/data/basis/* data/basis/
+          cp -rf /tmp/mshqc-basis/data/basis/* python/mshqc/basis/
+          rm -rf /tmp/mshqc-basis
+
+      - name: Set up Micromamba Build Environment
+        uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: tsan_env
+          create-args: >-
+            -c conda-forge
+            python=3.11 cmake ninja make pkg-config cxx-compiler c-compiler
+            llvm-openmp eigen openblas liblapacke nanobind setuptools wheel pip
+            numpy scipy pytest
+
+      - name: Restore Cached libcint & TBLIS
+        uses: actions/cache@v4
+        with:
+          path: .cache_local_deps
+          key: local-geom-deps-Linux-v2
+
+      - name: Install libcint & TBLIS into CONDA_PREFIX
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate tsan_env
+          if [ -f ".cache_local_deps/lib/libtblis.a" ] && [ -f ".cache_local_deps/lib/libcint.a" ]; then
+            cp -rf .cache_local_deps/include/* "$CONDA_PREFIX/include/"
+            cp -rf .cache_local_deps/lib/* "$CONDA_PREFIX/lib/"
+          else
+            echo "::error::Cache local-geom-deps-Linux-v2 belum ada; jalankan test_mshqc_hybrid.yml dulu."
+            exit 1
+          fi
+
+      - name: Build & Run TSan OpenMP Smoke Tests
+        shell: bash -el {0}
+        env:
+          OMP_NUM_THREADS: "2"
+          TBLIS_NUM_THREADS: "2"
+          OPENBLAS_NUM_THREADS: "1"
+          TSAN_OPTIONS: "halt_on_error=0:second_deadlock_stack=1"
+        run: |
+          set -o pipefail
+          micromamba activate tsan_env
+          export TBLIS_DIR="$CONDA_PREFIX"
+          export OpenMP_ROOT="$CONDA_PREFIX"
+          export CMAKE_PREFIX_PATH="$CONDA_PREFIX"
+          export CMAKE_BUILD_PARALLEL_LEVEL=4
+          export CMAKE_ARGS="-DOpenMP_ROOT=$CONDA_PREFIX -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_CXX_FLAGS='-fsanitize=thread -fno-omit-frame-pointer -g' -DCMAKE_SHARED_LINKER_FLAGS='-fsanitize=thread'"
+          python -m pip install --no-build-isolation --no-deps -e . -v
+          TSAN_LIB=$($CXX -print-file-name=libtsan.so)
+          LD_PRELOAD="$TSAN_LIB" python -m pytest tests/test_thin_core_stage3.py tests/test_thin_core_stage9_v21.py -v

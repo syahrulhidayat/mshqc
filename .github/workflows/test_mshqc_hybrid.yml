@@ -2,6 +2,18 @@ name: Build & Verify mshqc v2.0 Pure Thin-Core
 
 
 
+on:
+  push:
+    branches:
+      - hybrid-v2
+  workflow_dispatch:
+    inputs:
+      run_full_benchmarks:
+        description: "Jalankan juga Universal 26-sistem + Bab IV + Psi4 (40-60 menit)"
+        required: false
+        default: false
+        type: boolean
+
 jobs:
   thin_core_v2_test:
     name: Pure Thin-Core v2.0 (Zero-HDF5, ${{ matrix.os }})
@@ -195,7 +207,7 @@ jobs:
           python -m pytest tests/ -q 2>&1 | tee 09_full_pytest_discovery_log.txt
 
       - name: "[9/10] Full Universal Validation v2.0 (26 Standard Systems, cc-pVDZ, EXACT, CHOLESKY & DF)"
-        if: always() && steps.compile.outcome == 'success'
+        if: always() && steps.compile.outcome == 'success' && (github.event_name == 'workflow_dispatch' && inputs.run_full_benchmarks == true)
         shell: bash -el {0}
         run: |
           set -o pipefail
@@ -203,7 +215,7 @@ jobs:
           python benchmarks/run_universal_v2.py --tier standard --basis cc-pVDZ --out mshqc_universal_v2_raw.json 2>&1 | tee 10_universal_v2_standard_log.txt
 
       - name: "[10/10] Full Bab IV Benchmark Suite v2.0 (7 Systems, cc-pVTZ, EXACT/CHOLESKY/DF, Tables 1-5 + RAM)"
-        if: always() && steps.compile.outcome == 'success'
+        if: always() && steps.compile.outcome == 'success' && (github.event_name == 'workflow_dispatch' && inputs.run_full_benchmarks == true)
         shell: bash -el {0}
         run: |
           set -o pipefail
@@ -211,7 +223,7 @@ jobs:
           python benchmarks/run_bab4_v2.py --out mshqc_bab4_v2_raw.json --log 11_bab4_v2_full_log.txt
 
       - name: "[11/11] Bab IV Symmetry Comparison Benchmark (C1 vs Point-Group Symmetry)"
-        if: always() && steps.compile.outcome == 'success'
+        if: always() && steps.compile.outcome == 'success' && (github.event_name == 'workflow_dispatch' && inputs.run_full_benchmarks == true)
         shell: bash -el {0}
         run: |
           set -o pipefail
@@ -219,7 +231,7 @@ jobs:
           python benchmarks/run_bab4_v2.py --compare-symmetry 2>&1 | tee 12_symmetry_compare_bab4_log.txt
 
       - name: "[11/11] Full Bab IV Benchmark Suite v2.0 (Abelian + 8-Fold Symmetry, Tables 1-5 + RAM)"
-        if: always() && steps.compile.outcome == 'success'
+        if: always() && steps.compile.outcome == 'success' && (github.event_name == 'workflow_dispatch' && inputs.run_full_benchmarks == true)
         shell: bash -el {0}
         run: |
           set -o pipefail
@@ -230,14 +242,14 @@ jobs:
             --baseline-json mshqc_bab4_v2_raw.json 2>&1 | tee 12_bab4_abelian_v2_summary_log.txt
 
       - name: "Restore Cached Psi4 Environment (ubuntu-latest only)"
-        if: always() && steps.compile.outcome == 'success' && matrix.os == 'ubuntu-latest'
+        if: always() && steps.compile.outcome == 'success' && matrix.os == 'ubuntu-latest' && (github.event_name == 'workflow_dispatch' && inputs.run_full_benchmarks == true)
         uses: actions/cache@v4
         with:
           path: ~/micromamba/envs/psi4_env
           key: psi4-env-${{ runner.os }}-py311-v1
 
       - name: "Set up Psi4 Reference Environment (ubuntu-latest only)"
-        if: always() && steps.compile.outcome == 'success' && matrix.os == 'ubuntu-latest'
+        if: always() && steps.compile.outcome == 'success' && matrix.os == 'ubuntu-latest' && (github.event_name == 'workflow_dispatch' && inputs.run_full_benchmarks == true)
         shell: bash -el {0}
         run: |
           set -o pipefail
@@ -246,7 +258,7 @@ jobs:
           fi
 
       - name: "[12/13] Psi4 Bab IV Reference Suite v2.0 (ubuntu-latest, Same Runner CPU)"
-        if: always() && steps.compile.outcome == 'success' && matrix.os == 'ubuntu-latest'
+        if: always() && steps.compile.outcome == 'success' && matrix.os == 'ubuntu-latest' && (github.event_name == 'workflow_dispatch' && inputs.run_full_benchmarks == true)
         shell: bash -el {0}
         run: |
           set -o pipefail
@@ -280,7 +292,7 @@ jobs:
           rm -rf "$PSI_SCRATCH"
 
       - name: "[13/13] Head-to-Head Bab IV Comparator (mshqc C1+8F & Abelian+8F vs Psi4)"
-        if: always() && steps.compile.outcome == 'success' && matrix.os == 'ubuntu-latest'
+        if: always() && steps.compile.outcome == 'success' && matrix.os == 'ubuntu-latest' && (github.event_name == 'workflow_dispatch' && inputs.run_full_benchmarks == true)
         shell: bash -el {0}
         run: |
           set -o pipefail
