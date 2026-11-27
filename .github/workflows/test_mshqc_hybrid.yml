@@ -1,12 +1,6 @@
 name: Build & Verify mshqc v2.0 Pure Thin-Core
 
-on:
-  push:
-    branches:
-      - build-pypi
-      - hybrid-v2
-      - master
-  workflow_dispatch:
+
 
 jobs:
   thin_core_v2_test:
