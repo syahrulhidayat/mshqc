@@ -68,3 +68,4 @@ inject_phase0_*.py
 artifacts/
 build-asan/
 build-tsan/
+inject_cpc_*.py
