@@ -1,10 +1,15 @@
-name: CPC C++20 Sanitizers (ASan+UBSan & TSan)
+name: CPC Phase 1 Verification & C++20 Sanitizers
 
 on:
   workflow_dispatch:
     inputs:
+      run_error_bounds:
+        description: "Jalankan Phase 1 FD4 gradients + Cholesky/Laplace/kappa error-bound tables"
+        required: false
+        default: true
+        type: boolean
       run_asan:
-        description: "Jalankan AddressSanitizer + UndefinedBehaviorSanitizer"
+        description: "Jalankan AddressSanitizer + UndefinedBehaviorSanitizer (C++20)"
         required: false
         default: true
         type: boolean
@@ -15,6 +20,82 @@ on:
         type: boolean
 
 jobs:
+  phase1-error-bounds:
+    name: Phase 1 Error Bounds & FD4 Gradients (ubuntu-latest)
+    runs-on: ubuntu-latest
+    if: inputs.run_error_bounds == true
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch Basis Sets from mshqc-basis
+        shell: bash -eo pipefail {0}
+        run: |
+          git clone --depth 1 https://github.com/syahrulhidayat/mshqc-basis.git /tmp/mshqc-basis
+          mkdir -p data/basis python/mshqc/basis
+          cp -rf /tmp/mshqc-basis/data/basis/* data/basis/
+          cp -rf /tmp/mshqc-basis/data/basis/* python/mshqc/basis/
+          rm -rf /tmp/mshqc-basis
+
+      - name: Set up Micromamba Build Environment
+        uses: mamba-org/setup-micromamba@v2
+        with:
+          environment-name: p1_env
+          create-args: >-
+            -c conda-forge
+            python=3.11 cmake ninja make pkg-config cxx-compiler c-compiler
+            llvm-openmp eigen openblas liblapacke nanobind setuptools wheel pip
+            numpy scipy pytest
+
+      - name: Restore Cached libcint & TBLIS
+        uses: actions/cache@v4
+        with:
+          path: .cache_local_deps
+          key: local-geom-deps-Linux-v2
+
+      - name: Install Cached libcint & TBLIS
+        shell: bash -el {0}
+        run: |
+          set -o pipefail
+          micromamba activate p1_env
+          if [ -f ".cache_local_deps/lib/libtblis.a" ] && [ -f ".cache_local_deps/lib/libcint.a" ]; then
+            cp -rf .cache_local_deps/include/* "$CONDA_PREFIX/include/"
+            cp -rf .cache_local_deps/lib/* "$CONDA_PREFIX/lib/"
+          else
+            echo "::error::Cache local-geom-deps-Linux-v2 tidak ditemukan; jalankan test_mshqc_hybrid.yml dulu."
+            exit 1
+          fi
+
+      - name: Build mshqc & Run Phase 1 Verification + Error-Bound Tables
+        shell: bash -el {0}
+        env:
+          OMP_NUM_THREADS: "4"
+          TBLIS_NUM_THREADS: "4"
+          OPENBLAS_NUM_THREADS: "1"
+        run: |
+          set -o pipefail
+          micromamba activate p1_env
+          export TBLIS_DIR="$CONDA_PREFIX"
+          export OpenMP_ROOT="$CONDA_PREFIX"
+          export CMAKE_PREFIX_PATH="$CONDA_PREFIX"
+          export CMAKE_ARGS="-DOpenMP_ROOT=$CONDA_PREFIX"
+          export CMAKE_BUILD_PARALLEL_LEVEL=4
+          python -m pip install --no-build-isolation --no-deps -e .
+          python -m pytest tests/test_phase1_cpc_verification.py -v -s 2>&1 | tee phase1_pytest_log.txt
+          python repro_cpc/run_phase1_error_bounds.py --out-json phase1_error_bounds.json --out-md phase1_error_bounds.md
+          cat phase1_error_bounds.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Phase 1 Verification Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpc-phase1-error-bounds
+          path: |
+            phase1_pytest_log.txt
+            phase1_error_bounds.json
+            phase1_error_bounds.md
+          if-no-files-found: ignore
+
   cpp-asan-ubsan:
     name: C++20 ASan + UBSan (ubuntu-latest)
     runs-on: ubuntu-latest
@@ -53,25 +134,15 @@ jobs:
         run: |
           set -o pipefail
           micromamba activate san_env
-          mkdir -p .cache_local_deps/include .cache_local_deps/lib
           if [ -f ".cache_local_deps/lib/libtblis.a" ] && [ -f ".cache_local_deps/lib/libcint.a" ]; then
             cp -rf .cache_local_deps/include/* "$CONDA_PREFIX/include/"
             cp -rf .cache_local_deps/lib/* "$CONDA_PREFIX/lib/"
           else
-            git clone --depth 1 -b v6.1.2 https://github.com/sunqm/libcint.git /tmp/libcint
-            cmake -S /tmp/libcint -B /tmp/libcint/build -GNinja               -DCMAKE_INSTALL_PREFIX="$CONDA_PREFIX" -DCMAKE_POSITION_INDEPENDENT_CODE=ON               -DCMAKE_C_FLAGS="-O3 -fPIC -std=gnu17 -Wno-incompatible-pointer-types -Wno-implicit-function-declaration"               -DENABLE_EXAMPLE=0 -DENABLE_TEST=0 -DBUILD_SHARED_LIBS=OFF
-            cmake --build /tmp/libcint/build -j4 && cmake --install /tmp/libcint/build
-            [ -f "$CONDA_PREFIX/lib64/libcint.a" ] && cp -f "$CONDA_PREFIX/lib64/libcint.a" "$CONDA_PREFIX/lib/libcint.a"
-
-            git clone --depth 1 -b v1.2.0 https://github.com/devinamatthews/tblis.git /tmp/tblis
-            cd /tmp/tblis && git submodule update --init --recursive
-            python "$GITHUB_WORKSPACE/cmake/patch_tblis.py"
-            ./configure --prefix="$CONDA_PREFIX" --enable-static --disable-shared --with-pic --without-hwloc               --enable-config="haswell,zen,core2,reference"               CFLAGS="-O3 -fPIC -std=gnu17 -Wno-implicit-function-declaration -Wno-incompatible-function-pointer-types"               CXXFLAGS="-O3 -fPIC -std=c++17"
-            make -j4 bin_PROGRAMS= noinst_PROGRAMS= check_PROGRAMS=
-            make install bin_PROGRAMS= noinst_PROGRAMS= check_PROGRAMS=
+            echo "::error::Cache local-geom-deps-Linux-v2 belum ada; jalankan test_mshqc_hybrid.yml dulu."
+            exit 1
           fi
 
-      - name: Build & Run ASan + UBSan Smoke Tests
+      - name: Build & Run ASan + UBSan Verification
         shell: bash -el {0}
         env:
           OMP_NUM_THREADS: "2"
@@ -89,7 +160,19 @@ jobs:
           export CMAKE_ARGS="-DOpenMP_ROOT=$CONDA_PREFIX -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_CXX_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer -g' -DCMAKE_SHARED_LINKER_FLAGS='-fsanitize=address,undefined'"
           python -m pip install --no-build-isolation --no-deps -e . -v
           ASAN_LIB=$($CXX -print-file-name=libasan.so)
-          LD_PRELOAD="$ASAN_LIB" python -m pytest tests/test_thin_core_stage3.py tests/test_thin_core_stage7.py tests/test_thin_core_stage8_parity.py -v
+          if [ ! -f "$ASAN_LIB" ]; then
+            ASAN_LIB=$(find "$CONDA_PREFIX" /usr/lib -name "libasan.so*" 2>/dev/null | head -n 1)
+          fi
+          echo "Using ASAN_LIB=$ASAN_LIB"
+          LD_PRELOAD="$ASAN_LIB" python -m pytest             tests/test_thin_core_stage3.py             tests/test_thin_core_stage7.py             tests/test_thin_core_stage8_parity.py             tests/test_phase1_cpc_verification.py -v 2>&1 | tee 01_asan_ubsan_log.txt
+
+      - name: Upload ASan + UBSan Log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpc-asan-ubsan-log
+          path: 01_asan_ubsan_log.txt
+          if-no-files-found: ignore
 
   cpp-tsan-openmp:
     name: C++20 TSan OpenMP Race Check (ubuntu-latest)
@@ -137,7 +220,7 @@ jobs:
             exit 1
           fi
 
-      - name: Build & Run TSan OpenMP Smoke Tests
+      - name: Build & Run TSan OpenMP Verification
         shell: bash -el {0}
         env:
           OMP_NUM_THREADS: "2"
@@ -154,4 +237,16 @@ jobs:
           export CMAKE_ARGS="-DOpenMP_ROOT=$CONDA_PREFIX -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_CXX_FLAGS='-fsanitize=thread -fno-omit-frame-pointer -g' -DCMAKE_SHARED_LINKER_FLAGS='-fsanitize=thread'"
           python -m pip install --no-build-isolation --no-deps -e . -v
           TSAN_LIB=$($CXX -print-file-name=libtsan.so)
-          LD_PRELOAD="$TSAN_LIB" python -m pytest tests/test_thin_core_stage3.py tests/test_thin_core_stage9_v21.py -v
+          if [ ! -f "$TSAN_LIB" ]; then
+            TSAN_LIB=$(find "$CONDA_PREFIX" /usr/lib -name "libtsan.so*" 2>/dev/null | head -n 1)
+          fi
+          echo "Using TSAN_LIB=$TSAN_LIB"
+          LD_PRELOAD="$TSAN_LIB" python -m pytest             tests/test_thin_core_stage3.py             tests/test_thin_core_stage9_v21.py -v 2>&1 | tee 02_tsan_openmp_log.txt
+
+      - name: Upload TSan OpenMP Log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cpc-tsan-openmp-log
+          path: 02_tsan_openmp_log.txt
+          if-no-files-found: ignore
