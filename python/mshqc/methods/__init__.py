@@ -73,7 +73,7 @@ from .properties import (
     write_molden,
 )
 from .excited import ExcitedStateResult, run_df_cis_rhf, run_df_tdhf_rhf
-from .oo_dh_dft import OODoubleHybridResult, run_oo_double_hybrid_rhf
+# [QUARANTINED_PHASE0] from .oo_dh_dft import OODoubleHybridResult, run_oo_double_hybrid_rhf
 from .interop import run_from_arrays, run_from_pyscf
 # [INJECTED_V2_POLISH_SYMMETRY_EXPORT]
 from .symmetry import (
