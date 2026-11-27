@@ -111,7 +111,6 @@ __all__ = [
     "NaturalOrbitalResult", "PopulationResult", "build_1rdm_ao", "scf_density_ao", "correlated_density_ao",
     "compute_natural_orbitals", "mulliken_and_lowdin_charges", "write_molden",
     "ExcitedStateResult", "run_df_cis_rhf", "run_df_tdhf_rhf",
-    "OODoubleHybridResult", "run_oo_double_hybrid_rhf",
     "run_from_arrays", "run_from_pyscf",
     "AbelianSymmetryInfo", "AbelianSALCBlocks", "build_salc_orthogonalizer",
     "align_principal_axes", "detect_abelian_symmetry",

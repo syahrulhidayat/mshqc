@@ -3,7 +3,6 @@
 Validasi Fase C (v2.2.0 Scalability & Ecosystem):
 1. AdaptiveLaplaceCache menghindari penyelesaian ulang NNLS di setiap iterasi makro LT-SOS-OMP2.
 2. Pluggable Kernel Backend Registry (`get_backend("cpp")` vs `get_backend("numpy")` + `use_backend`).
-3. OO-Double-Hybrid DFT (`run_oo_double_hybrid_rhf`: OO-B2PLYP & OO-DSD-PBEP86, jika PySCF tersedia).
 """
 import numpy as np
 import pytest
@@ -72,16 +71,6 @@ def test_pluggable_backend_registry_cpp_vs_numpy():
     register_backend("custom_alias", k_cpp)
     assert get_backend("custom_alias") is k_cpp
     print("[BACKENDS    ] C++20 <-> Pure-NumPy kernel parity < 1e-12 & custom registry OK")
-
-
-def test_oo_double_hybrid_dft_if_pyscf_installed():
-    pyscf = pytest.importorskip("pyscf")
-    mol = pyscf.gto.M(atom="O 0 0 0.1173; H 0 0.7572 -0.4692; H 0 -0.7572 -0.4692", basis="cc-pVDZ", verbose=0)
-    res_b2 = M.run_oo_double_hybrid_rhf(mol, aux_basis="cc-pVDZ-RI", functional="oo-b2plyp", grad_tol=1e-5)
-    res_dsd = M.run_oo_double_hybrid_rhf(mol, aux_basis="cc-pVDZ-RI", functional="oo-dsd-pbep86", grad_tol=1e-5)
-    assert res_b2.converged and res_dsd.converged
-    print(f"[OO-DH DFT   ] OO-B2PLYP={res_b2.energy_total:.8f} Ha | OO-DSD-PBEP86={res_dsd.energy_total:.8f} Ha")
-
 
 if __name__ == "__main__":
     test_adaptive_laplace_cache_reuses_quadrature()
