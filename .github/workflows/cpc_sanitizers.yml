@@ -159,7 +159,8 @@ jobs:
           export CMAKE_BUILD_PARALLEL_LEVEL=4
           export CMAKE_ARGS="-DOpenMP_ROOT=$CONDA_PREFIX -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_CXX_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer -g' -DCMAKE_SHARED_LINKER_FLAGS='-fsanitize=address,undefined'"
           python -m pip install --no-build-isolation --no-deps -e . -v
-          ASAN_LIB=$(${CXX:-c++} -print-file-name=libasan.so)
+          CXX_BIN="$(command -v "${CXX:-}" 2>/dev/null || command -v "$CONDA_PREFIX/bin/c++" || command -v g++ || command -v c++)"
+          ASAN_LIB="$("$CXX_BIN" -print-file-name=libasan.so)"
           if [ ! -f "$ASAN_LIB" ]; then
             ASAN_LIB=$(find "$CONDA_PREFIX" /usr/lib -name "libasan.so*" 2>/dev/null | head -n 1)
           fi
@@ -236,7 +237,8 @@ jobs:
           export CMAKE_BUILD_PARALLEL_LEVEL=4
           export CMAKE_ARGS="-DOpenMP_ROOT=$CONDA_PREFIX -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_CXX_FLAGS='-fsanitize=thread -fno-omit-frame-pointer -g' -DCMAKE_SHARED_LINKER_FLAGS='-fsanitize=thread'"
           python -m pip install --no-build-isolation --no-deps -e . -v
-          TSAN_LIB=$(${CXX:-c++} -print-file-name=libtsan.so)
+          CXX_BIN="$(command -v "${CXX:-}" 2>/dev/null || command -v "$CONDA_PREFIX/bin/c++" || command -v g++ || command -v c++)"
+          TSAN_LIB="$("$CXX_BIN" -print-file-name=libtsan.so)"
           if [ ! -f "$TSAN_LIB" ]; then
             TSAN_LIB=$(find "$CONDA_PREFIX" /usr/lib -name "libtsan.so*" 2>/dev/null | head -n 1)
           fi

@@ -1,0 +1,185 @@
+name: GPU CUDA Test & Benchmark (Kaggle GPU)
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Mode benchmark: smoke (114 BF), heavy (<=264 BF), cpc_scaling (114..412 BF)"
+        required: true
+        default: "smoke"
+        type: choice
+        options:
+          - smoke
+          - heavy
+          - cpc_scaling
+      kernel_slug:
+        description: "Slug kernel Kaggle (huruf kecil + tanda hubung)"
+        required: true
+        default: "mshqc-cuda-ci-runner"
+        type: string
+
+jobs:
+  kaggle-cuda-gpu:
+    name: "CUDA FP64 Suite on Kaggle T4 (${{ inputs.mode }})"
+    runs-on: ubuntu-latest
+    timeout-minutes: 55
+
+    steps:
+      - name: Verify Kaggle Secrets Configured
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+          KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+        run: |
+          if [ -z "$KAGGLE_USERNAME" ]; then
+            echo "::error::Tambahkan secret KAGGLE_USERNAME di GitHub Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+          if [ -z "$KAGGLE_API_TOKEN" ] && [ -z "$KAGGLE_KEY" ]; then
+            echo "::error::Tambahkan salah satu secret: KAGGLE_API_TOKEN atau KAGGLE_KEY."
+            exit 1
+          fi
+
+      - name: Set up Python & Kaggle CLI
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Kaggle CLI & Configure Credentials
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+        run: |
+          python -m pip install --upgrade pip kaggle
+          if [ -n "$KAGGLE_KEY" ]; then
+            mkdir -p ~/.kaggle
+            python -c 'import json, os; json.dump({"username": os.environ["KAGGLE_USERNAME"], "key": os.environ["KAGGLE_KEY"]}, open(os.path.expanduser("~/.kaggle/kaggle.json"), "w"))'
+            chmod 600 ~/.kaggle/kaggle.json
+          fi
+
+      - name: Prepare Kaggle Kernel Package
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          REPO_FULL: ${{ github.repository }}
+          GIT_SHA: ${{ github.sha }}
+          GIT_REF: ${{ github.ref_name }}
+          RUN_MODE: ${{ inputs.mode }}
+          KERNEL_SLUG: ${{ inputs.kernel_slug }}
+        run: |
+          python - <<'GENEOF'
+          import json
+          import os
+          from pathlib import Path
+
+          job_dir = Path("/tmp/kaggle_mshqc_job")
+          job_dir.mkdir(parents=True, exist_ok=True)
+
+          username = os.environ["KAGGLE_USERNAME"].strip()
+          slug = os.environ["KERNEL_SLUG"].strip().lower().replace("_", "-")
+          repo_full = os.environ["REPO_FULL"].strip()
+          git_sha = os.environ["GIT_SHA"].strip()
+          git_ref = os.environ["GIT_REF"].strip()
+          run_mode = os.environ["RUN_MODE"].strip()
+
+          metadata = {
+              "id": f"{username}/{slug}",
+              "title": "mshqc CUDA CI Runner",
+              "code_file": "launch_mshqc_cuda.py",
+              "language": "python",
+              "kernel_type": "script",
+              "is_private": True,
+              "enable_gpu": True,
+              "enable_tpu": False,
+              "enable_internet": True,
+              "dataset_sources": [],
+              "competition_sources": [],
+              "kernel_sources": [],
+              "model_sources": [],
+          }
+          (job_dir / "kernel-metadata.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+
+          launcher = "\n".join([
+              "import os, subprocess, sys",
+              "from pathlib import Path",
+              "WORK = Path('/kaggle/working')",
+              "LOG = WORK / 'kaggle_cuda_log.txt'",
+              "STATUS = WORK / 'kaggle_cuda_status.txt'",
+              f"REPO_URL = 'https://github.com/{repo_full}.git'",
+              f"GIT_REF = '{git_ref}'",
+              f"GIT_SHA = '{git_sha}'",
+              f"RUN_MODE = '{run_mode}'",
+              "def run(cmd, cwd=None):",
+              "    print('>>>', cmd, flush=True)",
+              "    with LOG.open('a', encoding='utf-8') as lf:",
+              "        lf.write(f'\\n>>> {cmd}\\n')",
+              "        p = subprocess.Popen(cmd, shell=True, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)",
+              "        for line in p.stdout:",
+              "            sys.stdout.write(line); sys.stdout.flush(); lf.write(line)",
+              "        rc = p.wait()",
+              "    if rc != 0:",
+              "        raise RuntimeError(f'Exit {rc}: {cmd}')",
+              "try:",
+              "    LOG.write_text('', encoding='utf-8')",
+              "    run('nvidia-smi')",
+              "    run('rm -rf /tmp/mshqc')",
+              "    run(f'git clone --branch {GIT_REF} --depth 50 {REPO_URL} /tmp/mshqc')",
+              "    run(f'git checkout {GIT_SHA}', cwd='/tmp/mshqc')",
+              "    run(f'{sys.executable} benchmarks/kaggle_cuda_benchmark.py --mode {RUN_MODE} --out-dir /kaggle/working --git-sha {GIT_SHA}', cwd='/tmp/mshqc')",
+              "    STATUS.write_text('PASSED\\n', encoding='utf-8')",
+              "except Exception as exc:",
+              "    with LOG.open('a', encoding='utf-8') as lf:",
+              "        lf.write(f'\\n[FATAL] {exc}\\n')",
+              "    STATUS.write_text(f'FAILED: {exc}\\n', encoding='utf-8')",
+              "    sys.exit(1)",
+          ]) + "\n"
+          (job_dir / "launch_mshqc_cuda.py").write_text(launcher, encoding="utf-8")
+          print(f"[OK] Prepared Kaggle kernel: {metadata['id']}")
+          GENEOF
+
+      - name: Push & Poll Kaggle GPU Kernel
+        env:
+          KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+          KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+          KAGGLE_API_TOKEN: ${{ secrets.KAGGLE_API_TOKEN }}
+          KERNEL_SLUG: ${{ inputs.kernel_slug }}
+        run: |
+          set -euo pipefail
+          SLUG="$(echo "$KERNEL_SLUG" | tr '[:upper:]_' '[:lower:]-')"
+          KERNEL_ID="${KAGGLE_USERNAME}/${SLUG}"
+
+          kaggle kernels push -p /tmp/kaggle_mshqc_job
+          sleep 15
+          for i in $(seq 1 150); do
+            STATUS_OUT="$(kaggle kernels status "$KERNEL_ID" 2>&1 || true)"
+            echo "[Poll $i] $STATUS_OUT"
+            LOWER="$(echo "$STATUS_OUT" | tr '[:upper:]' '[:lower:]')"
+            if echo "$LOWER" | grep -q "complete"; then
+              break
+            fi
+            if echo "$LOWER" | grep -qE "error|cancel"; then
+              mkdir -p kaggle_artifacts
+              kaggle kernels output "$KERNEL_ID" -p kaggle_artifacts || true
+              [ -f kaggle_artifacts/kaggle_cuda_log.txt ] && tail -n 120 kaggle_artifacts/kaggle_cuda_log.txt
+              echo "::error::Kaggle kernel gagal: $STATUS_OUT"
+              exit 1
+            fi
+            sleep 20
+          done
+
+          mkdir -p kaggle_artifacts
+          kaggle kernels output "$KERNEL_ID" -p kaggle_artifacts || true
+          ls -la kaggle_artifacts
+          if [ -f kaggle_artifacts/cuda_gpu_benchmark_summary.md ]; then
+            cat kaggle_artifacts/cuda_gpu_benchmark_summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f kaggle_artifacts/kaggle_cuda_status.txt ]; then
+            grep -q "^PASSED" kaggle_artifacts/kaggle_cuda_status.txt
+          fi
+
+      - name: Upload Kaggle CUDA Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: mshqc-cuda-kaggle-T4-${{ inputs.mode }}
+          path: kaggle_artifacts/
+          if-no-files-found: warn

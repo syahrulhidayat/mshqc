@@ -147,7 +147,7 @@ def main() -> None:
 
         omp2_r = M.run_df_omp_rhf(H, v_nn, B_ao, scf_r.C_alpha, 5, method_name="omp2", grad_tol=1e-7)
         for kv in (0.5, 1.0, 1.45, 2.0, 4.0, 10.0, 50.0):
-            kr = M.run_df_kappa_omp2_rhf(H, v_nn, B_ao, scf_r.C_alpha, 5, kappa=kv, grad_tol=1e-7)
+            kr = M.run_df_kappa_omp2_rhf(H, v_nn, B_ao, scf_r.C_alpha, 5, kappa=kv, grad_tol=1e-7, max_iter=150)
             kappa_rows.append({
                 "system": geom_label,
                 "kappa": kv,
