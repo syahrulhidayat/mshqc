@@ -71,3 +71,5 @@ build-tsan/
 inject_cpc_*.py
 inject_phase1_*.py
 *.phase1.bak
+inject_fix_*.py
+*.tsanfix.bak

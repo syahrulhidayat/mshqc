@@ -6,6 +6,14 @@ on:
   push:
     branches:
       - hybrid-v2
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'experimental/**'
+      - '.modal/**'
+      - '.github/workflows/gpu_cuda_*.yml'
+      - '.github/workflows/cpc_sanitizers.yml'
+      - '.github/workflows/sync_gdrive.yml'
   workflow_dispatch:
     inputs:
       run_full_benchmarks:
