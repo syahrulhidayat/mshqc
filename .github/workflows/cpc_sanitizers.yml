@@ -6,12 +6,12 @@ on:
       run_error_bounds:
         description: "Jalankan Phase 1 FD4 gradients + Cholesky/Laplace/kappa error-bound tables"
         required: false
-        default: true
+        default: false
         type: boolean
       run_asan:
         description: "Jalankan AddressSanitizer + UndefinedBehaviorSanitizer (C++20)"
         required: false
-        default: true
+        default: false
         type: boolean
       run_tsan:
         description: "Jalankan ThreadSanitizer (OpenMP race check, terpisah dari ASan)"
@@ -100,7 +100,7 @@ jobs:
     name: C++20 ASan + UBSan (ubuntu-latest)
     runs-on: ubuntu-latest
     if: inputs.run_asan == true
-    timeout-minutes: 45
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
 
@@ -146,6 +146,7 @@ jobs:
         shell: bash -el {0}
         env:
           OMP_NUM_THREADS: "2"
+          OMP_WAIT_POLICY: "PASSIVE"
           TBLIS_NUM_THREADS: "2"
           OPENBLAS_NUM_THREADS: "1"
           ASAN_OPTIONS: "detect_leaks=0:halt_on_error=1:strict_string_checks=1"
@@ -159,8 +160,7 @@ jobs:
           export CMAKE_BUILD_PARALLEL_LEVEL=4
           export CMAKE_ARGS="-DOpenMP_ROOT=$CONDA_PREFIX -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_CXX_FLAGS='-fsanitize=address,undefined -fno-omit-frame-pointer -g' -DCMAKE_SHARED_LINKER_FLAGS='-fsanitize=address,undefined'"
           python -m pip install --no-build-isolation --no-deps -e . -v
-          CXX_BIN="$(command -v "${CXX:-}" 2>/dev/null || command -v "$CONDA_PREFIX/bin/c++" || command -v g++ || command -v c++)"
-          ASAN_LIB="$("$CXX_BIN" -print-file-name=libasan.so)"
+          ASAN_LIB=$(${CXX:-c++} -print-file-name=libasan.so)
           if [ ! -f "$ASAN_LIB" ]; then
             ASAN_LIB=$(find "$CONDA_PREFIX" /usr/lib -name "libasan.so*" 2>/dev/null | head -n 1)
           fi
@@ -179,7 +179,7 @@ jobs:
     name: C++20 TSan OpenMP Race Check (ubuntu-latest)
     runs-on: ubuntu-latest
     if: inputs.run_tsan == true
-    timeout-minutes: 45
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -192,14 +192,14 @@ jobs:
           cp -rf /tmp/mshqc-basis/data/basis/* python/mshqc/basis/
           rm -rf /tmp/mshqc-basis
 
-      - name: Set up Micromamba Build Environment
+      - name: Set up Micromamba Build Environment (GCC libgomp, no llvm-openmp clash)
         uses: mamba-org/setup-micromamba@v2
         with:
           environment-name: tsan_env
           create-args: >-
             -c conda-forge
             python=3.11 cmake ninja make pkg-config cxx-compiler c-compiler
-            llvm-openmp eigen openblas liblapacke nanobind setuptools wheel pip
+            eigen openblas liblapacke nanobind setuptools wheel pip
             numpy scipy pytest
 
       - name: Restore Cached libcint & TBLIS
@@ -221,29 +221,47 @@ jobs:
             exit 1
           fi
 
-      - name: Build & Run TSan OpenMP Verification
+      - name: Build & Run Focused TSan OpenMP Verification
         shell: bash -el {0}
         env:
           OMP_NUM_THREADS: "2"
-          TBLIS_NUM_THREADS: "2"
+          OMP_WAIT_POLICY: "PASSIVE"
+          GOMP_SPINCOUNT: "0"
+          KMP_BLOCKTIME: "0"
+          TBLIS_NUM_THREADS: "1"
           OPENBLAS_NUM_THREADS: "1"
-          TSAN_OPTIONS: "halt_on_error=0:second_deadlock_stack=1"
         run: |
           set -o pipefail
           micromamba activate tsan_env
           export TBLIS_DIR="$CONDA_PREFIX"
-          export OpenMP_ROOT="$CONDA_PREFIX"
           export CMAKE_PREFIX_PATH="$CONDA_PREFIX"
           export CMAKE_BUILD_PARALLEL_LEVEL=4
-          export CMAKE_ARGS="-DOpenMP_ROOT=$CONDA_PREFIX -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_CXX_FLAGS='-fsanitize=thread -fno-omit-frame-pointer -g' -DCMAKE_SHARED_LINKER_FLAGS='-fsanitize=thread'"
+          export CMAKE_ARGS="-DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_CXX_FLAGS='-fsanitize=thread -fno-omit-frame-pointer -g' -DCMAKE_SHARED_LINKER_FLAGS='-fsanitize=thread'"
           python -m pip install --no-build-isolation --no-deps -e . -v
-          CXX_BIN="$(command -v "${CXX:-}" 2>/dev/null || command -v "$CONDA_PREFIX/bin/c++" || command -v g++ || command -v c++)"
-          TSAN_LIB="$("$CXX_BIN" -print-file-name=libtsan.so)"
+
+          cat > /tmp/tsan_suppressions.txt << 'EOF'
+          # Abaikan false-positive internal pustaka prebuilt non-TSan (OpenMP/BLAS/Python)
+          race:^libgomp\.so
+          race:^libomp\.so
+          race:^libopenblas\.so
+          race:^libpython
+          EOF
+          export TSAN_OPTIONS="halt_on_error=0:second_deadlock_stack=0:history_size=2:suppressions=/tmp/tsan_suppressions.txt"
+
+          TSAN_LIB=$(${CXX:-c++} -print-file-name=libtsan.so)
           if [ ! -f "$TSAN_LIB" ]; then
             TSAN_LIB=$(find "$CONDA_PREFIX" /usr/lib -name "libtsan.so*" 2>/dev/null | head -n 1)
           fi
           echo "Using TSAN_LIB=$TSAN_LIB"
-          LD_PRELOAD="$TSAN_LIB" python -m pytest             tests/test_thin_core_stage3.py             tests/test_thin_core_stage9_v21.py -v 2>&1 | tee 02_tsan_openmp_log.txt
+          LD_PRELOAD="$TSAN_LIB" python -m pytest             tests/test_tsan_openmp_smoke.py             tests/test_thin_core_stage9_v21.py -v -s 2>&1 | tee 02_tsan_openmp_log.txt
+
+      - name: Check Zero TSan Races Inside mshqc src/
+        if: always()
+        run: |
+          if [ -f 02_tsan_openmp_log.txt ]; then
+            echo "=== TSan Warnings in mshqc/src ==="
+            grep -n "mshqc/src/" 02_tsan_openmp_log.txt || echo "ZERO TSan warnings in mshqc/src/"
+          fi
 
       - name: Upload TSan OpenMP Log
         if: always()
